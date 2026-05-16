@@ -1,0 +1,23 @@
+{
+  "app": {
+    "name": "VaporLensDB"
+  },
+  "connection": {
+    "new": "New Connection",
+    "test": "Test Connection",
+    "connect": "Connect",
+    "disconnect": "Disconnect"
+  },
+  "editor": {
+    "run": "Run",
+    "format": "Format",
+    "cancel": "Cancel"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "loading": "Loading..."
+  }
+}
