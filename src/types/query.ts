@@ -1,6 +1,50 @@
+export interface ColumnMeta {
+  name: string
+  dataType: string
+  nullable: boolean
+}
+
 export interface QueryResult {
-  columns: string[]
+  columns: ColumnMeta[]
   rows: unknown[][]
   rowCount: number
-  elapsed: number
+  elapsedMs: number
+  affectedRows: number
+  queryId?: string | null
+  truncated: boolean
+  maxRows?: number | null
+}
+
+export interface ExecuteQueryResponse {
+  queryId?: string | null
+  results: QueryResult[]
+}
+
+export interface QueryResultChunk {
+  queryId: string
+  columns: ColumnMeta[]
+  rows: unknown[][]
+  rowOffset: number
+}
+
+export interface QueryStreamDone {
+  queryId: string
+  rowCount: number
+  affectedRows: number
+  elapsedMs: number
+  truncated: boolean
+  maxRows?: number | null
+}
+
+export interface QueryStreamError {
+  queryId: string
+  code: string
+  message: string
+  detail?: string | null
+}
+
+export interface ExplainResult {
+  format: 'text' | 'json'
+  plan: unknown
+  elapsedMs: number
 }

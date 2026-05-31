@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "build:app": "./build.sh",
+    "build:mac": "./build.sh mac",
     "tauri": "tauri"
   },
   "dependencies": {

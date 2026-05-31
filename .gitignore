@@ -8,9 +8,8 @@ dist-ssr/
 # Rust / Cargo
 target/
 src-tauri/target/
-
-# Tauri
-src-tauri/Cargo.lock
+tools/**/build/
+tools/**/target/
 
 # Logs
 logs/
