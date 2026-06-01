@@ -28,7 +28,7 @@ export function useQuery() {
     try {
       if (canStreamSql(sql)) {
         startStreamResult(queryId)
-        const unlisteners = await registerStreamListeners(tabId, queryId)
+        const streamState = await registerStreamListeners(tabId, queryId)
         try {
           await executeQueryStream({
             connectionId,
@@ -38,8 +38,9 @@ export function useQuery() {
             maxRows: INTERACTIVE_QUERY_MAX_ROWS,
           })
         } finally {
-          unlisteners.forEach((unlisten) => unlisten())
+          streamState.unlisteners.forEach((unlisten) => unlisten())
         }
+        if (streamState.state.failed) return
       } else {
         const response = await executeQuery({ connectionId, sql, queryId })
         setResults(queryId, response.results)
@@ -80,6 +81,7 @@ export function useQuery() {
 }
 
 async function registerStreamListeners(tabId: string, queryId: string) {
+  const state = { failed: false }
   const unlisteners = await Promise.all([
     onQueryResultChunk((chunk) => {
       if (chunk.queryId === queryId) {
@@ -93,12 +95,13 @@ async function registerStreamListeners(tabId: string, queryId: string) {
     }),
     onQueryResultError((error) => {
       if (error.queryId === queryId) {
+        state.failed = true
         useEditorStore.getState().setTabQueryState(tabId, queryId, error.message)
       }
     }),
   ])
 
-  return unlisteners
+  return { state, unlisteners }
 }
 
 function canStreamSql(sql: string) {

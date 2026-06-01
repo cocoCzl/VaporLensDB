@@ -4,11 +4,11 @@ VaporLensDB is a Tauri + Rust + React database management tool. The project goal
 
 ## Current Phase
 
-Phase 5 from `docs/VaporLensDB-Implementation-Plan.md` is complete as a working baseline: runnable application shell, PostgreSQL driver, encrypted connection management, unified IPC error parsing, Toast notifications, database navigator metadata loading, SQL tabs, query execution, Explain, formatting, and basic result display.
+Phase 6 from `docs/VaporLensDB-Implementation-Plan.md` is now underway as a working baseline: runnable application shell, PostgreSQL/MySQL drivers, encrypted connection management, unified IPC error parsing, Toast notifications, database navigator metadata loading, SQL tabs, query execution, Explain, formatting, result display, streaming query results, multi-result switching, and initial metadata-backed SQL completion.
 
 The editor performance pass is also complete: Monaco is explicitly lazy-loaded, SQL formatter is loaded on demand, Monaco AMD assets are served from `/monaco/vs`, and the copied Monaco static assets are reduced to the core editor, SQL/PGSQL language support, the default editor worker, and required nls files.
 
-Next phase: Phase 6, implement SQL intelligent completion using the loaded metadata cache.
+Next phase: harden Phase 6 SQL completion with better dialect awareness, alias-aware column suggestions, lazy metadata loading, and completion smoke tests.
 
 ## Development
 

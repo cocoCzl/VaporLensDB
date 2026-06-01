@@ -340,7 +340,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUsername: 'system',
     usesUrl: true,
     externalDriver: true,
-    description: 'Oracle 使用 JDBC 外部驱动模式，需要用户提供 ojdbc.jar。当前会保存配置，JDBC bridge 接入后即可直接连接。',
+    description: 'Oracle 使用 JDBC 外部驱动模式，需要用户提供 ojdbc.jar；测试连接会通过 JDBC bridge 执行真实 ping。',
     driverClass: 'oracle.jdbc.OracleDriver',
     urlPlaceholder: 'jdbc:oracle:thin:@//localhost:1521/ORCLPDB1',
     defaultUrl: (input) =>
@@ -354,7 +354,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUsername: '',
     usesUrl: true,
     externalDriver: true,
-    description: '自定义 JDBC 会保存驱动类、JDBC URL 和 jar 路径，用于后续 JDBC bridge 动态加载。',
+    description: '自定义 JDBC 会通过 JDBC bridge 动态加载驱动类、JDBC URL 和 jar 路径。',
     urlPlaceholder: 'jdbc:vendor://host:port/database',
     defaultUrl: (input) => input.connectionUrl || '',
   },

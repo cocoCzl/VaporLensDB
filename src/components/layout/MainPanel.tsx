@@ -100,22 +100,14 @@ export function MainPanel() {
 
     let cancelled = false
     Promise.all([loadDatabases(connectionId), loadSchemas(connectionId, selectedDatabase)])
-      .then(([, schemas]) =>
-        Promise.all(
-          schemas.flatMap((schema) => [
-            loadTables(connectionId, schema.name),
-            loadViews(connectionId, schema.name),
-            loadFunctions(connectionId, schema.name),
-          ]),
-        ).then(() => {
-          if (!cancelled && !schemaByConnection[connectionId]) {
-            const preferredSchema = schemas.find((item) => item.name === 'public') ?? schemas[0]
-            if (preferredSchema) {
-              setSchemaByConnection((state) => ({ ...state, [connectionId]: preferredSchema.name }))
-            }
+      .then(([, schemas]) => {
+        if (!cancelled && !selectedSchema) {
+          const preferredSchema = schemas.find((item) => item.name === 'public') ?? schemas[0]
+          if (preferredSchema) {
+            setSchemaByConnection((state) => ({ ...state, [connectionId]: preferredSchema.name }))
           }
-        }),
-      )
+        }
+      })
       .catch((error) => {
         if (!cancelled) {
           notifyError(normalizeAppError(error), '加载补全元数据失败')
@@ -129,13 +121,39 @@ export function MainPanel() {
     connectionId,
     connectionIsConnected,
     selectedDatabase,
+    selectedSchema,
     loadDatabases,
-    loadFunctions,
     loadSchemas,
+    notifyError,
+  ])
+
+  useEffect(() => {
+    if (!connectionId || !connectionIsConnected || !selectedSchema) {
+      return
+    }
+
+    let cancelled = false
+    Promise.all([
+      loadTables(connectionId, selectedSchema),
+      loadViews(connectionId, selectedSchema),
+      loadFunctions(connectionId, selectedSchema),
+    ]).catch((error) => {
+      if (!cancelled) {
+        notifyError(normalizeAppError(error), '加载补全对象失败')
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    connectionId,
+    connectionIsConnected,
+    selectedSchema,
+    loadFunctions,
     loadTables,
     loadViews,
     notifyError,
-    schemaByConnection,
   ])
 
   function execute() {

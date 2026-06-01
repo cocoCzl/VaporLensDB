@@ -64,6 +64,8 @@ type MetadataSet = (
     | ((state: MetadataState) => Partial<MetadataState>),
 ) => void
 
+const pendingLoads = new Map<string, Promise<unknown>>()
+
 export const useMetadataStore = create<MetadataState>()((set, get) => ({
   databases: {},
   schemas: {},
@@ -206,12 +208,16 @@ async function withLoading<T>(
   key: string,
   task: () => Promise<T>,
 ): Promise<T> {
+  const pending = pendingLoads.get(key) as Promise<T> | undefined
+  if (pending) return pending
+
   set((state) => ({ loading: { ...state.loading, [key]: true } }))
-  try {
-    return await task()
-  } finally {
+  const promise = task().finally(() => {
+    pendingLoads.delete(key)
     set((state) => ({ loading: { ...state.loading, [key]: false } }))
-  }
+  })
+  pendingLoads.set(key, promise)
+  return promise
 }
 
 function omitByPrefix<T>(record: Record<string, T>, prefix: string) {

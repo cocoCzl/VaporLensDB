@@ -12,7 +12,7 @@ use crate::{
         metadata::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo},
         query_result::{ExplainResult, QueryResult},
     },
-    services::external_driver::{validate_jdbc_prerequisites, validate_odbc_prerequisites},
+    services::external_driver::validate_odbc_prerequisites,
 };
 
 pub struct ConnectionManager {
@@ -34,9 +34,6 @@ impl ConnectionManager {
         password: Option<&str>,
     ) -> Result<(), AppError> {
         match config.driver_type {
-            DriverType::Oracle | DriverType::Jdbc => {
-                return validate_jdbc_prerequisites(config).await;
-            }
             DriverType::Odbc => {
                 return validate_odbc_prerequisites(config);
             }

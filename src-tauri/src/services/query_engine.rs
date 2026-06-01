@@ -124,10 +124,7 @@ impl QueryEngine {
             }
             Err(error) => {
                 let _ = emit_task.await;
-                let payload = stream_error_payload(&query_id, error);
-                app.emit(QUERY_RESULT_ERROR_EVENT, payload.clone())
-                    .map_err(|emit_error| emit_error.to_string())?;
-                Err(serde_json::to_string(&payload).unwrap_or_else(|_| payload.message))
+                Err(error.into())
             }
         }
     }
