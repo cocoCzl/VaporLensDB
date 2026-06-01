@@ -45,6 +45,7 @@ export function MainPanel() {
   const loadViews = useMetadataStore((state) => state.loadViews)
   const loadFunctions = useMetadataStore((state) => state.loadFunctions)
   const notifyError = useUiStore((state) => state.notifyError)
+  const editorFontSize = useUiStore((state) => state.editorFontSize)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
   const [selectedSql, setSelectedSql] = useState('')
   const [editorLoaded, setEditorLoaded] = useState(false)
@@ -246,7 +247,7 @@ export function MainPanel() {
         {editorLoaded ? (
           <Suspense
             fallback={
-              <div className="grid h-full place-items-center bg-[#1e1e1e] text-xs text-zinc-400">
+              <div className="grid h-full place-items-center bg-card text-xs text-muted-foreground">
                 正在加载 SQL 编辑器
               </div>
             }
@@ -260,8 +261,8 @@ export function MainPanel() {
             />
           </Suspense>
         ) : (
-          <div className="flex h-full flex-col bg-[#1e1e1e]">
-            <div className="flex h-9 items-center justify-between border-b border-zinc-800 px-3 text-xs text-zinc-400">
+          <div className="flex h-full flex-col bg-card">
+            <div className="flex h-9 items-center justify-between border-b px-3 text-xs text-muted-foreground">
               <span>轻量 SQL 输入</span>
               <Button
                 type="button"
@@ -276,7 +277,8 @@ export function MainPanel() {
               </Button>
             </div>
             <textarea
-              className="min-h-0 flex-1 resize-none bg-[#1e1e1e] p-3 font-mono text-[13px] leading-5 text-zinc-100 outline-none"
+              className="min-h-0 flex-1 resize-none bg-card p-3 font-mono text-[13px] leading-5 text-foreground outline-none"
+              style={{ fontSize: editorFontSize, lineHeight: `${Math.max(18, editorFontSize + 7)}px` }}
               value={activeTab.sql}
               spellCheck={false}
               onChange={(event) => updateTabSql(activeTab.id, event.target.value)}
@@ -344,7 +346,18 @@ export function MainPanel() {
                 />
               )}
               <div className="min-h-0 flex-1">
-                <DataGrid result={activeResult} />
+                <DataGrid
+                  result={activeResult}
+                  tableContext={activeTab.tableContext}
+                  onExecuteEditSql={
+                    connectionId
+                      ? (sql) => {
+                          updateTabSql(activeTab.id, sql)
+                          runQuery(activeTab.id, connectionId, sql)
+                        }
+                      : undefined
+                  }
+                />
               </div>
             </div>
           )}

@@ -2,6 +2,13 @@ import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
 import type { AppError } from '@/types/error'
 
 export async function invokeCommand<T>(command: string, args?: InvokeArgs): Promise<T> {
+  if (!isTauriRuntime()) {
+    throw {
+      code: 'TAURI_RUNTIME_UNAVAILABLE',
+      message: '当前页面不在 Tauri 桌面运行时中，请使用 pnpm tauri dev 启动应用',
+    } satisfies AppError
+  }
+
   try {
     return await invoke<T>(command, args)
   } catch (error) {
@@ -42,4 +49,12 @@ function isAppError(value: unknown): value is AppError {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<AppError>
   return typeof candidate.code === 'string' && typeof candidate.message === 'string'
+}
+
+function isTauriRuntime() {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  return '__TAURI_INTERNALS__' in window
 }

@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { Eye, RefreshCw, Search } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
+import { useQuery } from '@/hooks/useQuery'
 import { useConnectionStore } from '@/stores/connectionStore'
+import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
+import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
 import { useUiStore } from '@/stores/uiStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
 import { TreeNode, type DatabaseTreeNodeData } from '@/components/explorer/TreeNode'
+import type { DriverType } from '@/types/connection'
 
 interface NodeRecord extends DatabaseTreeNodeData {
   parentId: string | null
@@ -33,11 +38,21 @@ const ROOT_ID = 'root'
 
 export function DatabaseTree() {
   const { activeConnectionId, connections, statuses } = useConnectionStore()
+  const addTab = useEditorStore((state) => state.addTab)
+  const setSidebarView = useUiStore((state) => state.setSidebarView)
   const notifyError = useUiStore((state) => state.notifyError)
+  const notify = useUiStore((state) => state.notify)
   const metadata = useMetadataStore()
+  const inspectTable = useObjectInspectorStore((state) => state.inspectTable)
+  const { runQuery } = useQuery()
   const [nodes, setNodes] = useState<NodeMap>({})
   const [childIds, setChildIds] = useState<Record<string, string[]>>({})
   const [filter, setFilter] = useState('')
+  const [contextMenu, setContextMenu] = useState<{
+    nodeId: string
+    x: number
+    y: number
+  } | null>(null)
 
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
   const isConnected =
@@ -167,19 +182,113 @@ export function DatabaseTree() {
     toggleNode(id, true)
   }
 
+  async function openTableData(nodeId: string) {
+    const node = nodes[nodeId]
+    if (!activeConnectionId || !activeConnection || !isTableLikeNode(node)) {
+      return
+    }
+    const sql = `SELECT *\nFROM ${qualifiedName(activeConnection.driverType, node.meta.schema, node.meta.table)}\nLIMIT 1000;`
+    const tabId = crypto.randomUUID()
+    let primaryKeyColumns: string[] = []
+    try {
+      const columns = await metadata.loadColumns(activeConnectionId, node.meta.schema, node.meta.table)
+      primaryKeyColumns = columns
+        .filter((column) => column.isPrimaryKey)
+        .map((column) => column.name)
+    } catch (error) {
+      notifyError(normalizeAppError(error), '加载主键信息失败')
+    }
+    addTab({
+      id: tabId,
+      title: `${node.meta.table} 数据`,
+      sql,
+      connectionId: activeConnectionId,
+      tableContext: {
+        schema: node.meta.schema,
+        table: node.meta.table,
+        driverType: activeConnection.driverType,
+        primaryKeyColumns,
+      },
+    })
+    runQuery(tabId, activeConnectionId, sql)
+  }
+
+  function inspectNode(nodeId: string) {
+    const node = nodes[nodeId]
+    if (!activeConnectionId || !isTableLikeNode(node)) {
+      return
+    }
+    setSidebarView('structure')
+    inspectTable(activeConnectionId, node.meta.schema, node.meta.table, node.kind)
+  }
+
+  async function copyText(value: string, title: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      notify({ kind: 'success', title })
+    } catch (error) {
+      notifyError(normalizeAppError(error), '复制失败')
+    }
+  }
+
+  function contextActions(node: NodeRecord): ContextMenuAction[] {
+    const tableLike = isTableLikeNode(node)
+    const fullName = tableLike
+      ? qualifiedName(activeConnection?.driverType ?? 'postgres', node.meta.schema, node.meta.table)
+      : node.label
+
+    return [
+      {
+        id: 'open-data',
+        label: '打开表数据',
+        icon: 'data',
+        disabled: !tableLike,
+        onSelect: () => openTableData(node.id),
+      },
+      {
+        id: 'inspect',
+        label: '查看结构 / DDL',
+        icon: 'ddl',
+        disabled: !tableLike,
+        onSelect: () => inspectNode(node.id),
+      },
+      {
+        id: 'copy-name',
+        label: '复制名称',
+        icon: 'copy',
+        onSelect: () => copyText(node.label, '已复制对象名'),
+      },
+      {
+        id: 'copy-full-name',
+        label: '复制完整限定名',
+        icon: 'copyFull',
+        disabled: !tableLike,
+        onSelect: () => copyText(fullName, '已复制完整限定名'),
+      },
+      {
+        id: 'refresh',
+        label: '刷新节点',
+        icon: 'refresh',
+        disabled: !node.expandable,
+        onSelect: () => refreshNode(node.id),
+      },
+    ]
+  }
+
   return (
-    <section className="flex min-h-0 flex-1 flex-col border-t">
+    <section className="flex min-h-0 flex-1 flex-col border-t ide-surface">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">数据库导航器</div>
+          <div className="truncate text-sm font-semibold">对象浏览器</div>
           <div className="truncate text-xs text-muted-foreground">
             {activeConnection?.name ?? '未选择连接'}
           </div>
         </div>
         <Button
           type="button"
-          size="sm"
+          size="icon-sm"
           variant="ghost"
+          title="刷新对象"
           disabled={!isConnected}
           onClick={() => refreshNode(ROOT_ID)}
         >
@@ -187,13 +296,20 @@ export function DatabaseTree() {
         </Button>
       </div>
 
-      <div className="border-b p-2">
-        <Input
-          value={filter}
-          disabled={!isConnected}
-          placeholder="搜索对象"
-          onChange={(event) => setFilter(event.target.value)}
-        />
+      <div className="flex h-10 items-center gap-1 border-b px-2">
+        <Button type="button" size="icon-sm" variant="ghost" disabled={!isConnected} title="显示选项">
+          <Eye className="size-4" />
+        </Button>
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="h-7 rounded-md pl-7 text-xs"
+            value={filter}
+            disabled={!isConnected}
+            placeholder="搜索对象"
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-1">
@@ -213,11 +329,23 @@ export function DatabaseTree() {
                 node={node}
                 onToggle={toggleNode}
                 onRefresh={refreshNode}
+                onDoubleClick={openTableData}
+                onNodeContextMenu={(targetNode, position) =>
+                  setContextMenu({ nodeId: targetNode.id, ...position })
+                }
               />
             ))}
           </div>
         )}
       </div>
+      {contextMenu && nodes[contextMenu.nodeId] && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          actions={contextActions(nodes[contextMenu.nodeId])}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </section>
   )
 }
@@ -403,4 +531,25 @@ function required(value?: string) {
     throw new Error('metadata path is incomplete')
   }
   return value
+}
+
+function isTableLikeNode(node?: NodeRecord): node is NodeRecord & {
+  kind: 'table' | 'view'
+  meta: { schema: string; table: string }
+} {
+  return (
+    Boolean(node) &&
+    (node?.kind === 'table' || node?.kind === 'view') &&
+    Boolean(node.meta?.schema) &&
+    Boolean(node.meta?.table)
+  )
+}
+
+function qualifiedName(driverType: DriverType, schema: string, table: string) {
+  const quote = driverType === 'mysql' ? '`' : '"'
+  return `${quoteIdentifier(schema, quote)}.${quoteIdentifier(table, quote)}`
+}
+
+function quoteIdentifier(value: string, quote: '"' | '`') {
+  return `${quote}${value.replaceAll(quote, `${quote}${quote}`)}${quote}`
 }

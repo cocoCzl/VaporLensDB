@@ -2,6 +2,7 @@ import Editor, { loader, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { useEffect, useRef } from 'react'
 import { registerSqlCompletionProvider } from '@/components/editor/AutoComplete'
+import { useUiStore } from '@/stores/uiStore'
 
 const MONACO_CTRL_CMD = 2048
 const MONACO_ENTER = 3
@@ -24,6 +25,14 @@ export function SqlEditor({
   onSelectionChange,
 }: SqlEditorProps) {
   const connectionIdRef = useRef(connectionId)
+  const appTheme = useUiStore((state) => state.theme)
+  const editorFontSize = useUiStore((state) => state.editorFontSize)
+  const editorTheme =
+    appTheme === 'light'
+      ? 'vs'
+      : appTheme === 'dark' || window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'vs-dark'
+        : 'vs'
 
   useEffect(() => {
     connectionIdRef.current = connectionId
@@ -45,12 +54,12 @@ export function SqlEditor({
       height="100%"
       defaultLanguage="pgsql"
       value={value}
-      theme="vs-dark"
+      theme={editorTheme}
       onChange={(next) => onChange(next ?? '')}
       onMount={handleMount}
       options={{
         minimap: { enabled: false },
-        fontSize: 13,
+        fontSize: editorFontSize,
         fontFamily: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
         lineHeight: 20,
         padding: { top: 12, bottom: 12 },

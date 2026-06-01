@@ -5,10 +5,18 @@ export interface EditorTab {
   title: string
   sql: string
   connectionId: string | null
+  tableContext?: TableEditContext | null
   lastQueryId?: string | null
   runningQueryId?: string | null
   running?: boolean
   error?: string | null
+}
+
+export interface TableEditContext {
+  schema: string
+  table: string
+  driverType: 'postgres' | 'mysql' | 'oracle' | 'sqlite' | 'mssql' | 'mongo' | 'redis' | 'odbc' | 'jdbc'
+  primaryKeyColumns: string[]
 }
 
 interface EditorState {

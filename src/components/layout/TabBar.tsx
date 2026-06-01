@@ -18,7 +18,7 @@ export function TabBar() {
   }
 
   return (
-    <div className="flex h-9 items-center border-b bg-muted/30">
+    <div className="flex h-9 items-center border-b ide-toolbar">
       <div className="flex min-w-0 flex-1 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId
@@ -28,7 +28,9 @@ export function TabBar() {
               type="button"
               className={[
                 'group flex h-9 max-w-56 items-center gap-2 border-r px-3 text-xs',
-                active ? 'bg-background text-foreground' : 'text-muted-foreground hover:bg-muted',
+                active
+                  ? 'bg-background text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary))]'
+                  : 'text-muted-foreground hover:bg-muted',
               ].join(' ')}
               onClick={() => setActiveTab(tab.id)}
             >

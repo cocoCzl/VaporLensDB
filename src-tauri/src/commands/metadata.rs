@@ -122,6 +122,21 @@ pub async fn get_functions(
         .map_err(Into::into)
 }
 
+#[tauri::command]
+pub async fn get_table_ddl(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    table: String,
+) -> Result<String, String> {
+    let driver = active_driver(&state, connection_id).await?;
+    state
+        .metadata_service
+        .get_table_ddl(connection_id, driver, &schema, &table)
+        .await
+        .map_err(Into::into)
+}
+
 async fn active_driver(
     state: &State<'_, AppState>,
     connection_id: Uuid,

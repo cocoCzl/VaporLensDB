@@ -9,10 +9,9 @@ import {
 } from '@/ipc/query'
 import { normalizeAppError } from '@/ipc/client'
 import { useEditorStore } from '@/stores/editorStore'
+import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import { useUiStore } from '@/stores/uiStore'
-
-const INTERACTIVE_QUERY_MAX_ROWS = 50_000
 
 export function useQuery() {
   const setTabRunning = useEditorStore((state) => state.setTabRunning)
@@ -24,6 +23,8 @@ export function useQuery() {
 
   async function runQuery(tabId: string, connectionId: string, sql: string) {
     const queryId = crypto.randomUUID()
+    const startedAt = new Date().toISOString()
+    const startedMs = performance.now()
     setTabRunning(tabId, true, queryId)
     try {
       if (canStreamSql(sql)) {
@@ -35,19 +36,38 @@ export function useQuery() {
             sql,
             queryId,
             chunkSize: 1_000,
-            maxRows: INTERACTIVE_QUERY_MAX_ROWS,
+            maxRows: useUiStore.getState().queryMaxRows,
           })
         } finally {
           streamState.unlisteners.forEach((unlisten) => unlisten())
         }
-        if (streamState.state.failed) return
+        if (streamState.state.failed) {
+          useQueryHistoryStore.getState().addEntry({
+            connectionId,
+            sql,
+            status: 'failed',
+            startedAt,
+            elapsedMs: Math.round(performance.now() - startedMs),
+            error: '流式查询失败',
+          })
+          return
+        }
       } else {
         const response = await executeQuery({ connectionId, sql, queryId })
         setResults(queryId, response.results)
       }
+      recordQueryHistory(connectionId, sql, queryId, startedAt, performance.now() - startedMs)
       setTabQueryState(tabId, queryId)
     } catch (error) {
       const appError = normalizeAppError(error)
+      useQueryHistoryStore.getState().addEntry({
+        connectionId,
+        sql,
+        status: 'failed',
+        startedAt,
+        elapsedMs: Math.round(performance.now() - startedMs),
+        error: appError.message,
+      })
       setTabQueryState(tabId, queryId, appError.message)
       notifyError(appError, '查询执行失败')
     }
@@ -78,6 +98,24 @@ export function useQuery() {
   }
 
   return { runQuery, runExplain, cancelRunningQuery }
+}
+
+function recordQueryHistory(
+  connectionId: string,
+  sql: string,
+  queryId: string,
+  startedAt: string,
+  elapsedMs: number,
+) {
+  const result = useQueryResultStore.getState().results[queryId]?.[0]
+  useQueryHistoryStore.getState().addEntry({
+    connectionId,
+    sql,
+    status: 'success',
+    startedAt,
+    elapsedMs: result?.elapsedMs || Math.round(elapsedMs),
+    rowCount: result?.rowCount ?? result?.affectedRows ?? null,
+  })
 }
 
 async function registerStreamListeners(tabId: string, queryId: string) {

@@ -26,6 +26,7 @@ struct MetadataCache {
     columns: HashMap<String, Vec<ColumnInfo>>,
     indexes: HashMap<String, Vec<IndexInfo>>,
     foreign_keys: HashMap<String, Vec<ForeignKeyInfo>>,
+    ddls: HashMap<String, String>,
 }
 
 impl MetadataService {
@@ -46,6 +47,7 @@ impl MetadataService {
         cache
             .foreign_keys
             .retain(|key, _| !key.starts_with(&prefix));
+        cache.ddls.retain(|key, _| !key.starts_with(&prefix));
     }
 
     pub async fn get_databases(
@@ -194,6 +196,23 @@ impl MetadataService {
             .foreign_keys
             .insert(key, values.clone());
         Ok(values)
+    }
+
+    pub async fn get_table_ddl(
+        &self,
+        connection_id: Uuid,
+        driver: Arc<dyn DatabaseDriver>,
+        schema: &str,
+        table: &str,
+    ) -> Result<String, AppError> {
+        let key = cache_key(connection_id, ["schema", schema, "table", table, "ddl"]);
+        if let Some(cached) = self.cache.read().await.ddls.get(&key).cloned() {
+            return Ok(cached);
+        }
+
+        let value = driver.get_table_ddl(schema, table).await?;
+        self.cache.write().await.ddls.insert(key, value.clone());
+        Ok(value)
     }
 }
 

@@ -39,6 +39,8 @@ interface TreeNodeProps {
   node: DatabaseTreeNodeData
   onToggle: (id: string) => void
   onRefresh?: (id: string) => void
+  onDoubleClick?: (id: string) => void
+  onNodeContextMenu?: (node: DatabaseTreeNodeData, position: { x: number; y: number }) => void
 }
 
 const NODE_ICONS: Record<DatabaseTreeNodeKind, LucideIcon> = {
@@ -53,14 +55,20 @@ const NODE_ICONS: Record<DatabaseTreeNodeKind, LucideIcon> = {
   function: FunctionSquare,
 }
 
-export function TreeNode({ node, onToggle, onRefresh }: TreeNodeProps) {
+export function TreeNode({
+  node,
+  onToggle,
+  onRefresh,
+  onDoubleClick,
+  onNodeContextMenu,
+}: TreeNodeProps) {
   const Icon = NODE_ICONS[node.kind]
   const hasToggle = node.expandable || node.loading
   const ToggleIcon = node.expanded ? ChevronDown : ChevronRight
 
   return (
     <div
-      className="group flex h-7 items-center gap-1 rounded px-1 text-xs hover:bg-accent"
+      className="group flex h-7 items-center gap-1 rounded-md px-1 text-xs text-foreground/90 hover:bg-accent/75"
       style={{ paddingLeft: `${node.depth * 14 + 4}px` }}
       role={node.expandable ? 'button' : undefined}
       tabIndex={node.expandable ? 0 : undefined}
@@ -76,7 +84,11 @@ export function TreeNode({ node, onToggle, onRefresh }: TreeNodeProps) {
       }}
       onContextMenu={(event) => {
         event.preventDefault()
-        onRefresh?.(node.id)
+        onNodeContextMenu?.(node, { x: event.clientX, y: event.clientY })
+      }}
+      onDoubleClick={(event) => {
+        event.preventDefault()
+        onDoubleClick?.(node.id)
       }}
     >
       <button
@@ -98,7 +110,7 @@ export function TreeNode({ node, onToggle, onRefresh }: TreeNodeProps) {
           <span className="size-3.5" />
         )}
       </button>
-      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      <Icon className="size-3.5 shrink-0 text-primary/80" />
       <span className="min-w-0 flex-1 truncate">{node.label}</span>
       {node.detail && (
         <span className="shrink-0 truncate text-[11px] text-muted-foreground">

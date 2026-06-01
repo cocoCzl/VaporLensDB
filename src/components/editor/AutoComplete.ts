@@ -82,7 +82,23 @@ function metadataSuggestions(
   const state = useMetadataStore.getState()
 
   if (context.memberOwner) {
-    return findColumnsForOwner(connectionId, context.memberOwner).then((columns) =>
+    const cte = context.ctes.find(
+      (item) =>
+        item.name.toLowerCase() === unquoteIdentifier(context.memberOwner ?? '').toLowerCase(),
+    )
+    if (cte?.columns.length) {
+      return Promise.resolve(
+        cte.columns.map((column) => ({
+          label: column,
+          kind: monaco.languages.CompletionItemKind.Field,
+          insertText: quoteIfNeeded(column),
+          detail: cte.name,
+          range,
+        })),
+      )
+    }
+
+    return findColumnsForOwner(connectionId, context.memberOwner, context.aliases).then((columns) =>
       columns.map((column) => ({
         label: column.name,
         kind: monaco.languages.CompletionItemKind.Field,
@@ -114,6 +130,14 @@ function metadataSuggestions(
     range,
   }))
 
+  const cteSuggestions = context.ctes.map((cte) => ({
+    label: cte.name,
+    kind: monaco.languages.CompletionItemKind.Class,
+    insertText: quoteIfNeeded(cte.name),
+    detail: 'CTE',
+    range,
+  }))
+
   const functionSuggestions = Object.entries(state.functions)
     .filter(([key]) => key.startsWith(`${connectionId}::`))
     .flatMap(([, functions]) => functions)
@@ -127,17 +151,24 @@ function metadataSuggestions(
 
   return Promise.resolve([
     ...schemaSuggestions,
+    ...cteSuggestions,
     ...tableSuggestions,
     ...uniqueBy(functionSuggestions, (item) => String(item.label)),
   ])
 }
 
-async function findColumnsForOwner(connectionId: string, owner: string) {
+async function findColumnsForOwner(
+  connectionId: string,
+  owner: string,
+  aliases: SqlAlias[] = [],
+) {
   const normalizedOwner = unquoteIdentifier(owner).toLowerCase()
+  const alias = aliases.find((item) => item.alias.toLowerCase() === normalizedOwner)
+  const normalizedResolvedOwner = unquoteIdentifier(alias?.target ?? owner).toLowerCase()
   const tables = knownTables(connectionId).filter(
     ({ schema, table }) =>
-      table.name.toLowerCase() === normalizedOwner ||
-      `${schema}.${table.name}`.toLowerCase() === normalizedOwner,
+      table.name.toLowerCase() === normalizedResolvedOwner ||
+      `${schema}.${table.name}`.toLowerCase() === normalizedResolvedOwner,
   )
 
   const state = useMetadataStore.getState()
@@ -176,15 +207,37 @@ function tableKind(monaco: MonacoApi, table: TableInfo) {
 
 interface CompletionContext {
   memberOwner?: string
+  aliases: SqlAlias[]
+  ctes: SqlCte[]
+}
+
+interface SqlAlias {
+  alias: string
+  target: string
+}
+
+interface SqlCte {
+  name: string
+  columns: string[]
 }
 
 function completionContext(
   model: Monaco.editor.ITextModel,
   position: Monaco.Position,
 ): CompletionContext {
+  const prefix = model.getValueInRange({
+    startLineNumber: 1,
+    startColumn: 1,
+    endLineNumber: position.lineNumber,
+    endColumn: position.column,
+  })
   const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1)
   const memberMatch = linePrefix.match(/((?:"[^"]+"|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|[A-Za-z_][\w$]*))?)\.\s*$/)
-  return { memberOwner: memberMatch?.[1] }
+  return {
+    memberOwner: memberMatch?.[1],
+    aliases: extractAliases(prefix),
+    ctes: extractCtes(prefix),
+  }
 }
 
 function completionRange(
@@ -205,7 +258,11 @@ function quoteIfNeeded(identifier: string) {
 }
 
 function unquoteIdentifier(identifier: string) {
-  return identifier.replaceAll('"', '')
+  const trimmed = identifier.trim()
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replaceAll('""', '"')
+  }
+  return trimmed.replaceAll('"', '')
 }
 
 function uniqueBy<T>(items: T[], key: (item: T) => string) {
@@ -216,4 +273,60 @@ function uniqueBy<T>(items: T[], key: (item: T) => string) {
     seen.add(value)
     return true
   })
+}
+
+function extractAliases(sql: string): SqlAlias[] {
+  const aliases: SqlAlias[] = []
+  const withoutComments = stripSqlComments(sql)
+  const relationPattern =
+    /\b(?:from|join|update|into)\s+((?:"[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:"[^"]+"|[A-Za-z_][\w$]*)){0,2})(?:\s+(?:as\s+)?(?!(?:where|join|left|right|inner|outer|full|cross|on|using|group|order|having|limit|offset|set|values|returning)\b)("?[^"\s(),.]+"?|[A-Za-z_][\w$]*))?/gi
+
+  for (const match of withoutComments.matchAll(relationPattern)) {
+    const target = normalizeDottedIdentifier(match[1])
+    const alias = match[2] ? unquoteIdentifier(match[2]) : ''
+    const targetName = target.split('.').at(-1) ?? ''
+    if (target && alias && alias.toLowerCase() !== targetName.toLowerCase()) {
+      aliases.push({ alias, target })
+    }
+  }
+
+  return uniqueBy(aliases, (item) => item.alias)
+}
+
+function extractCtes(sql: string): SqlCte[] {
+  const withoutComments = stripSqlComments(sql)
+  const withIndex = withoutComments.search(/\bwith\b/i)
+  if (withIndex < 0) return []
+
+  const ctes: SqlCte[] = []
+  const ctePattern =
+    /(?:\bwith\b|,)\s*(?:"([^"]+)"|([A-Za-z_][\w$]*))\s*(?:\(([^)]*)\))?\s+as\s*\(/gi
+
+  for (const match of withoutComments.slice(withIndex).matchAll(ctePattern)) {
+    const name = match[1] ?? match[2]
+    if (name) {
+      ctes.push({ name, columns: parseColumnList(match[3] ?? '') })
+    }
+  }
+
+  return uniqueBy(ctes, (item) => item.name)
+}
+
+function parseColumnList(value: string) {
+  return value
+    .split(',')
+    .map((item) => unquoteIdentifier(item.trim()))
+    .filter(Boolean)
+}
+
+function normalizeDottedIdentifier(value: string) {
+  return value
+    .split('.')
+    .map((part) => unquoteIdentifier(part.trim()))
+    .filter(Boolean)
+    .join('.')
+}
+
+function stripSqlComments(sql: string) {
+  return sql.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
 }

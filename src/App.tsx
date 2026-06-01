@@ -5,11 +5,13 @@ import { StatusBar } from './components/layout/StatusBar'
 import { TabBar } from './components/layout/TabBar'
 import { healthCheck } from './ipc/health'
 import { NotificationBridge } from './components/common/NotificationBridge'
+import { useUiStore } from './stores/uiStore'
 import splashBackground from './assets/brand/splash-background.png'
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
   const [showSplash, setShowSplash] = useState(true)
+  const theme = useUiStore((state) => state.theme)
 
   useEffect(() => {
     let cancelled = false
@@ -38,8 +40,21 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const applyTheme = () => {
+      const resolvedTheme = theme === 'system' ? (media.matches ? 'dark' : 'light') : theme
+      document.documentElement.classList.toggle('dark', resolvedTheme === 'dark')
+      document.documentElement.style.colorScheme = resolvedTheme
+    }
+
+    applyTheme()
+    media.addEventListener('change', applyTheme)
+    return () => media.removeEventListener('change', applyTheme)
+  }, [theme])
+
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <div className="flex flex-col flex-1 overflow-hidden">

@@ -41,11 +41,11 @@ export function EditorToolbar({
   onFormat,
 }: EditorToolbarProps) {
   return (
-    <div className="flex h-11 items-center gap-2 border-b bg-background px-3">
+    <div className="flex h-11 items-center gap-2 border-b ide-toolbar px-3">
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <Database className="size-4 text-muted-foreground" />
         <select
-          className="h-8 min-w-44 rounded-md border bg-background px-2 text-xs outline-none focus:border-ring"
+          className="ide-select min-w-44"
           value={connectionId ?? ''}
           onChange={(event) => onConnectionChange(event.target.value || null)}
         >
@@ -57,7 +57,7 @@ export function EditorToolbar({
           ))}
         </select>
         <select
-          className="h-8 min-w-36 rounded-md border bg-background px-2 text-xs outline-none focus:border-ring"
+          className="ide-select min-w-36"
           value={database ?? ''}
           disabled={!connectionId || databases.length === 0}
           title="PostgreSQL 查询仍运行在连接配置的数据库中；切换数据库需要重新连接。"
@@ -71,7 +71,7 @@ export function EditorToolbar({
           ))}
         </select>
         <select
-          className="h-8 min-w-32 rounded-md border bg-background px-2 text-xs outline-none focus:border-ring"
+          className="ide-select min-w-32"
           value={schema ?? ''}
           disabled={!connectionId || schemas.length === 0}
           onChange={(event) => onSchemaChange?.(event.target.value || null)}

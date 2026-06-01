@@ -52,6 +52,7 @@ pub fn run() {
             commands::metadata::get_foreign_keys,
             commands::metadata::get_views,
             commands::metadata::get_functions,
+            commands::metadata::get_table_ddl,
             commands::query::execute_query,
             commands::query::execute_query_stream,
             commands::query::explain_query,

@@ -39,3 +39,7 @@ export function getViews(connectionId: string, schema: string) {
 export function getFunctions(connectionId: string, schema: string) {
   return invokeCommand<string[]>('get_functions', { connectionId, schema })
 }
+
+export function getTableDdl(connectionId: string, schema: string, table: string) {
+  return invokeCommand<string>('get_table_ddl', { connectionId, schema, table })
+}
