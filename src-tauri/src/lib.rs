@@ -56,7 +56,11 @@ pub fn run() {
             commands::query::execute_query,
             commands::query::execute_query_stream,
             commands::query::explain_query,
-            commands::query::cancel_query
+            commands::query::cancel_query,
+            commands::query::analyze_sql_risk,
+            commands::query_history::add_query_history,
+            commands::query_history::list_query_history,
+            commands::query_history::clear_query_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

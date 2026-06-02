@@ -23,7 +23,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
         },
         DriverDefinition {
             id: DriverType::Mysql,
-            name: "MySQL / MariaDB".to_string(),
+            name: "MySQL".to_string(),
             backend: DriverBackend::NativeRust,
             status: DriverStatus::Ready,
             default_port: Some(3306),
@@ -46,7 +46,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
         },
         DriverDefinition {
             id: DriverType::Oracle,
-            name: "Oracle".to_string(),
+            name: "Oracle（实验性，需要 JDBC 驱动）".to_string(),
             backend: DriverBackend::Jdbc,
             status: DriverStatus::Configurable,
             default_port: Some(1521),
@@ -57,7 +57,9 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             driver_artifact: Some("ojdbc11.jar".to_string()),
             user_driver_required: true,
             built_in: true,
-            notes: Some("预置 Oracle 模板；因授权原因不内置 ojdbc，用户需导入 jar。".to_string()),
+            notes: Some(
+                "Oracle 为实验性 JDBC 支持；因授权原因不内置 ojdbc，用户需导入 jar。".to_string(),
+            ),
             capabilities: jdbc_basic_capabilities(),
         },
         DriverDefinition {

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Eye, RefreshCw, Search } from 'lucide-react'
+import { RefreshCw, Search } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
+import { getTableDdl } from '@/ipc/metadata'
 import { useQuery } from '@/hooks/useQuery'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
-import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
 import { useUiStore } from '@/stores/uiStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,11 +39,9 @@ const ROOT_ID = 'root'
 export function DatabaseTree() {
   const { activeConnectionId, connections, statuses } = useConnectionStore()
   const addTab = useEditorStore((state) => state.addTab)
-  const setSidebarView = useUiStore((state) => state.setSidebarView)
   const notifyError = useUiStore((state) => state.notifyError)
   const notify = useUiStore((state) => state.notify)
   const metadata = useMetadataStore()
-  const inspectTable = useObjectInspectorStore((state) => state.inspectTable)
   const { runQuery } = useQuery()
   const [nodes, setNodes] = useState<NodeMap>({})
   const [childIds, setChildIds] = useState<Record<string, string[]>>({})
@@ -57,6 +55,9 @@ export function DatabaseTree() {
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
   const isConnected =
     activeConnectionId != null && statuses[activeConnectionId]?.status === 'connected'
+  const objectBrowsingSupported = activeConnection
+    ? supportsObjectBrowsing(activeConnection.driverType)
+    : false
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -80,6 +81,11 @@ export function DatabaseTree() {
 
   async function loadRoot(force = false) {
     if (!activeConnectionId || !isConnected) {
+      return
+    }
+    if (!objectBrowsingSupported) {
+      setNodes({})
+      setChildIds({})
       return
     }
     if (!force && childIds[ROOT_ID]?.length) {
@@ -139,7 +145,7 @@ export function DatabaseTree() {
     })
     // The loader intentionally reacts only to active connection changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConnectionId, isConnected])
+  }, [activeConnectionId, isConnected, objectBrowsingSupported])
 
   async function toggleNode(id: string, force = false) {
     const node = nodes[id]
@@ -213,13 +219,23 @@ export function DatabaseTree() {
     runQuery(tabId, activeConnectionId, sql)
   }
 
-  function inspectNode(nodeId: string) {
+  async function openTableDdl(nodeId: string) {
     const node = nodes[nodeId]
     if (!activeConnectionId || !isTableLikeNode(node)) {
       return
     }
-    setSidebarView('structure')
-    inspectTable(activeConnectionId, node.meta.schema, node.meta.table, node.kind)
+
+    try {
+      const ddl = await getTableDdl(activeConnectionId, node.meta.schema, node.meta.table)
+      addTab({
+        id: crypto.randomUUID(),
+        title: `${node.meta.table} DDL`,
+        sql: ddl,
+        connectionId: activeConnectionId,
+      })
+    } catch (error) {
+      notifyError(normalizeAppError(error), '加载 DDL 失败')
+    }
   }
 
   async function copyText(value: string, title: string) {
@@ -233,46 +249,48 @@ export function DatabaseTree() {
 
   function contextActions(node: NodeRecord): ContextMenuAction[] {
     const tableLike = isTableLikeNode(node)
-    const fullName = tableLike
-      ? qualifiedName(activeConnection?.driverType ?? 'postgres', node.meta.schema, node.meta.table)
-      : node.label
 
-    return [
-      {
-        id: 'open-data',
-        label: '打开表数据',
-        icon: 'data',
-        disabled: !tableLike,
-        onSelect: () => openTableData(node.id),
-      },
-      {
-        id: 'inspect',
-        label: '查看结构 / DDL',
-        icon: 'ddl',
-        disabled: !tableLike,
-        onSelect: () => inspectNode(node.id),
-      },
-      {
-        id: 'copy-name',
-        label: '复制名称',
-        icon: 'copy',
-        onSelect: () => copyText(node.label, '已复制对象名'),
-      },
-      {
-        id: 'copy-full-name',
-        label: '复制完整限定名',
-        icon: 'copyFull',
-        disabled: !tableLike,
-        onSelect: () => copyText(fullName, '已复制完整限定名'),
-      },
-      {
-        id: 'refresh',
-        label: '刷新节点',
-        icon: 'refresh',
-        disabled: !node.expandable,
-        onSelect: () => refreshNode(node.id),
-      },
-    ]
+    if (tableLike) {
+      return [
+        {
+          id: 'open-data',
+          label: '打开前 1000 行',
+          icon: 'data',
+          onSelect: () => openTableData(node.id),
+        },
+        {
+          id: 'view-ddl',
+          label: '查看 DDL',
+          icon: 'ddl',
+          onSelect: () => openTableDdl(node.id),
+        },
+        {
+          id: 'copy-name',
+          label: '复制名称',
+          icon: 'copy',
+          onSelect: () => copyText(node.label, '已复制对象名'),
+        },
+        {
+          id: 'refresh',
+          label: '刷新',
+          icon: 'refresh',
+          onSelect: () => refreshNode(node.id),
+        },
+      ]
+    }
+
+    if (node.expandable) {
+      return [
+        {
+          id: 'refresh',
+          label: '刷新',
+          icon: 'refresh',
+          onSelect: () => refreshNode(node.id),
+        },
+      ]
+    }
+
+    return []
   }
 
   return (
@@ -289,7 +307,7 @@ export function DatabaseTree() {
           size="icon-sm"
           variant="ghost"
           title="刷新对象"
-          disabled={!isConnected}
+          disabled={!isConnected || !objectBrowsingSupported}
           onClick={() => refreshNode(ROOT_ID)}
         >
           <RefreshCw />
@@ -297,15 +315,12 @@ export function DatabaseTree() {
       </div>
 
       <div className="flex h-10 items-center gap-1 border-b px-2">
-        <Button type="button" size="icon-sm" variant="ghost" disabled={!isConnected} title="显示选项">
-          <Eye className="size-4" />
-        </Button>
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="h-7 rounded-md pl-7 text-xs"
             value={filter}
-            disabled={!isConnected}
+            disabled={!isConnected || !objectBrowsingSupported}
             placeholder="搜索对象"
             onChange={(event) => setFilter(event.target.value)}
           />
@@ -316,6 +331,10 @@ export function DatabaseTree() {
         {!isConnected ? (
           <div className="grid h-24 place-items-center text-center text-xs text-muted-foreground">
             连接数据库后浏览对象
+          </div>
+        ) : !objectBrowsingSupported ? (
+          <div className="grid h-24 place-items-center px-4 text-center text-xs text-muted-foreground">
+            对象浏览暂未支持。当前连接仍可用于执行基础 SQL。
           </div>
         ) : visibleNodes.length === 0 ? (
           <div className="grid h-24 place-items-center text-center text-xs text-muted-foreground">
@@ -330,9 +349,12 @@ export function DatabaseTree() {
                 onToggle={toggleNode}
                 onRefresh={refreshNode}
                 onDoubleClick={openTableData}
-                onNodeContextMenu={(targetNode, position) =>
+                onNodeContextMenu={(targetNode, position) => {
+                  if (contextActions(nodes[targetNode.id]).length === 0) {
+                    return
+                  }
                   setContextMenu({ nodeId: targetNode.id, ...position })
-                }
+                }}
               />
             ))}
           </div>
@@ -531,6 +553,10 @@ function required(value?: string) {
     throw new Error('metadata path is incomplete')
   }
   return value
+}
+
+function supportsObjectBrowsing(driverType: DriverType) {
+  return driverType === 'postgres' || driverType === 'mysql'
 }
 
 function isTableLikeNode(node?: NodeRecord): node is NodeRecord & {

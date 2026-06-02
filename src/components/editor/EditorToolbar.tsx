@@ -12,6 +12,8 @@ interface EditorToolbarProps {
   schemas?: SchemaInfo[]
   running?: boolean
   canCancel?: boolean
+  canExplain?: boolean
+  explainUnsupportedReason?: string
   disabled?: boolean
   onConnectionChange: (connectionId: string | null) => void
   onDatabaseChange?: (database: string | null) => void
@@ -31,6 +33,8 @@ export function EditorToolbar({
   schemas = [],
   running = false,
   canCancel = false,
+  canExplain = true,
+  explainUnsupportedReason = '当前驱动暂不支持 Explain',
   disabled = false,
   onConnectionChange,
   onDatabaseChange,
@@ -105,7 +109,9 @@ export function EditorToolbar({
         type="button"
         size="sm"
         variant="outline"
-        disabled={disabled || running}
+        disabled={disabled || running || !canExplain}
+        title={canExplain ? 'Explain' : explainUnsupportedReason}
+        aria-disabled={!canExplain}
         onClick={onExplain}
       >
         <Activity />

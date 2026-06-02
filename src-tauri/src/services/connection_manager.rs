@@ -208,24 +208,30 @@ async fn create_driver(
 ) -> Result<Arc<dyn DatabaseDriver>, AppError> {
     match config.driver_type {
         DriverType::Postgres => {
-            let host = required(config.host.as_deref(), "host")?;
-            let port = config.port.unwrap_or(5432);
-            let database = required(config.database.as_deref(), "database")?;
-            let username = required(config.username.as_deref(), "username")?;
-            let password = password.unwrap_or("");
-            let driver =
+            let driver = if let Some(connection_url) = config.connection_url.as_deref() {
+                PostgresDriver::connect(connection_url).await?
+            } else {
+                let host = required(config.host.as_deref(), "host")?;
+                let port = config.port.unwrap_or(5432);
+                let database = required(config.database.as_deref(), "database")?;
+                let username = required(config.username.as_deref(), "username")?;
+                let password = password.unwrap_or("");
                 PostgresDriver::connect_with_params(host, port, database, username, password)
-                    .await?;
+                    .await?
+            };
             Ok(Arc::new(driver))
         }
         DriverType::Mysql => {
-            let host = required(config.host.as_deref(), "host")?;
-            let port = config.port.unwrap_or(3306);
-            let database = required(config.database.as_deref(), "database")?;
-            let username = required(config.username.as_deref(), "username")?;
-            let password = password.unwrap_or("");
-            let driver =
-                MysqlDriver::connect_with_params(host, port, database, username, password).await?;
+            let driver = if let Some(connection_url) = config.connection_url.as_deref() {
+                MysqlDriver::connect(connection_url).await?
+            } else {
+                let host = required(config.host.as_deref(), "host")?;
+                let port = config.port.unwrap_or(3306);
+                let database = required(config.database.as_deref(), "database")?;
+                let username = required(config.username.as_deref(), "username")?;
+                let password = password.unwrap_or("");
+                MysqlDriver::connect_with_params(host, port, database, username, password).await?
+            };
             Ok(Arc::new(driver))
         }
         DriverType::Oracle => {

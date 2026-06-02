@@ -1,71 +1,57 @@
 import { create } from 'zustand'
-
-export interface QueryHistoryEntry {
-  id: string
-  connectionId: string
-  sql: string
-  status: 'success' | 'failed'
-  startedAt: string
-  elapsedMs?: number | null
-  rowCount?: number | null
-  error?: string | null
-}
-
-const STORAGE_KEY = 'vaporlensdb.queryHistory'
-const MAX_HISTORY = 200
+import { addQueryHistory, clearQueryHistory, listQueryHistory } from '@/ipc/queryHistory'
+import { normalizeAppError } from '@/ipc/client'
+import { useUiStore } from '@/stores/uiStore'
+import type { CreateQueryHistoryInput, QueryHistoryEntry } from '@/types/queryHistory'
 
 interface QueryHistoryState {
   entries: QueryHistoryEntry[]
-  addEntry: (entry: Omit<QueryHistoryEntry, 'id' | 'startedAt'> & { startedAt?: string }) => void
-  clear: () => void
+  loading: boolean
+  error: string | null
+  loadHistory: (limit?: number) => Promise<void>
+  addEntry: (entry: CreateQueryHistoryInput) => Promise<void>
+  clear: () => Promise<boolean>
 }
 
-export const useQueryHistoryStore = create<QueryHistoryState>((set) => ({
-  entries: readHistory(),
-  addEntry: (entry) =>
-    set((state) => {
-      const entries = [
-        {
-          ...entry,
-          id: crypto.randomUUID(),
-          startedAt: entry.startedAt ?? new Date().toISOString(),
-        },
-        ...state.entries,
-      ].slice(0, MAX_HISTORY)
-      writeHistory(entries)
-      return { entries }
-    }),
-  clear: () => {
-    writeHistory([])
-    set({ entries: [] })
+function notifyError(error: unknown, title: string) {
+  useUiStore.getState().notifyError(normalizeAppError(error), title)
+}
+
+export const useQueryHistoryStore = create<QueryHistoryState>((set, get) => ({
+  entries: [],
+  loading: false,
+  error: null,
+  loadHistory: async (limit = 200) => {
+    set({ loading: true, error: null })
+    try {
+      const entries = await listQueryHistory(limit)
+      set({ entries, loading: false })
+    } catch (error) {
+      const appError = normalizeAppError(error)
+      set({ error: appError.message, loading: false })
+      notifyError(error, '加载查询历史失败')
+    }
+  },
+  addEntry: async (entry) => {
+    try {
+      const saved = await addQueryHistory(entry)
+      set((state) => ({ entries: [saved, ...state.entries].slice(0, 200) }))
+    } catch (error) {
+      notifyError(error, '保存查询历史失败')
+      await get().loadHistory()
+    }
+  },
+  clear: async () => {
+    set({ loading: true, error: null })
+    try {
+      await clearQueryHistory()
+      set({ entries: [], loading: false })
+      return true
+    } catch (error) {
+      const appError = normalizeAppError(error)
+      set({ error: appError.message, loading: false })
+      notifyError(error, '清空查询历史失败')
+      return false
+    }
   },
 }))
-
-function readHistory(): QueryHistoryEntry[] {
-  if (typeof window === 'undefined') {
-    return []
-  }
-
-  try {
-    const value = window.localStorage.getItem(STORAGE_KEY)
-    const parsed = value ? JSON.parse(value) : []
-    return Array.isArray(parsed) ? parsed.filter(isHistoryEntry).slice(0, MAX_HISTORY) : []
-  } catch {
-    return []
-  }
-}
-
-function writeHistory(entries: QueryHistoryEntry[]) {
-  if (typeof window === 'undefined') {
-    return
-  }
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries))
-}
-
-function isHistoryEntry(value: unknown): value is QueryHistoryEntry {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-  const entry = value as Partial<QueryHistoryEntry>
-  return typeof entry.id === 'string' && typeof entry.connectionId === 'string' && typeof entry.sql === 'string'
-}

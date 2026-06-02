@@ -86,6 +86,17 @@ impl JdbcDriver {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if command == "query" {
+                return Err(AppError::QueryFailed {
+                    sql: sql.unwrap_or("<unknown>").to_string(),
+                    message: if stderr.is_empty() {
+                        "JDBC bridge query failed without stderr".to_string()
+                    } else {
+                        stderr
+                    },
+                });
+            }
+
             return Err(AppError::ConnectionFailed {
                 driver: self.driver_name().to_string(),
                 message: if stderr.is_empty() {
@@ -127,13 +138,20 @@ impl DatabaseDriver for JdbcDriver {
         sql: &str,
         query_id: Option<&str>,
     ) -> Result<QueryResult, AppError> {
-        let output =
-            self.run_bridge("query", Some(sql))
-                .await
-                .map_err(|error| AppError::QueryFailed {
-                    sql: sql.to_string(),
-                    message: error.to_string(),
-                })?;
+        let sql = normalize_jdbc_sql(sql);
+        let output = self
+            .run_bridge("query", Some(&sql))
+            .await
+            .map_err(|error| {
+                if matches!(error, AppError::QueryFailed { .. }) {
+                    error
+                } else {
+                    AppError::QueryFailed {
+                        sql: sql.clone(),
+                        message: error.to_string(),
+                    }
+                }
+            })?;
         let output: JdbcQueryOutput = serde_json::from_str(&output)?;
         Ok(QueryResult {
             columns: output.columns,
@@ -253,9 +271,38 @@ fn required<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, AppError>
         .ok_or_else(|| AppError::ConfigError(format!("{name} is required")))
 }
 
+fn normalize_jdbc_sql(sql: &str) -> String {
+    sql.trim().trim_end_matches(';').trim_end().to_string()
+}
+
 fn unsupported(operation: &str) -> AppError {
     AppError::UnsupportedOperation {
         driver: "jdbc".to_string(),
         operation: operation.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_jdbc_sql;
+
+    #[test]
+    fn removes_trailing_statement_semicolon_for_jdbc() {
+        assert_eq!(
+            normalize_jdbc_sql("SELECT 1 FROM dual;"),
+            "SELECT 1 FROM dual"
+        );
+        assert_eq!(
+            normalize_jdbc_sql("SELECT 1 FROM dual;\n"),
+            "SELECT 1 FROM dual"
+        );
+    }
+
+    #[test]
+    fn keeps_inner_semicolon_text() {
+        assert_eq!(
+            normalize_jdbc_sql("SELECT ';' AS value FROM dual;"),
+            "SELECT ';' AS value FROM dual"
+        );
     }
 }

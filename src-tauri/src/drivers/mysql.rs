@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use async_trait::async_trait;
-use mysql_async::{prelude::Queryable, Column, Conn, OptsBuilder, Row, Value};
+use mysql_async::{prelude::Queryable, Column, Conn, Opts, OptsBuilder, Row, Value};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
@@ -24,6 +24,18 @@ pub struct MysqlDriver {
 }
 
 impl MysqlDriver {
+    pub async fn connect(connection_url: &str) -> Result<Self, AppError> {
+        let opts = Opts::from_url(connection_url).map_err(|error| {
+            AppError::ConfigError(format!("Invalid MySQL connection URL: {error}"))
+        })?;
+        let conn = Conn::new(opts)
+            .await
+            .map_err(|error| map_mysql_connection_error(error))?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
+    }
+
     pub async fn connect_with_params(
         host: &str,
         port: u16,

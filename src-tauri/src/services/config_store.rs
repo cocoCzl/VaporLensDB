@@ -11,6 +11,7 @@ use crate::{
     models::{
         connection::{ConnectionConfig, DriverType},
         error::AppError,
+        query_history::{QueryHistoryEntry, QueryHistoryStatus},
     },
     utils::crypto,
 };
@@ -174,6 +175,64 @@ impl ConfigStore {
             .transpose()
     }
 
+    pub fn add_query_history(
+        &self,
+        entry: QueryHistoryEntry,
+    ) -> Result<QueryHistoryEntry, AppError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "
+            INSERT INTO query_history (
+                id, connection_id, connection_name_snapshot, driver_type, database_name,
+                schema_name, sql, status, started_at, elapsed_ms, row_count, affected_rows,
+                error_code, error_message
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            ",
+            params![
+                entry.id.to_string(),
+                entry.connection_id.to_string(),
+                &entry.connection_name_snapshot,
+                entry.driver_type.to_string(),
+                &entry.database,
+                &entry.schema,
+                &entry.sql,
+                query_history_status_value(&entry.status),
+                entry.started_at.to_rfc3339(),
+                entry.elapsed_ms.map(|value| value as i64),
+                entry.row_count.map(|value| value as i64),
+                entry.affected_rows.map(|value| value as i64),
+                &entry.error_code,
+                &entry.error_message,
+            ],
+        )?;
+        self.prune_query_history(5_000)?;
+        Ok(entry)
+    }
+
+    pub fn list_query_history(&self, limit: u32) -> Result<Vec<QueryHistoryEntry>, AppError> {
+        let limit = limit.clamp(1, 5_000);
+        let conn = self.conn()?;
+        let mut statement = conn.prepare(
+            "
+            SELECT id, connection_id, connection_name_snapshot, driver_type, database_name,
+                   schema_name, sql, status, started_at, elapsed_ms, row_count, affected_rows,
+                   error_code, error_message
+            FROM query_history
+            ORDER BY started_at DESC
+            LIMIT ?1
+            ",
+        )?;
+
+        let rows = statement.query_map(params![limit], row_to_query_history)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+    }
+
+    pub fn clear_query_history(&self) -> Result<(), AppError> {
+        self.conn()?.execute("DELETE FROM query_history", [])?;
+        Ok(())
+    }
+
     fn init(&self) -> Result<(), AppError> {
         let conn = self.conn()?;
         conn.execute_batch(
@@ -202,6 +261,23 @@ impl ConfigStore {
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS query_history (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL,
+                connection_name_snapshot TEXT NOT NULL,
+                driver_type TEXT NOT NULL,
+                database_name TEXT,
+                schema_name TEXT,
+                sql TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                elapsed_ms INTEGER,
+                row_count INTEGER,
+                affected_rows INTEGER,
+                error_code TEXT,
+                error_message TEXT
+            );
+
             INSERT OR IGNORE INTO schema_migrations (version, applied_at)
             VALUES (1, datetime('now'));
             ",
@@ -214,6 +290,22 @@ impl ConfigStore {
 
     fn conn(&self) -> Result<Connection, AppError> {
         Connection::open(&self.db_path).map_err(AppError::from)
+    }
+
+    fn prune_query_history(&self, max_entries: u32) -> Result<(), AppError> {
+        self.conn()?.execute(
+            "
+            DELETE FROM query_history
+            WHERE id NOT IN (
+                SELECT id
+                FROM query_history
+                ORDER BY started_at DESC
+                LIMIT ?1
+            )
+            ",
+            params![max_entries],
+        )?;
+        Ok(())
     }
 
     fn ensure_column(&self, table: &str, column: &str, column_type: &str) -> Result<(), AppError> {
@@ -294,6 +386,51 @@ fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error>
     })
 }
 
+fn row_to_query_history(row: &Row<'_>) -> Result<QueryHistoryEntry, rusqlite::Error> {
+    let id: String = row.get(0)?;
+    let connection_id: String = row.get(1)?;
+    let driver_type: String = row.get(3)?;
+    let status: String = row.get(7)?;
+    let started_at: String = row.get(8)?;
+    let elapsed_ms: Option<i64> = row.get(9)?;
+    let row_count: Option<i64> = row.get(10)?;
+    let affected_rows: Option<i64> = row.get(11)?;
+
+    Ok(QueryHistoryEntry {
+        id: Uuid::parse_str(&id).map_err(parse_error)?,
+        connection_id: Uuid::parse_str(&connection_id).map_err(parse_error)?,
+        connection_name_snapshot: row.get(2)?,
+        driver_type: DriverType::from_str(&driver_type).map_err(parse_error)?,
+        database: row.get(4)?,
+        schema: row.get(5)?,
+        sql: row.get(6)?,
+        status: query_history_status_from_value(&status).map_err(parse_error)?,
+        started_at: DateTime::parse_from_rfc3339(&started_at)
+            .map_err(parse_error)?
+            .with_timezone(&Utc),
+        elapsed_ms: elapsed_ms.map(|value| value as u64),
+        row_count: row_count.map(|value| value as u64),
+        affected_rows: affected_rows.map(|value| value as u64),
+        error_code: row.get(12)?,
+        error_message: row.get(13)?,
+    })
+}
+
+fn query_history_status_value(status: &QueryHistoryStatus) -> &'static str {
+    match status {
+        QueryHistoryStatus::Success => "success",
+        QueryHistoryStatus::Failed => "failed",
+    }
+}
+
+fn query_history_status_from_value(value: &str) -> Result<QueryHistoryStatus, String> {
+    match value {
+        "success" => Ok(QueryHistoryStatus::Success),
+        "failed" => Ok(QueryHistoryStatus::Failed),
+        _ => Err(format!("unsupported query history status: {value}")),
+    }
+}
+
 fn parse_error(error: impl ToString) -> rusqlite::Error {
     rusqlite::Error::InvalidParameterName(error.to_string())
 }
@@ -301,7 +438,10 @@ fn parse_error(error: impl ToString) -> rusqlite::Error {
 #[cfg(test)]
 mod tests {
     use super::ConfigStore;
-    use crate::models::connection::{ConnectionConfig, DriverType};
+    use crate::models::{
+        connection::{ConnectionConfig, DriverType},
+        query_history::{QueryHistoryEntry, QueryHistoryStatus},
+    };
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -343,5 +483,153 @@ mod tests {
 
         let connections = store.list_connections().expect("list connections");
         assert_eq!(connections.len(), 1);
+    }
+
+    #[test]
+    fn creates_updates_and_deletes_connection_with_v1_fields() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-connection-crud-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let connection_id = Uuid::new_v4();
+        let created_at = Utc::now();
+
+        let saved = store
+            .create_connection(
+                ConnectionConfig {
+                    id: connection_id,
+                    name: "Local MySQL".to_string(),
+                    driver_type: DriverType::Mysql,
+                    host: Some("localhost".to_string()),
+                    port: Some(3306),
+                    database: Some("app".to_string()),
+                    connection_url: Some("mysql://root@localhost:3306/app".to_string()),
+                    username: Some("root".to_string()),
+                    password_encrypted: None,
+                    driver_class: None,
+                    driver_paths: Vec::new(),
+                    ssl_mode: Some("prefer".to_string()),
+                    group: Some("Local".to_string()),
+                    color_tag: Some("dev".to_string()),
+                    created_at,
+                    updated_at: created_at,
+                },
+                None,
+            )
+            .expect("create connection");
+
+        assert_eq!(saved.id, connection_id);
+        assert_eq!(
+            saved.connection_url.as_deref(),
+            Some("mysql://root@localhost:3306/app")
+        );
+        assert_eq!(saved.group.as_deref(), Some("Local"));
+        assert_eq!(saved.color_tag.as_deref(), Some("dev"));
+
+        let updated = store
+            .update_connection(
+                ConnectionConfig {
+                    name: "Local MySQL Test".to_string(),
+                    database: Some("app_test".to_string()),
+                    color_tag: Some("test".to_string()),
+                    updated_at: Utc::now(),
+                    ..saved
+                },
+                None,
+            )
+            .expect("update connection");
+
+        assert_eq!(updated.name, "Local MySQL Test");
+        assert_eq!(updated.database.as_deref(), Some("app_test"));
+        assert_eq!(updated.color_tag.as_deref(), Some("test"));
+
+        store
+            .delete_connection(connection_id)
+            .expect("delete connection");
+        assert!(store
+            .get_connection(connection_id)
+            .expect("get deleted connection")
+            .is_none());
+    }
+
+    #[test]
+    fn stores_and_clears_query_history() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!("vaporlensdb-history-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let connection_id = Uuid::new_v4();
+
+        let entry = QueryHistoryEntry {
+            id: Uuid::new_v4(),
+            connection_id,
+            connection_name_snapshot: "Local PG".to_string(),
+            driver_type: DriverType::Postgres,
+            database: Some("penguin_farm".to_string()),
+            schema: Some("public".to_string()),
+            sql: "SELECT 1".to_string(),
+            status: QueryHistoryStatus::Success,
+            started_at: Utc::now(),
+            elapsed_ms: Some(12),
+            row_count: Some(1),
+            affected_rows: None,
+            error_code: None,
+            error_message: None,
+        };
+
+        store.add_query_history(entry).expect("save query history");
+
+        let history = store.list_query_history(200).expect("list query history");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].connection_id, connection_id);
+        assert_eq!(history[0].sql, "SELECT 1");
+        assert_eq!(history[0].row_count, Some(1));
+
+        store.clear_query_history().expect("clear query history");
+        assert!(store
+            .list_query_history(200)
+            .expect("list cleared query history")
+            .is_empty());
+    }
+
+    #[test]
+    fn prunes_query_history_to_five_thousand_entries() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir =
+            std::env::temp_dir().join(format!("vaporlensdb-history-prune-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let connection_id = Uuid::new_v4();
+
+        for index in 0..5_005 {
+            store
+                .add_query_history(QueryHistoryEntry {
+                    id: Uuid::new_v4(),
+                    connection_id,
+                    connection_name_snapshot: "Local PG".to_string(),
+                    driver_type: DriverType::Postgres,
+                    database: Some("penguin_farm".to_string()),
+                    schema: None,
+                    sql: format!("SELECT {index}"),
+                    status: QueryHistoryStatus::Success,
+                    started_at: Utc::now() + chrono::Duration::milliseconds(index),
+                    elapsed_ms: Some(index as u64),
+                    row_count: Some(1),
+                    affected_rows: None,
+                    error_code: None,
+                    error_message: None,
+                })
+                .expect("save query history");
+        }
+
+        let history = store
+            .list_query_history(5_000)
+            .expect("list pruned query history");
+        assert_eq!(history.len(), 5_000);
+        assert_eq!(history[0].sql, "SELECT 5004");
+        assert_eq!(
+            history.last().map(|entry| entry.sql.as_str()),
+            Some("SELECT 5")
+        );
     }
 }

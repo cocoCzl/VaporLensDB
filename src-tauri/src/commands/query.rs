@@ -4,7 +4,10 @@ use uuid::Uuid;
 
 use crate::{
     models::query_result::ExplainResult,
-    services::query_engine::{ExecuteQueryResponse, StreamQueryRequest},
+    services::{
+        query_engine::{ExecuteQueryResponse, StreamQueryRequest},
+        sql_risk::{analyze_sql_risk as analyze_sql_risk_service, SqlRiskAnalysis},
+    },
     AppState,
 };
 
@@ -103,4 +106,9 @@ pub async fn cancel_query(
         .cancel_query(driver, &query_id)
         .await
         .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn analyze_sql_risk(sql: String) -> SqlRiskAnalysis {
+    analyze_sql_risk_service(&sql)
 }

@@ -1,11 +1,12 @@
 {
   "name": "vapor-lens-db",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:v1-ui-scope": "node scripts/v1-ui-scope-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "build:app": "./build.sh",

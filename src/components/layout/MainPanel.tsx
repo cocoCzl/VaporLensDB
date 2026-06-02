@@ -5,14 +5,24 @@ import { DataGrid } from '@/components/grid/DataGrid'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/hooks/useQuery'
 import { normalizeAppError } from '@/ipc/client'
+import { analyzeSqlRisk, type SqlRiskAnalysis, type SqlRiskReason } from '@/ipc/query'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import { useUiStore } from '@/stores/uiStore'
+import type { DriverType } from '@/types/connection'
 import type { QueryResult } from '@/types/query'
 
 type SqlEditorModule = { default: typeof import('@/components/editor/SqlEditor').SqlEditor }
+
+interface QueryCapabilities {
+  canQuery: boolean
+  canExplain: boolean
+  canCancel: boolean
+  canReadMetadata: boolean
+  canComplete: boolean
+}
 
 let sqlEditorPreload: Promise<SqlEditorModule> | null = null
 
@@ -65,6 +75,9 @@ export function MainPanel() {
   )
   const connectionId = activeTab?.connectionId ?? activeConnectionId
   const activeConnection = connections.find((connection) => connection.id === connectionId)
+  const queryCapabilities = activeConnection
+    ? driverQueryCapabilities(activeConnection.driverType)
+    : emptyQueryCapabilities()
   const selectedDatabase =
     connectionId != null
       ? databaseByConnection[connectionId] ?? activeConnection?.database ?? null
@@ -73,7 +86,13 @@ export function MainPanel() {
   const connectionIsConnected = Boolean(
     connectionId && statuses[connectionId]?.status === 'connected',
   )
-  const canRun = Boolean(activeTab && connectionId && (selectedSql || activeTab.sql).trim())
+  const canRun = Boolean(
+    activeTab &&
+      connectionId &&
+      connectionIsConnected &&
+      queryCapabilities.canQuery &&
+      (selectedSql || activeTab.sql).trim(),
+  )
   const activeQueryId = activeTab?.lastQueryId ?? null
   const activeResults = activeQueryId ? results[activeQueryId] : undefined
   const activeExplain = activeQueryId ? explains[activeQueryId] : undefined
@@ -95,7 +114,7 @@ export function MainPanel() {
   }
 
   useEffect(() => {
-    if (!connectionId || !connectionIsConnected) {
+    if (!connectionId || !connectionIsConnected || !queryCapabilities.canReadMetadata) {
       return
     }
 
@@ -121,6 +140,7 @@ export function MainPanel() {
   }, [
     connectionId,
     connectionIsConnected,
+    queryCapabilities.canReadMetadata,
     selectedDatabase,
     selectedSchema,
     loadDatabases,
@@ -129,7 +149,12 @@ export function MainPanel() {
   ])
 
   useEffect(() => {
-    if (!connectionId || !connectionIsConnected || !selectedSchema) {
+    if (
+      !connectionId ||
+      !connectionIsConnected ||
+      !selectedSchema ||
+      !queryCapabilities.canReadMetadata
+    ) {
       return
     }
 
@@ -150,6 +175,7 @@ export function MainPanel() {
   }, [
     connectionId,
     connectionIsConnected,
+    queryCapabilities.canReadMetadata,
     selectedSchema,
     loadFunctions,
     loadTables,
@@ -157,22 +183,34 @@ export function MainPanel() {
     notifyError,
   ])
 
-  function execute() {
-    if (!activeTab || !connectionId) {
+  async function execute() {
+    if (!activeTab || !connectionId || !connectionIsConnected || !queryCapabilities.canQuery) {
       return
     }
-    runQuery(activeTab.id, connectionId, sqlToRun())
+    const sql = sqlToRun()
+
+    try {
+      const risk = await analyzeSqlRisk(sql)
+      if (risk.dangerous && !confirmDangerousSql(risk, activeConnection?.colorTag === 'prod')) {
+        return
+      }
+    } catch (error) {
+      notifyError(normalizeAppError(error), 'SQL 风险检查失败')
+      return
+    }
+
+    runQuery(activeTab.id, connectionId, sql)
   }
 
   function explain() {
-    if (!activeTab || !connectionId) {
+    if (!activeTab || !connectionId || !queryCapabilities.canExplain) {
       return
     }
     runExplain(activeTab.id, connectionId, sqlToRun())
   }
 
   function cancel() {
-    if (!activeTab || !connectionId || !activeTab.runningQueryId) {
+    if (!activeTab || !connectionId || !activeTab.runningQueryId || !queryCapabilities.canCancel) {
       return
     }
     cancelRunningQuery(activeTab.id, connectionId, activeTab.runningQueryId)
@@ -216,7 +254,9 @@ export function MainPanel() {
         databases={toolbarDatabases}
         schemas={toolbarSchemas}
         running={activeTab.running}
-        canCancel={Boolean(activeTab.runningQueryId)}
+        canCancel={Boolean(activeTab.runningQueryId && queryCapabilities.canCancel)}
+        canExplain={queryCapabilities.canExplain}
+        explainUnsupportedReason="当前驱动暂不支持 Explain"
         disabled={!canRun}
         onConnectionChange={(id) => {
           updateTabConnection(activeTab.id, id)
@@ -254,7 +294,7 @@ export function MainPanel() {
           >
             <SqlEditor
               value={activeTab.sql}
-              connectionId={connectionId}
+              connectionId={queryCapabilities.canComplete ? connectionId : null}
               onChange={(sql) => updateTabSql(activeTab.id, sql)}
               onRun={execute}
               onSelectionChange={setSelectedSql}
@@ -289,7 +329,7 @@ export function MainPanel() {
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                   event.preventDefault()
-                  execute()
+                  void execute()
                 }
               }}
             />
@@ -321,15 +361,17 @@ export function MainPanel() {
             )}
           </div>
           {activeTab.error && (
-            <div className="flex min-w-0 max-w-[55%] items-center gap-1 text-destructive">
+            <div className="flex min-w-0 items-center gap-1 text-destructive">
               <AlertCircle className="size-3.5 shrink-0" />
-              <span className="truncate">{activeTab.error}</span>
+              <span className="truncate">查询执行失败</span>
             </div>
           )}
         </div>
 
         <div className="min-h-0 flex-1">
-          {activeExplain ? (
+          {activeTab.error ? (
+            <ErrorDetails message={activeTab.error} />
+          ) : activeExplain ? (
             <pre className="h-full overflow-auto p-3 text-xs">
               {JSON.stringify(activeExplain.plan, null, 2)}
             </pre>
@@ -346,24 +388,35 @@ export function MainPanel() {
                 />
               )}
               <div className="min-h-0 flex-1">
-                <DataGrid
-                  result={activeResult}
-                  tableContext={activeTab.tableContext}
-                  onExecuteEditSql={
-                    connectionId
-                      ? (sql) => {
-                          updateTabSql(activeTab.id, sql)
-                          runQuery(activeTab.id, connectionId, sql)
-                        }
-                      : undefined
-                  }
-                />
+                <DataGrid result={activeResult} />
               </div>
             </div>
           )}
         </div>
       </section>
     </main>
+  )
+}
+
+function ErrorDetails({ message }: { message: string }) {
+  const [summary, ...details] = message.split('\n')
+  const detail = details.join('\n').trim()
+
+  return (
+    <div className="h-full overflow-auto bg-destructive/5 p-3">
+      <div className="rounded-md border border-destructive/25 bg-background p-3 text-xs">
+        <div className="mb-2 flex items-center gap-2 font-medium text-destructive">
+          <AlertCircle className="size-4 shrink-0" />
+          <span>查询执行失败</span>
+        </div>
+        <div className="whitespace-pre-wrap break-words text-destructive">{summary}</div>
+        {detail && (
+          <pre className="mt-3 max-h-52 overflow-auto rounded border bg-muted/45 p-2 text-[11px] leading-5 text-muted-foreground">
+            {detail}
+          </pre>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -401,6 +454,73 @@ function ResultSetTabs({
       })}
     </div>
   )
+}
+
+function confirmDangerousSql(risk: SqlRiskAnalysis, production: boolean) {
+  const title = production
+    ? '生产环境危险 SQL 确认'
+    : '危险 SQL 确认'
+  const environmentLine = production
+    ? '当前连接标记为 prod，请确认你确实要在生产环境执行。'
+    : '此 SQL 可能修改或删除大量数据。'
+  const reasons = risk.reasons.map(formatSqlRiskReason).join('\n')
+
+  return window.confirm(`${title}\n\n${environmentLine}\n\n检测到：\n${reasons}\n\n继续执行？`)
+}
+
+function driverQueryCapabilities(driverType: DriverType): QueryCapabilities {
+  switch (driverType) {
+    case 'postgres':
+      return {
+        canQuery: true,
+        canExplain: true,
+        canCancel: true,
+        canReadMetadata: true,
+        canComplete: true,
+      }
+    case 'mysql':
+      return {
+        canQuery: true,
+        canExplain: true,
+        canCancel: false,
+        canReadMetadata: true,
+        canComplete: true,
+      }
+    case 'oracle':
+    case 'jdbc':
+      return {
+        canQuery: true,
+        canExplain: false,
+        canCancel: false,
+        canReadMetadata: false,
+        canComplete: false,
+      }
+    default:
+      return emptyQueryCapabilities()
+  }
+}
+
+function emptyQueryCapabilities(): QueryCapabilities {
+  return {
+    canQuery: false,
+    canExplain: false,
+    canCancel: false,
+    canReadMetadata: false,
+    canComplete: false,
+  }
+}
+
+function formatSqlRiskReason(reason: SqlRiskReason) {
+  switch (reason) {
+    case 'dropStatement':
+      return '- DROP 语句'
+    case 'truncateStatement':
+      return '- TRUNCATE 语句'
+    case 'deleteWithoutWhere':
+      return '- DELETE 缺少 WHERE'
+    case 'updateWithoutWhere':
+      return '- UPDATE 缺少 WHERE'
+  }
 }
 
 function resultSummary(result: QueryResult) {

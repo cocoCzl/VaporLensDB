@@ -19,6 +19,7 @@ export function useQuery() {
   const setResults = useQueryResultStore((state) => state.setResults)
   const setExplain = useQueryResultStore((state) => state.setExplain)
   const startStreamResult = useQueryResultStore((state) => state.startStreamResult)
+  const notify = useUiStore((state) => state.notify)
   const notifyError = useUiStore((state) => state.notifyError)
 
   async function runQuery(tabId: string, connectionId: string, sql: string) {
@@ -42,14 +43,16 @@ export function useQuery() {
           streamState.unlisteners.forEach((unlisten) => unlisten())
         }
         if (streamState.state.failed) {
-          useQueryHistoryStore.getState().addEntry({
+          void useQueryHistoryStore.getState().addEntry({
             connectionId,
             sql,
             status: 'failed',
             startedAt,
             elapsedMs: Math.round(performance.now() - startedMs),
-            error: '流式查询失败',
+            errorCode: 'QUERY_STREAM_FAILED',
+            errorMessage: '流式查询失败',
           })
+          notify({ kind: 'error', title: '查询执行失败' })
           return
         }
       } else {
@@ -60,16 +63,17 @@ export function useQuery() {
       setTabQueryState(tabId, queryId)
     } catch (error) {
       const appError = normalizeAppError(error)
-      useQueryHistoryStore.getState().addEntry({
+      void useQueryHistoryStore.getState().addEntry({
         connectionId,
         sql,
         status: 'failed',
         startedAt,
         elapsedMs: Math.round(performance.now() - startedMs),
-        error: appError.message,
+        errorCode: appError.code,
+        errorMessage: appError.message,
       })
-      setTabQueryState(tabId, queryId, appError.message)
-      notifyError(appError, '查询执行失败')
+      setTabQueryState(tabId, queryId, formatLocalError(appError))
+      notify({ kind: 'error', title: '查询执行失败' })
     }
   }
 
@@ -108,14 +112,19 @@ function recordQueryHistory(
   elapsedMs: number,
 ) {
   const result = useQueryResultStore.getState().results[queryId]?.[0]
-  useQueryHistoryStore.getState().addEntry({
+  void useQueryHistoryStore.getState().addEntry({
     connectionId,
     sql,
     status: 'success',
     startedAt,
     elapsedMs: result?.elapsedMs || Math.round(elapsedMs),
-    rowCount: result?.rowCount ?? result?.affectedRows ?? null,
+    rowCount: result?.rowCount ?? null,
+    affectedRows: result?.affectedRows ?? null,
   })
+}
+
+function formatLocalError(error: { message: string; detail?: string }) {
+  return error.detail ? `${error.message}\n${error.detail}` : error.message
 }
 
 async function registerStreamListeners(tabId: string, queryId: string) {

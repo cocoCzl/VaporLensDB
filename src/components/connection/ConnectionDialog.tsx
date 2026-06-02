@@ -18,7 +18,7 @@ export function ConnectionDialog({
   trigger,
 }: ConnectionDialogProps) {
   const [open, setOpen] = useState(false)
-  const { saveConnection, testConnectionInput, loading, error } = useConnectionStore()
+  const { saveConnection, testConnectionInput, loading } = useConnectionStore()
   const { drivers, loadDrivers } = useDriverStore()
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export function ConnectionDialog({
             </div>
             <div className="min-h-0 overflow-auto p-4">
               <p className="mb-4 text-xs text-muted-foreground">
-                内置 PostgreSQL / MySQL，Oracle 和自定义库通过外部驱动配置接入。
+                内置 PostgreSQL / MySQL，Oracle 为实验性 JDBC 支持。
               </p>
               <ConnectionForm
                 connection={connection}
@@ -74,7 +74,6 @@ export function ConnectionDialog({
                   setOpen(false)
                 }}
               />
-              {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
             </div>
           </div>
         </div>

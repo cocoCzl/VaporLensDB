@@ -5,4 +5,5 @@ pub mod export_service;
 pub mod external_driver;
 pub mod metadata_service;
 pub mod query_engine;
+pub mod sql_risk;
 pub mod ssh_tunnel;

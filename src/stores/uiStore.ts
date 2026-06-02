@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { AppError } from '@/types/error'
 
 type Theme = 'light' | 'dark' | 'system'
-type SidebarView = 'dataSources' | 'structure' | 'sql' | 'settings'
+type SidebarView = 'dataSources' | 'sql' | 'settings'
 type NotificationKind = 'success' | 'error' | 'info' | 'warning'
 
 export interface AppNotification {

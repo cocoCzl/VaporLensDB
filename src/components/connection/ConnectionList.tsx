@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
-import { Database, Link, Link2Off, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight, Database, Link, Link2Off, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { useConnectionStore } from '@/stores/connectionStore'
+import type { ConnectionConfig } from '@/types/connection'
 
 export function ConnectionList() {
   const {
@@ -15,10 +16,16 @@ export function ConnectionList() {
     disconnectConnection,
     removeConnection,
   } = useConnectionStore()
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+  const groupedConnections = useMemo(() => groupConnections(connections), [connections])
 
   useEffect(() => {
     loadConnections()
   }, [loadConnections])
+
+  function toggleGroup(group: string) {
+    setCollapsedGroups((state) => ({ ...state, [group]: !state[group] }))
+  }
 
   return (
     <div className="flex max-h-[43%] min-h-44 flex-col ide-surface">
@@ -53,7 +60,7 @@ export function ConnectionList() {
         <span className="text-[11px] text-muted-foreground">连接</span>
       </div>
 
-      <div className="flex-1 overflow-auto p-2">
+      <div className="flex-1 overflow-auto px-1 py-1">
         {connections.length === 0 ? (
           <div className="grid h-32 place-items-center text-center text-xs text-muted-foreground">
             <div>
@@ -62,78 +69,33 @@ export function ConnectionList() {
             </div>
           </div>
         ) : (
-          <div className="grid gap-1">
-            {connections.map((connection) => {
-              const status = statuses[connection.id]?.status ?? 'disconnected'
-              const connected = status === 'connected'
-
+          <div className="grid gap-0.5">
+            {groupedConnections.map((group) => {
+              const collapsed = collapsedGroups[group.name] ?? false
               return (
-                <div
-                  key={connection.id}
-                  className={[
-                    'rounded-md border px-2 py-1.5 text-sm transition-colors',
-                    connected
-                      ? 'border-primary/30 bg-primary/10 shadow-sm'
-                      : 'border-transparent bg-transparent hover:bg-muted/70',
-                  ].join(' ')}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 font-medium leading-5">
-                        <Database
-                          className={[
-                            'size-4',
-                            connected ? 'text-primary' : 'text-muted-foreground',
-                          ].join(' ')}
-                        />
-                        <span className="truncate">{connection.name}</span>
-                      </div>
-                      <div className="mt-1 truncate text-xs text-muted-foreground">
-                        {connection.driverType} · {connection.username ?? '-'}@
-                        {connection.host ?? connection.connectionUrl ?? '-'}
-                        {connection.port ? `:${connection.port}` : ''}
-                        {connection.database ? `/${connection.database}` : ''}
-                      </div>
-                      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <span
-                          className={[
-                            'size-1.5 rounded-full',
-                            connected ? 'bg-emerald-500' : 'bg-muted-foreground/45',
-                          ].join(' ')}
-                        />
-                        {status}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant={connected ? 'outline' : 'secondary'}
-                      disabled={loading}
-                      onClick={() =>
-                        connected
-                          ? disconnectConnection(connection.id)
-                          : connectConnection(connection.id)
-                      }
-                    >
-                      {connected ? <Link2Off /> : <Link />}
-                      {connected ? '断开' : '连接'}
-                    </Button>
-                    <ConnectionDialog connection={connection} />
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="destructive"
-                      disabled={loading}
-                      onClick={() => removeConnection(connection.id)}
-                    >
-                      <Trash2 />
-                      删除
-                    </Button>
-                  </div>
-                </div>
+                <section key={group.name} className="grid gap-0.5">
+                  <button
+                    type="button"
+                    className="flex h-6 items-center gap-1 rounded px-1.5 text-left text-[11px] font-medium text-muted-foreground hover:bg-muted/70"
+                    onClick={() => toggleGroup(group.name)}
+                  >
+                    {collapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}
+                    <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                    <span>{group.connections.length}</span>
+                  </button>
+                  {!collapsed &&
+                    group.connections.map((connection) => (
+                      <ConnectionCard
+                        key={connection.id}
+                        connection={connection}
+                        status={statuses[connection.id]?.status ?? 'disconnected'}
+                        loading={loading}
+                        onConnect={() => connectConnection(connection.id)}
+                        onDisconnect={() => disconnectConnection(connection.id)}
+                        onDelete={() => removeConnection(connection.id)}
+                      />
+                    ))}
+                </section>
               )
             })}
           </div>
@@ -141,4 +103,136 @@ export function ConnectionList() {
       </div>
     </div>
   )
+}
+
+function ConnectionCard({
+  connection,
+  status,
+  loading,
+  onConnect,
+  onDisconnect,
+  onDelete,
+}: {
+  connection: ConnectionConfig
+  status: string
+  loading: boolean
+  onConnect: () => void
+  onDisconnect: () => void
+  onDelete: () => void
+}) {
+  const connected = status === 'connected'
+
+  return (
+    <div
+      className={[
+        'group flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-sm transition-colors',
+        connected
+          ? 'bg-primary/10 text-foreground ring-1 ring-primary/25'
+          : 'bg-transparent hover:bg-muted/70',
+      ].join(' ')}
+    >
+      <Database
+        className={[
+          'size-4 shrink-0',
+          connected ? 'text-primary' : 'text-muted-foreground',
+        ].join(' ')}
+      />
+      <span
+        className={[
+          'size-2 shrink-0 rounded-full border',
+          environmentDotClass(connection.colorTag ?? ''),
+        ].join(' ')}
+        title={environmentLabel(connection.colorTag ?? '')}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-medium leading-5">{connection.name}</span>
+          <span
+            className={[
+              'size-1.5 shrink-0 rounded-full',
+              connected ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+            ].join(' ')}
+            title={status}
+          />
+        </div>
+        <div className="truncate text-[11px] leading-4 text-muted-foreground">
+          {connection.driverType} · {compactConnectionTarget(connection)}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          title={connected ? '断开连接' : '连接'}
+          disabled={loading}
+          onClick={connected ? onDisconnect : onConnect}
+        >
+          {connected ? <Link2Off /> : <Link />}
+        </Button>
+        <ConnectionDialog
+          connection={connection}
+          trigger={
+            <Button type="button" size="icon-xs" variant="ghost" title="编辑连接">
+              <Pencil />
+            </Button>
+          }
+        />
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          title="删除连接"
+          disabled={loading}
+          onClick={onDelete}
+        >
+          <Trash2 />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function compactConnectionTarget(connection: ConnectionConfig) {
+  const host = connection.host ?? connection.connectionUrl ?? '-'
+  const port = connection.port ? `:${connection.port}` : ''
+  const database = connection.database ? `/${connection.database}` : ''
+  return `${connection.username ?? '-'}@${host}${port}${database}`
+}
+
+function groupConnections(connections: ConnectionConfig[]) {
+  const groups = new Map<string, ConnectionConfig[]>()
+  for (const connection of connections) {
+    const group = connection.group?.trim() || '未分组'
+    groups.set(group, [...(groups.get(group) ?? []), connection])
+  }
+
+  return [...groups.entries()]
+    .sort(([left], [right]) => groupSortKey(left).localeCompare(groupSortKey(right)))
+    .map(([name, groupConnections]) => ({
+      name,
+      connections: groupConnections
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    }))
+}
+
+function groupSortKey(group: string) {
+  return group === '未分组' ? '\uffff' : group
+}
+
+function environmentDotClass(tag: string) {
+  if (tag === 'prod') return 'border-red-600 bg-red-500'
+  if (tag === 'stage') return 'border-amber-600 bg-amber-500'
+  if (tag === 'test') return 'border-sky-600 bg-sky-500'
+  if (tag === 'dev') return 'border-emerald-600 bg-emerald-500'
+  return 'border-muted-foreground/40 bg-transparent'
+}
+
+function environmentLabel(tag: string) {
+  if (tag === 'prod') return 'prod'
+  if (tag === 'stage') return 'stage'
+  if (tag === 'test') return 'test'
+  if (tag === 'dev') return 'dev'
+  return '无环境标签'
 }

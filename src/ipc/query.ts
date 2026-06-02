@@ -22,6 +22,17 @@ export interface ExecuteQueryStreamInput {
   maxRows?: number
 }
 
+export type SqlRiskReason =
+  | 'dropStatement'
+  | 'truncateStatement'
+  | 'deleteWithoutWhere'
+  | 'updateWithoutWhere'
+
+export interface SqlRiskAnalysis {
+  dangerous: boolean
+  reasons: SqlRiskReason[]
+}
+
 export function executeQuery(input: ExecuteQueryInput) {
   return invokeCommand<ExecuteQueryResponse>('execute_query', { input })
 }
@@ -36,6 +47,10 @@ export function explainQuery(connectionId: string, sql: string) {
 
 export function cancelQuery(connectionId: string, queryId: string) {
   return invokeCommand<void>('cancel_query', { connectionId, queryId })
+}
+
+export function analyzeSqlRisk(sql: string) {
+  return invokeCommand<SqlRiskAnalysis>('analyze_sql_risk', { sql })
 }
 
 export function onQueryResultChunk(handler: (chunk: QueryResultChunk) => void): Promise<UnlistenFn> {

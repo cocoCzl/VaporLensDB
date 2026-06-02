@@ -1,36 +1,26 @@
 import {
-  Activity,
-  CheckCircle2,
-  Circle,
   Code2,
-  Columns3,
   Database,
   FileCode2,
-  GitBranch,
-  KeyRound,
   Moon,
   Plus,
   Settings,
   Sun,
-  Table2,
   TerminalSquare,
   Trash2,
 } from 'lucide-react'
+import { useEffect } from 'react'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { Button } from '@/components/ui/button'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
-import { useMetadataStore } from '@/stores/metadataStore'
-import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
 
 const RAIL_ITEMS = [
   { view: 'dataSources', icon: Database, label: '数据源' },
-  { view: 'structure', icon: GitBranch, label: '结构' },
   { view: 'sql', icon: FileCode2, label: 'SQL' },
 ] as const
 
@@ -65,10 +55,6 @@ export function Sidebar() {
 
 function SidebarPanel() {
   const sidebarView = useUiStore((state) => state.sidebarView)
-
-  if (sidebarView === 'structure') {
-    return <StructurePanel />
-  }
 
   if (sidebarView === 'sql') {
     return <SqlWorkspacePanel />
@@ -116,126 +102,16 @@ function RailButton({
   )
 }
 
-function StructurePanel() {
-  const { connections, statuses, activeConnectionId } = useConnectionStore()
-  const metadata = useMetadataStore()
-  const selectedObject = useObjectInspectorStore((state) => state.selected)
-  const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
-  const loadedDatabases = activeConnectionId ? metadata.databases[activeConnectionId] ?? [] : []
-  const loadedSchemas = countEntries(metadata.schemas, activeConnectionId)
-  const loadedTables = countEntries(metadata.tables, activeConnectionId)
-  const loadedViews = countEntries(metadata.views, activeConnectionId)
-  const loadedFunctions = countEntries(metadata.functions, activeConnectionId)
-  const isConnected = Boolean(activeConnectionId && statuses[activeConnectionId]?.status === 'connected')
-
-  return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      <PanelHeader
-        title="结构"
-        subtitle={activeConnection?.name ?? '未选择连接'}
-        icon={GitBranch}
-      />
-      <div className="space-y-3 border-b p-3">
-        <div className="flex items-center gap-2 text-sm">
-          {isConnected ? (
-            <CheckCircle2 className="size-4 text-emerald-500" />
-          ) : (
-            <Circle className="size-4 text-muted-foreground" />
-          )}
-          <span className="truncate font-medium">
-            {isConnected ? '连接已就绪' : '先连接一个数据源'}
-          </span>
-        </div>
-        <p className="text-xs leading-5 text-muted-foreground">
-          这里汇总当前已加载的对象结构。展开数据源里的节点后，统计会随缓存更新。
-        </p>
-      </div>
-      <div className="grid grid-cols-2 gap-2 p-3">
-        <Metric label="数据库" value={loadedDatabases.length} icon={Database} />
-        <Metric label="Schema" value={loadedSchemas} icon={GitBranch} />
-        <Metric label="表" value={loadedTables} icon={Table2} />
-        <Metric label="视图" value={loadedViews} icon={Activity} />
-      </div>
-      <div className="border-t px-3 py-2 text-xs text-muted-foreground">
-        已加载函数 {loadedFunctions.toLocaleString()} 个
-      </div>
-      <ObjectDetails />
-      {!selectedObject && (
-        <div className="border-t p-3">
-          <EmptyPanel
-            icon={Code2}
-            title="未选择对象"
-            text="在数据源里右键表或视图，选择查看结构 / DDL。"
-          />
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ObjectDetails() {
-  const selected = useObjectInspectorStore((state) => state.selected)
-  if (!selected) {
-    return null
-  }
-
-  return (
-    <div className="min-h-0 flex-1 overflow-auto border-t">
-      <div className="border-b p-3">
-        <div className="truncate text-sm font-semibold">{selected.table}</div>
-        <div className="truncate text-xs text-muted-foreground">
-          {selected.schema} · {selected.kind === 'view' ? '视图' : '表'}
-          {selected.loading ? ' · 加载中' : ''}
-        </div>
-      </div>
-      <ObjectSection icon={Columns3} title={`列 (${selected.columns.length})`}>
-        <div className="space-y-1">
-          {selected.columns.map((column) => (
-            <div
-              key={column.name}
-              className="flex items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5 text-xs"
-            >
-              <span className="min-w-0 truncate font-medium">{column.name}</span>
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {column.dataType}
-                {column.isPrimaryKey ? ' PK' : ''}
-              </span>
-            </div>
-          ))}
-        </div>
-      </ObjectSection>
-      <ObjectSection icon={KeyRound} title={`索引 (${selected.indexes.length})`}>
-        <div className="space-y-1">
-          {selected.indexes.map((index) => (
-            <div key={index.name} className="rounded border bg-background/60 px-2 py-1.5 text-xs">
-              <div className="truncate font-medium">{index.name}</div>
-              <div className="truncate text-[11px] text-muted-foreground">
-                {index.unique ? 'unique · ' : ''}
-                {index.columns.join(', ')}
-              </div>
-            </div>
-          ))}
-          {selected.indexes.length === 0 && <EmptyLine text="暂无索引" />}
-        </div>
-      </ObjectSection>
-      <ObjectSection icon={Code2} title="DDL">
-        {selected.ddl ? (
-          <pre className="max-h-72 overflow-auto rounded border bg-background/70 p-2 text-[11px] leading-5">
-            {selected.ddl}
-          </pre>
-        ) : (
-          <EmptyLine text={selected.loading ? '正在加载 DDL' : selected.error ?? '暂无 DDL'} />
-        )}
-      </ObjectSection>
-    </div>
-  )
-}
-
 function SqlWorkspacePanel() {
   const { tabs, activeTabId, setActiveTab, addTab } = useEditorStore()
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
   const history = useQueryHistoryStore((state) => state.entries)
   const clearHistory = useQueryHistoryStore((state) => state.clear)
+  const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
+
+  useEffect(() => {
+    loadHistory()
+  }, [loadHistory])
 
   function createTab() {
     addTab({
@@ -244,6 +120,19 @@ function SqlWorkspacePanel() {
       sql: '',
       connectionId: activeConnectionId,
     })
+  }
+
+  async function handleClearHistory() {
+    if (history.length === 0) {
+      return
+    }
+
+    const confirmed = window.confirm('确定要清空所有查询历史吗？此操作不会删除连接或查询结果。')
+    if (!confirmed) {
+      return
+    }
+
+    await clearHistory()
   }
 
   return (
@@ -295,7 +184,9 @@ function SqlWorkspacePanel() {
               variant="ghost"
               title="清空查询历史"
               disabled={history.length === 0}
-              onClick={clearHistory}
+              onClick={() => {
+                void handleClearHistory()
+              }}
             >
               <Trash2 className="size-3.5" />
             </Button>
@@ -333,9 +224,10 @@ function SqlWorkspacePanel() {
                     </span>
                   </div>
                   <div className="mt-1 text-[11px] text-muted-foreground">
-                    {formatHistoryTime(entry.startedAt)}
-                    {entry.elapsedMs ? ` · ${entry.elapsedMs} ms` : ''}
-                    {entry.rowCount != null ? ` · ${entry.rowCount} 行` : ''}
+                      {formatHistoryTime(entry.startedAt)}
+                      {entry.elapsedMs ? ` · ${entry.elapsedMs} ms` : ''}
+                      {entry.rowCount != null ? ` · ${entry.rowCount} 行` : ''}
+                      {entry.affectedRows != null ? ` · 影响 ${entry.affectedRows} 行` : ''}
                   </div>
                 </button>
               ))}
@@ -354,6 +246,31 @@ function SettingsPanel() {
   const setQueryMaxRows = useUiStore((state) => state.setQueryMaxRows)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const setEditorFontSize = useUiStore((state) => state.setEditorFontSize)
+  const notify = useUiStore((state) => state.notify)
+  const history = useQueryHistoryStore((state) => state.entries)
+  const historyLoading = useQueryHistoryStore((state) => state.loading)
+  const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
+  const clearHistory = useQueryHistoryStore((state) => state.clear)
+
+  useEffect(() => {
+    loadHistory()
+  }, [loadHistory])
+
+  async function handleClearHistory() {
+    if (history.length === 0 || historyLoading) {
+      return
+    }
+
+    const confirmed = window.confirm('确定要清空所有查询历史吗？此操作不会删除连接或查询结果。')
+    if (!confirmed) {
+      return
+    }
+
+    const cleared = await clearHistory()
+    if (cleared) {
+      notify({ kind: 'success', title: '查询历史已清空' })
+    }
+  }
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
@@ -384,6 +301,28 @@ function SettingsPanel() {
           onChange={setEditorFontSize}
         />
       </section>
+      <section className="space-y-2 border-b p-3 text-xs">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-foreground">查询历史</h3>
+            <p className="mt-1 text-muted-foreground">
+              当前保存 {history.length} 条最近记录。
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={history.length === 0 || historyLoading}
+            onClick={() => {
+              void handleClearHistory()
+            }}
+          >
+            <Trash2 className="size-3.5" />
+            清空
+          </Button>
+        </div>
+      </section>
       <section className="space-y-2 p-3 text-xs">
         <SettingFact label="配置存储" value="~/.vaporlensdb/config.db" />
         <SettingFact label="密码" value="AES-GCM 加密保存" />
@@ -409,18 +348,6 @@ function PanelHeader({
         <h2 className="truncate text-sm font-semibold">{title}</h2>
         <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
       </div>
-    </div>
-  )
-}
-
-function Metric({ label, value, icon: Icon }: { label: string; value: number; icon: LucideIcon }) {
-  return (
-    <div className="rounded-md border bg-background/60 p-2">
-      <div className="mb-2 flex items-center justify-between text-muted-foreground">
-        <span className="text-xs">{label}</span>
-        <Icon className="size-3.5" />
-      </div>
-      <div className="text-lg font-semibold tabular-nums">{value.toLocaleString()}</div>
     </div>
   )
 }
@@ -512,40 +439,6 @@ function NumberSetting({
       />
     </label>
   )
-}
-
-function ObjectSection({
-  icon: Icon,
-  title,
-  children,
-}: {
-  icon: LucideIcon
-  title: string
-  children: ReactNode
-}) {
-  return (
-    <section className="border-b p-3">
-      <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold">
-        <Icon className="size-3.5 text-primary" />
-        {title}
-      </h3>
-      {children}
-    </section>
-  )
-}
-
-function EmptyLine({ text }: { text: string }) {
-  return <div className="rounded border border-dashed p-2 text-xs text-muted-foreground">{text}</div>
-}
-
-function countEntries(record: Record<string, unknown[]>, connectionId: string | null) {
-  if (!connectionId) {
-    return 0
-  }
-
-  return Object.entries(record)
-    .filter(([key]) => key.startsWith(connectionId))
-    .reduce((count, [, values]) => count + values.length, 0)
 }
 
 function sqlPreview(sql: string) {

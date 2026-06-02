@@ -1,22 +1,19 @@
 /* eslint-disable react-hooks/incompatible-library -- TanStack Virtual intentionally exposes non-memoizable instance methods. */
 import { useMemo, useRef, useState } from 'react'
-import { Copy, DatabaseZap, Rows3 } from 'lucide-react'
+import { Copy, Rows3 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Button } from '@/components/ui/button'
 import type { QueryResult } from '@/types/query'
-import type { TableEditContext } from '@/stores/editorStore'
 
 interface DataGridProps {
   result?: QueryResult
-  tableContext?: TableEditContext | null
-  onExecuteEditSql?: (sql: string) => void
 }
 
 const ROW_HEIGHT = 28
 const ROW_INDEX_WIDTH = 56
 const COLUMN_MIN_WIDTH = 180
 
-export function DataGrid({ result, tableContext, onExecuteEditSql }: DataGridProps) {
+export function DataGrid({ result }: DataGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [selectedCell, setSelectedCell] = useState<{
     rowIndex: number
@@ -151,8 +148,6 @@ export function DataGrid({ result, tableContext, onExecuteEditSql }: DataGridPro
       <CellInspector
         result={result}
         selectedCell={selectedCell}
-        tableContext={tableContext}
-        onExecuteEditSql={onExecuteEditSql}
       />
     </div>
   )
@@ -161,17 +156,10 @@ export function DataGrid({ result, tableContext, onExecuteEditSql }: DataGridPro
 function CellInspector({
   result,
   selectedCell,
-  tableContext,
-  onExecuteEditSql,
 }: {
   result: QueryResult
   selectedCell: { rowIndex: number; columnIndex: number } | null
-  tableContext?: TableEditContext | null
-  onExecuteEditSql?: (sql: string) => void
 }) {
-  const [editValue, setEditValue] = useState('')
-  const [editingCellKey, setEditingCellKey] = useState('')
-
   if (!selectedCell) {
     return (
       <div className="flex h-9 shrink-0 items-center gap-2 border-t px-3 text-xs text-muted-foreground">
@@ -185,30 +173,6 @@ function CellInspector({
   const row = result.rows[selectedCell.rowIndex] ?? []
   const value = formatValue(row[selectedCell.columnIndex])
   const rowValue = JSON.stringify(Object.fromEntries(result.columns.map((item, index) => [item.name, row[index]])))
-  const cellKey = `${selectedCell.rowIndex}:${selectedCell.columnIndex}`
-  const primaryKeyColumns = tableContext?.primaryKeyColumns ?? []
-  const canEdit =
-    Boolean(primaryKeyColumns.length) &&
-    Boolean(onExecuteEditSql) &&
-    Boolean(column) &&
-    !primaryKeyColumns.includes(column.name) &&
-    primaryKeyColumns.every((key) =>
-      result.columns.some((resultColumn) => resultColumn.name === key),
-    )
-  const editing = editingCellKey === cellKey
-
-  function startEdit() {
-    setEditingCellKey(cellKey)
-    setEditValue(value === 'NULL' ? '' : value)
-  }
-
-  function submitEdit() {
-    if (!tableContext || !column || !canEdit) {
-      return
-    }
-    onExecuteEditSql?.(buildUpdateSql(tableContext, result, row, column.name, editValue))
-    setEditingCellKey('')
-  }
 
   return (
     <div className="flex min-h-10 shrink-0 items-center gap-2 border-t px-2 py-1 text-xs">
@@ -216,46 +180,8 @@ function CellInspector({
         <span className="font-medium">
           {selectedCell.rowIndex + 1}.{column?.name ?? selectedCell.columnIndex + 1}
         </span>
-        {editing ? (
-          <input
-            className="ml-2 h-7 w-[min(420px,55vw)] rounded-md border bg-background px-2 font-mono text-[11px] outline-none focus:border-ring"
-            value={editValue}
-            onChange={(event) => setEditValue(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                submitEdit()
-              }
-              if (event.key === 'Escape') {
-                setEditingCellKey('')
-              }
-            }}
-          />
-        ) : (
-          <span className="ml-2 font-mono text-muted-foreground">{value}</span>
-        )}
+        <span className="ml-2 font-mono text-muted-foreground">{value}</span>
       </div>
-      {editing ? (
-        <Button type="button" size="xs" onClick={submitEdit}>
-          <DatabaseZap className="size-3.5" />
-          提交
-        </Button>
-      ) : (
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          disabled={!canEdit}
-          title={
-            canEdit
-              ? '编辑该单元格并生成 UPDATE'
-              : '仅从表数据页打开且结果包含主键列时可编辑'
-          }
-          onClick={startEdit}
-        >
-          <DatabaseZap className="size-3.5" />
-          编辑
-        </Button>
-      )}
       <Button type="button" size="xs" variant="ghost" onClick={() => copyToClipboard(value)}>
         <Copy className="size-3.5" />
         单元格
@@ -270,42 +196,6 @@ function CellInspector({
 
 function copyToClipboard(value: string) {
   navigator.clipboard?.writeText(value)
-}
-
-function buildUpdateSql(
-  context: TableEditContext,
-  result: QueryResult,
-  row: unknown[],
-  columnName: string,
-  nextValue: string,
-) {
-  const quote = context.driverType === 'mysql' ? '`' : '"'
-  const setClause = `${quoteIdentifier(columnName, quote)} = ${sqlLiteral(nextValue)}`
-  const whereClause = context.primaryKeyColumns
-    .map((primaryKey) => {
-      const index = result.columns.findIndex((column) => column.name === primaryKey)
-      return `${quoteIdentifier(primaryKey, quote)} = ${sqlLiteral(row[index])}`
-    })
-    .join(' AND ')
-
-  return `UPDATE ${quoteIdentifier(context.schema, quote)}.${quoteIdentifier(context.table, quote)}\nSET ${setClause}\nWHERE ${whereClause};`
-}
-
-function quoteIdentifier(value: string, quote: '"' | '`') {
-  return `${quote}${value.replaceAll(quote, `${quote}${quote}`)}${quote}`
-}
-
-function sqlLiteral(value: unknown) {
-  if (value == null || value === 'NULL') {
-    return 'NULL'
-  }
-  if (typeof value === 'number' || typeof value === 'bigint') {
-    return String(value)
-  }
-  if (typeof value === 'boolean') {
-    return value ? 'TRUE' : 'FALSE'
-  }
-  return `'${String(value).replaceAll("'", "''")}'`
 }
 
 function formatValue(value: unknown) {
