@@ -53,3 +53,43 @@ export interface ForeignKeyInfo {
   referencedTable: string
   referencedColumns: string[]
 }
+
+export type MetadataIndexKind =
+  | 'connection'
+  | 'database'
+  | 'schema'
+  | 'table'
+  | 'view'
+  | 'function'
+  | 'column'
+
+export interface MetadataIndexEntry {
+  connectionId: string
+  connectionName: string
+  kind: MetadataIndexKind
+  name: string
+  database?: string | null
+  schema?: string | null
+  table?: string | null
+  path: string[]
+}
+
+export interface MetadataSearchResult {
+  entry: MetadataIndexEntry
+  score: number
+}
+
+export interface StartMetadataIndexInput {
+  connectionId: string
+  force?: boolean
+}
+
+export interface SearchMetadataIndexInput {
+  query: string
+  connectionId?: string | null
+  limit?: number
+}
+
+export interface ClearMetadataIndexInput {
+  connectionId?: string | null
+}

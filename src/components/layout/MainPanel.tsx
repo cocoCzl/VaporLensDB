@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { AlertCircle, FileCode2 } from 'lucide-react'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { DataGrid } from '@/components/grid/DataGrid'
@@ -36,7 +36,7 @@ function loadSqlEditor() {
 const SqlEditor = lazy(loadSqlEditor)
 
 export function MainPanel() {
-  const { connections, statuses, activeConnectionId } = useConnectionStore()
+  const { connections, statuses, activeConnectionId, setActiveConnection } = useConnectionStore()
   const {
     tabs,
     activeTabId,
@@ -68,11 +68,6 @@ export function MainPanel() {
   }, [activeConnectionId, ensureTab])
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
-  const connectedConnections = useMemo(
-    () =>
-      connections.filter((connection) => statuses[connection.id]?.status === 'connected'),
-    [connections, statuses],
-  )
   const connectionId = activeTab?.connectionId ?? activeConnectionId
   const activeConnection = connections.find((connection) => connection.id === connectionId)
   const queryCapabilities = activeConnection
@@ -247,7 +242,10 @@ export function MainPanel() {
   return (
     <main className="flex flex-1 flex-col overflow-hidden bg-background">
       <EditorToolbar
-        connections={connectedConnections}
+        connections={connections}
+        connectionStatuses={Object.fromEntries(
+          Object.entries(statuses).map(([id, status]) => [id, status.status]),
+        )}
         connectionId={connectionId}
         database={selectedDatabase}
         schema={selectedSchema}
@@ -260,6 +258,7 @@ export function MainPanel() {
         disabled={!canRun}
         onConnectionChange={(id) => {
           updateTabConnection(activeTab.id, id)
+          setActiveConnection(id)
           if (id) {
             const nextConnection = connections.find((connection) => connection.id === id)
             setDatabaseByConnection((state) => ({

@@ -1,4 +1,5 @@
 import { invokeCommand } from '@/ipc/client'
+import { COMMANDS } from '@/ipc/contracts'
 import type {
   DriverDefinition,
   ExternalDriverValidation,
@@ -6,9 +7,9 @@ import type {
 } from '@/types/driver'
 
 export function listDriverDefinitions() {
-  return invokeCommand<DriverDefinition[]>('list_driver_definitions')
+  return invokeCommand<DriverDefinition[]>(COMMANDS.listDriverDefinitions)
 }
 
 export function validateExternalDriver(input: ValidateExternalDriverInput) {
-  return invokeCommand<ExternalDriverValidation>('validate_external_driver', { input })
+  return invokeCommand<ExternalDriverValidation>(COMMANDS.validateExternalDriver, { input })
 }

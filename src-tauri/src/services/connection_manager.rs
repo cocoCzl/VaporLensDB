@@ -70,6 +70,27 @@ impl ConnectionManager {
         Ok(self.set_status(connection_id, ConnectionRuntimeStatus::Disconnected, None))
     }
 
+    pub async fn shutdown_all(&mut self) {
+        let drivers = self
+            .connections
+            .iter()
+            .map(|(id, driver)| (*id, driver.clone()))
+            .collect::<Vec<_>>();
+        let mut known_ids = self.statuses.keys().copied().collect::<Vec<_>>();
+
+        for (_, driver) in &drivers {
+            let _ = driver.cancel_all_queries().await;
+        }
+
+        self.connections.clear();
+        known_ids.extend(drivers.iter().map(|(id, _)| *id));
+        known_ids.sort();
+        known_ids.dedup();
+        for id in known_ids {
+            self.set_status(id, ConnectionRuntimeStatus::Disconnected, None);
+        }
+    }
+
     pub fn status(&self, connection_id: Uuid) -> ConnectionStatus {
         self.statuses
             .get(&connection_id)
@@ -260,4 +281,26 @@ fn required<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, AppError>
     value
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AppError::ConfigError(format!("{name} is required")))
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::ConnectionManager;
+    use crate::models::connection::ConnectionRuntimeStatus;
+
+    #[tokio::test]
+    async fn shutdown_all_marks_known_connections_disconnected() {
+        let mut manager = ConnectionManager::new();
+        let connection_id = Uuid::new_v4();
+        manager.set_status(connection_id, ConnectionRuntimeStatus::Connected, None);
+
+        manager.shutdown_all().await;
+
+        assert!(matches!(
+            manager.status(connection_id).status,
+            ConnectionRuntimeStatus::Disconnected
+        ));
+    }
 }

@@ -43,4 +43,7 @@ pub trait DatabaseDriver: Send + Sync {
     async fn get_table_ddl(&self, schema: &str, table: &str) -> Result<String, AppError>;
     async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError>;
     async fn cancel_query(&self, query_id: &str) -> Result<(), AppError>;
+    async fn cancel_all_queries(&self) -> Result<(), AppError> {
+        Ok(())
+    }
 }

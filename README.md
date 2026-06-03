@@ -4,9 +4,9 @@ VaporLensDB is a Tauri + Rust + React database management tool. The project goal
 
 ## Current Phase
 
-VaporLensDB is currently scoped to the v1 usable loop described in `docs/VaporLensDB-v1-scope-and-backlog.md`: connection setup, grouped data sources, PostgreSQL/MySQL object browsing, SQL execution, read-only result browsing, persisted query history, and basic local settings.
+VaporLensDB has completed the v1 usable loop and post-v1 foundation Tasks 1-4. The current next task is the full driver manager, tracked in `docs/TASKS.md`.
 
-PostgreSQL and MySQL use native Rust drivers. Oracle is experimental JDBC support: users provide `ojdbc` locally, and v1 only promises connection testing and basic SQL querying. SQLite, SQL Server, ODBC, custom JDBC, SSH tunnels, data editing, import/export, ER diagrams, and the full driver manager remain hidden or disabled until their backlog recovery criteria are met.
+PostgreSQL and MySQL use native Rust drivers. Oracle is experimental JDBC support: users provide `ojdbc` locally, and the current Oracle path only promises connection testing and basic SQL querying. SQLite, SQL Server, ODBC, custom JDBC, SSH tunnels, data editing, import/export, ER diagrams, and the full driver manager remain hidden or disabled until their task acceptance criteria are met.
 
 The default shell intentionally exposes only Data Sources, SQL, and Settings. Query history is stored in `config.db`, result grids are read-only, and dangerous SQL requires confirmation before execution.
 
@@ -66,7 +66,5 @@ src-tauri/target/release/bundle/dmg/VaporLensDB_0.1.1_aarch64.dmg
 ## Important Documents
 
 - `docs/VaporLensDB-Design.md`: product and architecture design.
-- `docs/VaporLensDB-Implementation-Plan.md`: phased AI/developer implementation plan.
-- `docs/VaporLensDB-v1-scope-and-backlog.md`: v1 supported surface and backlog recovery criteria.
-- `docs/TASKS-v1-usable-loop.md`: ordered v1 implementation task list.
-- `docs/TASKS-post-v1-backlog.md`: post-v1 optimization and recovery tasks.
+- `docs/VaporLensDB-Technical-Selection.md`: technical selection rationale for Rust/Tauri, native drivers, JDBC sidecar, and ODBC.
+- `docs/TASKS.md`: current progress, completed work, and remaining task checklist.

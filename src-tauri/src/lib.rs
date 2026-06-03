@@ -6,15 +6,19 @@ pub mod utils;
 
 use services::{
     config_store::ConfigStore, connection_manager::ConnectionManager,
-    metadata_service::MetadataService, query_engine::QueryEngine,
+    metadata_index::MetadataIndexService, metadata_service::MetadataService,
+    query_engine::QueryEngine, task_manager::TaskManager,
 };
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 pub struct AppState {
     pub config_store: ConfigStore,
     pub connection_manager: Mutex<ConnectionManager>,
     pub metadata_service: MetadataService,
+    pub metadata_index: MetadataIndexService,
     pub query_engine: QueryEngine,
+    pub task_manager: TaskManager,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -29,9 +33,21 @@ pub fn run() {
             config_store,
             connection_manager: Mutex::new(ConnectionManager::new()),
             metadata_service: MetadataService::new(),
+            metadata_index: MetadataIndexService::new(),
             query_engine: QueryEngine::new(),
+            task_manager: TaskManager::new(),
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let state = window.state::<AppState>();
+                tauri::async_runtime::block_on(async {
+                    state.connection_manager.lock().await.shutdown_all().await;
+                    state.metadata_index.clear_all().await;
+                });
+            }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::contract::list_command_contracts,
             commands::health::health_check,
             commands::connection::create_connection,
             commands::connection::update_connection,
@@ -53,6 +69,9 @@ pub fn run() {
             commands::metadata::get_views,
             commands::metadata::get_functions,
             commands::metadata::get_table_ddl,
+            commands::metadata::start_metadata_index_task,
+            commands::metadata::search_metadata_index,
+            commands::metadata::clear_metadata_index,
             commands::query::execute_query,
             commands::query::execute_query_stream,
             commands::query::explain_query,
@@ -60,7 +79,10 @@ pub fn run() {
             commands::query::analyze_sql_risk,
             commands::query_history::add_query_history,
             commands::query_history::list_query_history,
-            commands::query_history::clear_query_history
+            commands::query_history::clear_query_history,
+            commands::task::list_tasks,
+            commands::task::cancel_task,
+            commands::task::start_noop_task
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

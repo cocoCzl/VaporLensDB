@@ -1,4 +1,5 @@
 import { invokeCommand } from '@/ipc/client'
+import { COMMANDS } from '@/ipc/contracts'
 
 export interface HealthCheckResponse {
   status: 'ok'
@@ -7,5 +8,5 @@ export interface HealthCheckResponse {
 }
 
 export function healthCheck() {
-  return invokeCommand<HealthCheckResponse>('health_check')
+  return invokeCommand<HealthCheckResponse>(COMMANDS.healthCheck)
 }

@@ -609,6 +609,22 @@ impl DatabaseDriver for PostgresDriver {
                 message: error.to_string(),
             })
     }
+
+    async fn cancel_all_queries(&self) -> Result<(), AppError> {
+        let tokens = self
+            .active_queries
+            .lock()
+            .map_err(|_| AppError::ConfigError("active query registry is poisoned".to_string()))?
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for token in tokens {
+            let _ = token.cancel_query(NoTls).await;
+        }
+
+        Ok(())
+    }
 }
 
 impl PostgresDriver {

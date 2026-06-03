@@ -8,12 +8,18 @@ import {
   getSchemas,
   getTables,
   getViews,
+  searchMetadataIndex,
+  startMetadataIndexTask,
 } from '@/ipc/metadata'
+import { normalizeAppError } from '@/ipc/client'
+import { useTaskStore } from '@/stores/taskStore'
+import { useUiStore } from '@/stores/uiStore'
 import type {
   ColumnInfo,
   DatabaseInfo,
   ForeignKeyInfo,
   IndexInfo,
+  MetadataSearchResult,
   SchemaInfo,
   TableInfo,
 } from '@/types/metadata'
@@ -27,7 +33,9 @@ export interface MetadataState {
   columns: Record<string, ColumnInfo[]>
   indexes: Record<string, IndexInfo[]>
   foreignKeys: Record<string, ForeignKeyInfo[]>
+  indexResults: MetadataSearchResult[]
   loading: Record<string, boolean>
+  indexLoading: boolean
   loadDatabases: (connectionId: string, force?: boolean) => Promise<DatabaseInfo[]>
   loadSchemas: (
     connectionId: string,
@@ -55,6 +63,8 @@ export interface MetadataState {
     table: string,
     force?: boolean,
   ) => Promise<ForeignKeyInfo[]>
+  startIndexing: (connectionId: string, force?: boolean) => Promise<void>
+  searchIndex: (query: string, connectionId?: string | null) => Promise<MetadataSearchResult[]>
   clearConnection: (connectionId: string) => void
 }
 
@@ -75,7 +85,9 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
   columns: {},
   indexes: {},
   foreignKeys: {},
+  indexResults: [],
   loading: {},
+  indexLoading: false,
 
   loadDatabases: async (connectionId, force = false) => {
     const cacheKey = connectionId
@@ -173,6 +185,41 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     })
   },
 
+  startIndexing: async (connectionId, force = true) => {
+    set({ indexLoading: true })
+    try {
+      const task = await startMetadataIndexTask({ connectionId, force })
+      useTaskStore.getState().upsertTask(task)
+      useUiStore.getState().notify({
+        kind: 'info',
+        title: '已启动元数据索引',
+        message: task.title,
+      })
+    } catch (error) {
+      useUiStore.getState().notifyError(normalizeAppError(error), '启动元数据索引失败')
+      throw error
+    } finally {
+      set({ indexLoading: false })
+    }
+  },
+
+  searchIndex: async (query, connectionId = null) => {
+    const normalized = query.trim()
+    if (normalized.length < 2) {
+      set({ indexResults: [] })
+      return []
+    }
+
+    try {
+      const results = await searchMetadataIndex({ query: normalized, connectionId, limit: 40 })
+      set({ indexResults: results })
+      return results
+    } catch (error) {
+      useUiStore.getState().notifyError(normalizeAppError(error), '搜索元数据索引失败')
+      throw error
+    }
+  },
+
   clearConnection: (connectionId) =>
     set((state) => ({
       databases: omitByPrefix(state.databases, connectionId),
@@ -183,6 +230,9 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       columns: omitByPrefix(state.columns, connectionId),
       indexes: omitByPrefix(state.indexes, connectionId),
       foreignKeys: omitByPrefix(state.foreignKeys, connectionId),
+      indexResults: state.indexResults.filter(
+        (result) => result.entry.connectionId !== connectionId,
+      ),
       loading: omitByPrefix(state.loading, connectionId),
     })),
 }))

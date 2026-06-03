@@ -5,6 +5,7 @@ import type { DatabaseInfo, SchemaInfo } from '@/types/metadata'
 
 interface EditorToolbarProps {
   connections: ConnectionConfig[]
+  connectionStatuses?: Record<string, string>
   connectionId: string | null
   database?: string | null
   schema?: string | null
@@ -26,6 +27,7 @@ interface EditorToolbarProps {
 
 export function EditorToolbar({
   connections,
+  connectionStatuses = {},
   connectionId,
   database,
   schema,
@@ -57,6 +59,7 @@ export function EditorToolbar({
           {connections.map((connection) => (
             <option key={connection.id} value={connection.id}>
               {connection.name}
+              {connectionStatuses[connection.id] === 'connected' ? '' : ' (未连接)'}
             </option>
           ))}
         </select>

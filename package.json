@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test:v1-ui-scope": "node scripts/v1-ui-scope-smoke.mjs",
+    "test:command-contracts": "node scripts/command-contract-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "build:app": "./build.sh",

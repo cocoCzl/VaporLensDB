@@ -30,7 +30,14 @@ export function ConnectionDialog({
   return (
     <>
       {trigger ? (
-        <span onClick={() => setOpen(true)}>{trigger}</span>
+        <span
+          onClick={(event) => {
+            event.stopPropagation()
+            setOpen(true)
+          }}
+        >
+          {trigger}
+        </span>
       ) : (
         <Button
           type="button"

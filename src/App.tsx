@@ -6,12 +6,16 @@ import { TabBar } from './components/layout/TabBar'
 import { healthCheck } from './ipc/health'
 import { NotificationBridge } from './components/common/NotificationBridge'
 import { useUiStore } from './stores/uiStore'
+import { onTaskUpdated } from './ipc/task'
+import { useTaskStore } from './stores/taskStore'
 import splashBackground from './assets/brand/splash-background.png'
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
   const [showSplash, setShowSplash] = useState(true)
   const theme = useUiStore((state) => state.theme)
+  const loadTasks = useTaskStore((state) => state.loadTasks)
+  const upsertTask = useTaskStore((state) => state.upsertTask)
 
   useEffect(() => {
     let cancelled = false
@@ -39,6 +43,29 @@ export default function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    void loadTasks()
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+
+    onTaskUpdated((task) => upsertTask(task))
+      .then((dispose) => {
+        if (cancelled) {
+          dispose()
+        } else {
+          unlisten = dispose
+        }
+      })
+      .catch(() => {
+        // Task events are best-effort; command calls still refresh visible state.
+      })
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [loadTasks, upsertTask])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')

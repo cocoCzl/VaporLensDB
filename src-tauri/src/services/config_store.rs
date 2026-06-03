@@ -22,6 +22,30 @@ pub struct ConfigStore {
     db_path: PathBuf,
 }
 
+struct ConfigMigration {
+    version: i64,
+    name: &'static str,
+    apply: fn(&Connection) -> Result<(), AppError>,
+}
+
+const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
+    ConfigMigration {
+        version: 1,
+        name: "create base connection store",
+        apply: create_base_connection_store,
+    },
+    ConfigMigration {
+        version: 2,
+        name: "add external driver connection fields",
+        apply: add_external_driver_connection_fields,
+    },
+    ConfigMigration {
+        version: 3,
+        name: "create query history store",
+        apply: create_query_history_store,
+    },
+];
+
 impl ConfigStore {
     pub fn new_default() -> Result<Self, AppError> {
         let home = std::env::var("HOME").map_err(|_| {
@@ -235,57 +259,7 @@ impl ConfigStore {
 
     fn init(&self) -> Result<(), AppError> {
         let conn = self.conn()?;
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version INTEGER PRIMARY KEY,
-                applied_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS connections (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                driver_type TEXT NOT NULL,
-                host TEXT,
-                port INTEGER,
-                database_name TEXT,
-                connection_url TEXT,
-                username TEXT,
-                password_encrypted TEXT,
-                driver_class TEXT,
-                driver_paths TEXT,
-                ssl_mode TEXT,
-                group_name TEXT,
-                color_tag TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS query_history (
-                id TEXT PRIMARY KEY,
-                connection_id TEXT NOT NULL,
-                connection_name_snapshot TEXT NOT NULL,
-                driver_type TEXT NOT NULL,
-                database_name TEXT,
-                schema_name TEXT,
-                sql TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                elapsed_ms INTEGER,
-                row_count INTEGER,
-                affected_rows INTEGER,
-                error_code TEXT,
-                error_message TEXT
-            );
-
-            INSERT OR IGNORE INTO schema_migrations (version, applied_at)
-            VALUES (1, datetime('now'));
-            ",
-        )?;
-        self.ensure_column("connections", "connection_url", "TEXT")?;
-        self.ensure_column("connections", "driver_class", "TEXT")?;
-        self.ensure_column("connections", "driver_paths", "TEXT")?;
-        Ok(())
+        run_config_migrations(&conn)
     }
 
     fn conn(&self) -> Result<Connection, AppError> {
@@ -308,24 +282,163 @@ impl ConfigStore {
         Ok(())
     }
 
-    fn ensure_column(&self, table: &str, column: &str, column_type: &str) -> Result<(), AppError> {
+    #[cfg(test)]
+    fn migration_versions(&self) -> Result<Vec<i64>, AppError> {
         let conn = self.conn()?;
-        let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-        let exists = statement
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<Result<Vec<_>, _>>()?
-            .iter()
-            .any(|name| name == column);
+        let mut statement = conn.prepare(
+            "
+            SELECT version
+            FROM schema_migrations
+            ORDER BY version
+            ",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+    }
+}
 
-        if !exists {
-            conn.execute(
-                &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
-                [],
-            )?;
+fn run_config_migrations(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        );
+        ",
+    )?;
+
+    for migration in CONFIG_MIGRATIONS {
+        if migration_applied(conn, migration.version)? {
+            continue;
         }
 
-        Ok(())
+        (migration.apply)(conn).map_err(|error| {
+            AppError::ConfigError(format!(
+                "failed to apply config migration {} ({}): {}",
+                migration.version, migration.name, error
+            ))
+        })?;
+        conn.execute(
+            "
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?1, datetime('now'))
+            ",
+            params![migration.version],
+        )?;
     }
+
+    Ok(())
+}
+
+fn migration_applied(conn: &Connection, version: i64) -> Result<bool, AppError> {
+    conn.query_row(
+        "SELECT 1 FROM schema_migrations WHERE version = ?1",
+        params![version],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|value| value.is_some())
+    .map_err(AppError::from)
+}
+
+fn create_base_connection_store(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS connections (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            driver_type TEXT NOT NULL,
+            host TEXT,
+            port INTEGER,
+            database_name TEXT,
+            username TEXT,
+            password_encrypted TEXT,
+            ssl_mode TEXT,
+            group_name TEXT,
+            color_tag TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        ",
+    )
+    .map_err(AppError::from)
+}
+
+fn add_external_driver_connection_fields(conn: &Connection) -> Result<(), AppError> {
+    ensure_column(conn, "connections", "connection_url", "TEXT")?;
+    ensure_column(conn, "connections", "driver_class", "TEXT")?;
+    ensure_column(conn, "connections", "driver_paths", "TEXT")?;
+    Ok(())
+}
+
+fn create_query_history_store(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS query_history (
+            id TEXT PRIMARY KEY,
+            connection_id TEXT NOT NULL,
+            connection_name_snapshot TEXT NOT NULL,
+            driver_type TEXT NOT NULL,
+            database_name TEXT,
+            schema_name TEXT,
+            sql TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            elapsed_ms INTEGER,
+            row_count INTEGER,
+            affected_rows INTEGER,
+            error_code TEXT,
+            error_message TEXT
+        );
+        ",
+    )
+    .map_err(AppError::from)
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    column_type: &str,
+) -> Result<(), AppError> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == column);
+
+    if !exists {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>, AppError> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[cfg(test)]
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, AppError> {
+    conn.query_row(
+        "
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?1
+        ",
+        params![table],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|value| value.is_some())
+    .map_err(AppError::from)
 }
 
 fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 16] {
@@ -437,13 +550,135 @@ fn parse_error(error: impl ToString) -> rusqlite::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::ConfigStore;
+    use super::{table_columns, table_exists, ConfigStore};
     use crate::models::{
         connection::{ConnectionConfig, DriverType},
         query_history::{QueryHistoryEntry, QueryHistoryStatus},
     };
     use chrono::Utc;
+    use rusqlite::{params, Connection};
     use uuid::Uuid;
+
+    #[test]
+    fn fresh_database_runs_all_config_migrations_in_order() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-fresh-migration-test-{}",
+            Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+
+        assert_eq!(
+            store.migration_versions().expect("list migration versions"),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn upgrades_old_config_database_in_place() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-upgrade-migration-test-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp config dir");
+        let db_path = dir.join("config.db");
+        let old_connection_id = Uuid::new_v4();
+        let created_at = Utc::now().to_rfc3339();
+
+        let conn = Connection::open(&db_path).expect("open old config db");
+        conn.execute_batch(
+            "
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+
+            CREATE TABLE connections (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                driver_type TEXT NOT NULL,
+                host TEXT,
+                port INTEGER,
+                database_name TEXT,
+                username TEXT,
+                password_encrypted TEXT,
+                ssl_mode TEXT,
+                group_name TEXT,
+                color_tag TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (1, datetime('now'));
+            ",
+        )
+        .expect("create old config schema");
+        conn.execute(
+            "
+            INSERT INTO connections (
+                id, name, driver_type, host, port, database_name, username,
+                password_encrypted, ssl_mode, group_name, color_tag, created_at, updated_at
+            )
+            VALUES (?1, 'Legacy PG', 'postgres', 'localhost', 5432, 'postgres',
+                    'postgres', NULL, NULL, 'Legacy', 'dev', ?2, ?2)
+            ",
+            params![old_connection_id.to_string(), created_at],
+        )
+        .expect("insert old connection");
+        drop(conn);
+
+        let store = ConfigStore::new(dir.clone()).expect("upgrade config store");
+        let conn = Connection::open(db_path).expect("open upgraded config db");
+        let columns = table_columns(&conn, "connections").expect("list connection columns");
+
+        assert_eq!(
+            store.migration_versions().expect("list migration versions"),
+            vec![1, 2, 3]
+        );
+        assert!(columns.iter().any(|column| column == "connection_url"));
+        assert!(columns.iter().any(|column| column == "driver_class"));
+        assert!(columns.iter().any(|column| column == "driver_paths"));
+        assert!(table_exists(&conn, "query_history").expect("query history table exists"));
+
+        let upgraded = store
+            .get_connection(old_connection_id)
+            .expect("get upgraded connection")
+            .expect("connection exists");
+        assert_eq!(upgraded.name, "Legacy PG");
+        assert_eq!(upgraded.group.as_deref(), Some("Legacy"));
+    }
+
+    #[test]
+    fn config_migration_failure_reports_version_and_name() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-failed-migration-test-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp config dir");
+        let conn = Connection::open(dir.join("config.db")).expect("open broken config db");
+        conn.execute_batch(
+            "
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (1, datetime('now'));
+            ",
+        )
+        .expect("create broken config schema");
+        drop(conn);
+
+        let error = ConfigStore::new(dir).expect_err("migration should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("failed to apply config migration 2"));
+        assert!(message.contains("add external driver connection fields"));
+    }
 
     #[test]
     fn stores_connection_without_plaintext_password() {

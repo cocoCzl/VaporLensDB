@@ -1,5 +1,4 @@
 import {
-  Code2,
   Database,
   FileCode2,
   Moon,
@@ -9,7 +8,7 @@ import {
   TerminalSquare,
   Trash2,
 } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { Button } from '@/components/ui/button'
@@ -105,9 +104,13 @@ function RailButton({
 function SqlWorkspacePanel() {
   const { tabs, activeTabId, setActiveTab, addTab } = useEditorStore()
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
+  const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
   const history = useQueryHistoryStore((state) => state.entries)
   const clearHistory = useQueryHistoryStore((state) => state.clear)
   const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
+  const historyLoading = useQueryHistoryStore((state) => state.loading)
+  const notify = useUiStore((state) => state.notify)
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false)
 
   useEffect(() => {
     loadHistory()
@@ -123,16 +126,21 @@ function SqlWorkspacePanel() {
   }
 
   async function handleClearHistory() {
-    if (history.length === 0) {
+    if (history.length === 0 || historyLoading) {
       return
     }
 
-    const confirmed = window.confirm('确定要清空所有查询历史吗？此操作不会删除连接或查询结果。')
-    if (!confirmed) {
+    if (!confirmClearHistory) {
+      setConfirmClearHistory(true)
+      window.setTimeout(() => setConfirmClearHistory(false), 3000)
       return
     }
 
-    await clearHistory()
+    const cleared = await clearHistory()
+    setConfirmClearHistory(false)
+    if (cleared) {
+      notify({ kind: 'success', title: '查询历史已清空' })
+    }
   }
 
   return (
@@ -161,7 +169,10 @@ function SqlWorkspacePanel() {
                       ? 'bg-primary/15 text-primary ring-1 ring-primary/25'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                   ].join(' ')}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    setActiveTab(tab.id)
+                    setActiveConnection(tab.connectionId)
+                  }}
                 >
                   <FileCode2 className="size-4 shrink-0" />
                   <span className="min-w-0 flex-1">
@@ -181,9 +192,9 @@ function SqlWorkspacePanel() {
             <Button
               type="button"
               size="icon-xs"
-              variant="ghost"
-              title="清空查询历史"
-              disabled={history.length === 0}
+              variant={confirmClearHistory ? 'destructive' : 'ghost'}
+              title={confirmClearHistory ? '再次点击确认清空' : '清空查询历史'}
+              disabled={history.length === 0 || historyLoading}
               onClick={() => {
                 void handleClearHistory()
               }}
@@ -203,6 +214,7 @@ function SqlWorkspacePanel() {
                   type="button"
                   className="w-full rounded-md border bg-background/60 px-2 py-1.5 text-left text-xs hover:bg-muted"
                   onClick={() => {
+                    setActiveConnection(entry.connectionId)
                     addTab({
                       id: crypto.randomUUID(),
                       title: '历史 SQL',
@@ -251,6 +263,7 @@ function SettingsPanel() {
   const historyLoading = useQueryHistoryStore((state) => state.loading)
   const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
   const clearHistory = useQueryHistoryStore((state) => state.clear)
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false)
 
   useEffect(() => {
     loadHistory()
@@ -261,12 +274,14 @@ function SettingsPanel() {
       return
     }
 
-    const confirmed = window.confirm('确定要清空所有查询历史吗？此操作不会删除连接或查询结果。')
-    if (!confirmed) {
+    if (!confirmClearHistory) {
+      setConfirmClearHistory(true)
+      window.setTimeout(() => setConfirmClearHistory(false), 3000)
       return
     }
 
     const cleared = await clearHistory()
+    setConfirmClearHistory(false)
     if (cleared) {
       notify({ kind: 'success', title: '查询历史已清空' })
     }
@@ -312,14 +327,14 @@ function SettingsPanel() {
           <Button
             type="button"
             size="sm"
-            variant="outline"
+            variant={confirmClearHistory ? 'destructive' : 'outline'}
             disabled={history.length === 0 || historyLoading}
             onClick={() => {
               void handleClearHistory()
             }}
           >
             <Trash2 className="size-3.5" />
-            清空
+            {confirmClearHistory ? '确认清空' : '清空'}
           </Button>
         </div>
       </section>

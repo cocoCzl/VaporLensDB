@@ -1,34 +1,35 @@
 import { invokeCommand } from '@/ipc/client'
+import { COMMANDS } from '@/ipc/contracts'
 import type { ConnectionConfig, ConnectionInput, ConnectionStatus } from '@/types/connection'
 
 export function createConnection(input: ConnectionInput) {
-  return invokeCommand<ConnectionConfig>('create_connection', { input })
+  return invokeCommand<ConnectionConfig>(COMMANDS.createConnection, { input })
 }
 
 export function updateConnection(input: ConnectionInput) {
-  return invokeCommand<ConnectionConfig>('update_connection', { input })
+  return invokeCommand<ConnectionConfig>(COMMANDS.updateConnection, { input })
 }
 
 export function deleteConnection(id: string) {
-  return invokeCommand<void>('delete_connection', { id })
+  return invokeCommand<void>(COMMANDS.deleteConnection, { id })
 }
 
 export function listConnections() {
-  return invokeCommand<ConnectionConfig[]>('list_connections')
+  return invokeCommand<ConnectionConfig[]>(COMMANDS.listConnections)
 }
 
 export function testConnection(input: ConnectionInput) {
-  return invokeCommand<void>('test_connection', { input })
+  return invokeCommand<void>(COMMANDS.testConnection, { input })
 }
 
 export function connect(id: string) {
-  return invokeCommand<ConnectionStatus>('connect', { id })
+  return invokeCommand<ConnectionStatus>(COMMANDS.connect, { id })
 }
 
 export function disconnect(id: string) {
-  return invokeCommand<ConnectionStatus>('disconnect', { id })
+  return invokeCommand<ConnectionStatus>(COMMANDS.disconnect, { id })
 }
 
 export function listConnectionStatuses() {
-  return invokeCommand<ConnectionStatus[]>('list_connection_statuses')
+  return invokeCommand<ConnectionStatus[]>(COMMANDS.listConnectionStatuses)
 }

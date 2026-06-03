@@ -1,4 +1,5 @@
 import { invokeCommand } from '@/ipc/client'
+import { COMMANDS } from '@/ipc/contracts'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
   ExecuteQueryResponse,
@@ -34,23 +35,23 @@ export interface SqlRiskAnalysis {
 }
 
 export function executeQuery(input: ExecuteQueryInput) {
-  return invokeCommand<ExecuteQueryResponse>('execute_query', { input })
+  return invokeCommand<ExecuteQueryResponse>(COMMANDS.executeQuery, { input })
 }
 
 export function executeQueryStream(input: ExecuteQueryStreamInput) {
-  return invokeCommand<void>('execute_query_stream', { input })
+  return invokeCommand<void>(COMMANDS.executeQueryStream, { input })
 }
 
 export function explainQuery(connectionId: string, sql: string) {
-  return invokeCommand<ExplainResult>('explain_query', { connectionId, sql })
+  return invokeCommand<ExplainResult>(COMMANDS.explainQuery, { connectionId, sql })
 }
 
 export function cancelQuery(connectionId: string, queryId: string) {
-  return invokeCommand<void>('cancel_query', { connectionId, queryId })
+  return invokeCommand<void>(COMMANDS.cancelQuery, { connectionId, queryId })
 }
 
 export function analyzeSqlRisk(sql: string) {
-  return invokeCommand<SqlRiskAnalysis>('analyze_sql_risk', { sql })
+  return invokeCommand<SqlRiskAnalysis>(COMMANDS.analyzeSqlRisk, { sql })
 }
 
 export function onQueryResultChunk(handler: (chunk: QueryResultChunk) => void): Promise<UnlistenFn> {

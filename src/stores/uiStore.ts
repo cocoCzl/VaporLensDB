@@ -89,7 +89,7 @@ export const useUiStore = create<UiState>((set) => ({
           id: crypto.randomUUID(),
           kind: 'error',
           title,
-          message: error.detail ? `${error.message}\n${error.detail}` : error.message,
+          message: compactErrorMessage(error),
         },
       ],
     })),
@@ -137,6 +137,27 @@ function writeStoredSettings(settings: UserSettings) {
     return
   }
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+}
+
+function compactErrorMessage(error: AppError) {
+  const message = summarizeError(error.message)
+  const detail = error.detail ? summarizeError(error.detail) : null
+  return detail && detail !== message ? `${message}\n${detail}` : message
+}
+
+function summarizeError(value: string) {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  const noRoute = normalized.match(/No route to host[^.。]*/i)?.[0]
+  if (noRoute) {
+    return noRoute
+  }
+
+  const network = normalized.match(/The Network Adapter could not establish the connection/i)?.[0]
+  if (network) {
+    return network
+  }
+
+  return normalized.length > 220 ? `${normalized.slice(0, 220)}...` : normalized
 }
 
 function clampNumber(

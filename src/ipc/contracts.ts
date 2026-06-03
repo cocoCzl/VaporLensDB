@@ -1,0 +1,69 @@
+import { invokeCommand } from '@/ipc/client'
+import commandContracts from '@/shared/command-contracts.json'
+
+export type CommandNamespace =
+  | 'contract'
+  | 'connection'
+  | 'driver'
+  | 'history'
+  | 'metadata'
+  | 'query'
+  | 'settings'
+  | 'task'
+
+export type CommandStatus = 'active' | 'planned'
+
+export interface CommandContract {
+  name: string
+  namespace: CommandNamespace
+  args: string
+  response: string
+  status: CommandStatus
+}
+
+export const COMMAND_CONTRACTS = commandContracts as CommandContract[]
+
+export const COMMANDS = {
+  listCommandContracts: 'list_command_contracts',
+  healthCheck: 'health_check',
+  createConnection: 'create_connection',
+  updateConnection: 'update_connection',
+  deleteConnection: 'delete_connection',
+  listConnections: 'list_connections',
+  testConnection: 'test_connection',
+  connect: 'connect',
+  disconnect: 'disconnect',
+  connectionStatus: 'connection_status',
+  listConnectionStatuses: 'list_connection_statuses',
+  listDriverDefinitions: 'list_driver_definitions',
+  validateExternalDriver: 'validate_external_driver',
+  getDatabases: 'get_databases',
+  getSchemas: 'get_schemas',
+  getTables: 'get_tables',
+  getColumns: 'get_columns',
+  getIndexes: 'get_indexes',
+  getForeignKeys: 'get_foreign_keys',
+  getViews: 'get_views',
+  getFunctions: 'get_functions',
+  getTableDdl: 'get_table_ddl',
+  startMetadataIndexTask: 'start_metadata_index_task',
+  searchMetadataIndex: 'search_metadata_index',
+  clearMetadataIndex: 'clear_metadata_index',
+  executeQuery: 'execute_query',
+  executeQueryStream: 'execute_query_stream',
+  explainQuery: 'explain_query',
+  cancelQuery: 'cancel_query',
+  analyzeSqlRisk: 'analyze_sql_risk',
+  addQueryHistory: 'add_query_history',
+  listQueryHistory: 'list_query_history',
+  clearQueryHistory: 'clear_query_history',
+  listTasks: 'list_tasks',
+  cancelTask: 'cancel_task',
+  startNoopTask: 'start_noop_task',
+} as const
+
+export type CommandName = (typeof COMMANDS)[keyof typeof COMMANDS]
+
+export function listCommandContracts() {
+  return invokeCommand<CommandContract[]>(COMMANDS.listCommandContracts)
+}

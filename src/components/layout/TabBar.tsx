@@ -6,6 +6,7 @@ import { useEditorStore } from '@/stores/editorStore'
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, addTab, closeTab } = useEditorStore()
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
+  const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
 
   function createTab() {
     const index = tabs.length + 1
@@ -32,7 +33,10 @@ export function TabBar() {
                   ? 'bg-background text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary))]'
                   : 'text-muted-foreground hover:bg-muted',
               ].join(' ')}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id)
+                setActiveConnection(tab.connectionId)
+              }}
             >
               <span className="truncate">{tab.title}</span>
               <span

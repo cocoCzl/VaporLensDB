@@ -1,0 +1,254 @@
+[
+  {
+    "name": "list_command_contracts",
+    "namespace": "contract",
+    "args": "void",
+    "response": "CommandContract[]",
+    "status": "active"
+  },
+  {
+    "name": "health_check",
+    "namespace": "settings",
+    "args": "void",
+    "response": "HealthCheckResponse",
+    "status": "active"
+  },
+  {
+    "name": "create_connection",
+    "namespace": "connection",
+    "args": "{ input: ConnectionInput }",
+    "response": "ConnectionConfig",
+    "status": "active"
+  },
+  {
+    "name": "update_connection",
+    "namespace": "connection",
+    "args": "{ input: ConnectionInput }",
+    "response": "ConnectionConfig",
+    "status": "active"
+  },
+  {
+    "name": "delete_connection",
+    "namespace": "connection",
+    "args": "{ id: string }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "list_connections",
+    "namespace": "connection",
+    "args": "void",
+    "response": "ConnectionConfig[]",
+    "status": "active"
+  },
+  {
+    "name": "test_connection",
+    "namespace": "connection",
+    "args": "{ input: ConnectionInput }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "connect",
+    "namespace": "connection",
+    "args": "{ id: string }",
+    "response": "ConnectionStatus",
+    "status": "active"
+  },
+  {
+    "name": "disconnect",
+    "namespace": "connection",
+    "args": "{ id: string }",
+    "response": "ConnectionStatus",
+    "status": "active"
+  },
+  {
+    "name": "connection_status",
+    "namespace": "connection",
+    "args": "{ id: string }",
+    "response": "ConnectionStatus",
+    "status": "active"
+  },
+  {
+    "name": "list_connection_statuses",
+    "namespace": "connection",
+    "args": "void",
+    "response": "ConnectionStatus[]",
+    "status": "active"
+  },
+  {
+    "name": "list_driver_definitions",
+    "namespace": "driver",
+    "args": "void",
+    "response": "DriverDefinition[]",
+    "status": "active"
+  },
+  {
+    "name": "validate_external_driver",
+    "namespace": "driver",
+    "args": "{ input: ValidateExternalDriverInput }",
+    "response": "ExternalDriverValidation",
+    "status": "active"
+  },
+  {
+    "name": "get_databases",
+    "namespace": "metadata",
+    "args": "{ connectionId: string }",
+    "response": "DatabaseInfo[]",
+    "status": "active"
+  },
+  {
+    "name": "get_schemas",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; database?: string | null }",
+    "response": "SchemaInfo[]",
+    "status": "active"
+  },
+  {
+    "name": "get_tables",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; schema: string }",
+    "response": "TableInfo[]",
+    "status": "active"
+  },
+  {
+    "name": "get_columns",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; schema: string; table: string }",
+    "response": "ColumnInfo[]",
+    "status": "active"
+  },
+  {
+    "name": "get_indexes",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; schema: string; table: string }",
+    "response": "IndexInfo[]",
+    "status": "active"
+  },
+  {
+    "name": "get_foreign_keys",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; schema: string; table: string }",
+    "response": "ForeignKeyInfo[]",
+    "status": "active"
+  },
+  {
+    "name": "get_views",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; schema: string }",
+    "response": "TableInfo[]",
+    "status": "active"
+  },
+  {
+    "name": "get_functions",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; schema: string }",
+    "response": "string[]",
+    "status": "active"
+  },
+  {
+    "name": "get_table_ddl",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; schema: string; table: string }",
+    "response": "string",
+    "status": "active"
+  },
+  {
+    "name": "start_metadata_index_task",
+    "namespace": "metadata",
+    "args": "{ input: StartMetadataIndexInput }",
+    "response": "TaskInfo",
+    "status": "active"
+  },
+  {
+    "name": "search_metadata_index",
+    "namespace": "metadata",
+    "args": "{ input: SearchMetadataIndexInput }",
+    "response": "MetadataSearchResult[]",
+    "status": "active"
+  },
+  {
+    "name": "clear_metadata_index",
+    "namespace": "metadata",
+    "args": "{ input?: ClearMetadataIndexInput }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "execute_query",
+    "namespace": "query",
+    "args": "{ input: ExecuteQueryInput }",
+    "response": "ExecuteQueryResponse",
+    "status": "active"
+  },
+  {
+    "name": "execute_query_stream",
+    "namespace": "query",
+    "args": "{ input: ExecuteQueryStreamInput }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "explain_query",
+    "namespace": "query",
+    "args": "{ connectionId: string; sql: string }",
+    "response": "ExplainResult",
+    "status": "active"
+  },
+  {
+    "name": "cancel_query",
+    "namespace": "query",
+    "args": "{ connectionId: string; queryId: string }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "analyze_sql_risk",
+    "namespace": "query",
+    "args": "{ sql: string }",
+    "response": "SqlRiskAnalysis",
+    "status": "active"
+  },
+  {
+    "name": "add_query_history",
+    "namespace": "history",
+    "args": "{ input: CreateQueryHistoryInput }",
+    "response": "QueryHistoryEntry",
+    "status": "active"
+  },
+  {
+    "name": "list_query_history",
+    "namespace": "history",
+    "args": "{ limit?: number }",
+    "response": "QueryHistoryEntry[]",
+    "status": "active"
+  },
+  {
+    "name": "clear_query_history",
+    "namespace": "history",
+    "args": "void",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "list_tasks",
+    "namespace": "task",
+    "args": "void",
+    "response": "TaskInfo[]",
+    "status": "active"
+  },
+  {
+    "name": "cancel_task",
+    "namespace": "task",
+    "args": "{ taskId: string }",
+    "response": "TaskInfo",
+    "status": "active"
+  },
+  {
+    "name": "start_noop_task",
+    "namespace": "task",
+    "args": "{ input?: StartNoopTaskInput }",
+    "response": "TaskInfo",
+    "status": "active"
+  }
+]

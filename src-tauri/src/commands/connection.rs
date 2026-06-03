@@ -60,6 +60,7 @@ pub fn update_connection(
 pub async fn delete_connection(state: State<'_, AppState>, id: Uuid) -> Result<(), String> {
     state.connection_manager.lock().await.disconnect(id).ok();
     state.metadata_service.clear_connection(id).await;
+    state.metadata_index.clear_connection(id).await;
     state.config_store.delete_connection(id).map_err(Into::into)
 }
 
@@ -97,6 +98,7 @@ pub async fn connect(state: State<'_, AppState>, id: Uuid) -> Result<ConnectionS
         .map_err(String::from)?;
 
     state.metadata_service.clear_connection(id).await;
+    state.metadata_index.clear_connection(id).await;
 
     state
         .connection_manager
@@ -116,6 +118,7 @@ pub async fn disconnect(state: State<'_, AppState>, id: Uuid) -> Result<Connecti
         .disconnect(id)
         .map_err(String::from)?;
     state.metadata_service.clear_connection(id).await;
+    state.metadata_index.clear_connection(id).await;
     Ok(status)
 }
 

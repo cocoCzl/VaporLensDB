@@ -1,7 +1,8 @@
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
 import type { AppError } from '@/types/error'
+import type { CommandName } from '@/ipc/contracts'
 
-export async function invokeCommand<T>(command: string, args?: InvokeArgs): Promise<T> {
+export async function invokeCommand<T>(command: CommandName, args?: InvokeArgs): Promise<T> {
   if (!isTauriRuntime()) {
     throw {
       code: 'TAURI_RUNTIME_UNAVAILABLE',

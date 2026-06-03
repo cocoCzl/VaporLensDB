@@ -30,7 +30,7 @@ interface ConnectionState {
 }
 
 function errorMessage(error: unknown) {
-  return normalizeAppError(error).message
+  return summarizeConnectionError(normalizeAppError(error).message)
 }
 
 function notifyError(error: unknown, title: string) {
@@ -39,6 +39,16 @@ function notifyError(error: unknown, title: string) {
 
 function indexStatuses(statuses: ConnectionStatus[]) {
   return Object.fromEntries(statuses.map((status) => [status.connectionId, status]))
+}
+
+function summarizeConnectionError(message: string) {
+  const normalized = message.replace(/\s+/g, ' ').trim()
+  const noRoute = normalized.match(/No route to host[^.。]*/i)?.[0]
+  if (noRoute) return noRoute
+  if (/The Network Adapter could not establish the connection/i.test(normalized)) {
+    return '目标数据库网络不可达，请检查主机、端口、防火墙或 VPN。'
+  }
+  return normalized.length > 120 ? `${normalized.slice(0, 120)}...` : normalized
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({

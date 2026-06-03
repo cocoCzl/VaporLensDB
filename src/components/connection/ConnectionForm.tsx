@@ -134,7 +134,7 @@ export function ConnectionForm({
             required
           />
           <Label htmlFor="connection-color" className="text-right text-sm">
-            颜色:
+            环境:
           </Label>
           <ColorTagInput
             value={form.colorTag ?? ''}

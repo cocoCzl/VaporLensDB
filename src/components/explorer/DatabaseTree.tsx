@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RefreshCw, Search } from 'lucide-react'
+import { ListFilter, RefreshCw, Search } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
 import { getTableDdl } from '@/ipc/metadata'
 import { useQuery } from '@/hooks/useQuery'
@@ -37,11 +37,15 @@ type NodeMap = Record<string, NodeRecord>
 const ROOT_ID = 'root'
 
 export function DatabaseTree() {
-  const { activeConnectionId, connections, statuses } = useConnectionStore()
+  const { activeConnectionId, connections, statuses, setActiveConnection } = useConnectionStore()
   const addTab = useEditorStore((state) => state.addTab)
   const notifyError = useUiStore((state) => state.notifyError)
   const notify = useUiStore((state) => state.notify)
   const metadata = useMetadataStore()
+  const indexResults = useMetadataStore((state) => state.indexResults)
+  const indexLoading = useMetadataStore((state) => state.indexLoading)
+  const startIndexing = useMetadataStore((state) => state.startIndexing)
+  const searchIndex = useMetadataStore((state) => state.searchIndex)
   const { runQuery } = useQuery()
   const [nodes, setNodes] = useState<NodeMap>({})
   const [childIds, setChildIds] = useState<Record<string, string[]>>({})
@@ -58,6 +62,7 @@ export function DatabaseTree() {
   const objectBrowsingSupported = activeConnection
     ? supportsObjectBrowsing(activeConnection.driverType)
     : false
+  const showIndexResults = filter.trim().length >= 2
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -147,6 +152,19 @@ export function DatabaseTree() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConnectionId, isConnected, objectBrowsingSupported])
 
+  useEffect(() => {
+    const query = filter.trim()
+    const timer = window.setTimeout(() => {
+      if (query.length >= 2) {
+        void searchIndex(query)
+      } else {
+        void searchIndex('')
+      }
+    }, 180)
+
+    return () => window.clearTimeout(timer)
+  }, [filter, searchIndex])
+
   async function toggleNode(id: string, force = false) {
     const node = nodes[id]
     if (!node?.expandable || !activeConnectionId) {
@@ -186,6 +204,51 @@ export function DatabaseTree() {
       return
     }
     toggleNode(id, true)
+  }
+
+  function startMetadataIndex() {
+    if (!activeConnectionId || !isConnected || !objectBrowsingSupported) {
+      return
+    }
+    void startIndexing(activeConnectionId, true)
+  }
+
+  function openIndexResult(result: (typeof indexResults)[number]) {
+    const entry = result.entry
+    setActiveConnection(entry.connectionId)
+    const connection = connections.find((candidate) => candidate.id === entry.connectionId)
+    if (!connection) {
+      return
+    }
+
+    const table = entry.table ?? (entry.kind === 'table' || entry.kind === 'view' ? entry.name : null)
+    if (!table || !entry.schema) {
+      notify({
+        kind: 'info',
+        title: '已切换连接',
+        message: entry.path.join(' / '),
+      })
+      return
+    }
+
+    if (statuses[entry.connectionId]?.status !== 'connected') {
+      notify({
+        kind: 'warning',
+        title: '连接未建立',
+        message: '请先连接该数据源，再打开对象。',
+      })
+      return
+    }
+
+    const sql = `SELECT *\nFROM ${qualifiedName(connection.driverType, entry.schema, table)}\nLIMIT 1000;`
+    const tabId = crypto.randomUUID()
+    addTab({
+      id: tabId,
+      title: `${table} 数据`,
+      sql,
+      connectionId: entry.connectionId,
+    })
+    runQuery(tabId, entry.connectionId, sql)
   }
 
   async function openTableData(nodeId: string) {
@@ -312,6 +375,16 @@ export function DatabaseTree() {
         >
           <RefreshCw />
         </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          title="索引当前连接对象"
+          disabled={!isConnected || !objectBrowsingSupported || indexLoading}
+          onClick={startMetadataIndex}
+        >
+          <ListFilter />
+        </Button>
       </div>
 
       <div className="flex h-10 items-center gap-1 border-b px-2">
@@ -328,7 +401,9 @@ export function DatabaseTree() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-1">
-        {!isConnected ? (
+        {showIndexResults ? (
+          <MetadataSearchResults results={indexResults} onOpen={openIndexResult} />
+        ) : !isConnected ? (
           <div className="grid h-24 place-items-center text-center text-xs text-muted-foreground">
             连接数据库后浏览对象
           </div>
@@ -370,6 +445,55 @@ export function DatabaseTree() {
       )}
     </section>
   )
+}
+
+function MetadataSearchResults({
+  results,
+  onOpen,
+}: {
+  results: import('@/types/metadata').MetadataSearchResult[]
+  onOpen: (result: import('@/types/metadata').MetadataSearchResult) => void
+}) {
+  if (results.length === 0) {
+    return (
+      <div className="grid h-24 place-items-center px-4 text-center text-xs text-muted-foreground">
+        暂无索引结果。可点击对象浏览器右上角索引按钮刷新当前连接索引。
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid gap-0.5">
+      {results.map((result) => (
+        <button
+          key={`${result.entry.connectionId}:${result.entry.kind}:${result.entry.path.join('.')}`}
+          type="button"
+          className="rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+          onClick={() => onOpen(result)}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate font-medium">{result.entry.name}</span>
+            <span className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground">
+              {metadataKindLabel(result.entry.kind)}
+            </span>
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            {result.entry.path.join(' / ')}
+          </div>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function metadataKindLabel(kind: import('@/types/metadata').MetadataIndexKind) {
+  if (kind === 'connection') return '连接'
+  if (kind === 'database') return '库'
+  if (kind === 'schema') return 'Schema'
+  if (kind === 'table') return '表'
+  if (kind === 'view') return '视图'
+  if (kind === 'function') return '函数'
+  return '列'
 }
 
 async function loadChildren(

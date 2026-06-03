@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Database, Link, Link2Off, Pencil, Plus, Refr
 import { Button } from '@/components/ui/button'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { useConnectionStore } from '@/stores/connectionStore'
+import { useEditorStore } from '@/stores/editorStore'
 import type { ConnectionConfig } from '@/types/connection'
 
 export function ConnectionList() {
@@ -15,7 +16,12 @@ export function ConnectionList() {
     connectConnection,
     disconnectConnection,
     removeConnection,
+    activeConnectionId,
+    setActiveConnection,
   } = useConnectionStore()
+  const activeTabId = useEditorStore((state) => state.activeTabId)
+  const ensureTab = useEditorStore((state) => state.ensureTab)
+  const updateTabConnection = useEditorStore((state) => state.updateTabConnection)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const groupedConnections = useMemo(() => groupConnections(connections), [connections])
 
@@ -27,6 +33,12 @@ export function ConnectionList() {
     setCollapsedGroups((state) => ({ ...state, [group]: !state[group] }))
   }
 
+  function selectConnection(id: string) {
+    setActiveConnection(id)
+    const tabId = activeTabId ?? ensureTab(id)
+    updateTabConnection(tabId, id)
+  }
+
   return (
     <div className="flex max-h-[43%] min-h-44 flex-col ide-surface">
       <div className="flex h-12 items-center justify-between border-b px-3">
@@ -36,7 +48,11 @@ export function ConnectionList() {
         </div>
       </div>
 
-      {error && <div className="border-b px-3 py-2 text-xs text-destructive">{error}</div>}
+      {error && (
+        <div className="border-b px-3 py-2 text-xs text-destructive" title={error}>
+          <div className="truncate">{error}</div>
+        </div>
+      )}
 
       <div className="flex h-10 items-center gap-1 border-b px-2">
         <ConnectionDialog
@@ -89,8 +105,12 @@ export function ConnectionList() {
                         key={connection.id}
                         connection={connection}
                         status={statuses[connection.id]?.status ?? 'disconnected'}
+                        selected={connection.id === activeConnectionId}
                         loading={loading}
-                        onConnect={() => connectConnection(connection.id)}
+                        onSelect={() => selectConnection(connection.id)}
+                        onConnect={() => {
+                          void connectConnection(connection.id).then(() => selectConnection(connection.id))
+                        }}
                         onDisconnect={() => disconnectConnection(connection.id)}
                         onDelete={() => removeConnection(connection.id)}
                       />
@@ -108,14 +128,18 @@ export function ConnectionList() {
 function ConnectionCard({
   connection,
   status,
+  selected,
   loading,
+  onSelect,
   onConnect,
   onDisconnect,
   onDelete,
 }: {
   connection: ConnectionConfig
   status: string
+  selected: boolean
   loading: boolean
+  onSelect: () => void
   onConnect: () => void
   onDisconnect: () => void
   onDelete: () => void
@@ -124,29 +148,43 @@ function ConnectionCard({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={[
-        'group flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-sm transition-colors',
-        connected
-          ? 'bg-primary/10 text-foreground ring-1 ring-primary/25'
-          : 'bg-transparent hover:bg-muted/70',
+        'group flex min-w-0 cursor-pointer items-center gap-1 rounded border-l-2 px-1.5 py-1 text-sm transition-colors',
+        selected
+          ? 'border-l-primary bg-primary/15 text-foreground ring-1 ring-primary/30'
+          : 'border-l-transparent bg-transparent hover:bg-muted/70',
       ].join(' ')}
+      aria-current={selected ? 'true' : undefined}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect()
+        }
+      }}
     >
       <Database
         className={[
           'size-4 shrink-0',
-          connected ? 'text-primary' : 'text-muted-foreground',
+          selected ? 'text-primary' : connected ? 'text-emerald-500' : 'text-muted-foreground',
         ].join(' ')}
-      />
-      <span
-        className={[
-          'size-2 shrink-0 rounded-full border',
-          environmentDotClass(connection.colorTag ?? ''),
-        ].join(' ')}
-        title={environmentLabel(connection.colorTag ?? '')}
       />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-medium leading-5">{connection.name}</span>
+          {connection.colorTag && (
+            <span
+              className={[
+                'shrink-0 rounded border px-1 py-0 text-[10px] leading-4',
+                environmentBadgeClass(connection.colorTag),
+              ].join(' ')}
+              title={`环境: ${environmentLabel(connection.colorTag)}`}
+            >
+              {environmentLabel(connection.colorTag)}
+            </span>
+          )}
           <span
             className={[
               'size-1.5 shrink-0 rounded-full',
@@ -166,14 +204,26 @@ function ConnectionCard({
           variant="ghost"
           title={connected ? '断开连接' : '连接'}
           disabled={loading}
-          onClick={connected ? onDisconnect : onConnect}
+          onClick={(event) => {
+            event.stopPropagation()
+            if (connected) {
+              onDisconnect()
+            } else {
+              onConnect()
+            }
+          }}
         >
           {connected ? <Link2Off /> : <Link />}
         </Button>
         <ConnectionDialog
           connection={connection}
           trigger={
-            <Button type="button" size="icon-xs" variant="ghost" title="编辑连接">
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              title="编辑连接"
+            >
               <Pencil />
             </Button>
           }
@@ -184,7 +234,10 @@ function ConnectionCard({
           variant="ghost"
           title="删除连接"
           disabled={loading}
-          onClick={onDelete}
+          onClick={(event) => {
+            event.stopPropagation()
+            onDelete()
+          }}
         >
           <Trash2 />
         </Button>
@@ -221,12 +274,12 @@ function groupSortKey(group: string) {
   return group === '未分组' ? '\uffff' : group
 }
 
-function environmentDotClass(tag: string) {
-  if (tag === 'prod') return 'border-red-600 bg-red-500'
-  if (tag === 'stage') return 'border-amber-600 bg-amber-500'
-  if (tag === 'test') return 'border-sky-600 bg-sky-500'
-  if (tag === 'dev') return 'border-emerald-600 bg-emerald-500'
-  return 'border-muted-foreground/40 bg-transparent'
+function environmentBadgeClass(tag: string) {
+  if (tag === 'prod') return 'border-red-500/45 bg-red-500/10 text-red-400'
+  if (tag === 'stage') return 'border-amber-500/45 bg-amber-500/10 text-amber-400'
+  if (tag === 'test') return 'border-sky-500/45 bg-sky-500/10 text-sky-400'
+  if (tag === 'dev') return 'border-emerald-500/45 bg-emerald-500/10 text-emerald-400'
+  return 'border-muted-foreground/30 bg-muted/40 text-muted-foreground'
 }
 
 function environmentLabel(tag: string) {

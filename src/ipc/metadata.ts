@@ -1,45 +1,63 @@
 import { invokeCommand } from '@/ipc/client'
+import { COMMANDS } from '@/ipc/contracts'
 import type {
   ColumnInfo,
+  ClearMetadataIndexInput,
   DatabaseInfo,
   ForeignKeyInfo,
   IndexInfo,
+  MetadataSearchResult,
+  SearchMetadataIndexInput,
   SchemaInfo,
+  StartMetadataIndexInput,
   TableInfo,
 } from '@/types/metadata'
+import type { TaskInfo } from '@/types/task'
 
 export function getDatabases(connectionId: string) {
-  return invokeCommand<DatabaseInfo[]>('get_databases', { connectionId })
+  return invokeCommand<DatabaseInfo[]>(COMMANDS.getDatabases, { connectionId })
 }
 
 export function getSchemas(connectionId: string, database?: string | null) {
-  return invokeCommand<SchemaInfo[]>('get_schemas', { connectionId, database })
+  return invokeCommand<SchemaInfo[]>(COMMANDS.getSchemas, { connectionId, database })
 }
 
 export function getTables(connectionId: string, schema: string) {
-  return invokeCommand<TableInfo[]>('get_tables', { connectionId, schema })
+  return invokeCommand<TableInfo[]>(COMMANDS.getTables, { connectionId, schema })
 }
 
 export function getColumns(connectionId: string, schema: string, table: string) {
-  return invokeCommand<ColumnInfo[]>('get_columns', { connectionId, schema, table })
+  return invokeCommand<ColumnInfo[]>(COMMANDS.getColumns, { connectionId, schema, table })
 }
 
 export function getIndexes(connectionId: string, schema: string, table: string) {
-  return invokeCommand<IndexInfo[]>('get_indexes', { connectionId, schema, table })
+  return invokeCommand<IndexInfo[]>(COMMANDS.getIndexes, { connectionId, schema, table })
 }
 
 export function getForeignKeys(connectionId: string, schema: string, table: string) {
-  return invokeCommand<ForeignKeyInfo[]>('get_foreign_keys', { connectionId, schema, table })
+  return invokeCommand<ForeignKeyInfo[]>(COMMANDS.getForeignKeys, { connectionId, schema, table })
 }
 
 export function getViews(connectionId: string, schema: string) {
-  return invokeCommand<TableInfo[]>('get_views', { connectionId, schema })
+  return invokeCommand<TableInfo[]>(COMMANDS.getViews, { connectionId, schema })
 }
 
 export function getFunctions(connectionId: string, schema: string) {
-  return invokeCommand<string[]>('get_functions', { connectionId, schema })
+  return invokeCommand<string[]>(COMMANDS.getFunctions, { connectionId, schema })
 }
 
 export function getTableDdl(connectionId: string, schema: string, table: string) {
-  return invokeCommand<string>('get_table_ddl', { connectionId, schema, table })
+  return invokeCommand<string>(COMMANDS.getTableDdl, { connectionId, schema, table })
+}
+
+export function startMetadataIndexTask(input: StartMetadataIndexInput) {
+  return invokeCommand<TaskInfo>(COMMANDS.startMetadataIndexTask, { input })
+}
+
+export function searchMetadataIndex(input: SearchMetadataIndexInput) {
+  return invokeCommand<MetadataSearchResult[]>(COMMANDS.searchMetadataIndex, { input })
+}
+
+export function clearMetadataIndex(input?: ClearMetadataIndexInput) {
+  return invokeCommand<void>(COMMANDS.clearMetadataIndex, { input })
 }
