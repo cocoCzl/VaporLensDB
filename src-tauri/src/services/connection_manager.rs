@@ -8,6 +8,7 @@ use crate::{
     },
     models::{
         connection::{ConnectionConfig, ConnectionRuntimeStatus, ConnectionStatus, DriverType},
+        driver_catalog::DriverDefinition,
         error::AppError,
         metadata::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo},
         query_result::{ExplainResult, QueryResult},
@@ -32,15 +33,13 @@ impl ConnectionManager {
         &self,
         config: &ConnectionConfig,
         password: Option<&str>,
+        definition: Option<&DriverDefinition>,
     ) -> Result<(), AppError> {
-        match config.driver_type {
-            DriverType::Odbc => {
-                return validate_odbc_prerequisites(config);
-            }
-            _ => {}
+        if config.driver_type == DriverType::Odbc {
+            return validate_odbc_prerequisites(config);
         }
 
-        let driver = create_driver(config, password).await?;
+        let driver = create_driver(config, password, definition).await?;
         driver.ping().await
     }
 
@@ -48,10 +47,11 @@ impl ConnectionManager {
         &mut self,
         config: &ConnectionConfig,
         password: Option<&str>,
+        definition: Option<&DriverDefinition>,
     ) -> Result<ConnectionStatus, AppError> {
         self.set_status(config.id, ConnectionRuntimeStatus::Connecting, None);
 
-        match create_driver(config, password).await {
+        match create_driver(config, password, definition).await {
             Ok(driver) => {
                 driver.ping().await?;
                 self.connections.insert(config.id, driver);
@@ -226,6 +226,7 @@ impl Default for ConnectionManager {
 async fn create_driver(
     config: &ConnectionConfig,
     password: Option<&str>,
+    definition: Option<&DriverDefinition>,
 ) -> Result<Arc<dyn DatabaseDriver>, AppError> {
     match config.driver_type {
         DriverType::Postgres => {
@@ -256,11 +257,11 @@ async fn create_driver(
             Ok(Arc::new(driver))
         }
         DriverType::Oracle => {
-            let driver = JdbcDriver::connect(config, password).await?;
+            let driver = JdbcDriver::connect(config, password, definition).await?;
             Ok(Arc::new(driver))
         }
         DriverType::Jdbc => {
-            let driver = JdbcDriver::connect(config, password).await?;
+            let driver = JdbcDriver::connect(config, password, definition).await?;
             Ok(Arc::new(driver))
         }
         DriverType::Odbc => {

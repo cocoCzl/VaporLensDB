@@ -36,6 +36,7 @@ export function ConnectionForm({
   const [form, setForm] = useState<ConnectionInput>({
     id: connection?.id,
     name: connection?.name ?? 'Local PostgreSQL',
+    driverDefinitionId: connection?.driverDefinitionId ?? connection?.driverType ?? 'postgres',
     driverType: connection?.driverType ?? 'postgres',
     host: connection?.host ?? 'localhost',
     port: connection?.port ?? 5432,
@@ -53,50 +54,65 @@ export function ConnectionForm({
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
     defaultConnectionVariant(connection?.driverType ?? 'postgres'),
   )
-  const driverProfile = DRIVER_PROFILES[form.driverType]
   const selectableDrivers = driverDefinitions.length
-    ? driverDefinitions.filter((driver) => PRIMARY_DRIVER_IDS.includes(driver.id))
+    ? driverDefinitions.filter(
+        (driver) =>
+          PRIMARY_DRIVER_IDS.includes(driver.driverType) ||
+          (!driver.builtIn && (driver.driverType === 'jdbc' || driver.driverType === 'odbc')),
+      )
     : FALLBACK_DRIVER_OPTIONS
-  const selectedDriver = driverDefinitions.find((driver) => driver.id === form.driverType)
+  const selectedDriver =
+    driverDefinitions.find((driver) => driver.id === form.driverDefinitionId) ??
+    driverDefinitions.find((driver) => driver.driverType === form.driverType)
+  const driverProfile = profileForDriver(form.driverType, selectedDriver)
   const driverStatus = selectedDriver?.status ?? driverProfile.status
+
+  const activeConnectionVariant = driverProfile.connectionVariants.some(
+    (variant) => variant.id === connectionVariant,
+  )
+    ? connectionVariant
+    : driverProfile.connectionVariants[0].id
 
   const update = (key: keyof ConnectionInput, value: string | number | string[] | null) => {
     setForm((current) => ({ ...current, [key]: value }))
   }
 
-  const changeDriver = (driverType: DriverType) => {
-    const profile = DRIVER_PROFILES[driverType]
-    const nextVariant = defaultConnectionVariant(driverType)
+  const changeDriver = (driverDefinitionId: string) => {
+    const definition = driverDefinitions.find((driver) => driver.id === driverDefinitionId)
+    const driverType = definition?.driverType ?? (driverDefinitionId as DriverType)
+    const profile = profileForDriver(driverType, definition)
+    const nextVariant = profile.connectionVariants[0].id
     setConnectionVariant(nextVariant)
     setForm((current) => ({
       ...current,
+      driverDefinitionId: definition?.id ?? driverType,
       driverType,
-      name: current.name || profile.defaultName,
+      name: current.name || definition?.name || profile.defaultName,
       port: profile.defaultPort,
       database: current.database || profile.defaultDatabase,
       username: current.username || profile.defaultUsername,
       connectionUrl: profile.defaultUrl(current, nextVariant),
-      driverClass: profile.driverClass ?? current.driverClass,
-      driverPaths: current.driverPaths ?? [],
+      driverClass: profile.driverClass ?? '',
+      driverPaths: current.driverPaths?.length ? current.driverPaths : (definition?.driverArtifacts ?? []),
     }))
   }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setMessage(null)
-    await onSubmit(normalizeInput(form, connectionVariant))
+    await onSubmit(normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver))
   }
 
   const test = async () => {
     setMessage(null)
-    const validationError = validateRequiredFields(form, connectionVariant)
+    const validationError = validateRequiredFields(form, activeConnectionVariant)
     if (validationError) {
       setMessage(validationError)
       return
     }
 
     try {
-      await onTest(normalizeInput(form, connectionVariant))
+      await onTest(normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver))
       setMessage(driverProfile.externalDriver ? '本地驱动配置校验成功' : '连接测试成功')
     } catch (error) {
       const appError = normalizeAppError(error)
@@ -146,16 +162,18 @@ export function ConnectionForm({
           <div className="mx-auto grid max-w-4xl gap-3">
             <>
                 <FormRow label="驱动程序:">
+                  <div className="grid gap-2">
                   <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                     <select
                       id="driver-type"
                       className="ide-input"
-                      value={form.driverType}
-                      onChange={(event) => changeDriver(event.target.value as DriverType)}
+                      value={selectedDriver?.id ?? form.driverType}
+                      onChange={(event) => changeDriver(event.target.value)}
                     >
                       {selectableDrivers.map((driver) => (
                         <option key={driver.id} value={driver.id} disabled={driver.status === 'planned'}>
                           {driver.name}
+                          {!driver.builtIn ? '（custom）' : ''}
                           {driver.status === 'planned' ? '（即将支持）' : ''}
                         </option>
                       ))}
@@ -163,6 +181,8 @@ export function ConnectionForm({
                     <span className="inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs text-muted-foreground">
                       {driverStatusLabel(driverStatus)}
                     </span>
+                  </div>
+                  {selectedDriver && <DriverDefinitionSummary driver={selectedDriver} />}
                   </div>
                 </FormRow>
 
@@ -198,12 +218,12 @@ export function ConnectionForm({
                 <FormRow label="连接类型:">
                   <SegmentedControl
                     options={driverProfile.connectionVariants}
-                    value={connectionVariant}
+                    value={activeConnectionVariant}
                     onChange={setConnectionVariant}
                   />
                 </FormRow>
 
-                {connectionVariant !== 'urlOnly' && connectionVariant !== 'file' && (
+                {activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file' && (
                   <FormRow label="主机:">
                     <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
                       <Input
@@ -258,8 +278,8 @@ export function ConnectionForm({
                   </div>
                 </FormRow>
 
-                {connectionVariant !== 'urlOnly' && connectionVariant !== 'file' && (
-                  <FormRow label={databaseFieldLabel(connectionVariant)}>
+                {activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file' && (
+                  <FormRow label={databaseFieldLabel(activeConnectionVariant)}>
                     <Input
                       id="connection-database"
                       value={form.database ?? ''}
@@ -274,12 +294,12 @@ export function ConnectionForm({
                     <Input
                       id="connection-url"
                       value={
-                        connectionVariant === 'urlOnly'
+                        activeConnectionVariant === 'urlOnly'
                           ? (form.connectionUrl ?? '')
-                          : driverProfile.defaultUrl(form, connectionVariant)
+                          : driverProfile.defaultUrl(form, activeConnectionVariant)
                       }
                       placeholder={driverProfile.urlPlaceholder}
-                      readOnly={connectionVariant !== 'urlOnly'}
+                      readOnly={activeConnectionVariant !== 'urlOnly'}
                       onChange={(event) => update('connectionUrl', event.target.value)}
                     />
                   </FormRow>
@@ -287,30 +307,42 @@ export function ConnectionForm({
 
                 {driverProfile.externalDriver && (
                   <>
-                    <FormRow label="驱动类:">
-                      <Input
-                        id="driver-class"
-                        value={form.driverClass ?? ''}
-                        placeholder={driverProfile.driverClass}
-                        onChange={(event) => update('driverClass', event.target.value)}
-                      />
-                    </FormRow>
-                    <FormRow label="驱动文件:">
-                      <Input
-                        id="driver-paths"
-                        value={form.driverPaths?.join('\n') ?? ''}
-                        placeholder="/Users/me/drivers/ojdbc11.jar"
-                        onChange={(event) =>
-                          update(
-                            'driverPaths',
-                            event.target.value
-                              .split(/\r?\n|,/)
-                              .map((value) => value.trim())
-                              .filter(Boolean),
-                          )
-                        }
-                      />
-                    </FormRow>
+                    {form.driverType !== 'odbc' ? (
+                      <>
+                        <FormRow label="驱动类:">
+                          <Input
+                            id="driver-class"
+                            value={form.driverClass ?? ''}
+                            placeholder={driverProfile.driverClass}
+                            onChange={(event) => update('driverClass', event.target.value)}
+                          />
+                        </FormRow>
+                        <FormRow label="驱动文件:">
+                          <Input
+                            id="driver-paths"
+                            value={form.driverPaths?.join('\n') ?? ''}
+                            placeholder="/Users/me/drivers/ojdbc11.jar"
+                            onChange={(event) =>
+                              update(
+                                'driverPaths',
+                                event.target.value
+                                  .split(/\r?\n|,/)
+                                  .map((value) => value.trim())
+                                  .filter(Boolean),
+                              )
+                            }
+                          />
+                        </FormRow>
+                      </>
+                    ) : (
+                      <FormRow label="系统驱动:">
+                        <Input
+                          value={selectedDriver?.odbcDriverName ?? ''}
+                          placeholder="在驱动定义中选择系统 ODBC driver"
+                          readOnly
+                        />
+                      </FormRow>
+                    )}
                   </>
                 )}
 
@@ -406,6 +438,55 @@ function SegmentedControl({
   )
 }
 
+function DriverDefinitionSummary({ driver }: { driver: DriverDefinition }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+      <span className={driverOriginBadgeClass(driver)}>{driverOriginLabel(driver)}</span>
+      <span className="rounded-md border bg-background px-2 py-0.5">
+        {driverBackendLabel(driver.backend)}
+      </span>
+      {driver.userDriverRequired && (
+        <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-800">
+          需本地驱动文件
+        </span>
+      )}
+      {!driver.builtIn && (
+        <span className="rounded-md border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-emerald-800">
+          可编辑
+        </span>
+      )}
+      {driver.builtIn && (
+        <span className="rounded-md border bg-muted/45 px-2 py-0.5">
+          内置定义只读
+        </span>
+      )}
+    </div>
+  )
+}
+
+function driverOriginLabel(driver: DriverDefinition) {
+  if (!driver.builtIn) return 'Custom'
+  if (driver.status === 'configurable') return 'Preset'
+  return 'Built-in'
+}
+
+function driverOriginBadgeClass(driver: DriverDefinition) {
+  if (!driver.builtIn) {
+    return 'rounded-md border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-emerald-800'
+  }
+  if (driver.status === 'configurable') {
+    return 'rounded-md border border-sky-300 bg-sky-50 px-2 py-0.5 text-sky-800'
+  }
+  return 'rounded-md border bg-muted/45 px-2 py-0.5 text-foreground'
+}
+
+function driverBackendLabel(backend: DriverDefinition['backend']) {
+  if (backend === 'nativeRust') return 'Native Rust'
+  if (backend === 'jdbc') return 'JDBC'
+  if (backend === 'odbc') return 'ODBC'
+  return 'Planned'
+}
+
 function ColorTagInput({
   value,
   onChange,
@@ -473,10 +554,15 @@ function externalDriverStatus(input: ConnectionInput) {
   return '已填写配置'
 }
 
-function normalizeInput(input: ConnectionInput, variant: ConnectionVariant): ConnectionInput {
-  const profile = DRIVER_PROFILES[input.driverType]
+function normalizeInput(
+  input: ConnectionInput,
+  variant: ConnectionVariant,
+  profile: DriverProfile,
+  definition?: DriverDefinition,
+): ConnectionInput {
   return {
     ...input,
+    driverDefinitionId: input.driverDefinitionId ?? input.driverType,
     host: emptyToNull(input.host),
     database: emptyToNull(input.database),
     connectionUrl:
@@ -486,7 +572,7 @@ function normalizeInput(input: ConnectionInput, variant: ConnectionVariant): Con
     username: emptyToNull(input.username),
     password: emptyToNull(input.password),
     driverClass: emptyToNull(input.driverClass),
-    driverPaths: input.driverPaths ?? [],
+    driverPaths: input.driverPaths?.length ? input.driverPaths : (definition?.driverArtifacts ?? []),
     group: emptyToNull(input.group),
     colorTag: normalizeEnvironmentTag(input.colorTag),
   }
@@ -557,6 +643,62 @@ type DriverProfile = {
   urlPlaceholder?: string
   connectionVariants: ConnectionVariantOption[]
   defaultUrl: (input: ConnectionInput, variant: ConnectionVariant) => string
+}
+
+function profileForDriver(
+  driverType: DriverType,
+  definition?: DriverDefinition,
+): DriverProfile {
+  const fallback = DRIVER_PROFILES[driverType]
+  if (!definition) {
+    return fallback
+  }
+
+  const variants = definition.connectionVariants
+    .map((variant) => ({
+      id: isConnectionVariant(variant.id) ? variant.id : null,
+      label: variant.label,
+    }))
+    .filter((variant): variant is ConnectionVariantOption => variant.id !== null)
+
+  const urlTemplate = definition.urlTemplate ?? fallback.urlPlaceholder ?? ''
+
+  return {
+    ...fallback,
+    defaultPort: definition.defaultPort ?? fallback.defaultPort,
+    defaultDatabase: definition.defaultDatabase ?? fallback.defaultDatabase,
+    defaultUsername: definition.defaultUsername ?? fallback.defaultUsername,
+    status: definition.status,
+    usesUrl: fallback.usesUrl || Boolean(definition.urlTemplate),
+    externalDriver: fallback.externalDriver || definition.userDriverRequired,
+    description: definition.notes ?? fallback.description,
+    driverClass: definition.jdbcDriverClass ?? fallback.driverClass,
+    urlPlaceholder: definition.urlTemplate ?? fallback.urlPlaceholder,
+    connectionVariants: variants.length ? variants : fallback.connectionVariants,
+    defaultUrl: definition.urlTemplate
+      ? (input) => applyUrlTemplate(urlTemplate, input, definition)
+      : fallback.defaultUrl,
+  }
+}
+
+function isConnectionVariant(value: string): value is ConnectionVariant {
+  return value === 'hostPort' ||
+    value === 'urlOnly' ||
+    value === 'oracleService' ||
+    value === 'oracleSid' ||
+    value === 'file'
+}
+
+function applyUrlTemplate(template: string, input: ConnectionInput, definition?: DriverDefinition) {
+  const values: Record<string, string | number | null | undefined> = {
+    host: input.host || 'localhost',
+    port: input.port,
+    database: input.database,
+    username: input.username,
+    name: definition?.odbcDriverName,
+  }
+
+  return template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''))
 }
 
 const HOST_PORT_VARIANTS: ConnectionVariantOption[] = [
@@ -685,10 +827,10 @@ function databaseFieldLabel(variant: ConnectionVariant) {
 
 const PRIMARY_DRIVER_IDS: DriverType[] = ['postgres', 'mysql', 'oracle', 'sqlite', 'mssql']
 
-const FALLBACK_DRIVER_OPTIONS: Array<Pick<DriverDefinition, 'id' | 'name' | 'status'>> = [
-  { id: 'postgres', name: 'PostgreSQL', status: 'ready' },
-  { id: 'mysql', name: 'MySQL', status: 'ready' },
-  { id: 'oracle', name: 'Oracle（实验性，需要 JDBC 驱动）', status: 'configurable' },
-  { id: 'sqlite', name: 'SQLite', status: 'planned' },
-  { id: 'mssql', name: 'SQL Server', status: 'planned' },
+const FALLBACK_DRIVER_OPTIONS: Array<Pick<DriverDefinition, 'id' | 'driverType' | 'name' | 'status' | 'builtIn'>> = [
+  { id: 'postgres', driverType: 'postgres', name: 'PostgreSQL', status: 'ready', builtIn: true },
+  { id: 'mysql', driverType: 'mysql', name: 'MySQL', status: 'ready', builtIn: true },
+  { id: 'oracle', driverType: 'oracle', name: 'Oracle（实验性，需要 JDBC 驱动）', status: 'configurable', builtIn: true },
+  { id: 'sqlite', driverType: 'sqlite', name: 'SQLite', status: 'planned', builtIn: true },
+  { id: 'mssql', driverType: 'mssql', name: 'SQL Server', status: 'planned', builtIn: true },
 ]

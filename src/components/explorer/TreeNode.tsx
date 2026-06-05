@@ -8,7 +8,10 @@ import {
   FunctionSquare,
   KeyRound,
   ListTree,
+  Package,
+  SquareCode,
   Table2,
+  Zap,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -23,6 +26,12 @@ export type DatabaseTreeNodeKind =
   | 'index'
   | 'foreignKey'
   | 'function'
+  | 'materializedView'
+  | 'procedure'
+  | 'package'
+  | 'sequence'
+  | 'trigger'
+  | 'synonym'
 
 export interface DatabaseTreeNodeData {
   id: string
@@ -53,6 +62,12 @@ const NODE_ICONS: Record<DatabaseTreeNodeKind, LucideIcon> = {
   index: KeyRound,
   foreignKey: KeyRound,
   function: FunctionSquare,
+  materializedView: Table2,
+  procedure: SquareCode,
+  package: Package,
+  sequence: ListTree,
+  trigger: Zap,
+  synonym: SquareCode,
 }
 
 export function TreeNode({

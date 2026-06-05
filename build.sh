@@ -54,6 +54,9 @@ run_checks() {
   log "Building frontend"
   pnpm build
 
+  log "Running Rust clippy"
+  (cd "$ROOT_DIR/src-tauri" && cargo clippy --all-targets -- -D warnings)
+
   log "Running Rust tests"
   (cd "$ROOT_DIR/src-tauri" && cargo test)
 }

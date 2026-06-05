@@ -1,6 +1,7 @@
 // Requires a real PostgreSQL database.
 // Run with:
 // TEST_PG_URL='host=localhost port=5432 dbname=penguin_farm user=postgres password=postgres123' cargo test --test postgres_driver -- --ignored
+// TEST_PG_JDBC_URL='jdbc:postgresql://localhost:5432/penguin_farm' TEST_PG_USER=postgres TEST_PG_PASSWORD=postgres123 cargo test --test postgres_driver -- --ignored
 
 use std::{sync::Arc, time::Duration};
 
@@ -10,14 +11,26 @@ use vapor_lens_db_lib::drivers::{postgres::PostgresDriver, trait_def::DatabaseDr
 fn test_pg_url() -> Option<String> {
     std::env::var("TEST_PG_URL").ok().or_else(|| {
         let jdbc_url = std::env::var("TEST_PG_JDBC_URL").ok()?;
-        let database = jdbc_url
-            .strip_prefix("jdbc:postgresql://localhost:5432/")
-            .unwrap_or(&jdbc_url);
+        let target = jdbc_url.strip_prefix("jdbc:postgresql://")?;
+        let (host_port, database) = target.split_once('/').unwrap_or((target, ""));
+        let (host, port) = host_port.split_once(':').unwrap_or((host_port, "5432"));
+        let user = std::env::var("TEST_PG_USER").unwrap_or_else(|_| "postgres".to_string());
+        let password =
+            std::env::var("TEST_PG_PASSWORD").unwrap_or_else(|_| "postgres123".to_string());
+        let database = std::env::var("TEST_PG_DATABASE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| {
+                database
+                    .split('?')
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(&user)
+                    .to_string()
+            });
         Some(format!(
-            "host=localhost port=5432 dbname={} user={} password={}",
-            database,
-            std::env::var("TEST_PG_USER").unwrap_or_else(|_| "postgres".to_string()),
-            std::env::var("TEST_PG_PASSWORD").unwrap_or_else(|_| "postgres123".to_string())
+            "host={} port={} dbname={} user={} password={}",
+            host, port, database, user, password
         ))
     })
 }

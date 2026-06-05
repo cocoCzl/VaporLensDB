@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { AlertCircle, FileCode2 } from 'lucide-react'
+import { AlertCircle, Download, FileCode2 } from 'lucide-react'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { DataGrid } from '@/components/grid/DataGrid'
+import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/hooks/useQuery'
 import { normalizeAppError } from '@/ipc/client'
@@ -103,6 +104,11 @@ export function MainPanel() {
         metadataSchemas[`${connectionId}::database::::schemas`] ??
         []
       : []
+  const completionHint = completionMetadataHint(
+    connectionIsConnected,
+    queryCapabilities.canComplete,
+    selectedSchema,
+  )
 
   function sqlToRun() {
     return (selectedSql || activeTab?.sql || '').trim()
@@ -240,8 +246,9 @@ export function MainPanel() {
   }
 
   return (
-    <main className="flex flex-1 flex-col overflow-hidden bg-background">
-      <EditorToolbar
+    <main className="flex flex-1 overflow-hidden bg-background">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <EditorToolbar
         connections={connections}
         connectionStatuses={Object.fromEntries(
           Object.entries(statuses).map(([id, status]) => [id, status.status]),
@@ -280,9 +287,9 @@ export function MainPanel() {
         onCancel={cancel}
         onExplain={explain}
         onFormat={formatSql}
-      />
+        />
 
-      <div className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1">
         {editorLoaded ? (
           <Suspense
             fallback={
@@ -294,6 +301,7 @@ export function MainPanel() {
             <SqlEditor
               value={activeTab.sql}
               connectionId={queryCapabilities.canComplete ? connectionId : null}
+              schema={selectedSchema}
               onChange={(sql) => updateTabSql(activeTab.id, sql)}
               onRun={execute}
               onSelectionChange={setSelectedSql}
@@ -302,7 +310,9 @@ export function MainPanel() {
         ) : (
           <div className="flex h-full flex-col bg-card">
             <div className="flex h-9 items-center justify-between border-b px-3 text-xs text-muted-foreground">
-              <span>轻量 SQL 输入</span>
+              <span className="min-w-0 truncate">
+                轻量 SQL 输入{completionHint ? ` · ${completionHint}` : ''}
+              </span>
               <Button
                 type="button"
                 size="sm"
@@ -334,9 +344,9 @@ export function MainPanel() {
             />
           </div>
         )}
-      </div>
+        </div>
 
-      <section className="flex h-[38%] min-h-48 flex-col border-t bg-background">
+        <section className="flex h-[38%] min-h-48 flex-col border-t bg-background">
         <div className="flex h-9 items-center justify-between border-b px-3 text-xs">
           <div className="flex items-center gap-3">
             <span className="font-medium">结果</span>
@@ -359,12 +369,24 @@ export function MainPanel() {
               <span className="text-muted-foreground">Explain · {activeExplain.elapsedMs} ms</span>
             )}
           </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={!activeResult || activeResult.columns.length === 0}
+              onClick={() => activeResult && exportCurrentResult(activeResult, activeTab.title)}
+            >
+              <Download className="size-3.5" />
+              导出 CSV
+            </Button>
           {activeTab.error && (
             <div className="flex min-w-0 items-center gap-1 text-destructive">
               <AlertCircle className="size-3.5 shrink-0" />
               <span className="truncate">查询执行失败</span>
             </div>
           )}
+          </div>
         </div>
 
         <div className="min-h-0 flex-1">
@@ -392,7 +414,9 @@ export function MainPanel() {
             </div>
           )}
         </div>
-      </section>
+        </section>
+      </div>
+      <ObjectInspectorPanel />
     </main>
   )
 }
@@ -486,6 +510,13 @@ function driverQueryCapabilities(driverType: DriverType): QueryCapabilities {
         canComplete: true,
       }
     case 'oracle':
+      return {
+        canQuery: true,
+        canExplain: false,
+        canCancel: false,
+        canReadMetadata: true,
+        canComplete: true,
+      }
     case 'jdbc':
       return {
         canQuery: true,
@@ -540,4 +571,48 @@ function compactResultSummary(result: QueryResult) {
       : `${result.affectedRows.toLocaleString()} affected`
   }
   return `${result.rowCount.toLocaleString()} rows`
+}
+
+function completionMetadataHint(
+  connected: boolean,
+  canComplete: boolean,
+  selectedSchema: string | null,
+) {
+  if (!connected) return '连接后加载补全元数据'
+  if (!canComplete) return '当前驱动暂不支持元数据补全'
+  if (!selectedSchema) return '选择 Schema 后启用对象补全'
+  return null
+}
+
+function exportCurrentResult(result: QueryResult, title: string) {
+  const csv = toCsv(result)
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `${safeFileName(title || 'query-result')}.csv`
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
+function toCsv(result: QueryResult) {
+  const header = result.columns.map((column) => csvCell(column.name)).join(',')
+  const rows = result.rows.map((row) =>
+    result.columns.map((_, index) => csvCell(row[index])).join(','),
+  )
+  return [header, ...rows].join('\r\n')
+}
+
+function csvCell(value: unknown) {
+  if (value == null) {
+    return ''
+  }
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
+}
+
+function safeFileName(value: string) {
+  return value.trim().replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'query-result'
 }

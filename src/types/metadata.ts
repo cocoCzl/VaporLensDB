@@ -21,6 +21,26 @@ export interface TableInfo {
   rowCount?: number | null
 }
 
+export type DbObjectKind =
+  | 'table'
+  | 'view'
+  | 'materializedView'
+  | 'index'
+  | 'procedure'
+  | 'function'
+  | 'package'
+  | 'sequence'
+  | 'trigger'
+  | 'synonym'
+
+export interface DbObjectInfo {
+  schema?: string | null
+  name: string
+  kind: DbObjectKind
+  objectType?: string | null
+  status?: string | null
+}
+
 export interface ColumnInfo {
   schema?: string | null
   table: string

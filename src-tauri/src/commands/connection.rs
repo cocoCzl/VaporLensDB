@@ -13,6 +13,7 @@ use crate::{
 pub struct ConnectionInput {
     pub id: Option<Uuid>,
     pub name: String,
+    pub driver_definition_id: Option<String>,
     pub driver_type: DriverType,
     pub host: Option<String>,
     pub port: Option<u16>,
@@ -76,11 +77,18 @@ pub async fn test_connection(
 ) -> Result<(), String> {
     let password = input.password.clone();
     let config = input_to_config(input, Uuid::new_v4());
+    let definition = config
+        .driver_definition_id
+        .as_deref()
+        .map(|id| state.config_store.get_driver_definition(id))
+        .transpose()
+        .map_err(String::from)?
+        .flatten();
     state
         .connection_manager
         .lock()
         .await
-        .test_connection(&config, password.as_deref())
+        .test_connection(&config, password.as_deref(), definition.as_ref())
         .await
         .map_err(Into::into)
 }
@@ -100,11 +108,19 @@ pub async fn connect(state: State<'_, AppState>, id: Uuid) -> Result<ConnectionS
     state.metadata_service.clear_connection(id).await;
     state.metadata_index.clear_connection(id).await;
 
+    let definition = config
+        .driver_definition_id
+        .as_deref()
+        .map(|id| state.config_store.get_driver_definition(id))
+        .transpose()
+        .map_err(String::from)?
+        .flatten();
+
     state
         .connection_manager
         .lock()
         .await
-        .connect(&config, password.as_deref())
+        .connect(&config, password.as_deref(), definition.as_ref())
         .await
         .map_err(Into::into)
 }
@@ -142,6 +158,7 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
     ConnectionConfig {
         id,
         name: input.name,
+        driver_definition_id: input.driver_definition_id,
         driver_type: input.driver_type,
         host: input.host,
         port: input.port,

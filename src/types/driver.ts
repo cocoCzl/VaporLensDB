@@ -1,7 +1,8 @@
 import type { DriverType } from '@/types/connection'
 
 export interface DriverDefinition {
-  id: DriverType
+  id: string
+  driverType: DriverType
   name: string
   backend: DriverBackend
   status: DriverStatus
@@ -11,9 +12,13 @@ export interface DriverDefinition {
   jdbcDriverClass?: string | null
   urlTemplate?: string | null
   driverArtifact?: string | null
+  driverArtifacts: string[]
+  odbcDriverName?: string | null
   userDriverRequired: boolean
   builtIn: boolean
   notes?: string | null
+  connectionVariants: DriverConnectionVariant[]
+  metadataDialectSql?: string | null
   capabilities: DriverDefinitionCapabilities
 }
 
@@ -30,11 +35,27 @@ export interface DriverDefinitionCapabilities {
   canGenerateDdl: boolean
 }
 
+export interface DriverConnectionVariant {
+  id: string
+  label: string
+  requiredFields: string[]
+}
+
 export interface ValidateExternalDriverInput {
   driverType: DriverType
   connectionUrl?: string | null
   driverClass?: string | null
   driverPaths?: string[]
+}
+
+export interface ImportJdbcDriverArtifactsInput {
+  driverDefinitionId: string
+  paths: string[]
+}
+
+export interface RemoveJdbcDriverArtifactInput {
+  driverDefinitionId: string
+  path: string
 }
 
 export interface ExternalDriverValidation {

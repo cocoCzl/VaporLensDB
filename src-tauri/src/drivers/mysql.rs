@@ -28,9 +28,7 @@ impl MysqlDriver {
         let opts = Opts::from_url(connection_url).map_err(|error| {
             AppError::ConfigError(format!("Invalid MySQL connection URL: {error}"))
         })?;
-        let conn = Conn::new(opts)
-            .await
-            .map_err(|error| map_mysql_connection_error(error))?;
+        let conn = Conn::new(opts).await.map_err(map_mysql_connection_error)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -49,9 +47,7 @@ impl MysqlDriver {
             .db_name(Some(database))
             .user(Some(username))
             .pass(Some(password));
-        let conn = Conn::new(opts)
-            .await
-            .map_err(|error| map_mysql_connection_error(error))?;
+        let conn = Conn::new(opts).await.map_err(map_mysql_connection_error)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -82,7 +78,7 @@ impl DatabaseDriver for MysqlDriver {
             .await
             .ping()
             .await
-            .map_err(|error| map_mysql_connection_error(error))
+            .map_err(map_mysql_connection_error)
     }
 
     async fn execute_query(

@@ -4,6 +4,8 @@ import type {
   ColumnInfo,
   ClearMetadataIndexInput,
   DatabaseInfo,
+  DbObjectInfo,
+  DbObjectKind,
   ForeignKeyInfo,
   IndexInfo,
   MetadataSearchResult,
@@ -48,6 +50,19 @@ export function getFunctions(connectionId: string, schema: string) {
 
 export function getTableDdl(connectionId: string, schema: string, table: string) {
   return invokeCommand<string>(COMMANDS.getTableDdl, { connectionId, schema, table })
+}
+
+export function getSchemaObjects(connectionId: string, schema: string, kind: DbObjectKind) {
+  return invokeCommand<DbObjectInfo[]>(COMMANDS.getSchemaObjects, { connectionId, schema, kind })
+}
+
+export function getObjectDdl(
+  connectionId: string,
+  schema: string,
+  name: string,
+  kind: DbObjectKind,
+) {
+  return invokeCommand<string>(COMMANDS.getObjectDdl, { connectionId, schema, name, kind })
 }
 
 export function startMetadataIndexTask(input: StartMetadataIndexInput) {

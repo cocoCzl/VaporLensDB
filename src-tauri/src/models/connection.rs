@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub struct ConnectionConfig {
     pub id: Uuid,
     pub name: String,
+    pub driver_definition_id: Option<String>,
     pub driver_type: DriverType,
     pub host: Option<String>,
     pub port: Option<u16>,
@@ -25,7 +26,7 @@ pub struct ConnectionConfig {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DriverType {
     Postgres,

@@ -1,21 +1,28 @@
 import {
   Database,
   FileCode2,
+  HardDrive,
   Moon,
   Plus,
+  RefreshCw,
+  Save,
   Settings,
   Sun,
   TerminalSquare,
   Trash2,
+  Upload,
+  X,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { Button } from '@/components/ui/button'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
+import { useDriverStore } from '@/stores/driverStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
 import { useUiStore } from '@/stores/uiStore'
+import type { DriverDefinition } from '@/types/driver'
 import type { LucideIcon } from 'lucide-react'
 
 const RAIL_ITEMS = [
@@ -338,6 +345,7 @@ function SettingsPanel() {
           </Button>
         </div>
       </section>
+      <DriverDefinitionsSettings />
       <section className="space-y-2 p-3 text-xs">
         <SettingFact label="配置存储" value="~/.vaporlensdb/config.db" />
         <SettingFact label="密码" value="AES-GCM 加密保存" />
@@ -345,6 +353,501 @@ function SettingsPanel() {
       </section>
     </div>
   )
+}
+
+function DriverDefinitionsSettings() {
+  const drivers = useDriverStore((state) => state.drivers)
+  const loading = useDriverStore((state) => state.loading)
+  const loadDrivers = useDriverStore((state) => state.loadDrivers)
+  const saveDriver = useDriverStore((state) => state.saveDriver)
+  const deleteDriver = useDriverStore((state) => state.deleteDriver)
+  const importJdbcArtifacts = useDriverStore((state) => state.importJdbcArtifacts)
+  const removeJdbcArtifact = useDriverStore((state) => state.removeJdbcArtifact)
+  const loadOdbcDrivers = useDriverStore((state) => state.loadOdbcDrivers)
+  const validateDriver = useDriverStore((state) => state.validateDriver)
+  const [editing, setEditing] = useState<DriverDefinition | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [odbcDrivers, setOdbcDrivers] = useState<string[]>([])
+  const [artifactPathInput, setArtifactPathInput] = useState('')
+  const [validationMessage, setValidationMessage] = useState<{ valid: boolean; message: string } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    void loadDrivers()
+  }, [loadDrivers])
+
+  async function handleSave() {
+    if (!editing || !editing.name.trim()) {
+      return
+    }
+    const saved = await saveDriver(normalizeDriverDefinition(editing))
+    if (saved) {
+      setEditing(null)
+    }
+  }
+
+  async function handleImportJdbcArtifacts(files: FileList | null) {
+    if (!editing || editing.builtIn || editing.driverType !== 'jdbc' || !files?.length) {
+      return
+    }
+    const paths = Array.from(files)
+      .map((file) => filePath(file))
+      .filter(Boolean)
+    const saved = await importJdbcArtifacts(editing.id, paths)
+    if (saved) {
+      setEditing(saved)
+      setValidationMessage(null)
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  async function handleRemoveJdbcArtifact(path: string) {
+    if (!editing || editing.builtIn || editing.driverType !== 'jdbc') {
+      return
+    }
+    const saved = await removeJdbcArtifact(editing.id, path)
+    if (saved) {
+      setEditing(saved)
+      setValidationMessage(null)
+    }
+  }
+
+  async function handleImportJdbcArtifactPaths() {
+    if (!editing || editing.builtIn || editing.driverType !== 'jdbc' || !editing.id) {
+      return
+    }
+    const paths = artifactPathInput
+      .split(/\r?\n/)
+      .map((path) => path.trim())
+      .filter(Boolean)
+    if (paths.length === 0) {
+      return
+    }
+    const saved = await importJdbcArtifacts(editing.id, paths)
+    if (saved) {
+      setEditing(saved)
+      setArtifactPathInput('')
+      setValidationMessage(null)
+    }
+  }
+
+  async function handleValidateDriver() {
+    if (!editing || editing.driverType === 'postgres' || editing.driverType === 'mysql') {
+      return
+    }
+    const normalized = normalizeDriverDefinition(editing)
+    const result = await validateDriver(normalized)
+    setValidationMessage(result)
+  }
+
+  async function refreshOdbcDrivers() {
+    const drivers = await loadOdbcDrivers()
+    setOdbcDrivers(drivers)
+  }
+
+  async function handleDelete(driver: DriverDefinition) {
+    if (driver.builtIn || loading) {
+      return
+    }
+    if (confirmDeleteId !== driver.id) {
+      setConfirmDeleteId(driver.id)
+      window.setTimeout(() => setConfirmDeleteId(null), 3000)
+      return
+    }
+    const deleted = await deleteDriver(driver.id)
+    if (deleted) {
+      setConfirmDeleteId(null)
+      if (editing?.id === driver.id) {
+        setEditing(null)
+      }
+    }
+  }
+
+  return (
+    <section className="space-y-2 border-b p-3 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="font-semibold text-foreground">驱动定义</h3>
+          <p className="mt-1 text-muted-foreground">
+            {drivers.length} 个定义，custom 可编辑。
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setEditing(newCustomDriverDefinition())}
+        >
+          <Plus className="size-3.5" />
+          新增
+        </Button>
+      </div>
+
+      <div className="grid max-h-56 gap-1 overflow-auto pr-1">
+        {drivers.map((driver) => (
+          <button
+            key={driver.id}
+            type="button"
+            className={[
+              'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-2 text-left',
+              editing?.id === driver.id ? 'border-primary bg-primary/10' : 'bg-background/60 hover:bg-muted/45',
+            ].join(' ')}
+            onClick={() => setEditing(driver)}
+          >
+            <span className="min-w-0">
+              <span className="block truncate font-medium text-foreground">{driver.name}</span>
+              <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                {driver.driverType} · {driver.backend} · {driver.status}
+              </span>
+            </span>
+            <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {driver.builtIn ? 'built-in' : 'custom'}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {editing && (
+        <div className="grid gap-2 rounded-md border bg-muted/20 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-1.5 font-medium">
+              <HardDrive className="size-3.5 text-primary" />
+              <span className="truncate">{editing.builtIn ? '查看内置驱动' : '编辑自定义驱动'}</span>
+            </div>
+            <Button type="button" size="icon-sm" variant="ghost" onClick={() => setEditing(null)}>
+              <X className="size-3.5" />
+            </Button>
+          </div>
+
+          <DriverField label="名称">
+            <input
+              className="ide-input h-7 text-xs"
+              value={editing.name}
+              disabled={editing.builtIn}
+              onChange={(event) => setEditing({ ...editing, name: event.target.value })}
+            />
+          </DriverField>
+          <DriverField label="运行时">
+            <select
+              className="ide-input h-7 text-xs"
+              value={editing.driverType}
+              disabled={editing.builtIn}
+              onChange={(event) => {
+                setValidationMessage(null)
+                setEditing({
+                  ...editing,
+                  driverType: event.target.value as DriverDefinition['driverType'],
+                  backend: event.target.value === 'odbc' ? 'odbc' : 'jdbc',
+                  driverArtifacts: event.target.value === 'odbc' ? [] : editing.driverArtifacts,
+                  odbcDriverName: event.target.value === 'odbc' ? editing.odbcDriverName : null,
+                })
+              }}
+            >
+              <option value="jdbc">JDBC</option>
+              <option value="odbc">ODBC</option>
+            </select>
+          </DriverField>
+          <DriverField label="驱动类">
+            <input
+              className="ide-input h-7 text-xs"
+              value={editing.jdbcDriverClass ?? ''}
+              disabled={editing.builtIn || editing.driverType === 'odbc'}
+              onChange={(event) => setEditing({ ...editing, jdbcDriverClass: event.target.value })}
+            />
+          </DriverField>
+          <DriverField label="URL 模板">
+            <input
+              className="ide-input h-7 text-xs"
+              value={editing.urlTemplate ?? ''}
+              disabled={editing.builtIn}
+              onChange={(event) => setEditing({ ...editing, urlTemplate: event.target.value })}
+            />
+          </DriverField>
+          <DriverField label="驱动文件">
+            {editing.driverType === 'jdbc' ? (
+              <div className="grid gap-2">
+                <input
+                  ref={fileInputRef}
+                  className="hidden"
+                  type="file"
+                  accept=".jar,application/java-archive"
+                  multiple
+                  onChange={(event) => {
+                    void handleImportJdbcArtifacts(event.target.files)
+                  }}
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={editing.builtIn || loading || !editing.id}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload className="size-3.5" />
+                    导入 JAR
+                  </Button>
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+                    {editing.driverArtifacts.length
+                      ? `${editing.driverArtifacts.length} 个 managed JAR`
+                      : '尚未导入'}
+                  </span>
+                </div>
+                {editing.driverArtifacts.length > 0 && (
+                  <div className="grid gap-1">
+                    {editing.driverArtifacts.map((path) => (
+                      <div
+                        key={path}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border bg-background/70 px-2 py-1"
+                      >
+                        <span className="truncate font-mono text-[11px]" title={path}>
+                          {fileName(path)}
+                        </span>
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          disabled={loading}
+                          title="移除 JAR"
+                          onClick={() => {
+                            void handleRemoveJdbcArtifact(path)
+                          }}
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {!editing.builtIn && (
+                  <div className="grid gap-1">
+                    <textarea
+                      className="ide-input min-h-14 resize-y text-xs"
+                      value={artifactPathInput}
+                      placeholder="/absolute/path/to/vendor-driver.jar"
+                      onChange={(event) => setArtifactPathInput(event.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={loading || !editing.id || !artifactPathInput.trim()}
+                      onClick={() => {
+                        void handleImportJdbcArtifactPaths()
+                      }}
+                    >
+                      <Upload className="size-3.5" />
+                      导入路径
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                  <select
+                    className="ide-input h-7 text-xs"
+                    value={editing.odbcDriverName ?? ''}
+                    disabled={editing.builtIn}
+                    onChange={(event) =>
+                      setEditing({
+                        ...editing,
+                        odbcDriverName: event.target.value || null,
+                        driverArtifact: event.target.value || '系统 ODBC 驱动',
+                      })
+                    }
+                    onFocus={() => {
+                      if (odbcDrivers.length === 0) {
+                        void refreshOdbcDrivers()
+                      }
+                    }}
+                  >
+                    <option value="">选择系统 ODBC 驱动</option>
+                    {odbcDrivers.map((driver) => (
+                      <option key={driver} value={driver}>
+                        {driver}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    title="刷新 ODBC 驱动"
+                    disabled={loading}
+                    onClick={() => {
+                      void refreshOdbcDrivers()
+                    }}
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </Button>
+                </div>
+                <input
+                  className="ide-input h-7 text-xs"
+                  value={editing.odbcDriverName ?? ''}
+                  disabled={editing.builtIn}
+                  placeholder="系统 ODBC driver name"
+                  onChange={(event) =>
+                    setEditing({
+                      ...editing,
+                      odbcDriverName: event.target.value,
+                      driverArtifact: event.target.value || '系统 ODBC 驱动',
+                    })
+                  }
+                />
+              </div>
+            )}
+          </DriverField>
+          <DriverField label="元数据 SQL">
+            <textarea
+              className="ide-input min-h-16 resize-y text-xs"
+              value={editing.metadataDialectSql ?? ''}
+              disabled={editing.builtIn}
+              onChange={(event) => setEditing({ ...editing, metadataDialectSql: event.target.value })}
+            />
+          </DriverField>
+
+          {!editing.builtIn && (
+            <div className="grid gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={() => {
+                  void handleValidateDriver()
+                }}
+              >
+                <HardDrive className="size-3.5" />
+                校验驱动
+              </Button>
+              {validationMessage && (
+                <div
+                  className={[
+                    'rounded border px-2 py-1 text-[11px]',
+                    validationMessage.valid
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600'
+                      : 'border-destructive/35 bg-destructive/10 text-destructive',
+                  ].join(' ')}
+                >
+                  {validationMessage.message}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!editing.builtIn && (
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={confirmDeleteId === editing.id ? 'destructive' : 'outline'}
+                disabled={loading}
+                onClick={() => {
+                  void handleDelete(editing)
+                }}
+              >
+                <Trash2 className="size-3.5" />
+                {confirmDeleteId === editing.id ? '确认删除' : '删除'}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={loading || !editing.name.trim()}
+                onClick={() => {
+                  void handleSave()
+                }}
+              >
+                <Save className="size-3.5" />
+                保存
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function DriverField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-[11px] text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function newCustomDriverDefinition(): DriverDefinition {
+  return {
+    id: '',
+    driverType: 'jdbc',
+    name: 'Custom JDBC',
+    backend: 'jdbc',
+    status: 'configurable',
+    defaultPort: null,
+    defaultUsername: null,
+    defaultDatabase: null,
+    jdbcDriverClass: '',
+    urlTemplate: 'jdbc:vendor://{host}:{port}/{database}',
+    driverArtifact: '*.jar',
+    driverArtifacts: [],
+    odbcDriverName: null,
+    userDriverRequired: true,
+    builtIn: false,
+    notes: '',
+    connectionVariants: [{ id: 'urlOnly', label: 'URL only', requiredFields: ['connectionUrl'] }],
+    metadataDialectSql: '',
+    capabilities: {
+      canConnect: true,
+      canQuery: true,
+      canStream: false,
+      canReadMetadata: false,
+      canCancel: false,
+      canGenerateDdl: false,
+    },
+  }
+}
+
+function normalizeDriverDefinition(driver: DriverDefinition): DriverDefinition {
+  return {
+    ...driver,
+    name: driver.name.trim(),
+    backend: driver.driverType === 'odbc' ? 'odbc' : 'jdbc',
+    jdbcDriverClass: nullableText(driver.driverType === 'odbc' ? null : driver.jdbcDriverClass),
+    urlTemplate: nullableText(driver.urlTemplate),
+    driverArtifact:
+      driver.driverType === 'odbc'
+        ? nullableText(driver.odbcDriverName) ?? '系统 ODBC 驱动'
+        : driver.driverArtifacts.length
+          ? driver.driverArtifacts.map(fileName).join(', ')
+          : nullableText(driver.driverArtifact),
+    driverArtifacts: driver.driverType === 'jdbc' ? driver.driverArtifacts : [],
+    odbcDriverName: nullableText(driver.driverType === 'odbc' ? driver.odbcDriverName : null),
+    notes: nullableText(driver.notes),
+    metadataDialectSql: nullableText(driver.metadataDialectSql),
+    userDriverRequired: true,
+    builtIn: false,
+    status: 'configurable',
+    connectionVariants: driver.connectionVariants.length
+      ? driver.connectionVariants
+      : [{ id: 'urlOnly', label: 'URL only', requiredFields: ['connectionUrl'] }],
+  }
+}
+
+function nullableText(value: string | null | undefined) {
+  return value?.trim() ? value.trim() : null
+}
+
+function filePath(file: File) {
+  const tauriFile = file as File & { path?: string }
+  return tauriFile.path || file.name
+}
+
+function fileName(path: string) {
+  return path.split(/[\\/]/).pop() || path
 }
 
 function PanelHeader({

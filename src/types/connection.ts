@@ -1,6 +1,7 @@
 export interface ConnectionConfig {
   id: string
   name: string
+  driverDefinitionId?: string | null
   driverType: DriverType
   host?: string | null
   port?: number | null
@@ -38,6 +39,7 @@ export interface ConnectionStatus {
 export interface ConnectionInput {
   id?: string
   name: string
+  driverDefinitionId?: string | null
   driverType: DriverType
   host?: string | null
   port?: number | null

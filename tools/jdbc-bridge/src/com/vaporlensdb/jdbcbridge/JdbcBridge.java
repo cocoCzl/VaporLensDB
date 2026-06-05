@@ -98,6 +98,9 @@ public final class JdbcBridge {
                             output.append(',');
                         }
                         Object value = resultSet.getObject(index);
+                        if (!(value instanceof Number) && !(value instanceof Boolean)) {
+                            value = resultSet.getString(index);
+                        }
                         appendJsonValue(output, value);
                     }
                     output.append(']');

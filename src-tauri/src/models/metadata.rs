@@ -22,6 +22,31 @@ pub struct TableInfo {
     pub row_count: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum DbObjectKind {
+    Table,
+    View,
+    MaterializedView,
+    Index,
+    Procedure,
+    Function,
+    Package,
+    Sequence,
+    Trigger,
+    Synonym,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbObjectInfo {
+    pub schema: Option<String>,
+    pub name: String,
+    pub kind: DbObjectKind,
+    pub object_type: Option<String>,
+    pub status: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TableType {

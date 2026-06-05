@@ -5,6 +5,7 @@ export type CommandNamespace =
   | 'contract'
   | 'connection'
   | 'driver'
+  | 'export'
   | 'history'
   | 'metadata'
   | 'query'
@@ -36,7 +37,13 @@ export const COMMANDS = {
   connectionStatus: 'connection_status',
   listConnectionStatuses: 'list_connection_statuses',
   listDriverDefinitions: 'list_driver_definitions',
+  saveCustomDriverDefinition: 'save_custom_driver_definition',
+  deleteCustomDriverDefinition: 'delete_custom_driver_definition',
+  importJdbcDriverArtifacts: 'import_jdbc_driver_artifacts',
+  removeJdbcDriverArtifact: 'remove_jdbc_driver_artifact',
+  listSystemOdbcDrivers: 'list_system_odbc_drivers',
   validateExternalDriver: 'validate_external_driver',
+  exportQueryResultCsv: 'export_query_result_csv',
   getDatabases: 'get_databases',
   getSchemas: 'get_schemas',
   getTables: 'get_tables',
@@ -46,6 +53,8 @@ export const COMMANDS = {
   getViews: 'get_views',
   getFunctions: 'get_functions',
   getTableDdl: 'get_table_ddl',
+  getSchemaObjects: 'get_schema_objects',
+  getObjectDdl: 'get_object_ddl',
   startMetadataIndexTask: 'start_metadata_index_task',
   searchMetadataIndex: 'search_metadata_index',
   clearMetadataIndex: 'clear_metadata_index',

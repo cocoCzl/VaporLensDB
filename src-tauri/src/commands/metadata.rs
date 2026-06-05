@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     models::metadata::{
-        ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo,
+        ColumnInfo, DatabaseInfo, DbObjectInfo, DbObjectKind, ForeignKeyInfo, IndexInfo,
+        SchemaInfo, TableInfo,
     },
     services::metadata_index::{MetadataIndexProgress, MetadataSearchResult},
     AppState,
@@ -138,6 +139,37 @@ pub async fn get_table_ddl(
     state
         .metadata_service
         .get_table_ddl(connection_id, driver, &schema, &table)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_schema_objects(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    kind: DbObjectKind,
+) -> Result<Vec<DbObjectInfo>, String> {
+    let driver = active_driver(&state, connection_id).await?;
+    state
+        .metadata_service
+        .get_schema_objects(connection_id, driver, &schema, kind)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_object_ddl(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    name: String,
+    kind: DbObjectKind,
+) -> Result<String, String> {
+    let driver = active_driver(&state, connection_id).await?;
+    state
+        .metadata_service
+        .get_object_ddl(connection_id, driver, &schema, &name, kind)
         .await
         .map_err(Into::into)
 }

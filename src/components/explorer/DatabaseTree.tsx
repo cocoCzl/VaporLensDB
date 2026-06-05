@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ListFilter, RefreshCw, Search } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
-import { getTableDdl } from '@/ipc/metadata'
+import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { useQuery } from '@/hooks/useQuery'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
+import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
 import { useUiStore } from '@/stores/uiStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
 import { TreeNode, type DatabaseTreeNodeData } from '@/components/explorer/TreeNode'
 import type { DriverType } from '@/types/connection'
+import type { DbObjectKind } from '@/types/metadata'
 
 interface NodeRecord extends DatabaseTreeNodeData {
   parentId: string | null
@@ -26,9 +28,15 @@ interface NodeRecord extends DatabaseTreeNodeData {
       | 'tables'
       | 'views'
       | 'functions'
+      | 'materializedViews'
       | 'columns'
       | 'indexes'
       | 'foreignKeys'
+      | 'procedures'
+      | 'packages'
+      | 'sequences'
+      | 'triggers'
+      | 'synonyms'
   }
 }
 
@@ -42,6 +50,7 @@ export function DatabaseTree() {
   const notifyError = useUiStore((state) => state.notifyError)
   const notify = useUiStore((state) => state.notify)
   const metadata = useMetadataStore()
+  const inspectTable = useObjectInspectorStore((state) => state.inspectTable)
   const indexResults = useMetadataStore((state) => state.indexResults)
   const indexLoading = useMetadataStore((state) => state.indexLoading)
   const startIndexing = useMetadataStore((state) => state.startIndexing)
@@ -118,17 +127,31 @@ export function DatabaseTree() {
       }
       const nextChildIds = [databaseFolderId]
 
+      const databaseChildIds: Record<string, string[]> = {}
       visibleDatabases.forEach((database) => {
-        nextNodes[databaseId(database.name)] = {
-          id: databaseId(database.name),
+        const id = databaseId(database.name)
+        const schemasFolderId = `${id}/schemas`
+        nextNodes[id] = {
+          id,
           parentId: databaseFolderId,
           label: database.name,
           kind: 'database',
           depth: 1,
           expandable: true,
-          expanded: false,
+          expanded: true,
           meta: { database: database.name },
         }
+        nextNodes[schemasFolderId] = {
+          id: schemasFolderId,
+          parentId: id,
+          label: 'Schemas',
+          kind: 'folder',
+          depth: 2,
+          expandable: true,
+          expanded: false,
+          meta: { database: database.name, folder: 'schemas' },
+        }
+        databaseChildIds[id] = [schemasFolderId]
       })
 
       setNodes((state) => replaceChildren(state, childIds[ROOT_ID] ?? [], nextNodes))
@@ -136,6 +159,7 @@ export function DatabaseTree() {
         ...state,
         [ROOT_ID]: nextChildIds,
         [databaseFolderId]: visibleDatabases.map((database) => databaseId(database.name)),
+        ...databaseChildIds,
       }))
     } catch (error) {
       notifyError(normalizeAppError(error), '加载数据库失败')
@@ -179,7 +203,13 @@ export function DatabaseTree() {
     setNodes((state) => ({ ...state, [id]: { ...node, expanded: true, loading: true } }))
 
     try {
-      const children = await loadChildren(metadata, activeConnectionId, node, force)
+      const children = await loadChildren(
+        metadata,
+        activeConnectionId,
+        activeConnection?.driverType ?? 'postgres',
+        node,
+        force,
+      )
       setNodes((state) =>
         replaceChildren(
           state,
@@ -240,7 +270,7 @@ export function DatabaseTree() {
       return
     }
 
-    const sql = `SELECT *\nFROM ${qualifiedName(connection.driverType, entry.schema, table)}\nLIMIT 1000;`
+    const sql = previewSql(connection.driverType, entry.schema, table)
     const tabId = crypto.randomUUID()
     addTab({
       id: tabId,
@@ -256,7 +286,7 @@ export function DatabaseTree() {
     if (!activeConnectionId || !activeConnection || !isTableLikeNode(node)) {
       return
     }
-    const sql = `SELECT *\nFROM ${qualifiedName(activeConnection.driverType, node.meta.schema, node.meta.table)}\nLIMIT 1000;`
+    const sql = previewSql(activeConnection.driverType, node.meta.schema, node.meta.table)
     const tabId = crypto.randomUUID()
     let primaryKeyColumns: string[] = []
     try {
@@ -301,6 +331,54 @@ export function DatabaseTree() {
     }
   }
 
+  async function openGenericObjectDdl(nodeId: string) {
+    const node = nodes[nodeId]
+    if (!activeConnectionId || !isGenericObjectNode(node)) {
+      return
+    }
+
+    try {
+      const ddl = await getObjectDdl(
+        activeConnectionId,
+        node.meta.schema,
+        node.label,
+        node.kind,
+      )
+      addTab({
+        id: crypto.randomUUID(),
+        title: `${node.label} DDL`,
+        sql: ddl,
+        connectionId: activeConnectionId,
+      })
+    } catch (error) {
+      notifyError(normalizeAppError(error), '加载对象定义失败')
+    }
+  }
+
+  function openNode(nodeId: string) {
+    const node = nodes[nodeId]
+    if (isTableLikeNode(node)) {
+      void openTableData(nodeId)
+      return
+    }
+    if (isGenericObjectNode(node)) {
+      void openGenericObjectDdl(nodeId)
+    }
+  }
+
+  function openObjectInspector(nodeId: string) {
+    const node = nodes[nodeId]
+    if (!activeConnectionId || !isTableLikeNode(node)) {
+      return
+    }
+    void inspectTable(
+      activeConnectionId,
+      node.meta.schema,
+      node.meta.table,
+      node.kind === 'view' ? 'view' : 'table',
+    )
+  }
+
   async function copyText(value: string, title: string) {
     try {
       await navigator.clipboard.writeText(value)
@@ -315,6 +393,12 @@ export function DatabaseTree() {
 
     if (tableLike) {
       return [
+        {
+          id: 'inspect',
+          label: '打开对象结构',
+          icon: 'ddl',
+          onSelect: () => openObjectInspector(node.id),
+        },
         {
           id: 'open-data',
           label: '打开前 1000 行',
@@ -338,6 +422,23 @@ export function DatabaseTree() {
           label: '刷新',
           icon: 'refresh',
           onSelect: () => refreshNode(node.id),
+        },
+      ]
+    }
+
+    if (isGenericObjectNode(node)) {
+      return [
+        {
+          id: 'view-ddl',
+          label: '查看 DDL',
+          icon: 'ddl',
+          onSelect: () => openGenericObjectDdl(node.id),
+        },
+        {
+          id: 'copy-name',
+          label: '复制名称',
+          icon: 'copy',
+          onSelect: () => copyText(node.label, '已复制对象名'),
         },
       ]
     }
@@ -423,7 +524,7 @@ export function DatabaseTree() {
                 node={node}
                 onToggle={toggleNode}
                 onRefresh={refreshNode}
-                onDoubleClick={openTableData}
+                onDoubleClick={openNode}
                 onNodeContextMenu={(targetNode, position) => {
                   if (contextActions(nodes[targetNode.id]).length === 0) {
                     return
@@ -499,6 +600,7 @@ function metadataKindLabel(kind: import('@/types/metadata').MetadataIndexKind) {
 async function loadChildren(
   metadata: ReturnType<typeof useMetadataStore.getState>,
   connectionId: string,
+  driverType: DriverType,
   node: NodeRecord,
   force = false,
 ): Promise<NodeRecord[]> {
@@ -521,11 +623,25 @@ async function loadChildren(
 
   if (node.kind === 'schema') {
     const schema = node.meta?.schema ?? node.label
-    return [
+    const folders = [
       folderNode(node, 'tables', '表', schema),
       folderNode(node, 'views', '视图', schema),
-      folderNode(node, 'functions', '函数', schema),
     ]
+    if (driverType === 'oracle') {
+      folders.push(
+        folderNode(node, 'materializedViews', '物化视图', schema),
+        folderNode(node, 'indexes', '索引', schema),
+        folderNode(node, 'procedures', '过程', schema),
+        folderNode(node, 'functions', '函数', schema),
+        folderNode(node, 'packages', '包', schema),
+        folderNode(node, 'sequences', '序列', schema),
+        folderNode(node, 'triggers', '触发器', schema),
+        folderNode(node, 'synonyms', '同义词', schema),
+      )
+    } else {
+      folders.push(folderNode(node, 'functions', '函数', schema))
+    }
+    return folders
   }
 
   if (node.kind === 'folder' && node.meta?.folder === 'tables') {
@@ -539,17 +655,19 @@ async function loadChildren(
   }
 
   if (node.kind === 'folder' && node.meta?.folder === 'functions') {
+    if (driverType === 'oracle') {
+      return loadSchemaObjectNodes(metadata, connectionId, node, 'function', force)
+    }
     const functions = await metadata.loadFunctions(connectionId, required(node.meta.schema), force)
-    return functions.map((name) => ({
-      id: `${node.id}/function/${name}`,
-      parentId: node.id,
-      label: name,
-      kind: 'function',
-      depth: node.depth + 1,
-    }))
+    return functions.map((name) => genericObjectNode(node, name, 'function'))
   }
 
-  if (node.kind === 'table' || node.kind === 'view') {
+  const folderKind = node.meta?.table ? null : schemaFolderObjectKind(node.meta?.folder)
+  if (node.kind === 'folder' && folderKind) {
+    return loadSchemaObjectNodes(metadata, connectionId, node, folderKind, force)
+  }
+
+  if (node.kind === 'table' || node.kind === 'view' || node.kind === 'materializedView') {
     return [
       folderNode(node, 'columns', '列', required(node.meta?.schema), node.meta?.table),
       folderNode(node, 'indexes', '索引', required(node.meta?.schema), node.meta?.table),
@@ -664,6 +782,46 @@ function tableNode(parent: NodeRecord, name: string, kind: 'table' | 'view'): No
   }
 }
 
+async function loadSchemaObjectNodes(
+  metadata: ReturnType<typeof useMetadataStore.getState>,
+  connectionId: string,
+  parent: NodeRecord,
+  kind: DbObjectKind,
+  force: boolean,
+) {
+  const objects = await metadata.loadSchemaObjects(connectionId, required(parent.meta?.schema), kind, force)
+  return objects.map((object) => genericObjectNode(parent, object.name, object.kind, object.status ?? undefined))
+}
+
+function genericObjectNode(
+  parent: NodeRecord,
+  name: string,
+  kind: DbObjectKind,
+  status?: string,
+): NodeRecord {
+  return {
+    id: `${parent.id}/${kind}/${name}`,
+    parentId: parent.id,
+    label: name,
+    kind,
+    depth: parent.depth + 1,
+    expandable: kind === 'table' || kind === 'view' || kind === 'materializedView',
+    detail: status && status !== 'VALID' ? status : undefined,
+    meta: { ...parent.meta, table: name },
+  }
+}
+
+function schemaFolderObjectKind(folder?: NonNullable<NodeRecord['meta']>['folder']): DbObjectKind | null {
+  if (folder === 'materializedViews') return 'materializedView'
+  if (folder === 'indexes') return 'index'
+  if (folder === 'procedures') return 'procedure'
+  if (folder === 'packages') return 'package'
+  if (folder === 'sequences') return 'sequence'
+  if (folder === 'triggers') return 'trigger'
+  if (folder === 'synonyms') return 'synonym'
+  return null
+}
+
 function databaseId(database: string) {
   return `database/${database}`
 }
@@ -680,18 +838,40 @@ function required(value?: string) {
 }
 
 function supportsObjectBrowsing(driverType: DriverType) {
-  return driverType === 'postgres' || driverType === 'mysql'
+  return driverType === 'postgres' || driverType === 'mysql' || driverType === 'oracle'
 }
 
 function isTableLikeNode(node?: NodeRecord): node is NodeRecord & {
-  kind: 'table' | 'view'
+  kind: 'table' | 'view' | 'materializedView'
   meta: { schema: string; table: string }
 } {
   return (
     Boolean(node) &&
-    (node?.kind === 'table' || node?.kind === 'view') &&
+    (node?.kind === 'table' || node?.kind === 'view' || node?.kind === 'materializedView') &&
     Boolean(node.meta?.schema) &&
     Boolean(node.meta?.table)
+  )
+}
+
+function previewSql(driverType: DriverType, schema: string, table: string) {
+  const from = qualifiedName(driverType, schema, table)
+  if (driverType === 'oracle') {
+    return `SELECT *\nFROM ${from}\nFETCH FIRST 1000 ROWS ONLY`
+  }
+  return `SELECT *\nFROM ${from}\nLIMIT 1000;`
+}
+
+function isGenericObjectNode(node?: NodeRecord): node is NodeRecord & {
+  kind: Exclude<DbObjectKind, 'table' | 'view' | 'materializedView'>
+  meta: { schema: string }
+} {
+  if (!node?.meta?.schema) {
+    return false
+  }
+  return (
+    ['index', 'procedure', 'function', 'package', 'sequence', 'trigger', 'synonym'].includes(
+      node.kind,
+    )
   )
 }
 

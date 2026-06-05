@@ -7,7 +7,10 @@ use crate::{
     drivers::trait_def::DatabaseDriver,
     models::{
         error::AppError,
-        metadata::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo},
+        metadata::{
+            ColumnInfo, DatabaseInfo, DbObjectInfo, DbObjectKind, ForeignKeyInfo, IndexInfo,
+            SchemaInfo, TableInfo,
+        },
     },
 };
 
@@ -23,6 +26,7 @@ struct MetadataCache {
     tables: HashMap<String, Vec<TableInfo>>,
     views: HashMap<String, Vec<TableInfo>>,
     functions: HashMap<String, Vec<String>>,
+    schema_objects: HashMap<String, Vec<DbObjectInfo>>,
     columns: HashMap<String, Vec<ColumnInfo>>,
     indexes: HashMap<String, Vec<IndexInfo>>,
     foreign_keys: HashMap<String, Vec<ForeignKeyInfo>>,
@@ -42,6 +46,9 @@ impl MetadataService {
         cache.tables.retain(|key, _| !key.starts_with(&prefix));
         cache.views.retain(|key, _| !key.starts_with(&prefix));
         cache.functions.retain(|key, _| !key.starts_with(&prefix));
+        cache
+            .schema_objects
+            .retain(|key, _| !key.starts_with(&prefix));
         cache.columns.retain(|key, _| !key.starts_with(&prefix));
         cache.indexes.retain(|key, _| !key.starts_with(&prefix));
         cache
@@ -140,6 +147,28 @@ impl MetadataService {
         Ok(values)
     }
 
+    pub async fn get_schema_objects(
+        &self,
+        connection_id: Uuid,
+        driver: Arc<dyn DatabaseDriver>,
+        schema: &str,
+        kind: DbObjectKind,
+    ) -> Result<Vec<DbObjectInfo>, AppError> {
+        let kind_key = format!("{kind:?}");
+        let key = cache_key(connection_id, ["schema", schema, "objects", &kind_key]);
+        if let Some(cached) = self.cache.read().await.schema_objects.get(&key).cloned() {
+            return Ok(cached);
+        }
+
+        let values = driver.get_schema_objects(schema, kind).await?;
+        self.cache
+            .write()
+            .await
+            .schema_objects
+            .insert(key, values.clone());
+        Ok(values)
+    }
+
     pub async fn get_columns(
         &self,
         connection_id: Uuid,
@@ -211,6 +240,28 @@ impl MetadataService {
         }
 
         let value = driver.get_table_ddl(schema, table).await?;
+        self.cache.write().await.ddls.insert(key, value.clone());
+        Ok(value)
+    }
+
+    pub async fn get_object_ddl(
+        &self,
+        connection_id: Uuid,
+        driver: Arc<dyn DatabaseDriver>,
+        schema: &str,
+        name: &str,
+        kind: DbObjectKind,
+    ) -> Result<String, AppError> {
+        let kind_key = format!("{kind:?}");
+        let key = cache_key(
+            connection_id,
+            ["schema", schema, "object", name, &kind_key, "ddl"],
+        );
+        if let Some(cached) = self.cache.read().await.ddls.get(&key).cloned() {
+            return Ok(cached);
+        }
+
+        let value = driver.get_object_ddl(schema, name, kind).await?;
         self.cache.write().await.ddls.insert(key, value.clone());
         Ok(value)
     }

@@ -5,6 +5,7 @@ import {
   getForeignKeys,
   getFunctions,
   getIndexes,
+  getSchemaObjects,
   getSchemas,
   getTables,
   getViews,
@@ -17,6 +18,8 @@ import { useUiStore } from '@/stores/uiStore'
 import type {
   ColumnInfo,
   DatabaseInfo,
+  DbObjectInfo,
+  DbObjectKind,
   ForeignKeyInfo,
   IndexInfo,
   MetadataSearchResult,
@@ -30,6 +33,7 @@ export interface MetadataState {
   tables: Record<string, TableInfo[]>
   views: Record<string, TableInfo[]>
   functions: Record<string, string[]>
+  schemaObjects: Record<string, DbObjectInfo[]>
   columns: Record<string, ColumnInfo[]>
   indexes: Record<string, IndexInfo[]>
   foreignKeys: Record<string, ForeignKeyInfo[]>
@@ -45,6 +49,12 @@ export interface MetadataState {
   loadTables: (connectionId: string, schema: string, force?: boolean) => Promise<TableInfo[]>
   loadViews: (connectionId: string, schema: string, force?: boolean) => Promise<TableInfo[]>
   loadFunctions: (connectionId: string, schema: string, force?: boolean) => Promise<string[]>
+  loadSchemaObjects: (
+    connectionId: string,
+    schema: string,
+    kind: DbObjectKind,
+    force?: boolean,
+  ) => Promise<DbObjectInfo[]>
   loadColumns: (
     connectionId: string,
     schema: string,
@@ -82,6 +92,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
   tables: {},
   views: {},
   functions: {},
+  schemaObjects: {},
   columns: {},
   indexes: {},
   foreignKeys: {},
@@ -146,6 +157,18 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       const functions = await getFunctions(connectionId, schema)
       set((state) => ({ functions: { ...state.functions, [cacheKey]: functions } }))
       return functions
+    })
+  },
+
+  loadSchemaObjects: async (connectionId, schema, kind, force = false) => {
+    const cacheKey = schemaObjectKindKey(connectionId, schema, kind)
+    const cached = get().schemaObjects[cacheKey]
+    if (!force && cached) return cached
+
+    return withLoading(set, cacheKey, async () => {
+      const objects = await getSchemaObjects(connectionId, schema, kind)
+      set((state) => ({ schemaObjects: { ...state.schemaObjects, [cacheKey]: objects } }))
+      return objects
     })
   },
 
@@ -227,6 +250,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       tables: omitByPrefix(state.tables, connectionId),
       views: omitByPrefix(state.views, connectionId),
       functions: omitByPrefix(state.functions, connectionId),
+      schemaObjects: omitByPrefix(state.schemaObjects, connectionId),
       columns: omitByPrefix(state.columns, connectionId),
       indexes: omitByPrefix(state.indexes, connectionId),
       foreignKeys: omitByPrefix(state.foreignKeys, connectionId),
@@ -243,6 +267,10 @@ export function schemaKey(connectionId: string, database?: string | null) {
 
 export function schemaObjectKey(connectionId: string, schema: string) {
   return `${connectionId}::schema::${schema}`
+}
+
+export function schemaObjectKindKey(connectionId: string, schema: string, kind: DbObjectKind) {
+  return `${connectionId}::schema::${schema}::objects::${kind}`
 }
 
 export function tableObjectKey(connectionId: string, schema: string, table: string) {

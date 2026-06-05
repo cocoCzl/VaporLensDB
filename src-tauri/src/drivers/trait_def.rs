@@ -4,8 +4,8 @@ use tokio::sync::mpsc;
 use crate::models::{
     error::AppError,
     metadata::{
-        ColumnInfo, DatabaseInfo, DriverCapabilities, ForeignKeyInfo, IndexInfo, SchemaInfo,
-        TableInfo,
+        ColumnInfo, DatabaseInfo, DbObjectInfo, DbObjectKind, DriverCapabilities, ForeignKeyInfo,
+        IndexInfo, SchemaInfo, TableInfo,
     },
     query_result::{ExplainResult, QueryResult, QueryResultChunk, QueryStreamSummary},
 };
@@ -41,6 +41,34 @@ pub trait DatabaseDriver: Send + Sync {
     async fn get_views(&self, schema: &str) -> Result<Vec<TableInfo>, AppError>;
     async fn get_functions(&self, schema: &str) -> Result<Vec<String>, AppError>;
     async fn get_table_ddl(&self, schema: &str, table: &str) -> Result<String, AppError>;
+    async fn get_schema_objects(
+        &self,
+        _schema: &str,
+        _kind: DbObjectKind,
+    ) -> Result<Vec<DbObjectInfo>, AppError> {
+        Err(AppError::UnsupportedOperation {
+            driver: self.driver_name().to_string(),
+            operation: "get_schema_objects".to_string(),
+        })
+    }
+    async fn get_object_ddl(
+        &self,
+        schema: &str,
+        name: &str,
+        kind: DbObjectKind,
+    ) -> Result<String, AppError> {
+        if matches!(
+            kind,
+            DbObjectKind::Table | DbObjectKind::View | DbObjectKind::MaterializedView
+        ) {
+            self.get_table_ddl(schema, name).await
+        } else {
+            Err(AppError::UnsupportedOperation {
+                driver: self.driver_name().to_string(),
+                operation: "get_object_ddl".to_string(),
+            })
+        }
+    }
     async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError>;
     async fn cancel_query(&self, query_id: &str) -> Result<(), AppError>;
     async fn cancel_all_queries(&self) -> Result<(), AppError> {

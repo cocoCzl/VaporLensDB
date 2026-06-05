@@ -38,21 +38,23 @@ type CompletionItem = Monaco.languages.CompletionItem
 
 interface RegisterSqlCompletionOptions {
   getConnectionId: () => string | null | undefined
+  getSchema?: () => string | null | undefined
 }
 
 export function registerSqlCompletionProvider(
   monaco: MonacoApi,
-  { getConnectionId }: RegisterSqlCompletionOptions,
+  { getConnectionId, getSchema }: RegisterSqlCompletionOptions,
 ) {
   return monaco.languages.registerCompletionItemProvider('pgsql', {
     triggerCharacters: ['.', '"', ' '],
     provideCompletionItems: async (model, position) => {
       const connectionId = getConnectionId()
+      const preferredSchema = getSchema?.() ?? null
       const range = completionRange(monaco, model, position)
       const context = completionContext(model, position)
       const suggestions: CompletionItem[] = [
         ...keywordSuggestions(monaco, range),
-        ...(await metadataSuggestions(monaco, range, connectionId, context)),
+        ...(await metadataSuggestions(monaco, range, connectionId, context, preferredSchema)),
       ]
 
       return { suggestions }
@@ -74,6 +76,7 @@ function metadataSuggestions(
   range: Monaco.IRange,
   connectionId: string | null | undefined,
   context: CompletionContext,
+  preferredSchema: string | null,
 ): Promise<CompletionItem[]> {
   if (!connectionId) {
     return Promise.resolve([])
@@ -98,7 +101,12 @@ function metadataSuggestions(
       )
     }
 
-    return findColumnsForOwner(connectionId, context.memberOwner, context.aliases).then((columns) =>
+    return findColumnsForOwner(
+      connectionId,
+      context.memberOwner,
+      context.aliases,
+      preferredSchema,
+    ).then((columns) =>
       columns.map((column) => ({
         label: column.name,
         kind: monaco.languages.CompletionItemKind.Field,
@@ -119,14 +127,18 @@ function metadataSuggestions(
     kind: monaco.languages.CompletionItemKind.Module,
     insertText: quoteIfNeeded(schema.name),
     detail: 'schema',
+    sortText:
+      schema.name === preferredSchema ? `0_schema_${schema.name}` : `3_schema_${schema.name}`,
     range,
   }))
 
-  const tableSuggestions = knownTables(connectionId).map((item) => ({
+  const tableSuggestions = knownTables(connectionId, preferredSchema).map((item) => ({
     label: item.table.name,
     kind: tableKind(monaco, item.table),
     insertText: quoteIfNeeded(item.table.name),
-    detail: item.schema ? `${item.schema}.${item.table.name}` : item.table.name,
+    detail: `${tableTypeLabel(item.table)} - ${item.schema ? `${item.schema}.` : ''}${item.table.name}`,
+    sortText:
+      item.schema === preferredSchema ? `0_table_${item.table.name}` : `2_table_${item.table.name}`,
     range,
   }))
 
@@ -140,12 +152,13 @@ function metadataSuggestions(
 
   const functionSuggestions = Object.entries(state.functions)
     .filter(([key]) => key.startsWith(`${connectionId}::`))
-    .flatMap(([, functions]) => functions)
-    .map((name) => ({
+    .flatMap(([key, functions]) => functions.map((name) => ({ name, schema: schemaFromKey(key) })))
+    .map(({ name, schema }) => ({
       label: name,
       kind: monaco.languages.CompletionItemKind.Function,
       insertText: `${quoteIfNeeded(name)}()`,
-      detail: 'function',
+      detail: `function - ${schema}`,
+      sortText: schema === preferredSchema ? `0_function_${name}` : `2_function_${name}`,
       range,
     }))
 
@@ -161,11 +174,12 @@ async function findColumnsForOwner(
   connectionId: string,
   owner: string,
   aliases: SqlAlias[] = [],
+  preferredSchema: string | null = null,
 ) {
   const normalizedOwner = unquoteIdentifier(owner).toLowerCase()
   const alias = aliases.find((item) => item.alias.toLowerCase() === normalizedOwner)
   const normalizedResolvedOwner = unquoteIdentifier(alias?.target ?? owner).toLowerCase()
-  const tables = knownTables(connectionId).filter(
+  const tables = knownTables(connectionId, preferredSchema).filter(
     ({ schema, table }) =>
       table.name.toLowerCase() === normalizedResolvedOwner ||
       `${schema}.${table.name}`.toLowerCase() === normalizedResolvedOwner,
@@ -187,7 +201,7 @@ async function findColumnsForOwner(
   )
 }
 
-function knownTables(connectionId: string) {
+function knownTables(connectionId: string, preferredSchema: string | null = null) {
   const state = useMetadataStore.getState()
   const tableEntries = Object.entries(state.tables)
     .filter(([key]) => key.startsWith(`${connectionId}::`))
@@ -195,14 +209,36 @@ function knownTables(connectionId: string) {
   const viewEntries = Object.entries(state.views)
     .filter(([key]) => key.startsWith(`${connectionId}::`))
     .flatMap(([key, views]) => views.map((table) => ({ schema: schemaFromKey(key), table })))
+  const materializedViewEntries = Object.entries(state.schemaObjects)
+    .filter(([key]) => key.startsWith(`${connectionId}::`) && key.endsWith('::materializedView'))
+    .flatMap(([key, objects]) =>
+      objects.map((object) => ({
+        schema: schemaFromObjectKindKey(key),
+        table: {
+          schema: object.schema,
+          name: object.name,
+          tableType: 'materializedView' as const,
+          rowCount: null,
+        },
+      })),
+    )
 
-  return uniqueBy([...tableEntries, ...viewEntries], ({ schema, table }) => `${schema}.${table.name}`)
+  return uniqueBy(
+    [...tableEntries, ...viewEntries, ...materializedViewEntries],
+    ({ schema, table }) => `${schema}.${table.name}`,
+  ).sort((a, b) => Number(b.schema === preferredSchema) - Number(a.schema === preferredSchema))
 }
 
 function tableKind(monaco: MonacoApi, table: TableInfo) {
   return table.tableType === 'view'
     ? monaco.languages.CompletionItemKind.Interface
     : monaco.languages.CompletionItemKind.Class
+}
+
+function tableTypeLabel(table: TableInfo) {
+  if (table.tableType === 'view') return 'view'
+  if (table.tableType === 'materializedView') return 'materialized view'
+  return 'table'
 }
 
 interface CompletionContext {
@@ -251,6 +287,11 @@ function completionRange(
 
 function schemaFromKey(key: string) {
   return key.split('::schema::')[1]?.split('::')[0] ?? ''
+}
+
+function schemaFromObjectKindKey(key: string) {
+  const [, rest = ''] = key.split('::schema::')
+  return rest.split('::objects::')[0] ?? ''
 }
 
 function quoteIfNeeded(identifier: string) {

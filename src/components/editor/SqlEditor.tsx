@@ -12,6 +12,7 @@ loader.config({ paths: { vs: '/monaco/vs' } })
 interface SqlEditorProps {
   value: string
   connectionId?: string | null
+  schema?: string | null
   onChange: (value: string) => void
   onRun: () => void
   onSelectionChange?: (value: string) => void
@@ -20,11 +21,13 @@ interface SqlEditorProps {
 export function SqlEditor({
   value,
   connectionId,
+  schema,
   onChange,
   onRun,
   onSelectionChange,
 }: SqlEditorProps) {
   const connectionIdRef = useRef(connectionId)
+  const schemaRef = useRef(schema)
   const appTheme = useUiStore((state) => state.theme)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const editorTheme =
@@ -38,10 +41,15 @@ export function SqlEditor({
     connectionIdRef.current = connectionId
   }, [connectionId])
 
+  useEffect(() => {
+    schemaRef.current = schema
+  }, [schema])
+
   const handleMount: OnMount = (instance, monaco) => {
     instance.addCommand(MONACO_CTRL_CMD | MONACO_ENTER, onRun)
     const completionProvider = registerSqlCompletionProvider(monaco, {
       getConnectionId: () => connectionIdRef.current,
+      getSchema: () => schemaRef.current,
     })
     instance.onDidChangeCursorSelection(() => {
       onSelectionChange?.(selectedText(instance))
