@@ -3,6 +3,7 @@ import type { editor } from 'monaco-editor'
 import { useEffect, useRef } from 'react'
 import { registerSqlCompletionProvider } from '@/components/editor/AutoComplete'
 import { useUiStore } from '@/stores/uiStore'
+import type { DriverType } from '@/types/connection'
 
 const MONACO_CTRL_CMD = 2048
 const MONACO_ENTER = 3
@@ -13,21 +14,29 @@ interface SqlEditorProps {
   value: string
   connectionId?: string | null
   schema?: string | null
+  driverType?: DriverType | null
+  showSystemObjects?: boolean
   onChange: (value: string) => void
   onRun: () => void
   onSelectionChange?: (value: string) => void
+  readOnly?: boolean
 }
 
 export function SqlEditor({
   value,
   connectionId,
   schema,
+  driverType,
+  showSystemObjects = false,
   onChange,
   onRun,
   onSelectionChange,
+  readOnly = false,
 }: SqlEditorProps) {
   const connectionIdRef = useRef(connectionId)
   const schemaRef = useRef(schema)
+  const driverTypeRef = useRef(driverType)
+  const showSystemObjectsRef = useRef(showSystemObjects)
   const appTheme = useUiStore((state) => state.theme)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const editorTheme =
@@ -45,11 +54,23 @@ export function SqlEditor({
     schemaRef.current = schema
   }, [schema])
 
+  useEffect(() => {
+    driverTypeRef.current = driverType
+  }, [driverType])
+
+  useEffect(() => {
+    showSystemObjectsRef.current = showSystemObjects
+  }, [showSystemObjects])
+
   const handleMount: OnMount = (instance, monaco) => {
-    instance.addCommand(MONACO_CTRL_CMD | MONACO_ENTER, onRun)
+    if (!readOnly) {
+      instance.addCommand(MONACO_CTRL_CMD | MONACO_ENTER, onRun)
+    }
     const completionProvider = registerSqlCompletionProvider(monaco, {
       getConnectionId: () => connectionIdRef.current,
       getSchema: () => schemaRef.current,
+      getDriverType: () => driverTypeRef.current,
+      getShowSystemObjects: () => showSystemObjectsRef.current,
     })
     instance.onDidChangeCursorSelection(() => {
       onSelectionChange?.(selectedText(instance))
@@ -75,6 +96,8 @@ export function SqlEditor({
         automaticLayout: true,
         wordWrap: 'on',
         tabSize: 2,
+        readOnly,
+        domReadOnly: readOnly,
       }}
     />
   )

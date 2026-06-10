@@ -1,5 +1,7 @@
 import type * as Monaco from 'monaco-editor'
 import { tableObjectKey, useMetadataStore } from '@/stores/metadataStore'
+import { isSystemSchema } from '@/lib/systemObjects'
+import type { DriverType } from '@/types/connection'
 import type { TableInfo } from '@/types/metadata'
 
 const SQL_KEYWORDS = [
@@ -39,22 +41,34 @@ type CompletionItem = Monaco.languages.CompletionItem
 interface RegisterSqlCompletionOptions {
   getConnectionId: () => string | null | undefined
   getSchema?: () => string | null | undefined
+  getDriverType?: () => DriverType | null | undefined
+  getShowSystemObjects?: () => boolean
 }
 
 export function registerSqlCompletionProvider(
   monaco: MonacoApi,
-  { getConnectionId, getSchema }: RegisterSqlCompletionOptions,
+  { getConnectionId, getSchema, getDriverType, getShowSystemObjects }: RegisterSqlCompletionOptions,
 ) {
   return monaco.languages.registerCompletionItemProvider('pgsql', {
     triggerCharacters: ['.', '"', ' '],
     provideCompletionItems: async (model, position) => {
       const connectionId = getConnectionId()
       const preferredSchema = getSchema?.() ?? null
+      const driverType = getDriverType?.() ?? 'postgres'
+      const showSystemObjects = getShowSystemObjects?.() ?? false
       const range = completionRange(monaco, model, position)
       const context = completionContext(model, position)
       const suggestions: CompletionItem[] = [
         ...keywordSuggestions(monaco, range),
-        ...(await metadataSuggestions(monaco, range, connectionId, context, preferredSchema)),
+        ...(await metadataSuggestions(
+          monaco,
+          range,
+          connectionId,
+          context,
+          preferredSchema,
+          driverType,
+          showSystemObjects,
+        )),
       ]
 
       return { suggestions }
@@ -71,12 +85,14 @@ function keywordSuggestions(monaco: MonacoApi, range: Monaco.IRange): Completion
   }))
 }
 
-function metadataSuggestions(
+async function metadataSuggestions(
   monaco: MonacoApi,
   range: Monaco.IRange,
   connectionId: string | null | undefined,
   context: CompletionContext,
   preferredSchema: string | null,
+  driverType: DriverType,
+  showSystemObjects: boolean,
 ): Promise<CompletionItem[]> {
   if (!connectionId) {
     return Promise.resolve([])
@@ -101,11 +117,51 @@ function metadataSuggestions(
       )
     }
 
+    const alias = findAlias(context.memberOwner, context.aliases)
+    if (alias) {
+      return findColumnsForOwner(
+        connectionId,
+        context.memberOwner,
+        context.aliases,
+        preferredSchema,
+        driverType,
+        showSystemObjects,
+      ).then((columns) =>
+        columns.map((column) => ({
+          label: column.name,
+          kind: monaco.languages.CompletionItemKind.Field,
+          insertText: quoteIfNeeded(column.name),
+          detail: column.dataType,
+          documentation: column.isPrimaryKey ? 'Primary key' : undefined,
+          range,
+        })),
+      )
+    }
+
+    const schema = await schemaForOwner(
+      connectionId,
+      context.memberOwner,
+      driverType,
+      showSystemObjects,
+    )
+    if (schema) {
+      return schemaObjectSuggestions(
+        monaco,
+        range,
+        connectionId,
+        schema,
+        driverType,
+        showSystemObjects,
+      )
+    }
+
     return findColumnsForOwner(
       connectionId,
       context.memberOwner,
       context.aliases,
       preferredSchema,
+      driverType,
+      showSystemObjects,
     ).then((columns) =>
       columns.map((column) => ({
         label: column.name,
@@ -121,6 +177,7 @@ function metadataSuggestions(
   const schemas = Object.entries(state.schemas)
     .filter(([key]) => key.startsWith(`${connectionId}::`))
     .flatMap(([, values]) => values)
+    .filter((schema) => showSystemObjects || !isSystemSchema(driverType, schema.name))
 
   const schemaSuggestions = uniqueBy(schemas, (schema) => schema.name).map((schema) => ({
     label: schema.name,
@@ -132,7 +189,12 @@ function metadataSuggestions(
     range,
   }))
 
-  const tableSuggestions = knownTables(connectionId, preferredSchema).map((item) => ({
+  const tableSuggestions = knownTables(
+    connectionId,
+    preferredSchema,
+    driverType,
+    showSystemObjects,
+  ).map((item) => ({
     label: item.table.name,
     kind: tableKind(monaco, item.table),
     insertText: quoteIfNeeded(item.table.name),
@@ -153,6 +215,7 @@ function metadataSuggestions(
   const functionSuggestions = Object.entries(state.functions)
     .filter(([key]) => key.startsWith(`${connectionId}::`))
     .flatMap(([key, functions]) => functions.map((name) => ({ name, schema: schemaFromKey(key) })))
+    .filter(({ schema }) => showSystemObjects || !isSystemSchema(driverType, schema))
     .map(({ name, schema }) => ({
       label: name,
       kind: monaco.languages.CompletionItemKind.Function,
@@ -175,11 +238,12 @@ async function findColumnsForOwner(
   owner: string,
   aliases: SqlAlias[] = [],
   preferredSchema: string | null = null,
+  driverType: DriverType,
+  showSystemObjects: boolean,
 ) {
-  const normalizedOwner = unquoteIdentifier(owner).toLowerCase()
-  const alias = aliases.find((item) => item.alias.toLowerCase() === normalizedOwner)
+  const alias = findAlias(owner, aliases)
   const normalizedResolvedOwner = unquoteIdentifier(alias?.target ?? owner).toLowerCase()
-  const tables = knownTables(connectionId, preferredSchema).filter(
+  const tables = knownTables(connectionId, preferredSchema, driverType, showSystemObjects).filter(
     ({ schema, table }) =>
       table.name.toLowerCase() === normalizedResolvedOwner ||
       `${schema}.${table.name}`.toLowerCase() === normalizedResolvedOwner,
@@ -201,14 +265,94 @@ async function findColumnsForOwner(
   )
 }
 
-function knownTables(connectionId: string, preferredSchema: string | null = null) {
+function findAlias(owner: string, aliases: SqlAlias[]) {
+  const normalizedOwner = unquoteIdentifier(owner).toLowerCase()
+  return aliases.find((item) => item.alias.toLowerCase() === normalizedOwner)
+}
+
+async function schemaObjectSuggestions(
+  monaco: MonacoApi,
+  range: Monaco.IRange,
+  connectionId: string,
+  schema: string,
+  driverType: DriverType,
+  showSystemObjects: boolean,
+): Promise<CompletionItem[]> {
+  if (!showSystemObjects && isSystemSchema(driverType, schema)) {
+    return []
+  }
+
+  const state = useMetadataStore.getState()
+  await Promise.all([
+    state.loadTables(connectionId, schema).catch(() => []),
+    state.loadViews(connectionId, schema).catch(() => []),
+    state.loadFunctions(connectionId, schema).catch(() => []),
+    state.loadSchemaObjects(connectionId, schema, 'materializedView').catch(() => []),
+  ])
+  const nextState = useMetadataStore.getState()
+  const tables = knownTables(connectionId, schema, driverType, showSystemObjects).filter(
+    (item) => item.schema.toLowerCase() === schema.toLowerCase(),
+  )
+  const functions =
+    nextState.functions[`${connectionId}::schema::${schema}`]?.map((name) => ({
+      label: name,
+      kind: monaco.languages.CompletionItemKind.Function,
+      insertText: `${quoteIfNeeded(name)}()`,
+      detail: `function - ${schema}`,
+      sortText: `1_function_${name}`,
+      range,
+    })) ?? []
+
+  return [
+    ...tables.map((item) => ({
+      label: item.table.name,
+      kind: tableKind(monaco, item.table),
+      insertText: quoteIfNeeded(item.table.name),
+      detail: `${tableTypeLabel(item.table)} - ${schema}.${item.table.name}`,
+      sortText: `0_${tableTypeLabel(item.table)}_${item.table.name}`,
+      range,
+    })),
+    ...uniqueBy(functions, (item) => String(item.label)),
+  ]
+}
+
+async function schemaForOwner(
+  connectionId: string,
+  owner: string,
+  driverType: DriverType,
+  showSystemObjects: boolean,
+) {
+  const normalized = unquoteIdentifier(owner).toLowerCase()
+  const state = useMetadataStore.getState()
+  const loadedSchemas = Object.entries(state.schemas)
+    .filter(([key]) => key.startsWith(`${connectionId}::`))
+    .flatMap(([, values]) => values)
+    .filter((schema) => showSystemObjects || !isSystemSchema(driverType, schema.name))
+  const loadedMatch = loadedSchemas.find((schema) => schema.name.toLowerCase() === normalized)
+  if (loadedMatch) return loadedMatch.name
+
+  const path = state.catalogSchemaPaths[connectionId]
+  const schemas = await state.loadSchemas(connectionId, path?.database ?? null).catch(() => [])
+  return schemas
+    .filter((schema) => showSystemObjects || !isSystemSchema(driverType, schema.name))
+    .find((schema) => schema.name.toLowerCase() === normalized)?.name ?? null
+}
+
+function knownTables(
+  connectionId: string,
+  preferredSchema: string | null = null,
+  driverType: DriverType,
+  showSystemObjects: boolean,
+) {
   const state = useMetadataStore.getState()
   const tableEntries = Object.entries(state.tables)
     .filter(([key]) => key.startsWith(`${connectionId}::`))
     .flatMap(([key, tables]) => tables.map((table) => ({ schema: schemaFromKey(key), table })))
+    .filter(({ schema }) => showSystemObjects || !isSystemSchema(driverType, schema))
   const viewEntries = Object.entries(state.views)
     .filter(([key]) => key.startsWith(`${connectionId}::`))
     .flatMap(([key, views]) => views.map((table) => ({ schema: schemaFromKey(key), table })))
+    .filter(({ schema }) => showSystemObjects || !isSystemSchema(driverType, schema))
   const materializedViewEntries = Object.entries(state.schemaObjects)
     .filter(([key]) => key.startsWith(`${connectionId}::`) && key.endsWith('::materializedView'))
     .flatMap(([key, objects]) =>
@@ -222,6 +366,7 @@ function knownTables(connectionId: string, preferredSchema: string | null = null
         },
       })),
     )
+    .filter(({ schema }) => showSystemObjects || !isSystemSchema(driverType, schema))
 
   return uniqueBy(
     [...tableEntries, ...viewEntries, ...materializedViewEntries],

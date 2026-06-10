@@ -1,5 +1,7 @@
 package com.vaporlensdb.jdbcbridge;
 
+import java.io.Reader;
+import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
@@ -97,11 +99,7 @@ public final class JdbcBridge {
                         if (index > 1) {
                             output.append(',');
                         }
-                        Object value = resultSet.getObject(index);
-                        if (!(value instanceof Number) && !(value instanceof Boolean)) {
-                            value = resultSet.getString(index);
-                        }
-                        appendJsonValue(output, value);
+                        appendJsonValue(output, resultValue(resultSet, index));
                     }
                     output.append(']');
                     rowCount += 1;
@@ -124,6 +122,29 @@ public final class JdbcBridge {
             output.append(value);
         } else {
             output.append('"').append(json(String.valueOf(value))).append('"');
+        }
+    }
+
+    private static Object resultValue(ResultSet resultSet, int index) throws Exception {
+        Object value = resultSet.getObject(index);
+        if (value instanceof Number || value instanceof Boolean || value == null) {
+            return value;
+        }
+        if (value instanceof Clob clob) {
+            return readClob(clob);
+        }
+        return resultSet.getString(index);
+    }
+
+    private static String readClob(Clob clob) throws Exception {
+        try (Reader reader = clob.getCharacterStream()) {
+            StringBuilder value = new StringBuilder();
+            char[] buffer = new char[8192];
+            int read;
+            while ((read = reader.read(buffer)) != -1) {
+                value.append(buffer, 0, read);
+            }
+            return value.toString();
         }
     }
 

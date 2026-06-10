@@ -1,10 +1,13 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { AlertCircle, Download, FileCode2 } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Download, FileCode2, LockKeyhole, RefreshCw } from 'lucide-react'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { DataGrid } from '@/components/grid/DataGrid'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/hooks/useQuery'
+import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
+import { buildDataTabSql } from '@/lib/dataTabSql'
+import { isSystemSchema } from '@/lib/systemObjects'
 import { normalizeAppError } from '@/ipc/client'
 import { analyzeSqlRisk, type SqlRiskAnalysis, type SqlRiskReason } from '@/ipc/query'
 import { useConnectionStore } from '@/stores/connectionStore'
@@ -13,7 +16,9 @@ import { useMetadataStore } from '@/stores/metadataStore'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { DriverType } from '@/types/connection'
+import type { ColumnInfo, DbObjectInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
 import type { QueryResult } from '@/types/query'
+import type { EditorTab } from '@/stores/editorStore'
 
 type SqlEditorModule = { default: typeof import('@/components/editor/SqlEditor').SqlEditor }
 
@@ -42,7 +47,9 @@ export function MainPanel() {
     tabs,
     activeTabId,
     ensureTab,
+    addTab,
     updateTabSql,
+    updateDataTabContext,
     updateTabConnection,
     setTabQueryState,
   } = useEditorStore()
@@ -50,19 +57,21 @@ export function MainPanel() {
   const explains = useQueryResultStore((state) => state.explains)
   const metadataDatabases = useMetadataStore((state) => state.databases)
   const metadataSchemas = useMetadataStore((state) => state.schemas)
+  const catalogSchemaPaths = useMetadataStore((state) => state.catalogSchemaPaths)
+  const setCatalogSchemaPath = useMetadataStore((state) => state.setCatalogSchemaPath)
   const loadDatabases = useMetadataStore((state) => state.loadDatabases)
   const loadSchemas = useMetadataStore((state) => state.loadSchemas)
   const loadTables = useMetadataStore((state) => state.loadTables)
   const loadViews = useMetadataStore((state) => state.loadViews)
   const loadFunctions = useMetadataStore((state) => state.loadFunctions)
   const notifyError = useUiStore((state) => state.notifyError)
+  const notify = useUiStore((state) => state.notify)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
+  const showSystemObjects = useUiStore((state) => state.showSystemObjects)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
   const [selectedSql, setSelectedSql] = useState('')
   const [editorLoaded, setEditorLoaded] = useState(false)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
-  const [databaseByConnection, setDatabaseByConnection] = useState<Record<string, string | null>>({})
-  const [schemaByConnection, setSchemaByConnection] = useState<Record<string, string | null>>({})
 
   useEffect(() => {
     ensureTab(activeConnectionId)
@@ -71,14 +80,16 @@ export function MainPanel() {
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const connectionId = activeTab?.connectionId ?? activeConnectionId
   const activeConnection = connections.find((connection) => connection.id === connectionId)
+  const activeDriverType = activeConnection?.driverType ?? 'postgres'
+  const catalogSchemaPath = connectionId ? catalogSchemaPaths[connectionId] : null
   const queryCapabilities = activeConnection
     ? driverQueryCapabilities(activeConnection.driverType)
     : emptyQueryCapabilities()
   const selectedDatabase =
     connectionId != null
-      ? databaseByConnection[connectionId] ?? activeConnection?.database ?? null
+      ? catalogSchemaPath?.database ?? activeConnection?.database ?? null
       : null
-  const selectedSchema = connectionId != null ? schemaByConnection[connectionId] ?? null : null
+  const selectedSchema = connectionId != null ? catalogSchemaPath?.schema ?? null : null
   const connectionIsConnected = Boolean(
     connectionId && statuses[connectionId]?.status === 'connected',
   )
@@ -100,9 +111,13 @@ export function MainPanel() {
   const toolbarDatabases = connectionId ? metadataDatabases[connectionId] ?? [] : []
   const toolbarSchemas =
     connectionId && selectedDatabase
-      ? metadataSchemas[`${connectionId}::database::${selectedDatabase}::schemas`] ??
-        metadataSchemas[`${connectionId}::database::::schemas`] ??
-        []
+      ? filterCompletionSchemas(
+          activeDriverType,
+          metadataSchemas[`${connectionId}::database::${selectedDatabase}::schemas`] ??
+            metadataSchemas[`${connectionId}::database::::schemas`] ??
+            [],
+          showSystemObjects,
+        )
       : []
   const completionHint = completionMetadataHint(
     connectionIsConnected,
@@ -123,9 +138,20 @@ export function MainPanel() {
     Promise.all([loadDatabases(connectionId), loadSchemas(connectionId, selectedDatabase)])
       .then(([, schemas]) => {
         if (!cancelled && !selectedSchema) {
-          const preferredSchema = schemas.find((item) => item.name === 'public') ?? schemas[0]
+          const visibleSchemas = filterCompletionSchemas(
+            activeDriverType,
+            schemas,
+            showSystemObjects,
+          )
+          const preferredSchema =
+            visibleSchemas.find((item) => item.name === 'public') ?? visibleSchemas[0]
           if (preferredSchema) {
-            setSchemaByConnection((state) => ({ ...state, [connectionId]: preferredSchema.name }))
+            setCatalogSchemaPath({
+              connectionId,
+              database: selectedDatabase,
+              schema: preferredSchema.name,
+              schemaListAvailable: true,
+            })
           }
         }
       })
@@ -141,11 +167,14 @@ export function MainPanel() {
   }, [
     connectionId,
     connectionIsConnected,
+    activeDriverType,
     queryCapabilities.canReadMetadata,
     selectedDatabase,
     selectedSchema,
+    showSystemObjects,
     loadDatabases,
     loadSchemas,
+    setCatalogSchemaPath,
     notifyError,
   ])
 
@@ -245,6 +274,119 @@ export function MainPanel() {
     )
   }
 
+  const activeDataContext = activeTab.kind === 'data' ? activeTab.dataContext : null
+  if (activeDataContext) {
+    return (
+      <main className="flex flex-1 overflow-hidden bg-background">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <DataTabPanel
+            key={activeTab.id}
+            tab={{ ...activeTab, dataContext: activeDataContext }}
+            result={activeResult}
+            error={activeTab.error ?? null}
+            running={activeTab.running === true}
+            onRefresh={() => {
+              if (activeTab.connectionId) {
+                runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {
+                  maxRows: activeDataContext.limit,
+                })
+              }
+            }}
+            onLimitChange={(limit) => {
+              if (!activeTab.connectionId || !activeTab.dataContext) {
+                return
+              }
+              if (limit > 10_000) {
+                notify({
+                  kind: 'warning',
+                  title: '数据预览行数过大',
+                  message: '单个 Data tab 最多 10000 行，已回退到当前值。',
+                })
+                return
+              }
+              const nextContext = { ...activeTab.dataContext, limit, offset: 0 }
+              const nextSql = buildDataTabSql(dataContextToSqlInput(nextContext))
+              updateDataTabContext(activeTab.id, nextContext, nextSql)
+              runQuery(activeTab.id, activeTab.connectionId, nextSql, { maxRows: nextContext.limit })
+            }}
+            onContextChange={(patch) => {
+              if (!activeTab.connectionId || !activeTab.dataContext) {
+                return
+              }
+              const nextContext = { ...activeTab.dataContext, ...patch }
+              const nextSql = buildDataTabSql(dataContextToSqlInput(nextContext))
+              updateDataTabContext(activeTab.id, nextContext, nextSql)
+              runQuery(activeTab.id, activeTab.connectionId, nextSql, { maxRows: nextContext.limit })
+            }}
+            onOpenSqlTab={() => {
+              addTab({
+                id: crypto.randomUUID(),
+                kind: 'sql',
+                title: `${activeDataContext.object} generated SQL`,
+                sql: activeTab.sql,
+                connectionId: activeTab.connectionId,
+              })
+            }}
+            onExport={() => activeResult && exportCurrentResult(activeResult, activeTab.title)}
+          />
+        </div>
+        <ObjectInspectorPanel />
+      </main>
+    )
+  }
+
+  const activeStructureContext =
+    activeTab.kind === 'structure' ? activeTab.structureContext : null
+  if (activeStructureContext) {
+    return (
+      <main className="flex flex-1 overflow-hidden bg-background">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <StructureTabPanel
+            key={activeTab.id}
+            tab={{ ...activeTab, structureContext: activeStructureContext }}
+            onOpenDefinition={(title, definitionContext) => {
+              addTab({
+                id: crypto.randomUUID(),
+                kind: 'definition',
+                title,
+                sql: '',
+                connectionId: activeTab.connectionId,
+                definitionContext,
+              })
+            }}
+          />
+        </div>
+        <ObjectInspectorPanel />
+      </main>
+    )
+  }
+
+  const activeDefinitionContext =
+    activeTab.kind === 'definition' ? activeTab.definitionContext : null
+  if (activeDefinitionContext) {
+    return (
+      <main className="flex flex-1 overflow-hidden bg-background">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <DefinitionTabPanel
+            key={activeTab.id}
+            tab={{ ...activeTab, definitionContext: activeDefinitionContext }}
+            onTextLoaded={(text) => updateTabSql(activeTab.id, text)}
+            onOpenSqlTab={() => {
+              addTab({
+                id: crypto.randomUUID(),
+                kind: 'sql',
+                title: `${activeDefinitionContext.object} SQL`,
+                sql: activeTab.sql,
+                connectionId: activeTab.connectionId,
+              })
+            }}
+          />
+        </div>
+        <ObjectInspectorPanel />
+      </main>
+    )
+  }
+
   return (
     <main className="flex flex-1 overflow-hidden bg-background">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -268,20 +410,31 @@ export function MainPanel() {
           setActiveConnection(id)
           if (id) {
             const nextConnection = connections.find((connection) => connection.id === id)
-            setDatabaseByConnection((state) => ({
-              ...state,
-              [id]: state[id] ?? nextConnection?.database ?? null,
-            }))
+            setCatalogSchemaPath({
+              connectionId: id,
+              database: catalogSchemaPaths[id]?.database ?? nextConnection?.database ?? null,
+              schema: catalogSchemaPaths[id]?.schema ?? null,
+              schemaListAvailable: true,
+            })
           }
         }}
         onDatabaseChange={(database) => {
           if (!connectionId) return
-          setDatabaseByConnection((state) => ({ ...state, [connectionId]: database }))
-          setSchemaByConnection((state) => ({ ...state, [connectionId]: null }))
+          setCatalogSchemaPath({
+            connectionId,
+            database,
+            schema: null,
+            schemaListAvailable: true,
+          })
         }}
         onSchemaChange={(schema) => {
           if (!connectionId) return
-          setSchemaByConnection((state) => ({ ...state, [connectionId]: schema }))
+          setCatalogSchemaPath({
+            connectionId,
+            database: selectedDatabase,
+            schema,
+            schemaListAvailable: true,
+          })
         }}
         onRun={execute}
         onCancel={cancel}
@@ -302,6 +455,8 @@ export function MainPanel() {
               value={activeTab.sql}
               connectionId={queryCapabilities.canComplete ? connectionId : null}
               schema={selectedSchema}
+              driverType={activeDriverType}
+              showSystemObjects={showSystemObjects}
               onChange={(sql) => updateTabSql(activeTab.id, sql)}
               onRun={execute}
               onSelectionChange={setSelectedSql}
@@ -355,11 +510,11 @@ export function MainPanel() {
                 className={activeResult.truncated ? 'text-amber-600' : 'text-muted-foreground'}
                 title={
                   activeResult.truncated
-                    ? `结果已达到交互查询上限 ${activeResult.maxRows?.toLocaleString() ?? activeResult.rowCount.toLocaleString()} 行，请增加 WHERE/LIMIT 或使用导出任务处理完整结果`
+                    ? largeResultNotice(activeResult)
                     : undefined
                 }
               >
-                {resultSummary(activeResult)}
+                {activeResult.truncated ? largeResultNotice(activeResult) : resultSummary(activeResult)}
               </span>
             )}
             {activeResults && activeResults.length > 1 && (
@@ -418,6 +573,660 @@ export function MainPanel() {
       </div>
       <ObjectInspectorPanel />
     </main>
+  )
+}
+
+function DataTabPanel({
+  tab,
+  result,
+  error,
+  running,
+  onRefresh,
+  onLimitChange,
+  onContextChange,
+  onOpenSqlTab,
+  onExport,
+}: {
+  tab: EditorTab & { dataContext: NonNullable<EditorTab['dataContext']> }
+  result?: QueryResult
+  error: string | null
+  running: boolean
+  onRefresh: () => void
+  onLimitChange: (limit: number) => void
+  onContextChange: (patch: Partial<NonNullable<EditorTab['dataContext']>>) => void
+  onOpenSqlTab: () => void
+  onExport: () => void
+}) {
+  const [limitText, setLimitText] = useState(String(tab.dataContext.limit))
+  const [whereText, setWhereText] = useState(tab.dataContext.wherePredicate ?? '')
+  const page = Math.floor(tab.dataContext.offset / tab.dataContext.limit) + 1
+  const hasPrimaryKeyOrder =
+    !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length > 0
+  const hasNoStableOrder =
+    !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length === 0
+
+  function applyLimit() {
+    const value = Number(limitText)
+    if (!Number.isFinite(value) || value < 1) {
+      setLimitText(String(tab.dataContext.limit))
+      return
+    }
+    if (value > 10_000) {
+      setLimitText(String(tab.dataContext.limit))
+      onLimitChange(Math.round(value))
+      return
+    }
+    onLimitChange(Math.round(value))
+  }
+
+  function applyWhere() {
+    onContextChange({ wherePredicate: whereText.trim() || null, offset: 0 })
+  }
+
+  function changeSort(column: string | null) {
+    onContextChange({
+      sortColumn: column,
+      sortDirection: column ? tab.dataContext.sortDirection ?? 'asc' : null,
+      offset: 0,
+    })
+  }
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="flex min-h-11 items-center justify-between gap-3 border-b ide-toolbar px-3 py-1.5 text-xs">
+        <div className="flex min-w-0 items-center gap-2">
+          <LockKeyhole className="size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <div className="truncate font-medium">{tab.title}</div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              Data tab · read-only · {tab.dataContext.database ? `${tab.dataContext.database} / ` : ''}
+              {tab.dataContext.schema} / {tab.dataContext.object}
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <label className="flex items-center gap-1 text-muted-foreground">
+            <span>Limit</span>
+            <input
+              className="h-7 w-20 rounded-md border bg-background px-2 text-right text-foreground"
+              type="number"
+              min={1}
+              max={10_000}
+              value={limitText}
+              onChange={(event) => setLimitText(event.target.value)}
+              onBlur={applyLimit}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  applyLimit()
+                }
+              }}
+            />
+          </label>
+          <Button type="button" size="sm" variant="outline" disabled={running} onClick={onRefresh}>
+            <RefreshCw />
+            {running ? '刷新中' : '刷新'}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onOpenSqlTab}>
+            在 SQL Tab 中打开
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={!result || result.columns.length === 0}
+            onClick={onExport}
+          >
+            <Download className="size-3.5" />
+            导出 CSV
+          </Button>
+        </div>
+      </div>
+      <div className="flex h-8 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
+        <span>只读数据预览</span>
+        {result && <span>{resultSummary(result)}</span>}
+        <span>Page {page}</span>
+        {hasPrimaryKeyOrder && <span>按主键升序</span>}
+        {hasNoStableOrder && <span className="text-amber-600">无主键，结果顺序不保证</span>}
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-10 items-center gap-2 border-b px-3 py-1.5 text-xs">
+          <input
+            className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-[11px]"
+            placeholder="WHERE predicate"
+            value={whereText}
+            onChange={(event) => setWhereText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                applyWhere()
+              }
+            }}
+          />
+          <Button type="button" size="xs" variant="secondary" disabled={running} onClick={applyWhere}>
+            应用过滤
+          </Button>
+          <select
+            className="ide-select h-7 min-w-32"
+            value={tab.dataContext.sortColumn ?? ''}
+            onChange={(event) => changeSort(event.target.value || null)}
+          >
+            <option value="">排序</option>
+            {result?.columns.map((column) => (
+              <option key={column.name} value={column.name}>
+                {column.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            disabled={!tab.dataContext.sortColumn}
+            title="切换排序方向"
+            onClick={() =>
+              onContextChange({
+                sortDirection: tab.dataContext.sortDirection === 'desc' ? 'asc' : 'desc',
+                offset: 0,
+              })
+            }
+          >
+            {tab.dataContext.sortDirection === 'desc' ? <ArrowDownAZ /> : <ArrowUpAZ />}
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={running || tab.dataContext.offset === 0}
+            onClick={() =>
+              onContextChange({
+                offset: Math.max(0, tab.dataContext.offset - tab.dataContext.limit),
+              })
+            }
+          >
+            上一页
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={running}
+            onClick={() =>
+              onContextChange({
+                offset: tab.dataContext.offset + tab.dataContext.limit,
+              })
+            }
+          >
+            下一页
+          </Button>
+        </div>
+        <textarea
+          className="h-20 shrink-0 resize-none border-b bg-muted/20 p-2 font-mono text-[11px] text-muted-foreground outline-none"
+          readOnly
+          value={tab.sql}
+          aria-label="generated SQL"
+        />
+        <div className="min-h-0 flex-1">
+        {error ? <ErrorDetails message={error} /> : <DataGrid result={result} />}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+type StructureSection = 'columns' | 'indexes' | 'foreignKeys' | 'triggers' | 'ddl'
+
+function StructureTabPanel({
+  tab,
+  onOpenDefinition,
+}: {
+  tab: EditorTab & { structureContext: NonNullable<EditorTab['structureContext']> }
+  onOpenDefinition: (
+    title: string,
+    context: NonNullable<EditorTab['definitionContext']>,
+  ) => void
+}) {
+  const metadata = useMetadataStore()
+  const notifyError = useUiStore((state) => state.notifyError)
+  const [section, setSection] = useState<StructureSection>('columns')
+  const [columns, setColumns] = useState<ColumnInfo[]>([])
+  const [indexes, setIndexes] = useState<IndexInfo[]>([])
+  const [foreignKeys, setForeignKeys] = useState<ForeignKeyInfo[]>([])
+  const [triggers, setTriggers] = useState<DbObjectInfo[]>([])
+  const [ddl, setDdl] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const context = tab.structureContext
+
+  async function loadStructure(force = false) {
+    if (!tab.connectionId) {
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    try {
+      const [nextColumns, nextIndexes, nextForeignKeys, nextTriggers, nextDdl] =
+        await Promise.all([
+          metadata.loadColumns(tab.connectionId, context.schema, context.object, force),
+          metadata.loadIndexes(tab.connectionId, context.schema, context.object, force),
+          metadata.loadForeignKeys(tab.connectionId, context.schema, context.object, force),
+          metadata.loadSchemaObjects(tab.connectionId, context.schema, 'trigger', force),
+          getTableDdl(tab.connectionId, context.schema, context.object),
+        ])
+      setColumns(nextColumns)
+      setIndexes(nextIndexes)
+      setForeignKeys(nextForeignKeys)
+      setTriggers(nextTriggers)
+      setDdl(nextDdl)
+    } catch (loadError) {
+      const appError = normalizeAppError(loadError)
+      setError(appError.message)
+      notifyError(appError, '加载结构失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadStructure(false)
+    })
+    // Structure context is immutable for the tab lifetime; reload when tab identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab.id, tab.connectionId, context.schema, context.object])
+
+  function openTriggerDefinition(trigger: DbObjectInfo) {
+    onOpenDefinition(`${trigger.name} Source`, {
+      database: context.database,
+      schema: context.schema,
+      object: trigger.name,
+      objectKind: 'trigger',
+      definitionKind: 'Source',
+      operation: 'objectDdl',
+    })
+  }
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="flex min-h-11 items-center justify-between gap-3 border-b ide-toolbar px-3 py-1.5 text-xs">
+        <div className="flex min-w-0 items-center gap-2">
+          <LockKeyhole className="size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <div className="truncate font-medium">{tab.title}</div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              Structure tab · read-only · {context.database ? `${context.database} / ` : ''}
+              {context.schema} / {context.object}
+            </div>
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={loading}
+          onClick={() => loadStructure(true)}
+        >
+          <RefreshCw />
+          {loading ? '刷新中' : '刷新结构'}
+        </Button>
+      </div>
+
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b bg-muted/20 px-2 text-xs">
+        {structureSections.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={[
+              'h-7 rounded-md px-2',
+              section === item.id
+                ? 'bg-background font-medium text-foreground shadow-sm'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+            ].join(' ')}
+            onClick={() => setSection(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+        <span className="ml-auto text-[11px] text-muted-foreground">只读结构信息</span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto">
+        {error ? (
+          <ErrorDetails message={error} />
+        ) : loading && columns.length === 0 && ddl.length === 0 ? (
+          <div className="grid h-full place-items-center text-xs text-muted-foreground">
+            正在加载结构
+          </div>
+        ) : section === 'columns' ? (
+          <ColumnsView columns={columns} />
+        ) : section === 'indexes' ? (
+          <IndexesView indexes={indexes} />
+        ) : section === 'foreignKeys' ? (
+          <ForeignKeysView foreignKeys={foreignKeys} />
+        ) : section === 'triggers' ? (
+          <TriggersView triggers={triggers} onOpenDefinition={openTriggerDefinition} />
+        ) : (
+          <textarea
+            className="h-full w-full resize-none bg-card p-3 font-mono text-xs leading-5 outline-none"
+            readOnly
+            spellCheck={false}
+            value={ddl}
+            aria-label="read-only DDL"
+          />
+        )}
+      </div>
+    </section>
+  )
+}
+
+const structureSections: Array<{ id: StructureSection; label: string }> = [
+  { id: 'columns', label: 'Columns' },
+  { id: 'indexes', label: 'Indexes' },
+  { id: 'foreignKeys', label: 'Foreign Keys' },
+  { id: 'triggers', label: 'Triggers' },
+  { id: 'ddl', label: 'DDL' },
+]
+
+function ColumnsView({ columns }: { columns: ColumnInfo[] }) {
+  if (columns.length === 0) {
+    return <StructureEmpty label="No columns" />
+  }
+
+  return (
+    <StructureTable
+      headers={['#', 'Column', 'Type', 'Nullable', 'Default', 'PK']}
+      rows={columns.map((column) => [
+        String(column.ordinalPosition),
+        column.name,
+        column.dataType,
+        column.nullable ? 'YES' : 'NO',
+        column.defaultValue ?? '',
+        column.isPrimaryKey ? 'PK' : '',
+      ])}
+    />
+  )
+}
+
+function IndexesView({ indexes }: { indexes: IndexInfo[] }) {
+  if (indexes.length === 0) {
+    return <StructureEmpty label="No indexes" />
+  }
+
+  return (
+    <StructureTable
+      headers={['Index', 'Columns', 'Unique', 'Definition']}
+      rows={indexes.map((index) => [
+        index.name,
+        index.columns.join(', '),
+        index.unique ? 'YES' : 'NO',
+        index.definition ?? '',
+      ])}
+    />
+  )
+}
+
+function ForeignKeysView({ foreignKeys }: { foreignKeys: ForeignKeyInfo[] }) {
+  if (foreignKeys.length === 0) {
+    return <StructureEmpty label="No foreign keys" />
+  }
+
+  return (
+    <StructureTable
+      headers={['Name', 'Columns', 'Referenced Table', 'Referenced Columns']}
+      rows={foreignKeys.map((key) => [
+        key.name,
+        key.columns.join(', '),
+        [key.referencedSchema, key.referencedTable].filter(Boolean).join('.'),
+        key.referencedColumns.join(', '),
+      ])}
+    />
+  )
+}
+
+function TriggersView({
+  triggers,
+  onOpenDefinition,
+}: {
+  triggers: DbObjectInfo[]
+  onOpenDefinition: (trigger: DbObjectInfo) => void
+}) {
+  if (triggers.length === 0) {
+    return <StructureEmpty label="No triggers" />
+  }
+
+  return (
+    <div className="min-w-[720px] text-xs">
+      <div className="grid grid-cols-[minmax(220px,1fr)_160px_120px_120px] border-b bg-muted/45 font-medium">
+        <div className="border-r px-2 py-1.5">Trigger</div>
+        <div className="border-r px-2 py-1.5">Type</div>
+        <div className="border-r px-2 py-1.5">Status</div>
+        <div className="px-2 py-1.5">Definition</div>
+      </div>
+      {triggers.map((trigger) => (
+        <div
+          key={`${trigger.schema ?? ''}.${trigger.name}`}
+          className="grid grid-cols-[minmax(220px,1fr)_160px_120px_120px] border-b hover:bg-accent/35"
+        >
+          <div className="min-w-0 truncate border-r px-2 py-1.5 font-mono">{trigger.name}</div>
+          <div className="min-w-0 truncate border-r px-2 py-1.5">{trigger.objectType ?? 'trigger'}</div>
+          <div className="min-w-0 truncate border-r px-2 py-1.5">{trigger.status ?? ''}</div>
+          <div className="px-2 py-1">
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              onClick={() => onOpenDefinition(trigger)}
+            >
+              打开 Source/DDL
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function StructureTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
+  const template = `repeat(${headers.length}, minmax(140px, 1fr))`
+
+  return (
+    <div className="min-w-[720px] text-xs">
+      <div className="grid border-b bg-muted/45 font-medium" style={{ gridTemplateColumns: template }}>
+        {headers.map((header) => (
+          <div key={header} className="border-r px-2 py-1.5 last:border-r-0">
+            {header}
+          </div>
+        ))}
+      </div>
+      {rows.map((row, rowIndex) => (
+        <div
+          key={rowIndex}
+          className="grid border-b hover:bg-accent/35"
+          style={{ gridTemplateColumns: template }}
+        >
+          {row.map((cell, cellIndex) => (
+            <div
+              key={`${rowIndex}-${cellIndex}`}
+              className="min-w-0 truncate border-r px-2 py-1.5 font-mono last:border-r-0"
+              title={cell}
+            >
+              {cell}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function StructureEmpty({ label }: { label: string }) {
+  return (
+    <div className="grid h-full min-h-40 place-items-center text-xs text-muted-foreground">
+      {label}
+    </div>
+  )
+}
+
+function DefinitionTabPanel({
+  tab,
+  onTextLoaded,
+  onOpenSqlTab,
+}: {
+  tab: EditorTab & { definitionContext: NonNullable<EditorTab['definitionContext']> }
+  onTextLoaded: (text: string) => void
+  onOpenSqlTab: () => void
+}) {
+  const notify = useUiStore((state) => state.notify)
+  const notifyError = useUiStore((state) => state.notifyError)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const context = tab.definitionContext
+
+  async function loadDefinition(force = false) {
+    if (!tab.connectionId) {
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    try {
+      const text =
+        context.operation === 'tableDdl'
+          ? await getTableDdl(tab.connectionId, context.schema, context.object, force)
+          : await getObjectDdl(
+              tab.connectionId,
+              context.schema,
+              context.object,
+              context.objectKind,
+              force,
+            )
+      onTextLoaded(text)
+    } catch (loadError) {
+      const appError = normalizeAppError(loadError)
+      setError(appError.message)
+      notifyError(appError, `加载 ${context.definitionKind} 失败`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!tab.sql) {
+      queueMicrotask(() => {
+        void loadDefinition(false)
+      })
+    }
+    // Definition context is immutable for the tab lifetime; reload only when the tab changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab.id, tab.connectionId, context.schema, context.object, context.objectKind])
+
+  async function copyDefinition() {
+    try {
+      await navigator.clipboard.writeText(tab.sql)
+      notify({ kind: 'success', title: `已复制 ${context.definitionKind}` })
+    } catch (copyError) {
+      notifyError(normalizeAppError(copyError), '复制失败')
+    }
+  }
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="flex min-h-11 items-center justify-between gap-3 border-b ide-toolbar px-3 py-1.5 text-xs">
+        <div className="flex min-w-0 items-center gap-2">
+          <LockKeyhole className="size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <div className="truncate font-medium">{tab.title}</div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              {context.definitionKind} tab · read-only ·{' '}
+              {context.database ? `${context.database} / ` : ''}
+              {context.schema} / {context.object}
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={!tab.sql}
+            onClick={copyDefinition}
+          >
+            复制
+          </Button>
+          <Button type="button" size="sm" variant="ghost" disabled={!tab.sql} onClick={onOpenSqlTab}>
+            在 SQL Tab 中打开
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={loading}
+            onClick={() => loadDefinition(true)}
+          >
+            <RefreshCw />
+            {loading ? '刷新中' : `刷新 ${context.definitionKind}`}
+          </Button>
+        </div>
+      </div>
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
+        <span>只读定义</span>
+        <span>查找使用编辑器内置 Cmd/Ctrl+F</span>
+      </div>
+      <div className="min-h-0 flex-1">
+        {error ? (
+          <DefinitionError context={context} message={error} />
+        ) : loading && !tab.sql ? (
+          <div className="grid h-full place-items-center text-xs text-muted-foreground">
+            正在加载 {context.definitionKind}
+          </div>
+        ) : (
+          <Suspense
+            fallback={
+              <div className="grid h-full place-items-center bg-card text-xs text-muted-foreground">
+                正在加载只读编辑器
+              </div>
+            }
+          >
+            <SqlEditor
+              value={tab.sql}
+              connectionId={null}
+              schema={context.schema}
+              readOnly
+              onChange={() => undefined}
+              onRun={() => undefined}
+            />
+          </Suspense>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function DefinitionError({
+  context,
+  message,
+}: {
+  context: NonNullable<EditorTab['definitionContext']>
+  message: string
+}) {
+  return (
+    <div className="h-full overflow-auto bg-destructive/5 p-3">
+      <div className="rounded-md border border-destructive/25 bg-background p-3 text-xs">
+        <div className="mb-2 flex items-center gap-2 font-medium text-destructive">
+          <AlertCircle className="size-4 shrink-0" />
+          <span>加载 {context.definitionKind} 失败</span>
+        </div>
+        <div className="grid gap-1 text-muted-foreground">
+          <div>对象：{context.schema}.{context.object}</div>
+          <div>操作：{context.operation === 'tableDdl' ? '读取表结构 DDL' : '读取对象 Source/DDL'}</div>
+          <div>可能原因：权限不足、对象不存在或驱动不支持该对象定义。</div>
+        </div>
+        <pre className="mt-3 max-h-56 overflow-auto rounded border bg-muted/45 p-2 text-[11px] leading-5 text-destructive">
+          {message}
+        </pre>
+      </div>
+    </div>
   )
 }
 
@@ -530,6 +1339,16 @@ function driverQueryCapabilities(driverType: DriverType): QueryCapabilities {
   }
 }
 
+function filterCompletionSchemas<T extends { name: string }>(
+  driverType: DriverType,
+  schemas: T[],
+  showSystemObjects: boolean,
+) {
+  return showSystemObjects
+    ? schemas
+    : schemas.filter((schema) => !isSystemSchema(driverType, schema.name))
+}
+
 function emptyQueryCapabilities(): QueryCapabilities {
   return {
     canQuery: false,
@@ -564,6 +1383,10 @@ function resultSummary(result: QueryResult) {
   return `${result.rowCount.toLocaleString()} 行${result.truncated ? '，已截断' : ''} · ${result.elapsedMs} ms`
 }
 
+function largeResultNotice(result: QueryResult) {
+  return `结果较大，已显示前 ${result.maxRows ?? result.rowCount} 行`
+}
+
 function compactResultSummary(result: QueryResult) {
   if (result.columns.length === 0) {
     return result.elapsedMs === 0 && result.affectedRows === 0
@@ -595,6 +1418,20 @@ function exportCurrentResult(result: QueryResult, title: string) {
   anchor.click()
   anchor.remove()
   URL.revokeObjectURL(url)
+}
+
+function dataContextToSqlInput(context: NonNullable<EditorTab['dataContext']>) {
+  return {
+    driverType: context.driverType,
+    schema: context.schema,
+    table: context.object,
+    limit: context.limit,
+    offset: context.offset,
+    wherePredicate: context.wherePredicate,
+    sortColumn: context.sortColumn,
+    sortDirection: context.sortDirection,
+    primaryKeyColumns: context.primaryKeyColumns,
+  }
 }
 
 function toCsv(result: QueryResult) {

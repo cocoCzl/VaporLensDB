@@ -233,10 +233,13 @@ impl MetadataService {
         driver: Arc<dyn DatabaseDriver>,
         schema: &str,
         table: &str,
+        force: bool,
     ) -> Result<String, AppError> {
         let key = cache_key(connection_id, ["schema", schema, "table", table, "ddl"]);
-        if let Some(cached) = self.cache.read().await.ddls.get(&key).cloned() {
-            return Ok(cached);
+        if !force {
+            if let Some(cached) = self.cache.read().await.ddls.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let value = driver.get_table_ddl(schema, table).await?;
@@ -251,14 +254,17 @@ impl MetadataService {
         schema: &str,
         name: &str,
         kind: DbObjectKind,
+        force: bool,
     ) -> Result<String, AppError> {
         let kind_key = format!("{kind:?}");
         let key = cache_key(
             connection_id,
             ["schema", schema, "object", name, &kind_key, "ddl"],
         );
-        if let Some(cached) = self.cache.read().await.ddls.get(&key).cloned() {
-            return Ok(cached);
+        if !force {
+            if let Some(cached) = self.cache.read().await.ddls.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let value = driver.get_object_ddl(schema, name, kind).await?;

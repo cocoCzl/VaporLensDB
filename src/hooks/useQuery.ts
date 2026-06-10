@@ -22,7 +22,12 @@ export function useQuery() {
   const notify = useUiStore((state) => state.notify)
   const notifyError = useUiStore((state) => state.notifyError)
 
-  async function runQuery(tabId: string, connectionId: string, sql: string) {
+  async function runQuery(
+    tabId: string,
+    connectionId: string,
+    sql: string,
+    options: { maxRows?: number } = {},
+  ) {
     const queryId = crypto.randomUUID()
     const startedAt = new Date().toISOString()
     const startedMs = performance.now()
@@ -37,7 +42,7 @@ export function useQuery() {
             sql,
             queryId,
             chunkSize: 1_000,
-            maxRows: useUiStore.getState().queryMaxRows,
+            maxRows: options.maxRows ?? useUiStore.getState().queryMaxRows,
           })
         } finally {
           streamState.unlisteners.forEach((unlisten) => unlisten())
@@ -58,6 +63,13 @@ export function useQuery() {
       } else {
         const response = await executeQuery({ connectionId, sql, queryId })
         setResults(queryId, response.results)
+      }
+      if (containsLikelyDdl(sql)) {
+        notify({
+          kind: 'info',
+          title: '对象结构可能已变化',
+          message: '可手动刷新对象树、Structure tab 或 DDL/Source tab。',
+        })
       }
       recordQueryHistory(connectionId, sql, queryId, startedAt, performance.now() - startedMs)
       setTabQueryState(tabId, queryId)
@@ -153,6 +165,22 @@ async function registerStreamListeners(tabId: string, queryId: string) {
 
 function canStreamSql(sql: string) {
   return splitSqlStatements(sql).length === 1
+}
+
+function containsLikelyDdl(sql: string) {
+  return splitSqlStatements(sql).some((statement) => {
+    const normalized = statement.trim().toLowerCase()
+    return (
+      normalized.startsWith('create ') ||
+      normalized.startsWith('alter ') ||
+      normalized.startsWith('drop ') ||
+      normalized.startsWith('truncate ') ||
+      normalized.startsWith('rename ') ||
+      normalized.startsWith('comment ') ||
+      normalized.startsWith('grant ') ||
+      normalized.startsWith('revoke ')
+    )
+  })
 }
 
 function splitSqlStatements(sql: string) {

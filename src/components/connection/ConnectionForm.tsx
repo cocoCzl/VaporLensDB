@@ -20,7 +20,8 @@ interface ConnectionFormProps {
   connection?: ConnectionConfig | null
   loading?: boolean
   driverDefinitions?: DriverDefinition[]
-  onSubmit: (input: ConnectionInput) => Promise<void>
+  onSaveOnly: (input: ConnectionInput) => Promise<void>
+  onSaveAndConnect: (input: ConnectionInput) => Promise<void>
   onTest: (input: ConnectionInput) => Promise<void>
   onCancel: () => void
 }
@@ -29,7 +30,8 @@ export function ConnectionForm({
   connection,
   driverDefinitions = [],
   loading = false,
-  onSubmit,
+  onSaveOnly,
+  onSaveAndConnect,
   onTest,
   onCancel,
 }: ConnectionFormProps) {
@@ -59,13 +61,14 @@ export function ConnectionForm({
         (driver) =>
           PRIMARY_DRIVER_IDS.includes(driver.driverType) ||
           (!driver.builtIn && (driver.driverType === 'jdbc' || driver.driverType === 'odbc')),
-      )
+      ).sort(compareDriverChoices)
     : FALLBACK_DRIVER_OPTIONS
   const selectedDriver =
     driverDefinitions.find((driver) => driver.id === form.driverDefinitionId) ??
     driverDefinitions.find((driver) => driver.driverType === form.driverType)
   const driverProfile = profileForDriver(form.driverType, selectedDriver)
   const driverStatus = selectedDriver?.status ?? driverProfile.status
+  const readinessIssue = connectionReadinessIssue(form)
 
   const activeConnectionVariant = driverProfile.connectionVariants.some(
     (variant) => variant.id === connectionVariant,
@@ -97,15 +100,32 @@ export function ConnectionForm({
     }))
   }
 
+  const normalizedForm = () => normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver)
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setMessage(null)
-    await onSubmit(normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver))
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true })
+    if (validationError) {
+      setMessage(validationError)
+      return
+    }
+    await onSaveAndConnect(normalizedForm())
+  }
+
+  const saveOnly = async () => {
+    setMessage(null)
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: false })
+    if (validationError) {
+      setMessage(validationError)
+      return
+    }
+    await onSaveOnly(normalizedForm())
   }
 
   const test = async () => {
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant)
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true })
     if (validationError) {
       setMessage(validationError)
       return
@@ -199,7 +219,7 @@ export function ConnectionForm({
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-3 border-t pt-2">
-                        <span>v1 仅承诺连接测试和基础 SQL 查询；对象浏览、DDL、补全和取消查询暂未完整支持。</span>
+                        <span>需要本地 ojdbc；连接、查询、对象浏览、DDL/source 和补全可用。缺少 JAR 时可仅保存，稍后补齐。</span>
                         <Button
                           type="button"
                           size="xs"
@@ -271,9 +291,10 @@ export function ConnectionForm({
                       onChange={(event) => update('password', event.target.value)}
                     />
                     <Label className="self-center text-right text-sm">保存:</Label>
-                    <select className="ide-input">
-                      <option>永久</option>
-                      <option>本次会话</option>
+                    <select className="ide-input" defaultValue="secure">
+                      <option value="none">不保存</option>
+                      <option value="session">本次会话</option>
+                      <option value="secure">系统钥匙串或安全存储</option>
                     </select>
                   </div>
                 </FormRow>
@@ -379,7 +400,7 @@ export function ConnectionForm({
 
         <div className="flex items-center justify-between gap-2 border-t px-4 py-3">
           <div className="min-w-0 whitespace-pre-line text-xs text-muted-foreground">
-            {message ?? ' '}
+            {message ?? readinessIssue ?? ' '}
           </div>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={test} disabled={loading}>
@@ -389,9 +410,12 @@ export function ConnectionForm({
             <Button type="button" variant="ghost" onClick={onCancel}>
               取消
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="button" variant="secondary" disabled={loading} onClick={saveOnly}>
+              仅保存
+            </Button>
+            <Button type="submit" disabled={loading || Boolean(readinessIssue)}>
               <Database />
-              确定
+              保存并连接
             </Button>
           </div>
         </div>
@@ -582,12 +606,16 @@ function emptyToNull(value: string | null | undefined) {
   return value && value.trim() ? value.trim() : null
 }
 
-function validateRequiredFields(input: ConnectionInput, variant: ConnectionVariant) {
+function validateRequiredFields(
+  input: ConnectionInput,
+  variant: ConnectionVariant,
+  validationMode: { requireExternalDriver: boolean },
+) {
   if (!input.name.trim()) {
     return '连接名称必填'
   }
 
-  if (requiresExternalDriverConfig(input.driverType)) {
+  if (validationMode.requireExternalDriver && requiresExternalDriverConfig(input.driverType)) {
     if (!input.driverClass?.trim()) {
       return 'Oracle JDBC 驱动类必填，默认应为 oracle.jdbc.OracleDriver'
     }
@@ -615,6 +643,19 @@ function validateRequiredFields(input: ConnectionInput, variant: ConnectionVaria
     return '用户名必填'
   }
 
+  return null
+}
+
+function connectionReadinessIssue(input: ConnectionInput) {
+  if (!requiresExternalDriverConfig(input.driverType)) {
+    return null
+  }
+  if (!input.driverClass?.trim()) {
+    return '未就绪：缺少 JDBC 驱动类。可仅保存，补齐后再连接。'
+  }
+  if (!input.driverPaths?.length) {
+    return '未就绪：缺少本地 ojdbc/JDBC JAR。可仅保存，补齐后再连接。'
+  }
   return null
 }
 
@@ -733,7 +774,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     status: 'configurable',
     usesUrl: true,
     externalDriver: true,
-    description: 'Oracle 为实验性 JDBC 支持，需要用户提供 ojdbc.jar；测试连接会通过 JDBC bridge 执行真实 ping。',
+    description: 'Oracle 需要用户提供本地 ojdbc.jar；连接、查询、对象浏览、DDL/source 和补全可用。',
     driverClass: 'oracle.jdbc.OracleDriver',
     urlPlaceholder: 'jdbc:oracle:thin:@//localhost:1521/ORCLPDB1',
     connectionVariants: [
@@ -826,11 +867,23 @@ function databaseFieldLabel(variant: ConnectionVariant) {
 }
 
 const PRIMARY_DRIVER_IDS: DriverType[] = ['postgres', 'mysql', 'oracle', 'sqlite', 'mssql']
+const PRIMARY_DRIVER_ORDER = new Map<DriverType, number>(
+  ['postgres', 'mysql', 'oracle', 'sqlite', 'mssql'].map((driver, index) => [driver as DriverType, index]),
+)
 
 const FALLBACK_DRIVER_OPTIONS: Array<Pick<DriverDefinition, 'id' | 'driverType' | 'name' | 'status' | 'builtIn'>> = [
   { id: 'postgres', driverType: 'postgres', name: 'PostgreSQL', status: 'ready', builtIn: true },
   { id: 'mysql', driverType: 'mysql', name: 'MySQL', status: 'ready', builtIn: true },
-  { id: 'oracle', driverType: 'oracle', name: 'Oracle（实验性，需要 JDBC 驱动）', status: 'configurable', builtIn: true },
+  { id: 'oracle', driverType: 'oracle', name: 'Oracle（需要本地 ojdbc）', status: 'configurable', builtIn: true },
   { id: 'sqlite', driverType: 'sqlite', name: 'SQLite', status: 'planned', builtIn: true },
   { id: 'mssql', driverType: 'mssql', name: 'SQL Server', status: 'planned', builtIn: true },
 ]
+
+function compareDriverChoices(
+  left: Pick<DriverDefinition, 'driverType' | 'name'>,
+  right: Pick<DriverDefinition, 'driverType' | 'name'>,
+) {
+  const leftRank = PRIMARY_DRIVER_ORDER.get(left.driverType) ?? 99
+  const rightRank = PRIMARY_DRIVER_ORDER.get(right.driverType) ?? 99
+  return leftRank === rightRank ? left.name.localeCompare(right.name) : leftRank - rightRank
+}

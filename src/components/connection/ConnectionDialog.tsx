@@ -18,7 +18,7 @@ export function ConnectionDialog({
   trigger,
 }: ConnectionDialogProps) {
   const [open, setOpen] = useState(false)
-  const { saveConnection, testConnectionInput, loading } = useConnectionStore()
+  const { saveConnection, testConnectionInput, connectConnection, loading } = useConnectionStore()
   const { drivers, loadDrivers } = useDriverStore()
 
   useEffect(() => {
@@ -62,13 +62,13 @@ export function ConnectionDialog({
                   {connection ? '编辑连接' : '新建连接'}
                 </h2>
                 <p className="text-xs text-muted-foreground">
-                  配置数据源、驱动和认证信息。
+                  配置 PostgreSQL、MySQL、Oracle 或自定义驱动的数据源。
                 </p>
               </div>
             </div>
             <div className="min-h-0 overflow-auto p-4">
               <p className="mb-4 text-xs text-muted-foreground">
-                内置 PostgreSQL / MySQL，Oracle 为实验性 JDBC 支持。
+                PostgreSQL 和 MySQL 使用内置驱动；Oracle 需要本地 ojdbc，连接、查询、对象浏览、DDL/source 和补全可用。
               </p>
               <ConnectionForm
                 connection={connection}
@@ -76,8 +76,13 @@ export function ConnectionDialog({
                 loading={loading}
                 onCancel={() => setOpen(false)}
                 onTest={testConnectionInput}
-                onSubmit={async (input) => {
+                onSaveOnly={async (input) => {
                   await saveConnection(input)
+                  setOpen(false)
+                }}
+                onSaveAndConnect={async (input) => {
+                  const saved = await saveConnection(input)
+                  await connectConnection(saved.id)
                   setOpen(false)
                 }}
               />

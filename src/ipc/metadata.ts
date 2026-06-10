@@ -48,8 +48,13 @@ export function getFunctions(connectionId: string, schema: string) {
   return invokeCommand<string[]>(COMMANDS.getFunctions, { connectionId, schema })
 }
 
-export function getTableDdl(connectionId: string, schema: string, table: string) {
-  return invokeCommand<string>(COMMANDS.getTableDdl, { connectionId, schema, table })
+export function getTableDdl(
+  connectionId: string,
+  schema: string,
+  table: string,
+  force = false,
+) {
+  return invokeCommand<string>(COMMANDS.getTableDdl, { connectionId, schema, table, force })
 }
 
 export function getSchemaObjects(connectionId: string, schema: string, kind: DbObjectKind) {
@@ -61,8 +66,9 @@ export function getObjectDdl(
   schema: string,
   name: string,
   kind: DbObjectKind,
+  force = false,
 ) {
-  return invokeCommand<string>(COMMANDS.getObjectDdl, { connectionId, schema, name, kind })
+  return invokeCommand<string>(COMMANDS.getObjectDdl, { connectionId, schema, name, kind, force })
 }
 
 export function startMetadataIndexTask(input: StartMetadataIndexInput) {

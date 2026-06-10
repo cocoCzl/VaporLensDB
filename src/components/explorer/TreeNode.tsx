@@ -4,16 +4,21 @@ import {
   CircleDot,
   Columns3,
   Database,
+  Eye,
   Folder,
   FunctionSquare,
   KeyRound,
+  Layers3,
   ListTree,
   Package,
   SquareCode,
   Table2,
+  TriangleAlert,
   Zap,
+  CalendarClock,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import type { KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 
 export type DatabaseTreeNodeKind =
@@ -32,6 +37,7 @@ export type DatabaseTreeNodeKind =
   | 'sequence'
   | 'trigger'
   | 'synonym'
+  | 'event'
 
 export interface DatabaseTreeNodeData {
   id: string
@@ -41,14 +47,20 @@ export interface DatabaseTreeNodeData {
   expandable?: boolean
   expanded?: boolean
   loading?: boolean
+  muted?: boolean
   detail?: string
+  tooltip?: string
+  selected?: boolean
 }
 
 interface TreeNodeProps {
   node: DatabaseTreeNodeData
+  selected?: boolean
   onToggle: (id: string) => void
+  onSelect?: (id: string) => void
   onRefresh?: (id: string) => void
   onDoubleClick?: (id: string) => void
+  onNodeKeyDown?: (node: DatabaseTreeNodeData, event: KeyboardEvent<HTMLDivElement>) => void
   onNodeContextMenu?: (node: DatabaseTreeNodeData, position: { x: number; y: number }) => void
 }
 
@@ -57,52 +69,65 @@ const NODE_ICONS: Record<DatabaseTreeNodeKind, LucideIcon> = {
   schema: ListTree,
   folder: Folder,
   table: Table2,
-  view: Table2,
+  view: Eye,
   column: Columns3,
   index: KeyRound,
   foreignKey: KeyRound,
   function: FunctionSquare,
-  materializedView: Table2,
+  materializedView: Layers3,
   procedure: SquareCode,
   package: Package,
   sequence: ListTree,
   trigger: Zap,
   synonym: SquareCode,
+  event: CalendarClock,
 }
+
+const CATEGORY_KINDS = new Set<DatabaseTreeNodeKind>(['folder'])
+const KEY_KINDS = new Set<DatabaseTreeNodeKind>(['index', 'foreignKey'])
+const CODE_KINDS = new Set<DatabaseTreeNodeKind>(['procedure', 'function', 'package', 'trigger'])
 
 export function TreeNode({
   node,
+  selected,
   onToggle,
+  onSelect,
   onRefresh,
   onDoubleClick,
+  onNodeKeyDown,
   onNodeContextMenu,
 }: TreeNodeProps) {
   const Icon = NODE_ICONS[node.kind]
   const hasToggle = node.expandable || node.loading
   const ToggleIcon = node.expanded ? ChevronDown : ChevronRight
+  const warning = node.detail?.toUpperCase() === 'INVALID'
 
   return (
     <div
-      className="group flex h-7 items-center gap-1 rounded-md px-1 text-xs text-foreground/90 hover:bg-accent/75"
+      className={[
+        'group flex h-7 items-center gap-1 rounded-md px-1 text-xs text-foreground/90 hover:bg-accent/75',
+        selected ? 'bg-accent text-accent-foreground' : '',
+      ].join(' ')}
+      data-muted={node.muted ? 'true' : undefined}
+      data-selected={selected ? 'true' : undefined}
+      title={node.tooltip ?? node.detail ?? node.label}
       style={{ paddingLeft: `${node.depth * 14 + 4}px` }}
-      role={node.expandable ? 'button' : undefined}
-      tabIndex={node.expandable ? 0 : undefined}
-      onClick={() => node.expandable && onToggle(node.id)}
+      role="treeitem"
+      aria-selected={selected}
+      aria-expanded={node.expandable ? node.expanded === true : undefined}
+      tabIndex={0}
+      onClick={() => onSelect?.(node.id)}
       onKeyDown={(event) => {
-        if (!node.expandable) {
-          return
-        }
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onToggle(node.id)
-        }
+        onNodeKeyDown?.(node, event)
       }}
       onContextMenu={(event) => {
         event.preventDefault()
+        onSelect?.(node.id)
         onNodeContextMenu?.(node, { x: event.clientX, y: event.clientY })
       }}
       onDoubleClick={(event) => {
         event.preventDefault()
+        onSelect?.(node.id)
         onDoubleClick?.(node.id)
       }}
     >
@@ -125,10 +150,23 @@ export function TreeNode({
           <span className="size-3.5" />
         )}
       </button>
-      <Icon className="size-3.5 shrink-0 text-primary/80" />
-      <span className="min-w-0 flex-1 truncate">{node.label}</span>
+      <Icon
+        className={[
+          'size-3.5 shrink-0',
+          nodeIconTone(node.kind, node.muted),
+        ].join(' ')}
+      />
+      <span className={['min-w-0 flex-1 truncate', node.muted ? 'text-muted-foreground' : ''].join(' ')}>
+        {node.label}
+      </span>
       {node.detail && (
-        <span className="shrink-0 truncate text-[11px] text-muted-foreground">
+        <span
+          className={[
+            'inline-flex shrink-0 items-center gap-1 truncate text-[11px]',
+            warning ? 'text-amber-600' : 'text-muted-foreground',
+          ].join(' ')}
+        >
+          {warning && <TriangleAlert className="size-3" />}
           {node.detail}
         </span>
       )}
@@ -148,4 +186,17 @@ export function TreeNode({
       )}
     </div>
   )
+}
+
+function nodeIconTone(kind: DatabaseTreeNodeKind, muted?: boolean) {
+  if (muted) return 'text-muted-foreground/50'
+  if (kind === 'database') return 'text-sky-600'
+  if (kind === 'schema') return 'text-emerald-600'
+  if (CATEGORY_KINDS.has(kind)) return 'text-muted-foreground/75'
+  if (kind === 'table') return 'text-blue-600'
+  if (kind === 'view') return 'text-cyan-600'
+  if (kind === 'materializedView') return 'text-indigo-600'
+  if (KEY_KINDS.has(kind)) return 'text-amber-600'
+  if (CODE_KINDS.has(kind)) return 'text-violet-600'
+  return 'text-primary/80'
 }

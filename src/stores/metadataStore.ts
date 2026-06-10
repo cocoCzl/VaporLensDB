@@ -16,6 +16,7 @@ import { normalizeAppError } from '@/ipc/client'
 import { useTaskStore } from '@/stores/taskStore'
 import { useUiStore } from '@/stores/uiStore'
 import type {
+  CatalogSchemaPath,
   ColumnInfo,
   DatabaseInfo,
   DbObjectInfo,
@@ -37,6 +38,7 @@ export interface MetadataState {
   columns: Record<string, ColumnInfo[]>
   indexes: Record<string, IndexInfo[]>
   foreignKeys: Record<string, ForeignKeyInfo[]>
+  catalogSchemaPaths: Record<string, CatalogSchemaPath>
   indexResults: MetadataSearchResult[]
   loading: Record<string, boolean>
   indexLoading: boolean
@@ -73,6 +75,9 @@ export interface MetadataState {
     table: string,
     force?: boolean,
   ) => Promise<ForeignKeyInfo[]>
+  setCatalogSchemaPath: (path: CatalogSchemaPath) => void
+  clearSchema: (connectionId: string, schema: string) => void
+  clearSchemaObjectKind: (connectionId: string, schema: string, kind: DbObjectKind) => void
   startIndexing: (connectionId: string, force?: boolean) => Promise<void>
   searchIndex: (query: string, connectionId?: string | null) => Promise<MetadataSearchResult[]>
   clearConnection: (connectionId: string) => void
@@ -96,6 +101,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
   columns: {},
   indexes: {},
   foreignKeys: {},
+  catalogSchemaPaths: {},
   indexResults: [],
   loading: {},
   indexLoading: false,
@@ -208,6 +214,44 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     })
   },
 
+  setCatalogSchemaPath: (path) =>
+    set((state) => ({
+      catalogSchemaPaths: {
+        ...state.catalogSchemaPaths,
+        [path.connectionId]: path,
+      },
+    })),
+
+  clearSchema: (connectionId, schema) =>
+    set((state) => {
+      const schemaPrefix = schemaObjectKey(connectionId, schema)
+      return {
+        tables: omitByPrefix(state.tables, schemaPrefix),
+        views: omitByPrefix(state.views, schemaPrefix),
+        functions: omitByPrefix(state.functions, schemaPrefix),
+        schemaObjects: omitByPrefix(state.schemaObjects, schemaPrefix),
+        columns: omitByPrefix(state.columns, schemaPrefix),
+        indexes: omitByPrefix(state.indexes, schemaPrefix),
+        foreignKeys: omitByPrefix(state.foreignKeys, schemaPrefix),
+        loading: omitByPrefix(state.loading, schemaPrefix),
+      }
+    }),
+
+  clearSchemaObjectKind: (connectionId, schema, kind) =>
+    set((state) => ({
+      schemaObjects: omitByPrefix(state.schemaObjects, schemaObjectKindKey(connectionId, schema, kind)),
+      tables:
+        kind === 'table' ? omitByPrefix(state.tables, schemaObjectKey(connectionId, schema)) : state.tables,
+      views:
+        kind === 'view' || kind === 'materializedView'
+          ? omitByPrefix(state.views, schemaObjectKey(connectionId, schema))
+          : state.views,
+      functions:
+        kind === 'function'
+          ? omitByPrefix(state.functions, schemaObjectKey(connectionId, schema))
+          : state.functions,
+    })),
+
   startIndexing: async (connectionId, force = true) => {
     set({ indexLoading: true })
     try {
@@ -254,6 +298,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       columns: omitByPrefix(state.columns, connectionId),
       indexes: omitByPrefix(state.indexes, connectionId),
       foreignKeys: omitByPrefix(state.foreignKeys, connectionId),
+      catalogSchemaPaths: omitByPrefix(state.catalogSchemaPaths, connectionId),
       indexResults: state.indexResults.filter(
         (result) => result.entry.connectionId !== connectionId,
       ),

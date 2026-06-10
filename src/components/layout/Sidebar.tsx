@@ -126,6 +126,7 @@ function SqlWorkspacePanel() {
   function createTab() {
     addTab({
       id: crypto.randomUUID(),
+      kind: 'sql',
       title: `SQL ${tabs.length + 1}`,
       sql: '',
       connectionId: activeConnectionId,
@@ -224,6 +225,7 @@ function SqlWorkspacePanel() {
                     setActiveConnection(entry.connectionId)
                     addTab({
                       id: crypto.randomUUID(),
+                      kind: 'sql',
                       title: '历史 SQL',
                       sql: entry.sql,
                       connectionId: entry.connectionId,
@@ -263,8 +265,12 @@ function SettingsPanel() {
   const setTheme = useUiStore((state) => state.setTheme)
   const queryMaxRows = useUiStore((state) => state.queryMaxRows)
   const setQueryMaxRows = useUiStore((state) => state.setQueryMaxRows)
+  const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
+  const setDataPreviewDefaultRows = useUiStore((state) => state.setDataPreviewDefaultRows)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const setEditorFontSize = useUiStore((state) => state.setEditorFontSize)
+  const showSystemObjects = useUiStore((state) => state.showSystemObjects)
+  const setShowSystemObjects = useUiStore((state) => state.setShowSystemObjects)
   const notify = useUiStore((state) => state.notify)
   const history = useQueryHistoryStore((state) => state.entries)
   const historyLoading = useQueryHistoryStore((state) => state.loading)
@@ -315,6 +321,14 @@ function SettingsPanel() {
           onChange={setQueryMaxRows}
         />
         <NumberSetting
+          label="数据预览默认行数"
+          value={dataPreviewDefaultRows}
+          min={1}
+          max={10_000}
+          step={50}
+          onChange={setDataPreviewDefaultRows}
+        />
+        <NumberSetting
           label="编辑器字号"
           value={editorFontSize}
           min={10}
@@ -322,6 +336,20 @@ function SettingsPanel() {
           step={1}
           onChange={setEditorFontSize}
         />
+        <label className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-2 py-2">
+          <span className="min-w-0">
+            <span className="block font-medium text-foreground">显示系统对象</span>
+            <span className="mt-0.5 block text-[11px] text-muted-foreground">
+              对象树和 SQL 补全包含 vendor/internal schema。
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={showSystemObjects}
+            onChange={(event) => setShowSystemObjects(event.target.checked)}
+          />
+        </label>
       </section>
       <section className="space-y-2 border-b p-3 text-xs">
         <div className="flex items-center justify-between gap-3">

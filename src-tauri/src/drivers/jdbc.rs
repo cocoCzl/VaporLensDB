@@ -147,7 +147,9 @@ impl JdbcDriver {
             .ok_or_else(|| unsupported(operation))?;
         let template = selector(dialect).ok_or_else(|| unsupported(operation))?;
         let sql = apply_metadata_template(template, params);
-        self.execute_query(&sql, None).await
+        self.execute_query(&sql, None)
+            .await
+            .map_err(|error| clarify_metadata_error(operation, error))
     }
 
     async fn get_table_like_metadata(
@@ -185,13 +187,18 @@ impl DatabaseDriver for JdbcDriver {
     }
 
     fn capabilities(&self) -> DriverCapabilities {
+        let supports_ddl = self
+            .metadata_sql
+            .as_ref()
+            .map(|sql| sql.table_ddl.is_some() || sql.object_ddl.is_some())
+            .unwrap_or(false);
         DriverCapabilities {
             has_database: true,
             has_schema: true,
             supports_transactions: true,
             supports_explain: false,
             supports_cancel: false,
-            supports_ddl: false,
+            supports_ddl,
             supports_streaming: false,
         }
     }
@@ -325,30 +332,7 @@ impl DatabaseDriver for JdbcDriver {
             .rows
             .iter()
             .enumerate()
-            .filter_map(|(index, row)| {
-                Some(ColumnInfo {
-                    schema: row_string(&result, row, &["schema", "schema_name"])
-                        .or_else(|| Some(schema.to_string())),
-                    table: row_string(&result, row, &["table", "table_name"])
-                        .unwrap_or_else(|| table.to_string()),
-                    name: row_string(&result, row, &["name", "column", "column_name"])?,
-                    ordinal_position: row_i32(&result, row, &["ordinal_position", "position"])
-                        .unwrap_or((index + 1) as i32),
-                    data_type: row_string(&result, row, &["data_type", "type", "type_name"])
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    nullable: row_bool(&result, row, &["nullable", "is_nullable"]).unwrap_or(true),
-                    default_value: row_string(&result, row, &["default_value", "column_default"]),
-                    character_maximum_length: row_i64(
-                        &result,
-                        row,
-                        &["character_maximum_length", "max_length"],
-                    ),
-                    numeric_precision: row_i32(&result, row, &["numeric_precision", "precision"]),
-                    numeric_scale: row_i32(&result, row, &["numeric_scale", "scale"]),
-                    is_primary_key: row_bool(&result, row, &["is_primary_key", "primary_key"])
-                        .unwrap_or(false),
-                })
-            })
+            .filter_map(|(index, row)| map_column_row(&result, row, schema, table, index))
             .collect())
     }
 
@@ -363,20 +347,7 @@ impl DatabaseDriver for JdbcDriver {
         Ok(result
             .rows
             .iter()
-            .filter_map(|row| {
-                Some(IndexInfo {
-                    schema: row_string(&result, row, &["schema", "schema_name"])
-                        .or_else(|| Some(schema.to_string())),
-                    table: row_string(&result, row, &["table", "table_name"])
-                        .unwrap_or_else(|| table.to_string()),
-                    name: row_string(&result, row, &["name", "index", "index_name"])?,
-                    columns: row_string(&result, row, &["columns", "column_names"])
-                        .map(split_csv)
-                        .unwrap_or_default(),
-                    unique: row_bool(&result, row, &["unique", "is_unique"]).unwrap_or(false),
-                    definition: row_string(&result, row, &["definition", "index_definition"]),
-                })
-            })
+            .filter_map(|row| map_index_row(&result, row, schema, table))
             .collect())
     }
 
@@ -487,14 +458,7 @@ impl DatabaseDriver for JdbcDriver {
                     .as_deref()
                     .map(db_object_kind_from_value)
                     .unwrap_or_else(|| kind.clone());
-                Some(DbObjectInfo {
-                    schema: row_string(&result, row, &["schema", "schema_name", "owner"])
-                        .or_else(|| Some(schema.to_string())),
-                    name: row_string(&result, row, &["name", "object_name"])?,
-                    kind: row_kind,
-                    object_type: row_string(&result, row, &["object_type", "type"]),
-                    status: row_string(&result, row, &["status"]),
-                })
+                map_schema_object_row(&result, row, schema, row_kind)
             })
             .collect())
     }
@@ -653,6 +617,68 @@ fn split_csv(value: String) -> Vec<String> {
         .collect()
 }
 
+fn map_column_row(
+    result: &QueryResult,
+    row: &[serde_json::Value],
+    schema: &str,
+    table: &str,
+    index: usize,
+) -> Option<ColumnInfo> {
+    Some(ColumnInfo {
+        schema: row_string(result, row, &["schema", "schema_name"])
+            .or_else(|| Some(schema.to_string())),
+        table: row_string(result, row, &["table", "table_name"])
+            .unwrap_or_else(|| table.to_string()),
+        name: row_string(result, row, &["name", "column", "column_name"])?,
+        ordinal_position: row_i32(result, row, &["ordinal_position", "position"])
+            .unwrap_or((index + 1) as i32),
+        data_type: row_string(result, row, &["data_type", "type", "type_name"])
+            .unwrap_or_else(|| "unknown".to_string()),
+        nullable: row_bool(result, row, &["nullable", "is_nullable"]).unwrap_or(true),
+        default_value: row_string(result, row, &["default_value", "column_default"]),
+        character_maximum_length: row_i64(result, row, &["character_maximum_length", "max_length"]),
+        numeric_precision: row_i32(result, row, &["numeric_precision", "precision"]),
+        numeric_scale: row_i32(result, row, &["numeric_scale", "scale"]),
+        is_primary_key: row_bool(result, row, &["is_primary_key", "primary_key"]).unwrap_or(false),
+    })
+}
+
+fn map_index_row(
+    result: &QueryResult,
+    row: &[serde_json::Value],
+    schema: &str,
+    table: &str,
+) -> Option<IndexInfo> {
+    Some(IndexInfo {
+        schema: row_string(result, row, &["schema", "schema_name"])
+            .or_else(|| Some(schema.to_string())),
+        table: row_string(result, row, &["table", "table_name"])
+            .unwrap_or_else(|| table.to_string()),
+        name: row_string(result, row, &["name", "index", "index_name"])?,
+        columns: row_string(result, row, &["columns", "column_names"])
+            .map(split_csv)
+            .unwrap_or_default(),
+        unique: row_bool(result, row, &["unique", "is_unique"]).unwrap_or(false),
+        definition: row_string(result, row, &["definition", "index_definition"]),
+    })
+}
+
+fn map_schema_object_row(
+    result: &QueryResult,
+    row: &[serde_json::Value],
+    schema: &str,
+    kind: DbObjectKind,
+) -> Option<DbObjectInfo> {
+    Some(DbObjectInfo {
+        schema: row_string(result, row, &["schema", "schema_name", "owner"])
+            .or_else(|| Some(schema.to_string())),
+        name: row_string(result, row, &["name", "object_name"])?,
+        kind,
+        object_type: row_string(result, row, &["object_type", "type"]),
+        status: row_string(result, row, &["status"]),
+    })
+}
+
 fn table_type_from_value(value: &str) -> TableType {
     match value.trim().to_ascii_lowercase().as_str() {
         "table" | "base table" => TableType::Table,
@@ -675,6 +701,7 @@ fn db_object_kind_value(kind: &DbObjectKind) -> &'static str {
         DbObjectKind::Sequence => "sequence",
         DbObjectKind::Trigger => "trigger",
         DbObjectKind::Synonym => "synonym",
+        DbObjectKind::Event => "event",
     }
 }
 
@@ -692,7 +719,29 @@ fn db_object_kind_from_value(value: &str) -> DbObjectKind {
         "sequence" => DbObjectKind::Sequence,
         "trigger" => DbObjectKind::Trigger,
         "synonym" => DbObjectKind::Synonym,
+        "event" => DbObjectKind::Event,
         _ => DbObjectKind::Table,
+    }
+}
+
+fn clarify_metadata_error(operation: &str, error: AppError) -> AppError {
+    match error {
+        AppError::QueryFailed { sql, message } => {
+            let lower = message.to_ascii_lowercase();
+            let hint = if lower.contains("ora-01031") || lower.contains("insufficient privileges") {
+                Some("insufficient privileges for Oracle metadata; grant access to the object or DBMS_METADATA")
+            } else if lower.contains("ora-00942") {
+                Some("Oracle metadata object is not visible to the current user")
+            } else {
+                None
+            };
+            let message = match hint {
+                Some(hint) => format!("{operation}: {hint}. {message}"),
+                None => format!("{operation}: {message}"),
+            };
+            AppError::QueryFailed { sql, message }
+        }
+        error => error,
     }
 }
 
@@ -716,9 +765,14 @@ fn unsupported(operation: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::{
-        db_object_kind_from_value, db_object_kind_value, normalize_jdbc_sql, parse_metadata_sql,
+        clarify_metadata_error, db_object_kind_from_value, db_object_kind_value, map_column_row,
+        map_index_row, map_schema_object_row, normalize_jdbc_sql, parse_metadata_sql,
     };
-    use crate::models::metadata::DbObjectKind;
+    use crate::models::{
+        error::AppError,
+        metadata::DbObjectKind,
+        query_result::{ColumnMeta, QueryResult},
+    };
 
     #[test]
     fn removes_trailing_statement_semicolon_for_jdbc() {
@@ -764,5 +818,135 @@ mod tests {
         );
         assert_eq!(db_object_kind_value(&DbObjectKind::Package), "package");
         assert_eq!(db_object_kind_value(&DbObjectKind::Synonym), "synonym");
+    }
+
+    #[test]
+    fn maps_oracle_metadata_rows_with_non_reserved_aliases() {
+        let columns = query_result(
+            &[
+                "schema_name",
+                "table_name",
+                "name",
+                "ordinal_position",
+                "data_type",
+                "nullable",
+                "default_value",
+                "character_maximum_length",
+                "numeric_precision",
+                "numeric_scale",
+                "is_primary_key",
+            ],
+            vec![vec![
+                serde_json::json!("APP"),
+                serde_json::json!("CUSTOMERS"),
+                serde_json::json!("ID"),
+                serde_json::json!(1),
+                serde_json::json!("NUMBER"),
+                serde_json::json!(0),
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                serde_json::json!(19),
+                serde_json::json!(0),
+                serde_json::json!(1),
+            ]],
+        );
+        let column = map_column_row(&columns, &columns.rows[0], "fallback", "fallback", 0)
+            .expect("column row");
+        assert_eq!(column.schema.as_deref(), Some("APP"));
+        assert_eq!(column.table, "CUSTOMERS");
+        assert_eq!(column.name, "ID");
+        assert_eq!(column.ordinal_position, 1);
+        assert_eq!(column.data_type, "NUMBER");
+        assert!(!column.nullable);
+        assert_eq!(column.numeric_precision, Some(19));
+        assert!(column.is_primary_key);
+
+        let indexes = query_result(
+            &[
+                "schema_name",
+                "table_name",
+                "name",
+                "column_names",
+                "is_unique",
+                "definition",
+            ],
+            vec![vec![
+                serde_json::json!("APP"),
+                serde_json::json!("CUSTOMERS"),
+                serde_json::json!("CUSTOMERS_PK"),
+                serde_json::json!("ID, ACCOUNT_ID"),
+                serde_json::json!(1),
+                serde_json::json!("NORMAL"),
+            ]],
+        );
+        let index =
+            map_index_row(&indexes, &indexes.rows[0], "fallback", "fallback").expect("index row");
+        assert_eq!(index.schema.as_deref(), Some("APP"));
+        assert_eq!(index.table, "CUSTOMERS");
+        assert_eq!(index.name, "CUSTOMERS_PK");
+        assert_eq!(index.columns, vec!["ID", "ACCOUNT_ID"]);
+        assert!(index.unique);
+        assert_eq!(index.definition.as_deref(), Some("NORMAL"));
+
+        let objects = query_result(
+            &["schema_name", "name", "kind", "object_type", "status"],
+            vec![vec![
+                serde_json::json!("APP"),
+                serde_json::json!("PKG_BILLING"),
+                serde_json::json!("package"),
+                serde_json::json!("PACKAGE"),
+                serde_json::json!("VALID"),
+            ]],
+        );
+        let object = map_schema_object_row(
+            &objects,
+            &objects.rows[0],
+            "fallback",
+            DbObjectKind::Package,
+        )
+        .expect("schema object row");
+        assert_eq!(object.schema.as_deref(), Some("APP"));
+        assert_eq!(object.name, "PKG_BILLING");
+        assert_eq!(object.kind, DbObjectKind::Package);
+        assert_eq!(object.object_type.as_deref(), Some("PACKAGE"));
+        assert_eq!(object.status.as_deref(), Some("VALID"));
+    }
+
+    #[test]
+    fn clarifies_oracle_metadata_permission_errors() {
+        let error = clarify_metadata_error(
+            "get_object_ddl",
+            AppError::QueryFailed {
+                sql: "SELECT DBMS_METADATA.GET_DDL(...) FROM dual".to_string(),
+                message: "ORA-01031: insufficient privileges".to_string(),
+            },
+        );
+
+        let AppError::QueryFailed { message, .. } = error else {
+            panic!("expected query failed");
+        };
+        assert!(message.contains("get_object_ddl"));
+        assert!(message.contains("insufficient privileges for Oracle metadata"));
+        assert!(message.contains("DBMS_METADATA"));
+    }
+
+    fn query_result(names: &[&str], rows: Vec<Vec<serde_json::Value>>) -> QueryResult {
+        QueryResult {
+            columns: names
+                .iter()
+                .map(|name| ColumnMeta {
+                    name: (*name).to_string(),
+                    data_type: "VARCHAR2".to_string(),
+                    nullable: true,
+                })
+                .collect(),
+            row_count: rows.len() as u64,
+            rows,
+            elapsed_ms: 0,
+            affected_rows: 0,
+            query_id: None,
+            truncated: false,
+            max_rows: None,
+        }
     }
 }

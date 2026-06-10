@@ -3,7 +3,6 @@ import { ChevronDown, ChevronRight, Database, Link, Link2Off, Pencil, Plus, Refr
 import { Button } from '@/components/ui/button'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { useConnectionStore } from '@/stores/connectionStore'
-import { useEditorStore } from '@/stores/editorStore'
 import type { ConnectionConfig } from '@/types/connection'
 
 export function ConnectionList() {
@@ -19,9 +18,6 @@ export function ConnectionList() {
     activeConnectionId,
     setActiveConnection,
   } = useConnectionStore()
-  const activeTabId = useEditorStore((state) => state.activeTabId)
-  const ensureTab = useEditorStore((state) => state.ensureTab)
-  const updateTabConnection = useEditorStore((state) => state.updateTabConnection)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const groupedConnections = useMemo(() => groupConnections(connections), [connections])
 
@@ -35,8 +31,6 @@ export function ConnectionList() {
 
   function selectConnection(id: string) {
     setActiveConnection(id)
-    const tabId = activeTabId ?? ensureTab(id)
-    updateTabConnection(tabId, id)
   }
 
   return (
@@ -109,7 +103,9 @@ export function ConnectionList() {
                         loading={loading}
                         onSelect={() => selectConnection(connection.id)}
                         onConnect={() => {
-                          void connectConnection(connection.id).then(() => selectConnection(connection.id))
+                          if (!connectionReadinessIssue(connection)) {
+                            void connectConnection(connection.id).then(() => selectConnection(connection.id))
+                          }
                         }}
                         onDisconnect={() => disconnectConnection(connection.id)}
                         onDelete={() => removeConnection(connection.id)}
@@ -145,6 +141,7 @@ function ConnectionCard({
   onDelete: () => void
 }) {
   const connected = status === 'connected'
+  const readinessIssue = connectionReadinessIssue(connection)
 
   return (
     <div
@@ -188,13 +185,17 @@ function ConnectionCard({
           <span
             className={[
               'size-1.5 shrink-0 rounded-full',
-              connected ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+              connected
+                ? 'bg-emerald-500'
+                : readinessIssue
+                  ? 'bg-amber-500'
+                  : 'bg-muted-foreground/40',
             ].join(' ')}
-            title={status}
+            title={readinessIssue ?? status}
           />
         </div>
         <div className="truncate text-[11px] leading-4 text-muted-foreground">
-          {connection.driverType} · {compactConnectionTarget(connection)}
+          {connection.driverType} · {readinessIssue ? '未就绪' : compactConnectionTarget(connection)}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
@@ -203,7 +204,7 @@ function ConnectionCard({
           size="icon-xs"
           variant="ghost"
           title={connected ? '断开连接' : '连接'}
-          disabled={loading}
+          disabled={loading || Boolean(readinessIssue)}
           onClick={(event) => {
             event.stopPropagation()
             if (connected) {
@@ -251,6 +252,19 @@ function compactConnectionTarget(connection: ConnectionConfig) {
   const port = connection.port ? `:${connection.port}` : ''
   const database = connection.database ? `/${connection.database}` : ''
   return `${connection.username ?? '-'}@${host}${port}${database}`
+}
+
+function connectionReadinessIssue(connection: ConnectionConfig) {
+  if (connection.driverType !== 'oracle' && connection.driverType !== 'jdbc') {
+    return null
+  }
+  if (!connection.driverClass?.trim()) {
+    return '缺少 JDBC 驱动类'
+  }
+  if (!connection.driverPaths?.length) {
+    return '缺少本地 JDBC JAR'
+  }
+  return null
 }
 
 function groupConnections(connections: ConnectionConfig[]) {

@@ -7,6 +7,13 @@ export interface SchemaInfo {
   database?: string | null
 }
 
+export interface CatalogSchemaPath {
+  connectionId: string
+  database: string | null
+  schema: string | null
+  schemaListAvailable: boolean
+}
+
 export type TableType =
   | 'table'
   | 'view'
@@ -32,6 +39,7 @@ export type DbObjectKind =
   | 'sequence'
   | 'trigger'
   | 'synonym'
+  | 'event'
 
 export interface DbObjectInfo {
   schema?: string | null

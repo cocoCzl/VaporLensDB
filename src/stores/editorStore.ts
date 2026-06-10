@@ -1,15 +1,51 @@
 import { create } from 'zustand'
+import type { DataTabSortDirection } from '@/lib/dataTabSql'
+import type { DbObjectKind } from '@/types/metadata'
 
 export interface EditorTab {
   id: string
+  kind?: 'sql' | 'data' | 'structure' | 'definition'
   title: string
   sql: string
   connectionId: string | null
+  dataContext?: DataTabContext | null
+  structureContext?: StructureTabContext | null
+  definitionContext?: DefinitionTabContext | null
   tableContext?: TableEditContext | null
   lastQueryId?: string | null
   runningQueryId?: string | null
   running?: boolean
   error?: string | null
+}
+
+export interface DataTabContext {
+  database?: string | null
+  schema: string
+  object: string
+  objectKind: 'table' | 'view' | 'materializedView'
+  driverType: TableEditContext['driverType']
+  limit: number
+  offset: number
+  wherePredicate?: string | null
+  sortColumn?: string | null
+  sortDirection?: DataTabSortDirection | null
+  primaryKeyColumns: string[]
+}
+
+export interface StructureTabContext {
+  database?: string | null
+  schema: string
+  object: string
+  objectKind: 'table' | 'view' | 'materializedView'
+}
+
+export interface DefinitionTabContext {
+  database?: string | null
+  schema: string
+  object: string
+  objectKind: DbObjectKind
+  definitionKind: 'DDL' | 'Source'
+  operation: 'tableDdl' | 'objectDdl'
 }
 
 export interface TableEditContext {
@@ -26,6 +62,8 @@ interface EditorState {
   addTab: (tab: EditorTab) => void
   ensureTab: (connectionId: string | null) => string
   updateTabSql: (id: string, sql: string) => void
+  updateDataTabLimit: (id: string, limit: number, sql: string) => void
+  updateDataTabContext: (id: string, dataContext: DataTabContext, sql: string) => void
   updateTabConnection: (id: string, connectionId: string | null) => void
   setTabRunning: (id: string, running: boolean, queryId?: string | null) => void
   setTabQueryState: (id: string, queryId: string | null, error?: string | null) => void
@@ -47,6 +85,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         tabs: [
           {
             id,
+            kind: 'sql',
             title: 'SQL 1',
             sql: 'SELECT 1 AS value;',
             connectionId,
@@ -59,6 +98,18 @@ export const useEditorStore = create<EditorState>((set) => ({
   },
   updateTabSql: (id, sql) =>
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql } : t)) })),
+  updateDataTabLimit: (id, limit, sql) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === id && t.dataContext
+          ? { ...t, sql, dataContext: { ...t.dataContext, limit } }
+          : t,
+      ),
+    })),
+  updateDataTabContext: (id, dataContext, sql) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql, dataContext } : t)),
+    })),
   updateTabConnection: (id, connectionId) =>
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, connectionId } : t)),

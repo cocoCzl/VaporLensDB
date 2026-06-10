@@ -8,7 +8,7 @@ use vapor_lens_db_lib::{
     drivers::{jdbc::JdbcDriver, trait_def::DatabaseDriver},
     models::{
         connection::{ConnectionConfig, DriverType},
-        metadata::DbObjectKind,
+        metadata::{DbObjectInfo, DbObjectKind, TableInfo},
     },
     services::driver_catalog::driver_definitions,
 };
@@ -112,15 +112,82 @@ async fn reads_oracle_metadata_with_jdbc_bridge() {
         assert!(ddl.contains(&table.name));
     }
 
-    let packages = driver
-        .get_schema_objects(&schema, DbObjectKind::Package)
-        .await
-        .expect("get oracle packages");
-    if let Some(package) = packages.first() {
-        let source = driver
-            .get_object_ddl(&schema, &package.name, DbObjectKind::Package)
-            .await
-            .expect("get oracle package source");
-        assert!(source.contains(&package.name));
+    let views = driver.get_views(&schema).await.expect("get oracle views");
+    if let Some(view) = views.first() {
+        assert_object_ddl_contains_name(&driver, &schema, view, DbObjectKind::View).await;
     }
+
+    let mut source_candidates: Vec<(DbObjectKind, DbObjectInfo)> = Vec::new();
+    for kind in [
+        DbObjectKind::Table,
+        DbObjectKind::View,
+        DbObjectKind::MaterializedView,
+        DbObjectKind::Index,
+        DbObjectKind::Procedure,
+        DbObjectKind::Function,
+        DbObjectKind::Package,
+        DbObjectKind::Sequence,
+        DbObjectKind::Trigger,
+        DbObjectKind::Synonym,
+    ] {
+        let objects = driver
+            .get_schema_objects(&schema, kind.clone())
+            .await
+            .unwrap_or_else(|error| panic!("get oracle {kind:?} objects: {error}"));
+        assert!(
+            objects
+                .iter()
+                .all(|object| object.schema.as_deref() == Some(schema.as_str())),
+            "oracle {kind:?} metadata should stay within requested schema"
+        );
+
+        if matches!(
+            kind,
+            DbObjectKind::Procedure
+                | DbObjectKind::Function
+                | DbObjectKind::Package
+                | DbObjectKind::Trigger
+        ) {
+            if let Some(object) = objects.first() {
+                source_candidates.push((kind.clone(), object.clone()));
+            }
+        }
+
+        if matches!(kind, DbObjectKind::MaterializedView) {
+            if let Some(object) = objects.first() {
+                let ddl = driver
+                    .get_object_ddl(&schema, &object.name, DbObjectKind::MaterializedView)
+                    .await
+                    .expect("get oracle materialized view DDL");
+                assert!(ddl
+                    .to_ascii_uppercase()
+                    .contains(&object.name.to_ascii_uppercase()));
+            }
+        }
+    }
+
+    for (kind, object) in source_candidates {
+        let source = driver
+            .get_object_ddl(&schema, &object.name, kind.clone())
+            .await
+            .unwrap_or_else(|error| panic!("get oracle {kind:?} source: {error}"));
+        assert!(source
+            .to_ascii_uppercase()
+            .contains(&object.name.to_ascii_uppercase()));
+    }
+}
+
+async fn assert_object_ddl_contains_name(
+    driver: &JdbcDriver,
+    schema: &str,
+    object: &TableInfo,
+    kind: DbObjectKind,
+) {
+    let ddl = driver
+        .get_object_ddl(schema, &object.name, kind)
+        .await
+        .expect("get oracle object DDL");
+    assert!(ddl
+        .to_ascii_uppercase()
+        .contains(&object.name.to_ascii_uppercase()));
 }

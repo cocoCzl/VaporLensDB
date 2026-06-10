@@ -35,6 +35,7 @@ pub enum DbObjectKind {
     Sequence,
     Trigger,
     Synonym,
+    Event,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

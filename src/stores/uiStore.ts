@@ -15,12 +15,15 @@ export interface AppNotification {
 const THEME_STORAGE_KEY = 'vaporlensdb.theme'
 const SETTINGS_STORAGE_KEY = 'vaporlensdb.settings'
 const DEFAULT_THEME: Theme = 'system'
-const DEFAULT_QUERY_MAX_ROWS = 50_000
+const DEFAULT_QUERY_MAX_ROWS = 5_000
+const DEFAULT_DATA_PREVIEW_ROWS = 200
 const DEFAULT_EDITOR_FONT_SIZE = 13
 
 interface UserSettings {
   queryMaxRows: number
+  dataPreviewDefaultRows: number
   editorFontSize: number
+  showSystemObjects: boolean
 }
 
 interface UiState {
@@ -29,14 +32,18 @@ interface UiState {
   sidebarWidth: number
   bottomPanelHeight: number
   queryMaxRows: number
+  dataPreviewDefaultRows: number
   editorFontSize: number
+  showSystemObjects: boolean
   notifications: AppNotification[]
   setTheme: (theme: Theme) => void
   setSidebarView: (view: SidebarView) => void
   setSidebarWidth: (width: number) => void
   setBottomPanelHeight: (height: number) => void
   setQueryMaxRows: (maxRows: number) => void
+  setDataPreviewDefaultRows: (rows: number) => void
   setEditorFontSize: (fontSize: number) => void
+  setShowSystemObjects: (showSystemObjects: boolean) => void
   notify: (notification: Omit<AppNotification, 'id'>) => void
   notifyError: (error: AppError, title?: string) => void
   dismissNotification: (id: string) => void
@@ -60,19 +67,45 @@ export const useUiStore = create<UiState>((set) => ({
     set((state) => {
       const next = {
         queryMaxRows: clampNumber(queryMaxRows, 100, 1_000_000),
+        dataPreviewDefaultRows: state.dataPreviewDefaultRows,
         editorFontSize: state.editorFontSize,
+        showSystemObjects: state.showSystemObjects,
       }
       writeStoredSettings(next)
       return { queryMaxRows: next.queryMaxRows }
+    }),
+  setDataPreviewDefaultRows: (dataPreviewDefaultRows) =>
+    set((state) => {
+      const next = {
+        queryMaxRows: state.queryMaxRows,
+        dataPreviewDefaultRows: clampNumber(dataPreviewDefaultRows, 1, 10_000),
+        editorFontSize: state.editorFontSize,
+        showSystemObjects: state.showSystemObjects,
+      }
+      writeStoredSettings(next)
+      return { dataPreviewDefaultRows: next.dataPreviewDefaultRows }
     }),
   setEditorFontSize: (editorFontSize) =>
     set((state) => {
       const next = {
         queryMaxRows: state.queryMaxRows,
+        dataPreviewDefaultRows: state.dataPreviewDefaultRows,
         editorFontSize: clampNumber(editorFontSize, 10, 24),
+        showSystemObjects: state.showSystemObjects,
       }
       writeStoredSettings(next)
       return { editorFontSize: next.editorFontSize }
+    }),
+  setShowSystemObjects: (showSystemObjects) =>
+    set((state) => {
+      const next = {
+        queryMaxRows: state.queryMaxRows,
+        dataPreviewDefaultRows: state.dataPreviewDefaultRows,
+        editorFontSize: state.editorFontSize,
+        showSystemObjects,
+      }
+      writeStoredSettings(next)
+      return { showSystemObjects }
     }),
   notify: (notification) =>
     set((state) => ({
@@ -117,7 +150,12 @@ function writeStoredTheme(theme: Theme) {
 
 function readStoredSettings(): UserSettings {
   if (typeof window === 'undefined') {
-    return { queryMaxRows: DEFAULT_QUERY_MAX_ROWS, editorFontSize: DEFAULT_EDITOR_FONT_SIZE }
+    return {
+      queryMaxRows: DEFAULT_QUERY_MAX_ROWS,
+      dataPreviewDefaultRows: DEFAULT_DATA_PREVIEW_ROWS,
+      editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
+      showSystemObjects: false,
+    }
   }
 
   try {
@@ -125,10 +163,22 @@ function readStoredSettings(): UserSettings {
     const parsed = value ? JSON.parse(value) : {}
     return {
       queryMaxRows: clampNumber(parsed.queryMaxRows, 100, 1_000_000, DEFAULT_QUERY_MAX_ROWS),
+      dataPreviewDefaultRows: clampNumber(
+        parsed.dataPreviewDefaultRows,
+        1,
+        10_000,
+        DEFAULT_DATA_PREVIEW_ROWS,
+      ),
       editorFontSize: clampNumber(parsed.editorFontSize, 10, 24, DEFAULT_EDITOR_FONT_SIZE),
+      showSystemObjects: parsed.showSystemObjects === true,
     }
   } catch {
-    return { queryMaxRows: DEFAULT_QUERY_MAX_ROWS, editorFontSize: DEFAULT_EDITOR_FONT_SIZE }
+    return {
+      queryMaxRows: DEFAULT_QUERY_MAX_ROWS,
+      dataPreviewDefaultRows: DEFAULT_DATA_PREVIEW_ROWS,
+      editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
+      showSystemObjects: false,
+    }
   }
 }
 

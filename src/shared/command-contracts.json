@@ -191,7 +191,7 @@
   {
     "name": "get_table_ddl",
     "namespace": "metadata",
-    "args": "{ connectionId: string; schema: string; table: string }",
+    "args": "{ connectionId: string; schema: string; table: string; force?: boolean }",
     "response": "string",
     "status": "active"
   },
@@ -205,7 +205,7 @@
   {
     "name": "get_object_ddl",
     "namespace": "metadata",
-    "args": "{ connectionId: string; schema: string; name: string; kind: DbObjectKind }",
+    "args": "{ connectionId: string; schema: string; name: string; kind: DbObjectKind; force?: boolean }",
     "response": "string",
     "status": "active"
   },

@@ -10,6 +10,7 @@ import {
   updateConnection,
 } from '@/ipc/connection'
 import { normalizeAppError } from '@/ipc/client'
+import { useMetadataStore } from '@/stores/metadataStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { ConnectionConfig, ConnectionInput, ConnectionStatus } from '@/types/connection'
 
@@ -20,7 +21,7 @@ interface ConnectionState {
   loading: boolean
   error: string | null
   loadConnections: () => Promise<void>
-  saveConnection: (input: ConnectionInput) => Promise<void>
+  saveConnection: (input: ConnectionInput) => Promise<ConnectionConfig>
   removeConnection: (id: string) => Promise<void>
   testConnectionInput: (input: ConnectionInput) => Promise<void>
   connectConnection: (id: string) => Promise<void>
@@ -73,12 +74,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   saveConnection: async (input) => {
     set({ loading: true, error: null })
     try {
-      if (input.id) {
-        await updateConnection(input)
-      } else {
-        await createConnection(input)
-      }
+      const saved = input.id ? await updateConnection(input) : await createConnection(input)
       await get().loadConnections()
+      return saved
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
       notifyError(error, '保存连接失败')
@@ -91,9 +89,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       await deleteConnection(id)
       set((state) => ({
         connections: state.connections.filter((connection) => connection.id !== id),
+        statuses: Object.fromEntries(
+          Object.entries(state.statuses).filter(([connectionId]) => connectionId !== id),
+        ),
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
         loading: false,
       }))
+      useMetadataStore.getState().clearConnection(id)
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
       notifyError(error, '删除连接失败')
@@ -129,7 +131,21 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         loading: false,
       }))
     } catch (error) {
-      set({ error: errorMessage(error), loading: false })
+      const message = errorMessage(error)
+      set((state) => ({
+        error: message,
+        statuses: {
+          ...state.statuses,
+          [id]: {
+            connectionId: id,
+            status: 'failed',
+            message,
+          },
+        },
+        activeConnectionId: id,
+        loading: false,
+      }))
+      useMetadataStore.getState().clearConnection(id)
       notifyError(error, '连接失败')
       throw error
     }
@@ -143,6 +159,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
         loading: false,
       }))
+      useMetadataStore.getState().clearConnection(id)
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
       notifyError(error, '断开连接失败')

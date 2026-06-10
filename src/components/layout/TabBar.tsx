@@ -12,6 +12,7 @@ export function TabBar() {
     const index = tabs.length + 1
     addTab({
       id: crypto.randomUUID(),
+      kind: 'sql',
       title: `SQL ${index}`,
       sql: '',
       connectionId: activeConnectionId,
