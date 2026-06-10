@@ -821,8 +821,9 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultPort: 0,
     defaultDatabase: '',
     defaultUsername: '',
-    status: 'planned',
+    status: 'ready',
     usesUrl: true,
+    description: '本地 SQLite 文件，支持查询、对象浏览、DDL 和只读数据预览。',
     urlPlaceholder: '/path/to/database.sqlite',
     connectionVariants: [{ id: 'file', label: 'File' }],
     defaultUrl: (input) => input.connectionUrl || '',
@@ -875,7 +876,7 @@ const FALLBACK_DRIVER_OPTIONS: Array<Pick<DriverDefinition, 'id' | 'driverType' 
   { id: 'postgres', driverType: 'postgres', name: 'PostgreSQL', status: 'ready', builtIn: true },
   { id: 'mysql', driverType: 'mysql', name: 'MySQL', status: 'ready', builtIn: true },
   { id: 'oracle', driverType: 'oracle', name: 'Oracle（需要本地 ojdbc）', status: 'configurable', builtIn: true },
-  { id: 'sqlite', driverType: 'sqlite', name: 'SQLite', status: 'planned', builtIn: true },
+  { id: 'sqlite', driverType: 'sqlite', name: 'SQLite', status: 'ready', builtIn: true },
   { id: 'mssql', driverType: 'mssql', name: 'SQL Server', status: 'planned', builtIn: true },
 ]
 

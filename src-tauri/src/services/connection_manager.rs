@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     drivers::{
-        jdbc::JdbcDriver, mysql::MysqlDriver, postgres::PostgresDriver, trait_def::DatabaseDriver,
+        jdbc::JdbcDriver, mysql::MysqlDriver, postgres::PostgresDriver, sqlite::SqliteDriver,
+        trait_def::DatabaseDriver,
     },
     models::{
         connection::{ConnectionConfig, ConnectionRuntimeStatus, ConnectionStatus, DriverType},
@@ -258,6 +259,11 @@ async fn create_driver(
         }
         DriverType::Oracle => {
             let driver = JdbcDriver::connect(config, password, definition).await?;
+            Ok(Arc::new(driver))
+        }
+        DriverType::Sqlite => {
+            let path = required(config.connection_url.as_deref(), "connection_url")?;
+            let driver = SqliteDriver::connect(path).await?;
             Ok(Arc::new(driver))
         }
         DriverType::Jdbc => {

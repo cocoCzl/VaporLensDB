@@ -1326,6 +1326,14 @@ function driverQueryCapabilities(driverType: DriverType): QueryCapabilities {
         canReadMetadata: true,
         canComplete: true,
       }
+    case 'sqlite':
+      return {
+        canQuery: true,
+        canExplain: true,
+        canCancel: false,
+        canReadMetadata: true,
+        canComplete: false,
+      }
     case 'jdbc':
       return {
         canQuery: true,

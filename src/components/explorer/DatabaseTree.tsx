@@ -71,13 +71,13 @@ const OBJECT_CATEGORY_ORDER: ObjectCategoryDefinition[] = [
     folder: 'tables',
     label: 'Tables',
     kind: 'table',
-    drivers: ['postgres', 'mysql', 'oracle'],
+    drivers: ['postgres', 'mysql', 'oracle', 'sqlite'],
   },
   {
     folder: 'views',
     label: 'Views',
     kind: 'view',
-    drivers: ['postgres', 'mysql', 'oracle'],
+    drivers: ['postgres', 'mysql', 'oracle', 'sqlite'],
   },
   {
     folder: 'materializedViews',
@@ -89,7 +89,7 @@ const OBJECT_CATEGORY_ORDER: ObjectCategoryDefinition[] = [
     folder: 'indexes',
     label: 'Indexes',
     kind: 'index',
-    drivers: ['postgres', 'mysql', 'oracle'],
+    drivers: ['postgres', 'mysql', 'oracle', 'sqlite'],
   },
   {
     folder: 'procedures',
@@ -1591,7 +1591,7 @@ function selectDefaultSchema(
 }
 
 function supportsObjectBrowsing(driverType: DriverType) {
-  return driverType === 'postgres' || driverType === 'mysql' || driverType === 'oracle'
+  return driverType === 'postgres' || driverType === 'mysql' || driverType === 'oracle' || driverType === 'sqlite'
 }
 
 function requiresExternalDriver(connection: ConnectionConfig) {

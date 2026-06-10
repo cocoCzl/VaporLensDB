@@ -139,7 +139,13 @@ pub async fn get_table_ddl(
     let driver = active_driver(&state, connection_id).await?;
     state
         .metadata_service
-        .get_table_ddl(connection_id, driver, &schema, &table, force.unwrap_or(false))
+        .get_table_ddl(
+            connection_id,
+            driver,
+            &schema,
+            &table,
+            force.unwrap_or(false),
+        )
         .await
         .map_err(Into::into)
 }
@@ -171,7 +177,14 @@ pub async fn get_object_ddl(
     let driver = active_driver(&state, connection_id).await?;
     state
         .metadata_service
-        .get_object_ddl(connection_id, driver, &schema, &name, kind, force.unwrap_or(false))
+        .get_object_ddl(
+            connection_id,
+            driver,
+            &schema,
+            &name,
+            kind,
+            force.unwrap_or(false),
+        )
         .await
         .map_err(Into::into)
 }

@@ -60,7 +60,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
         DriverDefinition {
             id: DriverType::Oracle.to_string(),
             driver_type: DriverType::Oracle,
-            name: "Oracle（实验性，需要 JDBC 驱动）".to_string(),
+            name: "Oracle（需要 JDBC 驱动）".to_string(),
             backend: DriverBackend::Jdbc,
             status: DriverStatus::Configurable,
             default_port: Some(1521),
@@ -143,11 +143,34 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             metadata_dialect_sql: None,
             capabilities: external_pending_capabilities(),
         },
-        planned_definition(
-            DriverType::Sqlite,
-            "SQLite",
-            Some("本地文件数据库，后续用 rusqlite 接入。"),
-        ),
+        DriverDefinition {
+            id: DriverType::Sqlite.to_string(),
+            driver_type: DriverType::Sqlite,
+            name: "SQLite".to_string(),
+            backend: DriverBackend::NativeRust,
+            status: DriverStatus::Ready,
+            default_port: None,
+            default_username: None,
+            default_database: None,
+            jdbc_driver_class: None,
+            url_template: Some("{database}".to_string()),
+            driver_artifact: None,
+            driver_artifacts: vec![],
+            odbc_driver_name: None,
+            user_driver_required: false,
+            built_in: true,
+            notes: Some("内置 rusqlite，支持本地文件连接、查询和基础对象浏览。".to_string()),
+            connection_variants: vec![variant("file", "File", &["connectionUrl"])],
+            metadata_dialect_sql: Some("sqlite".to_string()),
+            capabilities: DriverDefinitionCapabilities {
+                can_connect: true,
+                can_query: true,
+                can_stream: false,
+                can_read_metadata: true,
+                can_cancel: false,
+                can_generate_ddl: true,
+            },
+        },
         planned_definition(
             DriverType::Mssql,
             "SQL Server",
@@ -292,6 +315,7 @@ mod tests {
             .find(|definition| definition.driver_type == DriverType::Oracle)
             .expect("oracle driver definition");
 
+        assert!(!definition.name.contains("实验性"));
         assert!(definition.user_driver_required);
         assert!(definition.capabilities.can_read_metadata);
         assert!(definition.capabilities.can_generate_ddl);

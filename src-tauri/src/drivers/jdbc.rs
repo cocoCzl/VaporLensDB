@@ -1,10 +1,13 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{path::Path, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
-use tokio::{process::Command, sync::mpsc};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command},
+    sync::{mpsc, Mutex},
+    time::{timeout, Duration},
+};
 
 use crate::{
     drivers::trait_def::DatabaseDriver,
@@ -25,10 +28,20 @@ use crate::{
 };
 
 pub struct JdbcDriver {
-    config: ConnectionConfig,
-    password: String,
-    bridge_jar: PathBuf,
     metadata_sql: Option<JdbcMetadataSql>,
+    sidecar: Arc<JdbcBridgeSidecar>,
+}
+
+struct JdbcBridgeSidecar {
+    process: Mutex<Option<JdbcBridgeProcess>>,
+}
+
+struct JdbcBridgeProcess {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    stderr: BufReader<ChildStderr>,
+    next_request_id: u64,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -70,69 +83,32 @@ impl JdbcDriver {
             .and_then(|definition| definition.metadata_dialect_sql.as_deref())
             .map(parse_metadata_sql)
             .transpose()?;
+        let sidecar =
+            JdbcBridgeSidecar::spawn(&config, password.unwrap_or(""), &bridge_jar).await?;
         let driver = Self {
-            config,
-            password: password.unwrap_or("").to_string(),
-            bridge_jar,
             metadata_sql,
+            sidecar: Arc::new(sidecar),
         };
         driver.ping().await?;
         Ok(driver)
     }
 
     async fn run_bridge(&self, command: &str, sql: Option<&str>) -> Result<String, AppError> {
-        let driver_class = required(self.config.driver_class.as_deref(), "JDBC driver class")?;
-        let connection_url = required(self.config.connection_url.as_deref(), "JDBC URL")?;
-        let username = self.config.username.as_deref().unwrap_or("");
-        let classpath = build_classpath(&self.bridge_jar, &self.config.driver_paths);
-
-        let mut process = Command::new("java");
-        process
-            .arg("-cp")
-            .arg(classpath)
-            .arg("com.vaporlensdb.jdbcbridge.JdbcBridge")
-            .arg(command)
-            .arg(driver_class)
-            .arg(connection_url)
-            .arg(username)
-            .arg(&self.password);
-
-        if let Some(sql) = sql {
-            process.arg(sql);
-        }
-
-        let output = process
-            .output()
-            .await
-            .map_err(|error| AppError::ConnectionFailed {
-                driver: self.driver_name().to_string(),
-                message: format!("failed to run JDBC bridge: {error}"),
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            if command == "query" {
-                return Err(AppError::QueryFailed {
-                    sql: sql.unwrap_or("<unknown>").to_string(),
-                    message: if stderr.is_empty() {
-                        "JDBC bridge query failed without stderr".to_string()
-                    } else {
-                        stderr
-                    },
+        let runtime_command = match command {
+            "ping" => JdbcBridgeCommand::Ping,
+            "query" => JdbcBridgeCommand::Query(sql.unwrap_or_default().to_string()),
+            other => {
+                return Err(AppError::UnsupportedOperation {
+                    driver: self.driver_name().to_string(),
+                    operation: format!("jdbc bridge command {other}"),
                 });
             }
+        };
 
-            return Err(AppError::ConnectionFailed {
-                driver: self.driver_name().to_string(),
-                message: if stderr.is_empty() {
-                    "JDBC bridge failed without stderr".to_string()
-                } else {
-                    stderr
-                },
-            });
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        self.sidecar
+            .request(runtime_command)
+            .await
+            .map_err(|error| classify_jdbc_error(command, sql, error))
     }
 
     async fn metadata_query(
@@ -179,6 +155,200 @@ impl JdbcDriver {
             .collect())
     }
 }
+
+impl JdbcBridgeSidecar {
+    async fn spawn(
+        config: &ConnectionConfig,
+        password: &str,
+        bridge_jar: &Path,
+    ) -> Result<Self, AppError> {
+        let driver_class = required(config.driver_class.as_deref(), "JDBC driver class")?;
+        let connection_url = required(config.connection_url.as_deref(), "JDBC URL")?;
+        let username = config.username.as_deref().unwrap_or("");
+        let classpath = build_classpath(bridge_jar, &config.driver_paths);
+
+        let mut child = Command::new("java")
+            .arg("-cp")
+            .arg(classpath)
+            .arg("com.vaporlensdb.jdbcbridge.JdbcBridge")
+            .arg("server")
+            .arg(driver_class)
+            .arg(connection_url)
+            .arg(username)
+            .arg(password)
+            .arg(JDBC_CONNECT_TIMEOUT_SECS.to_string())
+            .arg(JDBC_QUERY_TIMEOUT_SECS.to_string())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|error| AppError::ConnectionFailed {
+                driver: "jdbc".to_string(),
+                message: format!("failed to start JDBC bridge sidecar: {error}"),
+            })?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AppError::ConnectionFailed {
+                driver: "jdbc".to_string(),
+                message: "JDBC bridge sidecar stdin unavailable".to_string(),
+            })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AppError::ConnectionFailed {
+                driver: "jdbc".to_string(),
+                message: "JDBC bridge sidecar stdout unavailable".to_string(),
+            })?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| AppError::ConnectionFailed {
+                driver: "jdbc".to_string(),
+                message: "JDBC bridge sidecar stderr unavailable".to_string(),
+            })?;
+
+        Ok(Self {
+            process: Mutex::new(Some(JdbcBridgeProcess {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+                stderr: BufReader::new(stderr),
+                next_request_id: 1,
+            })),
+        })
+    }
+
+    async fn request(&self, command: JdbcBridgeCommand) -> Result<String, AppError> {
+        let mut guard = self.process.lock().await;
+        let process = guard
+            .as_mut()
+            .ok_or_else(|| broken_sidecar("JDBC bridge sidecar is not running"))?;
+        let request_id = process.next_request_id;
+        process.next_request_id += 1;
+        let timeout_window = command.timeout();
+        let request = command.encode(request_id);
+
+        timeout(timeout_window, process.stdin.write_all(request.as_bytes()))
+            .await
+            .map_err(|_| AppError::Timeout {
+                operation: format!("jdbc {}", command.operation_name()),
+                elapsed_ms: timeout_window.as_millis() as u64,
+            })?
+            .map_err(|error| {
+                broken_sidecar(&format!("failed to write JDBC bridge request: {error}"))
+            })?;
+
+        timeout(timeout_window, process.stdin.flush())
+            .await
+            .map_err(|_| AppError::Timeout {
+                operation: format!("jdbc {}", command.operation_name()),
+                elapsed_ms: timeout_window.as_millis() as u64,
+            })?
+            .map_err(|error| {
+                broken_sidecar(&format!("failed to flush JDBC bridge request: {error}"))
+            })?;
+
+        let mut response = String::new();
+        let bytes_read = timeout(timeout_window, process.stdout.read_line(&mut response))
+            .await
+            .map_err(|_| AppError::Timeout {
+                operation: format!("jdbc {}", command.operation_name()),
+                elapsed_ms: timeout_window.as_millis() as u64,
+            })?
+            .map_err(|error| {
+                broken_sidecar(&format!("failed to read JDBC bridge response: {error}"))
+            })?;
+
+        if bytes_read == 0 {
+            let error = process.take_exit_error().await;
+            *guard = None;
+            return Err(error);
+        }
+
+        parse_sidecar_response(&response, request_id)
+    }
+
+    async fn shutdown(&self) -> Result<(), AppError> {
+        let mut process = self.process.lock().await;
+        let Some(mut process) = process.take() else {
+            return Ok(());
+        };
+
+        let request = format!("CLOSE\t0\t-\n");
+        let _ = timeout(
+            Duration::from_secs(2),
+            process.stdin.write_all(request.as_bytes()),
+        )
+        .await;
+        let _ = timeout(Duration::from_secs(2), process.stdin.flush()).await;
+        let _ = timeout(Duration::from_secs(2), process.child.wait()).await;
+        let _ = process.child.start_kill();
+        Ok(())
+    }
+}
+
+impl Drop for JdbcBridgeSidecar {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.process.try_lock() {
+            if let Some(process) = guard.as_mut() {
+                let _ = process.child.start_kill();
+            }
+        }
+    }
+}
+
+impl JdbcBridgeProcess {
+    async fn take_exit_error(&mut self) -> AppError {
+        let status = self.child.wait().await.ok();
+        let mut stderr = String::new();
+        let _ = self.stderr.read_to_string(&mut stderr).await;
+        let stderr = stderr.trim();
+        let message = if stderr.is_empty() {
+            match status {
+                Some(status) => {
+                    format!("JDBC bridge sidecar exited unexpectedly with status {status}")
+                }
+                None => "JDBC bridge sidecar exited unexpectedly".to_string(),
+            }
+        } else {
+            stderr.to_string()
+        };
+        broken_sidecar(&message)
+    }
+}
+
+enum JdbcBridgeCommand {
+    Ping,
+    Query(String),
+}
+
+impl JdbcBridgeCommand {
+    fn encode(&self, request_id: u64) -> String {
+        match self {
+            Self::Ping => format!("PING\t{request_id}\t-\n"),
+            Self::Query(sql) => format!("QUERY\t{request_id}\t{}\n", BASE64.encode(sql)),
+        }
+    }
+
+    fn operation_name(&self) -> &'static str {
+        match self {
+            Self::Ping => "ping",
+            Self::Query(_) => "query",
+        }
+    }
+
+    fn timeout(&self) -> Duration {
+        match self {
+            Self::Ping => Duration::from_secs(JDBC_CONNECT_TIMEOUT_SECS as u64),
+            Self::Query(_) => Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
+        }
+    }
+}
+
+const JDBC_CONNECT_TIMEOUT_SECS: u32 = 15;
+const JDBC_QUERY_TIMEOUT_SECS: u32 = 60;
 
 #[async_trait]
 impl DatabaseDriver for JdbcDriver {
@@ -501,6 +671,10 @@ impl DatabaseDriver for JdbcDriver {
     async fn cancel_query(&self, _query_id: &str) -> Result<(), AppError> {
         Err(unsupported("cancel_query"))
     }
+
+    async fn cancel_all_queries(&self) -> Result<(), AppError> {
+        self.sidecar.shutdown().await
+    }
 }
 
 fn build_classpath(bridge_jar: &Path, driver_paths: &[String]) -> String {
@@ -745,6 +919,113 @@ fn clarify_metadata_error(operation: &str, error: AppError) -> AppError {
     }
 }
 
+fn classify_jdbc_error(command: &str, sql: Option<&str>, error: AppError) -> AppError {
+    match error {
+        AppError::Timeout { .. } => error,
+        AppError::ConnectionFailed { driver, message } => AppError::ConnectionFailed {
+            driver,
+            message: normalize_jdbc_error_message(&message),
+        },
+        AppError::QueryFailed { sql, message } => AppError::QueryFailed {
+            sql,
+            message: normalize_jdbc_error_message(&message),
+        },
+        AppError::IoError(message) => {
+            if command == "query" {
+                AppError::QueryFailed {
+                    sql: sql.unwrap_or("<unknown>").to_string(),
+                    message: normalize_jdbc_error_message(&message),
+                }
+            } else {
+                AppError::ConnectionFailed {
+                    driver: "jdbc".to_string(),
+                    message: normalize_jdbc_error_message(&message),
+                }
+            }
+        }
+        other => {
+            if command == "query" {
+                AppError::QueryFailed {
+                    sql: sql.unwrap_or("<unknown>").to_string(),
+                    message: normalize_jdbc_error_message(&other.to_string()),
+                }
+            } else {
+                AppError::ConnectionFailed {
+                    driver: "jdbc".to_string(),
+                    message: normalize_jdbc_error_message(&other.to_string()),
+                }
+            }
+        }
+    }
+}
+
+fn parse_sidecar_response(response: &str, expected_request_id: u64) -> Result<String, AppError> {
+    let trimmed = response.trim_end();
+    let mut parts = trimmed.splitn(3, '\t');
+    let status = parts
+        .next()
+        .ok_or_else(|| broken_sidecar("malformed JDBC bridge response: missing status"))?;
+    let request_id = parts
+        .next()
+        .ok_or_else(|| broken_sidecar("malformed JDBC bridge response: missing request id"))?;
+    let payload = parts
+        .next()
+        .ok_or_else(|| broken_sidecar("malformed JDBC bridge response: missing payload"))?;
+    let request_id = request_id
+        .parse::<u64>()
+        .map_err(|_| broken_sidecar("malformed JDBC bridge response: invalid request id"))?;
+
+    if request_id != expected_request_id {
+        return Err(broken_sidecar("JDBC bridge response id mismatch"));
+    }
+
+    let decoded = BASE64
+        .decode(payload)
+        .map_err(|_| broken_sidecar("malformed JDBC bridge response payload"))?;
+    let decoded = String::from_utf8(decoded)
+        .map_err(|_| broken_sidecar("JDBC bridge response payload was not valid UTF-8"))?;
+
+    match status {
+        "OK" => Ok(decoded),
+        "ERR" => Err(broken_sidecar(&normalize_jdbc_error_message(&decoded))),
+        _ => Err(broken_sidecar(
+            "malformed JDBC bridge response: invalid status",
+        )),
+    }
+}
+
+fn normalize_jdbc_error_message(message: &str) -> String {
+    let normalized = message.trim();
+    let lower = normalized.to_ascii_lowercase();
+    if lower.contains("io error: connection failed") || lower.contains("connection refused") {
+        return normalized.to_string();
+    }
+    if lower.contains("ora-01017")
+        || lower.contains("access denied")
+        || lower.contains("authentication failed")
+        || lower.contains("invalid username/password")
+    {
+        return format!("authentication failed. {normalized}");
+    }
+    if lower.contains("no suitable driver") {
+        return format!("JDBC driver class or JAR is not usable. {normalized}");
+    }
+    if lower.contains("unknown host")
+        || lower.contains("network adapter could not establish the connection")
+        || lower.contains("the network adapter could not establish the connection")
+    {
+        return format!("database host is unreachable. {normalized}");
+    }
+    normalized.to_string()
+}
+
+fn broken_sidecar(message: &str) -> AppError {
+    AppError::ConnectionFailed {
+        driver: "jdbc".to_string(),
+        message: message.to_string(),
+    }
+}
+
 fn required<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, AppError> {
     value
         .filter(|value| !value.trim().is_empty())
@@ -766,13 +1047,15 @@ fn unsupported(operation: &str) -> AppError {
 mod tests {
     use super::{
         clarify_metadata_error, db_object_kind_from_value, db_object_kind_value, map_column_row,
-        map_index_row, map_schema_object_row, normalize_jdbc_sql, parse_metadata_sql,
+        map_index_row, map_schema_object_row, normalize_jdbc_error_message, normalize_jdbc_sql,
+        parse_metadata_sql, parse_sidecar_response,
     };
     use crate::models::{
         error::AppError,
         metadata::DbObjectKind,
         query_result::{ColumnMeta, QueryResult},
     };
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
     #[test]
     fn removes_trailing_statement_semicolon_for_jdbc() {
@@ -928,6 +1211,22 @@ mod tests {
         assert!(message.contains("get_object_ddl"));
         assert!(message.contains("insufficient privileges for Oracle metadata"));
         assert!(message.contains("DBMS_METADATA"));
+    }
+
+    #[test]
+    fn parses_sidecar_ok_response() {
+        let response = format!("OK\t7\t{}\n", BASE64.encode("{\"ok\":true}"));
+        let payload = parse_sidecar_response(&response, 7).expect("parse sidecar response");
+
+        assert_eq!(payload, "{\"ok\":true}");
+    }
+
+    #[test]
+    fn normalizes_jdbc_auth_error_message() {
+        let message =
+            normalize_jdbc_error_message("ORA-01017: invalid username/password; logon denied");
+        assert!(message.contains("authentication failed"));
+        assert!(message.contains("ORA-01017"));
     }
 
     fn query_result(names: &[&str], rows: Vec<Vec<serde_json::Value>>) -> QueryResult {
