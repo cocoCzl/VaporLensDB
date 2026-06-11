@@ -1,8 +1,19 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, State};
+use tokio::{
+    fs::File,
+    io::{AsyncWriteExt, BufWriter},
+    task::yield_now,
+};
 
-use crate::{models::error::AppError, models::query_result::QueryResult};
+use crate::{
+    commands::task::emit_task_update,
+    models::{error::AppError, query_result::QueryResult},
+    services::task_manager::{TaskHandle, TaskInfo},
+    AppState,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,19 +34,165 @@ pub struct ExportReport {
 
 #[tauri::command]
 pub async fn export_query_result_csv(
+    app: AppHandle,
+    state: State<'_, AppState>,
     input: ExportQueryResultCsvInput,
-) -> Result<ExportReport, AppError> {
-    let csv = query_result_to_csv(&input.result, input.include_header);
+) -> Result<TaskInfo, AppError> {
     let path = PathBuf::from(&input.path);
-    tokio::fs::write(&path, csv.as_bytes()).await?;
+    let row_count = input.result.rows.len() as u64;
+    let manager = state.task_manager.clone();
+    let task = manager
+        .create_task(
+            "export.csv.result",
+            &format!("Export CSV: {}", display_file_name(&path)),
+            Some(row_count),
+        )
+        .await;
+    let handle = manager.handle(task.id).await?;
 
+    let app_for_task = app.clone();
+    tokio::spawn(async move {
+        if let Ok(task) = manager.start_task(handle.id, "Preparing CSV export").await {
+            emit_task_update(&app_for_task, &task);
+        }
+
+        match write_query_result_csv(&input.result, &path, input.include_header, &manager, &handle)
+            .await
+        {
+            Ok(report) => {
+                if let Ok(task) = manager
+                    .finish_success(
+                        handle.id,
+                        format!(
+                            "Exported {} rows to {} ({} bytes)",
+                            report.row_count, report.path, report.bytes_written
+                        ),
+                    )
+                    .await
+                {
+                    emit_task_update(&app_for_task, &task);
+                }
+            }
+            Err(ExportTaskError::Cancelled) => {
+                if let Ok(task) = manager
+                    .finish_cancelled(handle.id, "CSV export cancelled")
+                    .await
+                {
+                    emit_task_update(&app_for_task, &task);
+                }
+            }
+            Err(ExportTaskError::Failed(error)) => {
+                if let Ok(task) = manager
+                    .finish_failed(handle.id, format!("CSV export failed: {error}"))
+                    .await
+                {
+                    emit_task_update(&app_for_task, &task);
+                }
+            }
+        }
+    });
+
+    emit_task_update(&app, &task);
+    Ok(task)
+}
+
+enum ExportTaskError {
+    Cancelled,
+    Failed(AppError),
+}
+
+impl From<AppError> for ExportTaskError {
+    fn from(value: AppError) -> Self {
+        Self::Failed(value)
+    }
+}
+
+async fn write_query_result_csv(
+    result: &QueryResult,
+    path: &PathBuf,
+    include_header: bool,
+    manager: &crate::services::task_manager::TaskManager,
+    handle: &TaskHandle,
+) -> Result<ExportReport, ExportTaskError> {
+    let file = File::create(path).await.map_err(AppError::from)?;
+    let mut writer = BufWriter::new(file);
+    let mut bytes_written = 0_u64;
+    let mut wrote_any = false;
+
+    if include_header {
+        bytes_written += write_csv_line(
+            &mut writer,
+            result
+                .columns
+                .iter()
+                .map(|column| csv_cell(&column.name))
+                .collect(),
+            false,
+        )
+        .await
+        .map_err(AppError::from)?;
+        wrote_any = true;
+    }
+
+    for (index, row) in result.rows.iter().enumerate() {
+        if handle.is_cancel_requested() {
+            return Err(ExportTaskError::Cancelled);
+        }
+
+        bytes_written += write_csv_line(
+            &mut writer,
+            (0..result.columns.len())
+                .map(|column_index| csv_value(row.get(column_index)))
+                .collect(),
+            wrote_any,
+        )
+        .await
+        .map_err(AppError::from)?;
+        wrote_any = true;
+
+        let current = index as u64 + 1;
+        if current == result.rows.len() as u64 || current % 500 == 0 {
+            manager
+                .update_progress(
+                    handle.id,
+                    current,
+                    format!("Exported {current} of {} rows", result.rows.len()),
+                )
+                .await
+                .map_err(ExportTaskError::from)?;
+        }
+
+        if current % 500 == 0 {
+            yield_now().await;
+        }
+    }
+
+    writer.flush().await.map_err(AppError::from)?;
     Ok(ExportReport {
         path: path.to_string_lossy().to_string(),
-        row_count: input.result.rows.len() as u64,
-        bytes_written: csv.len() as u64,
+        row_count: result.rows.len() as u64,
+        bytes_written,
     })
 }
 
+async fn write_csv_line(
+    writer: &mut BufWriter<File>,
+    cells: Vec<String>,
+    prefix_newline: bool,
+) -> Result<u64, std::io::Error> {
+    let mut bytes = 0_u64;
+    if prefix_newline {
+        writer.write_all(b"\r\n").await?;
+        bytes += 2;
+    }
+
+    let line = cells.join(",");
+    writer.write_all(line.as_bytes()).await?;
+    bytes += line.len() as u64;
+    Ok(bytes)
+}
+
+#[cfg(test)]
 fn query_result_to_csv(result: &QueryResult, include_header: bool) -> String {
     let mut lines = Vec::with_capacity(result.rows.len() + usize::from(include_header));
 
@@ -80,6 +237,13 @@ fn csv_cell(value: &str) -> String {
     }
 }
 
+fn display_file_name(path: &PathBuf) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("query-result.csv")
+        .to_string()
+}
+
 fn default_include_header() -> bool {
     true
 }
@@ -121,6 +285,29 @@ mod tests {
         assert_eq!(
             query_result_to_csv(&result, true),
             "id,note\r\n1,\"comma, quote \"\" and\nline\"\r\n2,"
+        );
+    }
+
+    #[test]
+    fn csv_export_quotes_headers_and_json_values() {
+        let result = QueryResult {
+            columns: vec![ColumnMeta {
+                name: "bad,header".to_string(),
+                data_type: "jsonb".to_string(),
+                nullable: true,
+            }],
+            rows: vec![vec![json!({ "key": "a,b" })]],
+            row_count: 1,
+            elapsed_ms: 1,
+            affected_rows: 0,
+            query_id: None,
+            truncated: false,
+            max_rows: None,
+        };
+
+        assert_eq!(
+            query_result_to_csv(&result, true),
+            "\"bad,header\"\r\n\"{\"\"key\"\":\"\"a,b\"\"}\""
         );
     }
 }

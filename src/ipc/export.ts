@@ -1,6 +1,7 @@
 import { invokeCommand } from '@/ipc/client'
 import { COMMANDS } from '@/ipc/contracts'
 import type { QueryResult } from '@/types/query'
+import type { TaskInfo } from '@/types/task'
 
 export interface ExportQueryResultCsvInput {
   result: QueryResult
@@ -8,12 +9,6 @@ export interface ExportQueryResultCsvInput {
   includeHeader?: boolean
 }
 
-export interface ExportReport {
-  path: string
-  rowCount: number
-  bytesWritten: number
-}
-
 export function exportQueryResultCsv(input: ExportQueryResultCsvInput) {
-  return invokeCommand<ExportReport>(COMMANDS.exportQueryResultCsv, { input })
+  return invokeCommand<TaskInfo>(COMMANDS.exportQueryResultCsv, { input })
 }

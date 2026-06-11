@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
+import { downloadDir, join } from '@tauri-apps/api/path'
 import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Download, FileCode2, LockKeyhole, RefreshCw } from 'lucide-react'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { DataGrid } from '@/components/grid/DataGrid'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/hooks/useQuery'
+import { exportQueryResultCsv } from '@/ipc/export'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { buildDataTabSql } from '@/lib/dataTabSql'
 import { isSystemSchema } from '@/lib/systemObjects'
@@ -14,11 +16,15 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
 import { useQueryResultStore } from '@/stores/queryResultStore'
+import { useTaskStore } from '@/stores/taskStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { DriverType } from '@/types/connection'
+import type { AppError } from '@/types/error'
 import type { ColumnInfo, DbObjectInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
 import type { QueryResult } from '@/types/query'
+import type { TaskInfo } from '@/types/task'
 import type { EditorTab } from '@/stores/editorStore'
+import type { AppNotification } from '@/stores/uiStore'
 
 type SqlEditorModule = { default: typeof import('@/components/editor/SqlEditor').SqlEditor }
 
@@ -66,6 +72,7 @@ export function MainPanel() {
   const loadFunctions = useMetadataStore((state) => state.loadFunctions)
   const notifyError = useUiStore((state) => state.notifyError)
   const notify = useUiStore((state) => state.notify)
+  const upsertTask = useTaskStore((state) => state.upsertTask)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const showSystemObjects = useUiStore((state) => state.showSystemObjects)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
@@ -327,7 +334,10 @@ export function MainPanel() {
                 connectionId: activeTab.connectionId,
               })
             }}
-            onExport={() => activeResult && exportCurrentResult(activeResult, activeTab.title)}
+            onExport={() =>
+              activeResult &&
+              exportCurrentResult(activeResult, activeTab.title, notify, notifyError, upsertTask)
+            }
           />
         </div>
         <ObjectInspectorPanel />
@@ -530,7 +540,10 @@ export function MainPanel() {
               size="xs"
               variant="ghost"
               disabled={!activeResult || activeResult.columns.length === 0}
-              onClick={() => activeResult && exportCurrentResult(activeResult, activeTab.title)}
+              onClick={() =>
+                activeResult &&
+                exportCurrentResult(activeResult, activeTab.title, notify, notifyError, upsertTask)
+              }
             >
               <Download className="size-3.5" />
               导出 CSV
@@ -1415,17 +1428,29 @@ function completionMetadataHint(
   return null
 }
 
-function exportCurrentResult(result: QueryResult, title: string) {
-  const csv = toCsv(result)
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `${safeFileName(title || 'query-result')}.csv`
-  document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
+async function exportCurrentResult(
+  result: QueryResult,
+  title: string,
+  notify: (notification: Omit<AppNotification, 'id'>) => void,
+  notifyError: (error: AppError, title?: string) => void,
+  upsertTask: (task: TaskInfo) => void,
+) {
+  try {
+    const directory = await downloadDir()
+    const fileName = `${safeFileName(title || 'query-result')}-${new Date()
+      .toISOString()
+      .replace(/[:.]/g, '-')}.csv`
+    const path = await join(directory, fileName)
+    const task = await exportQueryResultCsv({ result, path, includeHeader: true })
+    upsertTask(task)
+    notify({
+      kind: 'info',
+      title: 'CSV 导出已开始',
+      message: fileName,
+    })
+  } catch (error) {
+    notifyError(normalizeAppError(error), '启动 CSV 导出失败')
+  }
 }
 
 function dataContextToSqlInput(context: NonNullable<EditorTab['dataContext']>) {
@@ -1440,22 +1465,6 @@ function dataContextToSqlInput(context: NonNullable<EditorTab['dataContext']>) {
     sortDirection: context.sortDirection,
     primaryKeyColumns: context.primaryKeyColumns,
   }
-}
-
-function toCsv(result: QueryResult) {
-  const header = result.columns.map((column) => csvCell(column.name)).join(',')
-  const rows = result.rows.map((row) =>
-    result.columns.map((_, index) => csvCell(row[index])).join(','),
-  )
-  return [header, ...rows].join('\r\n')
-}
-
-function csvCell(value: unknown) {
-  if (value == null) {
-    return ''
-  }
-  const text = typeof value === 'object' ? JSON.stringify(value) : String(value)
-  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }
 
 function safeFileName(value: string) {

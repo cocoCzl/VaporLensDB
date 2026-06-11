@@ -28,6 +28,7 @@
     "test:object-tree-workflow": "node scripts/object-tree-workflow-smoke.mjs",
     "test:driver-manager": "node scripts/driver-manager-smoke.mjs",
     "test:ssh-tunnel": "node scripts/ssh-tunnel-smoke.mjs",
+    "test:result-export": "node scripts/result-export-smoke.mjs",
     "test:command-contracts": "node scripts/command-contract-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",

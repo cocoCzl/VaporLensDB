@@ -52,7 +52,7 @@ includesAll(
     'runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {',
     'maxRows: activeDataContext.limit',
     'maxRows: nextContext.limit',
-    'const rows = result.rows.map((row) =>',
+    'exportQueryResultCsv({ result, path, includeHeader: true })',
   ],
   'SQL tab large-result UI and CSV behavior',
 )

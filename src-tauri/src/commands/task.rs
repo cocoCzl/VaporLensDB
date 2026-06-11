@@ -87,6 +87,6 @@ pub async fn start_noop_task(
     Ok(task)
 }
 
-fn emit_task_update(app: &AppHandle, task: &TaskInfo) {
+pub fn emit_task_update(app: &AppHandle, task: &TaskInfo) {
     let _ = app.emit(TASK_UPDATED_EVENT, task);
 }
