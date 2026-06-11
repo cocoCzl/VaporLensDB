@@ -43,6 +43,7 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
         ssl_mode: None,
         group: None,
         color_tag: None,
+        ssh_tunnel: None,
         created_at: now,
         updated_at: now,
     };

@@ -4,7 +4,9 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::{
-    models::connection::{ConnectionConfig, ConnectionStatus, DriverType},
+    models::connection::{
+        ConnectionConfig, ConnectionStatus, DriverType, SshAuthMethod, SshTunnelConfig,
+    },
     AppState,
 };
 
@@ -26,6 +28,23 @@ pub struct ConnectionInput {
     pub ssl_mode: Option<String>,
     pub group: Option<String>,
     pub color_tag: Option<String>,
+    pub ssh_tunnel: Option<SshTunnelInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTunnelInput {
+    pub enabled: bool,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub auth_method: Option<SshAuthMethod>,
+    pub password: Option<String>,
+    pub private_key_path: Option<String>,
+    pub private_key_passphrase: Option<String>,
+    pub remote_host: Option<String>,
+    pub remote_port: Option<u16>,
+    pub local_host: Option<String>,
 }
 
 #[tauri::command]
@@ -116,11 +135,18 @@ pub async fn connect(state: State<'_, AppState>, id: Uuid) -> Result<ConnectionS
         .map_err(String::from)?
         .flatten();
 
+    let ssh_tunnel = state
+        .config_store
+        .decrypt_ssh_tunnel(&config)
+        .map_err(String::from)?;
+    let mut runtime_config = config.clone();
+    runtime_config.ssh_tunnel = ssh_tunnel;
+
     state
         .connection_manager
         .lock()
         .await
-        .connect(&config, password.as_deref(), definition.as_ref())
+        .connect(&runtime_config, password.as_deref(), definition.as_ref())
         .await
         .map_err(Into::into)
 }
@@ -171,7 +197,40 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
         ssl_mode: input.ssl_mode,
         group: input.group,
         color_tag: input.color_tag,
+        ssh_tunnel: input.ssh_tunnel.and_then(input_to_ssh_tunnel),
         created_at: now,
         updated_at: now,
     }
+}
+
+fn input_to_ssh_tunnel(input: SshTunnelInput) -> Option<SshTunnelConfig> {
+    if !input.enabled {
+        return Some(SshTunnelConfig {
+            enabled: false,
+            host: String::new(),
+            port: 22,
+            username: String::new(),
+            auth_method: SshAuthMethod::PrivateKey,
+            password_encrypted: None,
+            private_key_path: None,
+            private_key_passphrase_encrypted: None,
+            remote_host: None,
+            remote_port: None,
+            local_host: None,
+        });
+    }
+
+    Some(SshTunnelConfig {
+        enabled: true,
+        host: input.host.unwrap_or_default(),
+        port: input.port.unwrap_or(22),
+        username: input.username.unwrap_or_default(),
+        auth_method: input.auth_method.unwrap_or(SshAuthMethod::PrivateKey),
+        password_encrypted: input.password,
+        private_key_path: input.private_key_path,
+        private_key_passphrase_encrypted: input.private_key_passphrase,
+        remote_host: input.remote_host,
+        remote_port: input.remote_port,
+        local_host: input.local_host,
+    })
 }

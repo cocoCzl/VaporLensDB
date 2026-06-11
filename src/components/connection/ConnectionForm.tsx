@@ -51,6 +51,21 @@ export function ConnectionForm({
     sslMode: connection?.sslMode ?? '',
     group: connection?.group ?? '',
     colorTag: connection?.colorTag ?? '',
+    sshTunnel: connection?.sshTunnel
+      ? { ...connection.sshTunnel, password: '', privateKeyPassphrase: '' }
+      : {
+          enabled: false,
+          host: '',
+          port: 22,
+          username: '',
+          authMethod: 'privateKey',
+          password: '',
+          privateKeyPath: '',
+          privateKeyPassphrase: '',
+          remoteHost: '',
+          remotePort: null,
+          localHost: '127.0.0.1',
+        },
   })
   const [message, setMessage] = useState<string | null>(null)
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
@@ -78,6 +93,27 @@ export function ConnectionForm({
 
   const update = (key: keyof ConnectionInput, value: string | number | string[] | null) => {
     setForm((current) => ({ ...current, [key]: value }))
+  }
+
+  const updateSshTunnel = (key: string, value: string | number | boolean | null) => {
+    setForm((current) => ({
+      ...current,
+      sshTunnel: {
+        enabled: false,
+        host: '',
+        port: 22,
+        username: '',
+        authMethod: 'privateKey',
+        password: '',
+        privateKeyPath: '',
+        privateKeyPassphrase: '',
+        remoteHost: '',
+        remotePort: null,
+        localHost: '127.0.0.1',
+        ...current.sshTunnel,
+        [key]: value,
+      },
+    }))
   }
 
   const changeDriver = (driverDefinitionId: string) => {
@@ -380,6 +416,105 @@ export function ConnectionForm({
                         <option value="verify-full">verify-full</option>
                       </select>
                     </FormRow>
+
+                    <FormRow label="SSH Tunnel:">
+                      <label className="inline-flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(form.sshTunnel?.enabled)}
+                          onChange={(event) => updateSshTunnel('enabled', event.target.checked)}
+                        />
+                        <span>启用 SSH tunnel</span>
+                      </label>
+                    </FormRow>
+
+                    {form.sshTunnel?.enabled && (
+                      <>
+                        <FormRow label="SSH 主机:">
+                          <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
+                            <Input
+                              value={form.sshTunnel.host}
+                              onChange={(event) => updateSshTunnel('host', event.target.value)}
+                              required
+                            />
+                            <Label className="self-center text-right text-sm">端口:</Label>
+                            <Input
+                              type="number"
+                              value={form.sshTunnel.port}
+                              onChange={(event) => updateSshTunnel('port', Number(event.target.value))}
+                              required
+                            />
+                          </div>
+                        </FormRow>
+                        <FormRow label="SSH 用户:">
+                          <Input
+                            value={form.sshTunnel.username}
+                            onChange={(event) => updateSshTunnel('username', event.target.value)}
+                            required
+                          />
+                        </FormRow>
+                        <FormRow label="SSH 认证:">
+                          <select
+                            className="ide-input"
+                            value={form.sshTunnel.authMethod}
+                            onChange={(event) => updateSshTunnel('authMethod', event.target.value)}
+                          >
+                            <option value="privateKey">Private key</option>
+                            <option value="password">Password</option>
+                          </select>
+                        </FormRow>
+                        {form.sshTunnel.authMethod === 'password' ? (
+                          <FormRow label="SSH 密码:">
+                            <Input
+                              type="password"
+                              value={form.sshTunnel.password ?? ''}
+                              placeholder={connection?.sshTunnel ? '<已隐藏>' : ''}
+                              onChange={(event) => updateSshTunnel('password', event.target.value)}
+                            />
+                          </FormRow>
+                        ) : (
+                          <>
+                            <FormRow label="私钥路径:">
+                              <Input
+                                value={form.sshTunnel.privateKeyPath ?? ''}
+                                placeholder="/Users/me/.ssh/id_ed25519"
+                                onChange={(event) => updateSshTunnel('privateKeyPath', event.target.value)}
+                                required
+                              />
+                            </FormRow>
+                            <FormRow label="私钥口令:">
+                              <Input
+                                type="password"
+                                value={form.sshTunnel.privateKeyPassphrase ?? ''}
+                                placeholder={connection?.sshTunnel ? '<已隐藏>' : ''}
+                                onChange={(event) => updateSshTunnel('privateKeyPassphrase', event.target.value)}
+                              />
+                            </FormRow>
+                          </>
+                        )}
+                        <FormRow label="远端地址:">
+                          <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
+                            <Input
+                              value={form.sshTunnel.remoteHost ?? ''}
+                              placeholder={form.host ?? '数据库主机'}
+                              onChange={(event) => updateSshTunnel('remoteHost', event.target.value)}
+                            />
+                            <Label className="self-center text-right text-sm">端口:</Label>
+                            <Input
+                              type="number"
+                              value={form.sshTunnel.remotePort ?? ''}
+                              placeholder={String(form.port ?? '')}
+                              onChange={(event) =>
+                                updateSshTunnel(
+                                  'remotePort',
+                                  event.target.value ? Number(event.target.value) : null,
+                                )
+                              }
+                            />
+                          </div>
+                        </FormRow>
+                      </>
+                    )}
                   </div>
                 </details>
               </>
@@ -586,6 +721,25 @@ function normalizeInput(
     driverPaths: input.driverPaths?.length ? input.driverPaths : (definition?.driverArtifacts ?? []),
     group: emptyToNull(input.group),
     colorTag: normalizeEnvironmentTag(input.colorTag),
+    sshTunnel: normalizeSshTunnel(input),
+  }
+}
+
+function normalizeSshTunnel(input: ConnectionInput) {
+  const tunnel = input.sshTunnel
+  if (!tunnel?.enabled) return null
+  return {
+    enabled: true,
+    host: tunnel.host.trim(),
+    port: tunnel.port || 22,
+    username: tunnel.username.trim(),
+    authMethod: tunnel.authMethod,
+    password: emptyToNull(tunnel.password),
+    privateKeyPath: emptyToNull(tunnel.privateKeyPath),
+    privateKeyPassphrase: emptyToNull(tunnel.privateKeyPassphrase),
+    remoteHost: emptyToNull(tunnel.remoteHost),
+    remotePort: tunnel.remotePort || null,
+    localHost: emptyToNull(tunnel.localHost) ?? '127.0.0.1',
   }
 }
 
@@ -608,6 +762,14 @@ function validateRequiredFields(
     }
     if (!input.driverPaths?.length) {
       return 'Oracle 需要至少填写一个本地 ojdbc JAR 路径'
+    }
+  }
+
+  if (input.sshTunnel?.enabled) {
+    if (!input.sshTunnel.host?.trim()) return 'SSH host is required'
+    if (!input.sshTunnel.username?.trim()) return 'SSH username is required'
+    if (input.sshTunnel.authMethod === 'privateKey' && !input.sshTunnel.privateKeyPath?.trim()) {
+      return 'SSH private key path is required'
     }
   }
 

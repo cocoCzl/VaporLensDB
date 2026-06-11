@@ -14,11 +14,17 @@ use crate::{
         metadata::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo},
         query_result::{ExplainResult, QueryResult},
     },
+    services::ssh_tunnel::SshTunnel,
 };
 
 pub struct ConnectionManager {
-    connections: HashMap<Uuid, Arc<dyn DatabaseDriver>>,
+    connections: HashMap<Uuid, ActiveConnection>,
     statuses: HashMap<Uuid, ConnectionStatus>,
+}
+
+struct ActiveConnection {
+    driver: Arc<dyn DatabaseDriver>,
+    _ssh_tunnel: Option<SshTunnel>,
 }
 
 impl ConnectionManager {
@@ -35,7 +41,8 @@ impl ConnectionManager {
         password: Option<&str>,
         definition: Option<&DriverDefinition>,
     ) -> Result<(), AppError> {
-        let driver = create_driver(config, password, definition).await?;
+        let (_tunnel, runtime_config) = open_tunnel(config).await?;
+        let driver = create_driver(&runtime_config, password, definition).await?;
         driver.ping().await
     }
 
@@ -47,10 +54,10 @@ impl ConnectionManager {
     ) -> Result<ConnectionStatus, AppError> {
         self.set_status(config.id, ConnectionRuntimeStatus::Connecting, None);
 
-        match create_driver(config, password, definition).await {
-            Ok(driver) => {
-                driver.ping().await?;
-                self.connections.insert(config.id, driver);
+        match create_active_connection(config, password, definition).await {
+            Ok(active) => {
+                active.driver.ping().await?;
+                self.connections.insert(config.id, active);
                 Ok(self.set_status(config.id, ConnectionRuntimeStatus::Connected, None))
             }
             Err(error) => {
@@ -70,7 +77,7 @@ impl ConnectionManager {
         let drivers = self
             .connections
             .iter()
-            .map(|(id, driver)| (*id, driver.clone()))
+            .map(|(id, connection)| (*id, connection.driver.clone()))
             .collect::<Vec<_>>();
         let mut known_ids = self.statuses.keys().copied().collect::<Vec<_>>();
 
@@ -190,7 +197,7 @@ impl ConnectionManager {
     pub fn driver(&self, connection_id: Uuid) -> Result<Arc<dyn DatabaseDriver>, AppError> {
         self.connections
             .get(&connection_id)
-            .cloned()
+            .map(|connection| connection.driver.clone())
             .ok_or_else(|| AppError::NotFound {
                 resource: "active connection".to_string(),
                 id: connection_id.to_string(),
@@ -216,6 +223,28 @@ impl ConnectionManager {
 impl Default for ConnectionManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+async fn create_active_connection(
+    config: &ConnectionConfig,
+    password: Option<&str>,
+    definition: Option<&DriverDefinition>,
+) -> Result<ActiveConnection, AppError> {
+    let (ssh_tunnel, runtime_config) = open_tunnel(config).await?;
+    let driver = create_driver(&runtime_config, password, definition).await?;
+    Ok(ActiveConnection {
+        driver,
+        _ssh_tunnel: ssh_tunnel,
+    })
+}
+
+async fn open_tunnel(
+    config: &ConnectionConfig,
+) -> Result<(Option<SshTunnel>, ConnectionConfig), AppError> {
+    match SshTunnel::open(config).await? {
+        Some((tunnel, runtime_config)) => Ok((Some(tunnel), runtime_config)),
+        None => Ok((None, config.clone())),
     }
 }
 

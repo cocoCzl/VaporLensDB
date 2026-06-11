@@ -288,6 +288,7 @@ pub async fn validate_external_driver(
         ssl_mode: None,
         group: None,
         color_tag: None,
+        ssh_tunnel: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

@@ -13,6 +13,7 @@ export interface ConnectionConfig {
   sslMode?: string | null
   group?: string | null
   colorTag?: string | null
+  sshTunnel?: SshTunnelConfig | null
   createdAt?: string
   updatedAt?: string
 }
@@ -51,4 +52,24 @@ export interface ConnectionInput {
   sslMode?: string | null
   group?: string | null
   colorTag?: string | null
+  sshTunnel?: SshTunnelInput | null
+}
+
+export type SshAuthMethod = 'password' | 'privateKey'
+
+export interface SshTunnelConfig {
+  enabled: boolean
+  host: string
+  port: number
+  username: string
+  authMethod: SshAuthMethod
+  privateKeyPath?: string | null
+  remoteHost?: string | null
+  remotePort?: number | null
+  localHost?: string | null
+}
+
+export interface SshTunnelInput extends SshTunnelConfig {
+  password?: string | null
+  privateKeyPassphrase?: string | null
 }

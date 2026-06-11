@@ -22,8 +22,34 @@ pub struct ConnectionConfig {
     pub ssl_mode: Option<String>,
     pub group: Option<String>,
     pub color_tag: Option<String>,
+    pub ssh_tunnel: Option<SshTunnelConfig>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTunnelConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_method: SshAuthMethod,
+    #[serde(skip_serializing)]
+    pub password_encrypted: Option<String>,
+    pub private_key_path: Option<String>,
+    #[serde(skip_serializing)]
+    pub private_key_passphrase_encrypted: Option<String>,
+    pub remote_host: Option<String>,
+    pub remote_port: Option<u16>,
+    pub local_host: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SshAuthMethod {
+    Password,
+    PrivateKey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

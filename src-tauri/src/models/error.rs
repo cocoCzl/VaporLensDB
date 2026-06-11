@@ -6,6 +6,9 @@ pub enum AppError {
     #[error("Connection failed ({driver}): {message}")]
     ConnectionFailed { driver: String, message: String },
 
+    #[error("SSH tunnel failed: {message}")]
+    SshTunnelError { message: String },
+
     #[error("Query failed: {message}")]
     QueryFailed { sql: String, message: String },
 
@@ -35,6 +38,7 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::ConnectionFailed { .. } => "CONNECTION_FAILED",
+            Self::SshTunnelError { .. } => "SSH_TUNNEL_FAILED",
             Self::QueryFailed { .. } => "QUERY_FAILED",
             Self::AuthError(_) => "AUTH_ERROR",
             Self::IoError(_) => "IO_ERROR",
@@ -49,6 +53,7 @@ impl AppError {
     pub fn detail(&self) -> Option<String> {
         match self {
             Self::ConnectionFailed { driver, .. } => Some(format!("driver={driver}")),
+            Self::SshTunnelError { .. } => Some("phase=ssh_tunnel".to_string()),
             Self::QueryFailed { sql, .. } => Some(format!("sql={sql}")),
             Self::NotFound { resource, id } => Some(format!("resource={resource}; id={id}")),
             Self::Timeout {

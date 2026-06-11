@@ -38,6 +38,7 @@ fn test_oracle_config() -> Option<(ConnectionConfig, String)> {
             ssl_mode: None,
             group: None,
             color_tag: None,
+            ssh_tunnel: None,
             created_at: now,
             updated_at: now,
         },

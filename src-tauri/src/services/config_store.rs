@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        connection::{ConnectionConfig, DriverType},
+        connection::{ConnectionConfig, DriverType, SshTunnelConfig},
         driver_catalog::{
             DriverBackend, DriverConnectionVariant, DriverDefinition, DriverDefinitionCapabilities,
             DriverStatus,
@@ -69,6 +69,11 @@ const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
         name: "add managed external driver definition fields",
         apply: add_managed_external_driver_definition_fields,
     },
+    ConfigMigration {
+        version: 8,
+        name: "add ssh tunnel connection fields",
+        apply: add_ssh_tunnel_connection_fields,
+    },
 ];
 
 impl ConfigStore {
@@ -107,15 +112,17 @@ impl ConfigStore {
             .filter(|value| !value.is_empty())
             .map(|value| crypto::encrypt_password(&self.config_dir, value))
             .transpose()?;
+        encrypt_ssh_tunnel_secrets(&self.config_dir, &mut config, None)?;
 
         self.conn()?.execute(
             "
             INSERT INTO connections (
                 id, name, driver_definition_id, driver_type, host, port, database_name, connection_url, username,
                 password_encrypted, driver_class, driver_paths, ssl_mode, group_name, color_tag,
+                ssh_tunnel_json, ssh_password_encrypted, ssh_private_key_passphrase_encrypted,
                 created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
             ",
             params_from_config(&config),
         )?;
@@ -143,6 +150,7 @@ impl ConfigStore {
             }
             _ => existing.password_encrypted,
         };
+        encrypt_ssh_tunnel_secrets(&self.config_dir, &mut config, existing.ssh_tunnel.as_ref())?;
 
         self.conn()?.execute(
             "
@@ -161,8 +169,11 @@ impl ConfigStore {
                 ssl_mode = ?13,
                 group_name = ?14,
                 color_tag = ?15,
-                created_at = ?16,
-                updated_at = ?17
+                ssh_tunnel_json = ?16,
+                ssh_password_encrypted = ?17,
+                ssh_private_key_passphrase_encrypted = ?18,
+                created_at = ?19,
+                updated_at = ?20
             WHERE id = ?1
             ",
             params_from_config(&config),
@@ -191,7 +202,8 @@ impl ConfigStore {
             "
             SELECT id, name, driver_definition_id, driver_type, host, port, database_name, connection_url, username,
                    password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
-                   color_tag, created_at, updated_at
+                   color_tag, ssh_tunnel_json, ssh_password_encrypted,
+                   ssh_private_key_passphrase_encrypted, created_at, updated_at
             FROM connections
             WHERE driver_type <> 'odbc'
             ORDER BY group_name IS NOT NULL, group_name, name
@@ -208,7 +220,8 @@ impl ConfigStore {
                 "
             SELECT id, name, driver_definition_id, driver_type, host, port, database_name, connection_url, username,
                    password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
-                   color_tag, created_at, updated_at
+                   color_tag, ssh_tunnel_json, ssh_password_encrypted,
+                   ssh_private_key_passphrase_encrypted, created_at, updated_at
                 FROM connections
                 WHERE id = ?1
                   AND driver_type <> 'odbc'
@@ -226,6 +239,26 @@ impl ConfigStore {
             .as_deref()
             .map(|value| crypto::decrypt_password(&self.config_dir, value))
             .transpose()
+    }
+
+    pub fn decrypt_ssh_tunnel(
+        &self,
+        config: &ConnectionConfig,
+    ) -> Result<Option<SshTunnelConfig>, AppError> {
+        let Some(mut tunnel) = config.ssh_tunnel.clone() else {
+            return Ok(None);
+        };
+        tunnel.password_encrypted = tunnel
+            .password_encrypted
+            .as_deref()
+            .map(|value| crypto::decrypt_password(&self.config_dir, value))
+            .transpose()?;
+        tunnel.private_key_passphrase_encrypted = tunnel
+            .private_key_passphrase_encrypted
+            .as_deref()
+            .map(|value| crypto::decrypt_password(&self.config_dir, value))
+            .transpose()?;
+        Ok(Some(tunnel))
     }
 
     pub fn add_query_history(
@@ -658,6 +691,18 @@ fn add_managed_external_driver_definition_fields(conn: &Connection) -> Result<()
     Ok(())
 }
 
+fn add_ssh_tunnel_connection_fields(conn: &Connection) -> Result<(), AppError> {
+    ensure_column(conn, "connections", "ssh_tunnel_json", "TEXT")?;
+    ensure_column(conn, "connections", "ssh_password_encrypted", "TEXT")?;
+    ensure_column(
+        conn,
+        "connections",
+        "ssh_private_key_passphrase_encrypted",
+        "TEXT",
+    )?;
+    Ok(())
+}
+
 fn is_builtin_driver_definition(conn: &Connection, id: &str) -> Result<bool, AppError> {
     conn.query_row(
         "
@@ -738,8 +783,45 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool, AppError> {
     .map_err(AppError::from)
 }
 
-fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 17] {
+fn encrypt_ssh_tunnel_secrets(
+    config_dir: &Path,
+    config: &mut ConnectionConfig,
+    existing: Option<&SshTunnelConfig>,
+) -> Result<(), AppError> {
+    if let Some(tunnel) = config.ssh_tunnel.as_mut() {
+        tunnel.password_encrypted = match tunnel.password_encrypted.take() {
+            Some(password) if !password.is_empty() => {
+                Some(crypto::encrypt_password(config_dir, &password)?)
+            }
+            _ => existing.and_then(|value| value.password_encrypted.clone()),
+        };
+        tunnel.private_key_passphrase_encrypted =
+            match tunnel.private_key_passphrase_encrypted.take() {
+                Some(passphrase) if !passphrase.is_empty() => {
+                    Some(crypto::encrypt_password(config_dir, &passphrase)?)
+                }
+                _ => existing.and_then(|value| value.private_key_passphrase_encrypted.clone()),
+            };
+    }
+    Ok(())
+}
+
+fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 20] {
     let driver_paths = serde_json::to_string(&config.driver_paths).unwrap_or_default();
+    let ssh_tunnel_json = config
+        .ssh_tunnel
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .unwrap_or_default();
+    let ssh_password_encrypted = config
+        .ssh_tunnel
+        .as_ref()
+        .and_then(|tunnel| tunnel.password_encrypted.clone());
+    let ssh_private_key_passphrase_encrypted = config
+        .ssh_tunnel
+        .as_ref()
+        .and_then(|tunnel| tunnel.private_key_passphrase_encrypted.clone());
 
     [
         Box::new(config.id.to_string()),
@@ -757,6 +839,9 @@ fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 1
         Box::new(config.ssl_mode.clone()),
         Box::new(config.group.clone()),
         Box::new(config.color_tag.clone()),
+        Box::new(ssh_tunnel_json),
+        Box::new(ssh_password_encrypted),
+        Box::new(ssh_private_key_passphrase_encrypted),
         Box::new(config.created_at.to_rfc3339()),
         Box::new(config.updated_at.to_rfc3339()),
     ]
@@ -765,10 +850,18 @@ fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 1
 fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error> {
     let id: String = row.get(0)?;
     let driver_type: String = row.get(3)?;
-    let created_at: String = row.get(15)?;
-    let updated_at: String = row.get(16)?;
+    let created_at: String = row.get(18)?;
+    let updated_at: String = row.get(19)?;
     let port: Option<i64> = row.get(5)?;
     let driver_paths: Option<String> = row.get(11)?;
+    let ssh_tunnel_json: Option<String> = row.get(15)?;
+    let mut ssh_tunnel = ssh_tunnel_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<SshTunnelConfig>(value).ok());
+    if let Some(tunnel) = ssh_tunnel.as_mut() {
+        tunnel.password_encrypted = row.get(16)?;
+        tunnel.private_key_passphrase_encrypted = row.get(17)?;
+    }
 
     Ok(ConnectionConfig {
         id: Uuid::parse_str(&id).map_err(parse_error)?,
@@ -789,6 +882,7 @@ fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error>
         ssl_mode: row.get(12)?,
         group: row.get(13)?,
         color_tag: row.get(14)?,
+        ssh_tunnel,
         created_at: DateTime::parse_from_rfc3339(&created_at)
             .map_err(parse_error)?
             .with_timezone(&Utc),
@@ -890,7 +984,7 @@ fn parse_error(error: impl ToString) -> rusqlite::Error {
 mod tests {
     use super::{table_columns, table_exists, ConfigStore};
     use crate::models::{
-        connection::{ConnectionConfig, DriverType},
+        connection::{ConnectionConfig, DriverType, SshAuthMethod, SshTunnelConfig},
         driver_catalog::{
             DriverBackend, DriverConnectionVariant, DriverDefinition, DriverDefinitionCapabilities,
             DriverStatus,
@@ -912,7 +1006,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7]
+            vec![1, 2, 3, 4, 5, 6, 7, 8]
         );
         let drivers = store
             .list_driver_definitions()
@@ -986,7 +1080,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7]
+            vec![1, 2, 3, 4, 5, 6, 7, 8]
         );
         assert!(columns.iter().any(|column| column == "connection_url"));
         assert!(columns.iter().any(|column| column == "driver_class"));
@@ -994,6 +1088,10 @@ mod tests {
         assert!(columns
             .iter()
             .any(|column| column == "driver_definition_id"));
+        assert!(columns.iter().any(|column| column == "ssh_tunnel_json"));
+        assert!(columns
+            .iter()
+            .any(|column| column == "ssh_password_encrypted"));
         assert!(table_exists(&conn, "query_history").expect("query history table exists"));
         assert!(table_exists(&conn, "driver_definitions").expect("driver definitions table exists"));
 
@@ -1063,6 +1161,7 @@ mod tests {
             ssl_mode: None,
             group: None,
             color_tag: None,
+            ssh_tunnel: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -1080,6 +1179,76 @@ mod tests {
 
         let connections = store.list_connections().expect("list connections");
         assert_eq!(connections.len(), 1);
+    }
+
+    #[test]
+    fn stores_connection_ssh_tunnel_without_plaintext_secrets() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-ssh-tunnel-config-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let connection_id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let saved = store
+            .create_connection(
+                ConnectionConfig {
+                    id: connection_id,
+                    name: "Tunnel PG".to_string(),
+                    driver_definition_id: Some("postgres".to_string()),
+                    driver_type: DriverType::Postgres,
+                    host: Some("db.internal".to_string()),
+                    port: Some(5432),
+                    database: Some("postgres".to_string()),
+                    connection_url: None,
+                    username: Some("postgres".to_string()),
+                    password_encrypted: None,
+                    driver_class: None,
+                    driver_paths: Vec::new(),
+                    ssl_mode: None,
+                    group: None,
+                    color_tag: None,
+                    ssh_tunnel: Some(SshTunnelConfig {
+                        enabled: true,
+                        host: "bastion.internal".to_string(),
+                        port: 22,
+                        username: "deploy".to_string(),
+                        auth_method: SshAuthMethod::PrivateKey,
+                        password_encrypted: None,
+                        private_key_path: Some("/tmp/id_ed25519".to_string()),
+                        private_key_passphrase_encrypted: Some("key-passphrase".to_string()),
+                        remote_host: None,
+                        remote_port: None,
+                        local_host: Some("127.0.0.1".to_string()),
+                    }),
+                    created_at: now,
+                    updated_at: now,
+                },
+                None,
+            )
+            .expect("create connection");
+
+        let stored_tunnel = saved.ssh_tunnel.as_ref().expect("ssh tunnel stored");
+        assert_ne!(
+            stored_tunnel.private_key_passphrase_encrypted.as_deref(),
+            Some("key-passphrase")
+        );
+
+        let reloaded = store
+            .get_connection(connection_id)
+            .expect("get connection")
+            .expect("connection exists");
+        let decrypted = store
+            .decrypt_ssh_tunnel(&reloaded)
+            .expect("decrypt ssh tunnel")
+            .expect("ssh tunnel exists");
+        assert_eq!(
+            decrypted.private_key_passphrase_encrypted.as_deref(),
+            Some("key-passphrase")
+        );
+        assert_eq!(decrypted.host, "bastion.internal");
     }
 
     #[test]
@@ -1111,6 +1280,7 @@ mod tests {
                     ssl_mode: Some("prefer".to_string()),
                     group: Some("Local".to_string()),
                     color_tag: Some("dev".to_string()),
+                    ssh_tunnel: None,
                     created_at,
                     updated_at: created_at,
                 },
@@ -1182,6 +1352,7 @@ mod tests {
                     ssl_mode: None,
                     group: Some("Custom".to_string()),
                     color_tag: Some("dev".to_string()),
+                    ssh_tunnel: None,
                     created_at: now,
                     updated_at: now,
                 },
