@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button'
 import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
 import type { ColumnInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
 
+const STRUCTURE_EDITING_ENABLED = false
+
 export function ObjectInspectorPanel() {
   const selected = useObjectInspectorStore((state) => state.selected)
   const inspectTable = useObjectInspectorStore((state) => state.inspectTable)
@@ -14,20 +16,34 @@ export function ObjectInspectorPanel() {
   }
 
   const title = `${selected.schema}.${selected.table}`
+  const kindLabel =
+    selected.kind === 'materializedView'
+      ? 'Materialized View'
+      : selected.kind === 'view'
+        ? 'View'
+        : 'Table'
 
   return (
-    <aside className="flex h-full w-[460px] min-w-[360px] max-w-[52vw] flex-col border-l bg-background">
+    <aside
+      className="flex h-full w-[460px] min-w-[360px] max-w-[52vw] flex-col border-l bg-background"
+      aria-label="Object Inspector workspace"
+    >
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
           <Table2 className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">{title}</div>
+            <div className="truncate text-sm font-semibold">Object Inspector</div>
             <div className="text-[11px] text-muted-foreground">
-              {selected.kind === 'view' ? 'View Inspector' : 'Table Inspector'}
+              {kindLabel} · {title}
             </div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {STRUCTURE_EDITING_ENABLED && (
+            <Button type="button" size="xs" variant="secondary">
+              编辑结构
+            </Button>
+          )}
           <Button
             type="button"
             size="icon-sm"

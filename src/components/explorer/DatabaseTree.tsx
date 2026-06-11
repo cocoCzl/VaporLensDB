@@ -745,8 +745,56 @@ export function DatabaseTree() {
       activeConnectionId,
       node.meta.schema,
       node.meta.table,
-      node.kind === 'view' ? 'view' : 'table',
+      tableInspectorKind(node.kind),
     )
+  }
+
+  function openTableInspector(nodeId: string) {
+    const node = nodes[nodeId]
+    if (!activeConnectionId || !isTableLikeNode(node)) {
+      return
+    }
+
+    void inspectTable(activeConnectionId, node.meta.schema, node.meta.table, tableInspectorKind(node.kind))
+  }
+
+  function openTableDiagram(nodeId: string) {
+    const node = nodes[nodeId]
+    if (!activeConnectionId || !isTableLikeNode(node)) {
+      return
+    }
+
+    addTab({
+      id: crypto.randomUUID(),
+      title: `${node.meta.table} ER`,
+      kind: 'diagram',
+      sql: '',
+      connectionId: activeConnectionId,
+      diagramContext: {
+        database: node.meta.database,
+        schema: node.meta.schema,
+        tables: [node.meta.table],
+      },
+    })
+  }
+
+  function openSchemaDiagram(node: NodeRecord) {
+    if (!activeConnectionId || node.kind !== 'schema' || !node.meta?.schema) {
+      return
+    }
+
+    addTab({
+      id: crypto.randomUUID(),
+      title: `${node.meta.schema} ER`,
+      kind: 'diagram',
+      sql: '',
+      connectionId: activeConnectionId,
+      diagramContext: {
+        database: node.meta.database,
+        schema: node.meta.schema,
+        tables: null,
+      },
+    })
   }
 
   async function copyText(value: string, title: string) {
@@ -874,7 +922,13 @@ export function DatabaseTree() {
       return [
         {
           id: 'inspect',
-          label: '打开对象结构',
+          label: '打开 Object Inspector',
+          icon: 'ddl',
+          onSelect: () => openTableInspector(node.id),
+        },
+        {
+          id: 'open-structure',
+          label: '打开 Structure Tab',
           icon: 'ddl',
           onSelect: () => openTableStructure(node.id),
         },
@@ -889,6 +943,12 @@ export function DatabaseTree() {
           label: '查看 DDL',
           icon: 'ddl',
           onSelect: () => openTableDdl(node.id),
+        },
+        {
+          id: 'open-er-diagram',
+          label: '打开 ER Diagram',
+          icon: 'ddl',
+          onSelect: () => openTableDiagram(node.id),
         },
         {
           id: 'generate-select',
@@ -955,6 +1015,12 @@ export function DatabaseTree() {
                 label: '设为当前 Schema',
                 icon: 'ddl' as const,
                 onSelect: () => setCurrentSchema(node),
+              },
+              {
+                id: 'open-schema-er-diagram',
+                label: '打开 ER Diagram',
+                icon: 'ddl' as const,
+                onSelect: () => openSchemaDiagram(node),
               },
             ]
           : []),
@@ -1620,6 +1686,10 @@ function isTableLikeNode(node?: NodeRecord): node is NodeRecord & {
     Boolean(node.meta?.schema) &&
     Boolean(node.meta?.table)
   )
+}
+
+function tableInspectorKind(kind: 'table' | 'view' | 'materializedView') {
+  return kind
 }
 
 function selectSql(driverType: DriverType, schema: string, table: string) {

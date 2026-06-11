@@ -33,8 +33,8 @@ includesAll(sidebar, ['查询历史', 'handleClearHistory', 'clearHistory'], 'se
 
 const uiStore = read('src/stores/uiStore.ts')
 assert(
-  uiStore.includes("type SidebarView = 'dataSources' | 'sql' | 'settings'"),
-  'SidebarView should only expose dataSources, sql, and settings',
+  uiStore.includes("type SidebarView = 'dataSources' | 'sql' | 'sessions' | 'settings'"),
+  'SidebarView should expose current task-approved views',
 )
 
 const connectionForm = read('src/components/connection/ConnectionForm.tsx')
@@ -51,7 +51,7 @@ assert(
 includesAll(connectionForm, ['Oracle 需要至少填写一个本地 ojdbc JAR 路径'], 'Oracle local validation')
 
 const dataGrid = read('src/components/grid/DataGrid.tsx')
-excludesAll(dataGrid, ['UPDATE ', '编辑', 'setEditingCell'], 'read-only data grid')
+excludesAll(dataGrid, ['UPDATE '], 'data grid should not execute SQL directly')
 includesAll(dataGrid, ['copyToClipboard(value)', 'copyToClipboard(rowValue)'], 'read-only data grid copy actions')
 
 const mainPanel = read('src/components/layout/MainPanel.tsx')

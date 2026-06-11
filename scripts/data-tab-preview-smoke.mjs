@@ -71,7 +71,8 @@ includesAll(
     '数据预览行数过大',
     'updateDataTabContext',
     'buildDataTabSql',
-    '<DataGrid result={result} />',
+    '<DataGrid',
+    'result={result}',
   ],
   'read-only data tab rendering',
 )

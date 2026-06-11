@@ -9,7 +9,7 @@ export interface ObjectInspection {
   connectionId: string
   schema: string
   table: string
-  kind: 'table' | 'view'
+  kind: 'table' | 'view' | 'materializedView'
   columns: ColumnInfo[]
   indexes: IndexInfo[]
   foreignKeys: ForeignKeyInfo[]
@@ -24,7 +24,7 @@ interface ObjectInspectorState {
     connectionId: string,
     schema: string,
     table: string,
-    kind: 'table' | 'view',
+    kind: 'table' | 'view' | 'materializedView',
   ) => Promise<void>
   clear: () => void
 }

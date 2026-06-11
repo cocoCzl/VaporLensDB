@@ -1,23 +1,39 @@
 /* eslint-disable react-hooks/incompatible-library -- TanStack Virtual intentionally exposes non-memoizable instance methods. */
 import { useMemo, useRef, useState } from 'react'
-import { Copy, Rows3 } from 'lucide-react'
+import { Check, Copy, Pencil, Rows3, X } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Button } from '@/components/ui/button'
+import type { PendingCellChange } from '@/lib/dataEditSql'
 import type { QueryResult } from '@/types/query'
 
 interface DataGridProps {
   result?: QueryResult
+  editable?: boolean
+  pendingChanges?: PendingCellChange[]
+  failedChanges?: PendingCellChange[]
+  onEditCell?: (rowIndex: number, columnIndex: number, value: string) => void
 }
 
 const ROW_HEIGHT = 28
 const ROW_INDEX_WIDTH = 56
 const COLUMN_MIN_WIDTH = 180
 
-export function DataGrid({ result }: DataGridProps) {
+export function DataGrid({
+  result,
+  editable = false,
+  pendingChanges = [],
+  failedChanges = [],
+  onEditCell,
+}: DataGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [selectedCell, setSelectedCell] = useState<{
     rowIndex: number
     columnIndex: number
+  } | null>(null)
+  const [editingCell, setEditingCell] = useState<{
+    rowIndex: number
+    columnIndex: number
+    value: string
   } | null>(null)
   const virtualizer = useVirtualizer({
     count: result?.rows.length ?? 0,
@@ -121,22 +137,68 @@ export function DataGrid({ result }: DataGridProps) {
                     const selected =
                       selectedCell?.rowIndex === virtualRow.index &&
                       selectedCell.columnIndex === columnIndex
+                    const pending = pendingChanges.find(
+                      (change) =>
+                        change.rowIndex === virtualRow.index && change.columnName === column.name,
+                    )
+                    const failed = failedChanges.find(
+                      (change) =>
+                        change.rowIndex === virtualRow.index && change.columnName === column.name,
+                    )
+                    const editing =
+                      editingCell?.rowIndex === virtualRow.index &&
+                      editingCell.columnIndex === columnIndex
 
                     return (
-                      <button
+                      <div
                         key={`${virtualRow.index}-${column.name}`}
-                        type="button"
                         className={[
-                          'min-w-0 truncate border-b border-r px-2 py-1 text-left font-mono outline-none',
+                          'group relative min-w-0 border-b border-r font-mono outline-none',
                           selected
                             ? 'bg-primary/15 text-primary ring-1 ring-inset ring-primary/40'
                             : 'hover:bg-accent/50',
+                          pending ? 'bg-amber-50 text-amber-950' : '',
+                          failed ? 'bg-destructive/10 text-destructive' : '',
                         ].join(' ')}
-                        title={formatted}
-                        onClick={() => setSelectedCell({ rowIndex: virtualRow.index, columnIndex })}
+                        title={failed?.error ?? (pending ? '待提交变更' : formatted)}
                       >
-                        {formatted}
-                      </button>
+                        {editing ? (
+                          <InlineCellEditor
+                            value={editingCell.value}
+                            onChange={(value) => setEditingCell({ ...editingCell, value })}
+                            onCancel={() => setEditingCell(null)}
+                            onCommit={() => {
+                              onEditCell?.(virtualRow.index, columnIndex, editingCell.value)
+                              setEditingCell(null)
+                            }}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className="flex h-full w-full min-w-0 items-center gap-1 px-2 py-1 text-left"
+                            onClick={() =>
+                              setSelectedCell({ rowIndex: virtualRow.index, columnIndex })
+                            }
+                            onDoubleClick={() => {
+                              if (editable && onEditCell) {
+                                setEditingCell({
+                                  rowIndex: virtualRow.index,
+                                  columnIndex,
+                                  value: pending ? formatValue(pending.newValue) : formatted,
+                                })
+                              }
+                            }}
+                          >
+                            <span className="min-w-0 flex-1 truncate">
+                              {pending ? formatValue(pending.newValue) : formatted}
+                            </span>
+                            {pending && <span className="shrink-0 text-[10px]">pending</span>}
+                            {editable && (
+                              <Pencil className="size-3 shrink-0 opacity-0 group-hover:opacity-60" />
+                            )}
+                          </button>
+                        )}
+                      </div>
                     )
                   })}
                 </div>
@@ -149,6 +211,45 @@ export function DataGrid({ result }: DataGridProps) {
         result={result}
         selectedCell={selectedCell}
       />
+    </div>
+  )
+}
+
+function InlineCellEditor({
+  value,
+  onChange,
+  onCancel,
+  onCommit,
+}: {
+  value: string
+  onChange: (value: string) => void
+  onCancel: () => void
+  onCommit: () => void
+}) {
+  return (
+    <div className="flex h-full min-w-0 items-center gap-1 bg-background px-1">
+      <input
+        className="h-6 min-w-0 flex-1 rounded border bg-background px-1 font-mono text-xs outline-none"
+        value={value}
+        autoFocus
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            onCommit()
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onCancel()
+          }
+        }}
+      />
+      <button type="button" className="rounded p-0.5 hover:bg-muted" onClick={onCommit}>
+        <Check className="size-3" />
+      </button>
+      <button type="button" className="rounded p-0.5 hover:bg-muted" onClick={onCancel}>
+        <X className="size-3" />
+      </button>
     </div>
   )
 }

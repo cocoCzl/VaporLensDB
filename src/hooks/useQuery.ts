@@ -58,7 +58,7 @@ export function useQuery() {
             errorMessage: '流式查询失败',
           })
           notify({ kind: 'error', title: '查询执行失败' })
-          return
+          return false
         }
       } else {
         const response = await executeQuery({ connectionId, sql, queryId })
@@ -73,6 +73,7 @@ export function useQuery() {
       }
       recordQueryHistory(connectionId, sql, queryId, startedAt, performance.now() - startedMs)
       setTabQueryState(tabId, queryId)
+      return true
     } catch (error) {
       const appError = normalizeAppError(error)
       void useQueryHistoryStore.getState().addEntry({
@@ -86,6 +87,7 @@ export function useQuery() {
       })
       setTabQueryState(tabId, queryId, formatLocalError(appError))
       notify({ kind: 'error', title: '查询执行失败' })
+      return false
     }
   }
 

@@ -4,13 +4,14 @@ import type { DbObjectKind } from '@/types/metadata'
 
 export interface EditorTab {
   id: string
-  kind?: 'sql' | 'data' | 'structure' | 'definition'
+  kind?: 'sql' | 'data' | 'structure' | 'definition' | 'diagram'
   title: string
   sql: string
   connectionId: string | null
   dataContext?: DataTabContext | null
   structureContext?: StructureTabContext | null
   definitionContext?: DefinitionTabContext | null
+  diagramContext?: DiagramTabContext | null
   tableContext?: TableEditContext | null
   lastQueryId?: string | null
   runningQueryId?: string | null
@@ -46,6 +47,12 @@ export interface DefinitionTabContext {
   objectKind: DbObjectKind
   definitionKind: 'DDL' | 'Source'
   operation: 'tableDdl' | 'objectDdl'
+}
+
+export interface DiagramTabContext {
+  database?: string | null
+  schema: string
+  tables?: string[] | null
 }
 
 export interface TableEditContext {

@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Download, FileCode2, LockKeyhole, RefreshCw, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Download, FileCode2, LockKeyhole, RefreshCw, Send, Trash2, Upload } from 'lucide-react'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { DataGrid } from '@/components/grid/DataGrid'
+import { ERDiagram } from '@/components/diagram/ERDiagram'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/hooks/useQuery'
@@ -14,6 +15,12 @@ import {
   type ImportPreview,
 } from '@/ipc/export'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
+import {
+  buildPendingCellChange,
+  buildTransactionalEditSql,
+  upsertPendingCellChange,
+  type PendingCellChange,
+} from '@/lib/dataEditSql'
 import { buildDataTabSql } from '@/lib/dataTabSql'
 import { isSystemSchema } from '@/lib/systemObjects'
 import { normalizeAppError } from '@/ipc/client'
@@ -340,10 +347,25 @@ export function MainPanel() {
                 connectionId: activeTab.connectionId,
               })
             }}
+            onOpenEditPreview={(sql) => {
+              addTab({
+                id: crypto.randomUUID(),
+                kind: 'sql',
+                title: `${activeDataContext.object} edit preview`,
+                sql,
+                connectionId: activeTab.connectionId,
+              })
+            }}
             onExport={() =>
               activeResult &&
               exportCurrentResult(activeResult, activeTab.title, notify, notifyError, upsertTask)
             }
+            onSubmitEdits={(sql) => {
+              if (!activeTab.connectionId) {
+                return Promise.resolve(false)
+              }
+              return runQuery(activeTab.id, activeTab.connectionId, sql)
+            }}
           />
         </div>
         <ObjectInspectorPanel />
@@ -396,6 +418,23 @@ export function MainPanel() {
                 connectionId: activeTab.connectionId,
               })
             }}
+          />
+        </div>
+        <ObjectInspectorPanel />
+      </main>
+    )
+  }
+
+  const activeDiagramContext = activeTab.kind === 'diagram' ? activeTab.diagramContext : null
+  if (activeDiagramContext) {
+    return (
+      <main className="flex flex-1 overflow-hidden bg-background">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <ERDiagram
+            connectionId={activeTab.connectionId}
+            database={activeDiagramContext.database}
+            schema={activeDiagramContext.schema}
+            tables={activeDiagramContext.tables}
           />
         </div>
         <ObjectInspectorPanel />
@@ -604,7 +643,9 @@ function DataTabPanel({
   onLimitChange,
   onContextChange,
   onOpenSqlTab,
+  onOpenEditPreview,
   onExport,
+  onSubmitEdits,
 }: {
   tab: EditorTab & { dataContext: NonNullable<EditorTab['dataContext']> }
   result?: QueryResult
@@ -614,7 +655,9 @@ function DataTabPanel({
   onLimitChange: (limit: number) => void
   onContextChange: (patch: Partial<NonNullable<EditorTab['dataContext']>>) => void
   onOpenSqlTab: () => void
+  onOpenEditPreview: (sql: string) => void
   onExport: () => void
+  onSubmitEdits: (sql: string) => Promise<boolean>
 }) {
   const notifyError = useUiStore((state) => state.notifyError)
   const notify = useUiStore((state) => state.notify)
@@ -624,11 +667,34 @@ function DataTabPanel({
   const [importPath, setImportPath] = useState('')
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
   const [importBusy, setImportBusy] = useState(false)
+  const [pendingChanges, setPendingChanges] = useState<PendingCellChange[]>([])
+  const [submittingEdits, setSubmittingEdits] = useState(false)
   const page = Math.floor(tab.dataContext.offset / tab.dataContext.limit) + 1
   const hasPrimaryKeyOrder =
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length > 0
   const hasNoStableOrder =
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length === 0
+  const canEditData =
+    tab.dataContext.objectKind === 'table' &&
+    tab.dataContext.primaryKeyColumns.length > 0 &&
+    Boolean(result?.columns.length)
+  const editDisabledReason =
+    tab.dataContext.objectKind !== 'table'
+      ? '只有 table-like Data tab 中的真实表支持编辑队列'
+      : tab.dataContext.primaryKeyColumns.length === 0
+        ? '缺少 primary key，无法安全定位待更新行'
+        : !result?.columns.length
+          ? '加载结果后可编辑单元格'
+          : null
+  const editPreviewSql = buildTransactionalEditSql(
+    {
+      driverType: tab.dataContext.driverType,
+      schema: tab.dataContext.schema,
+      table: tab.dataContext.object,
+      primaryKeyColumns: tab.dataContext.primaryKeyColumns,
+    },
+    pendingChanges,
+  )
 
   function applyLimit() {
     const value = Number(limitText)
@@ -744,6 +810,60 @@ function DataTabPanel({
     }
   }
 
+  function queueCellEdit(rowIndex: number, columnIndex: number, value: string) {
+    if (!result || !canEditData) {
+      return
+    }
+
+    const change = buildPendingCellChange({
+      result,
+      rowIndex,
+      columnIndex,
+      newValue: value,
+      primaryKeyColumns: tab.dataContext.primaryKeyColumns,
+    })
+    if (!change) {
+      notify({
+        kind: 'warning',
+        title: '无法加入编辑队列',
+        message: '当前行缺少 primary-key 定位信息。',
+      })
+      return
+    }
+
+    setPendingChanges((current) => upsertPendingCellChange(current, change))
+  }
+
+  async function submitPendingChanges() {
+    if (!editPreviewSql || pendingChanges.length === 0) {
+      return
+    }
+
+    setSubmittingEdits(true)
+    try {
+      const success = await onSubmitEdits(editPreviewSql)
+      if (success) {
+        setPendingChanges([])
+        notify({
+          kind: 'info',
+          title: '数据编辑已提交',
+          message: '事务已完成，正在刷新 Data tab。',
+        })
+        onRefresh()
+      } else {
+        setPendingChanges((current) =>
+          current.map((change) => ({
+            ...change,
+            status: 'failed',
+            error: '事务提交失败，查看查询错误详情。',
+          })),
+        )
+      }
+    } finally {
+      setSubmittingEdits(false)
+    }
+  }
+
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-background">
       <div className="flex min-h-11 items-center justify-between gap-3 border-b ide-toolbar px-3 py-1.5 text-xs">
@@ -752,7 +872,8 @@ function DataTabPanel({
           <div className="min-w-0">
             <div className="truncate font-medium">{tab.title}</div>
             <div className="truncate text-[11px] text-muted-foreground">
-              Data tab · read-only · {tab.dataContext.database ? `${tab.dataContext.database} / ` : ''}
+              Data tab · {canEditData ? 'editable queue' : 'read-only'} ·{' '}
+              {tab.dataContext.database ? `${tab.dataContext.database} / ` : ''}
               {tab.dataContext.schema} / {tab.dataContext.object}
             </div>
           </div>
@@ -806,11 +927,12 @@ function DataTabPanel({
         </div>
       </div>
       <div className="flex h-8 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
-        <span>只读数据预览</span>
+        <span>{canEditData ? '事务编辑队列' : '只读数据预览'}</span>
         {result && <span>{resultSummary(result)}</span>}
         <span>Page {page}</span>
         {hasPrimaryKeyOrder && <span>按主键升序</span>}
         {hasNoStableOrder && <span className="text-amber-600">无主键，结果顺序不保证</span>}
+        {editDisabledReason && <span className="text-amber-600">{editDisabledReason}</span>}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex min-h-10 items-center gap-2 border-b px-3 py-1.5 text-xs">
@@ -929,14 +1051,74 @@ function DataTabPanel({
             </span>
           )}
         </div>
+        <div className="flex min-h-10 items-center gap-2 border-b bg-muted/10 px-3 py-1.5 text-xs">
+          <span className="shrink-0 text-muted-foreground">Pending changes</span>
+          <span
+            className={
+              pendingChanges.some((change) => change.status === 'failed')
+                ? 'text-destructive'
+                : 'text-muted-foreground'
+            }
+          >
+            {pendingChanges.length.toLocaleString()} queued
+          </span>
+          <Button
+            type="button"
+            size="xs"
+            variant="secondary"
+            disabled={!editPreviewSql}
+            onClick={() => onOpenEditPreview(editPreviewSql)}
+          >
+            预览 SQL
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={!editPreviewSql || submittingEdits || running}
+            onClick={() => void submitPendingChanges()}
+          >
+            <Send className="size-3.5" />
+            {submittingEdits ? '提交中' : '提交事务'}
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={pendingChanges.length === 0 || submittingEdits}
+            onClick={() => setPendingChanges([])}
+          >
+            <Trash2 className="size-3.5" />
+            丢弃
+          </Button>
+          {pendingChanges.length > 0 && (
+            <span className="min-w-0 truncate text-muted-foreground">
+              {pendingChanges
+                .slice(0, 3)
+                .map((change) => `R${change.rowIndex + 1}.${change.columnName}`)
+                .join(', ')}
+              {pendingChanges.length > 3 ? ` +${pendingChanges.length - 3}` : ''}
+            </span>
+          )}
+        </div>
         <textarea
           className="h-20 shrink-0 resize-none border-b bg-muted/20 p-2 font-mono text-[11px] text-muted-foreground outline-none"
           readOnly
-          value={tab.sql}
-          aria-label="generated SQL"
+          value={editPreviewSql || tab.sql}
+          aria-label={editPreviewSql ? 'generated edit SQL' : 'generated SQL'}
         />
         <div className="min-h-0 flex-1">
-        {error ? <ErrorDetails message={error} /> : <DataGrid result={result} />}
+        {error ? (
+          <ErrorDetails message={error} />
+        ) : (
+          <DataGrid
+            result={result}
+            editable={canEditData}
+            pendingChanges={pendingChanges.filter((change) => change.status !== 'failed')}
+            failedChanges={pendingChanges.filter((change) => change.status === 'failed')}
+            onEditCell={queueCellEdit}
+          />
+        )}
         </div>
       </div>
     </section>

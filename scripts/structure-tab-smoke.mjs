@@ -42,7 +42,7 @@ includesAll(
     'database: node.meta.database',
     'schema: node.meta.schema',
     'object: node.meta.table',
-    '打开对象结构',
+    '打开 Structure Tab',
   ],
   'object tree structure tab action',
 )
