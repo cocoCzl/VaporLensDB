@@ -1,12 +1,18 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Download, FileCode2, LockKeyhole, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Download, FileCode2, LockKeyhole, RefreshCw, Upload } from 'lucide-react'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { DataGrid } from '@/components/grid/DataGrid'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/hooks/useQuery'
-import { exportQueryResultCsv } from '@/ipc/export'
+import {
+  exportQueryResultCsv,
+  exportTableCsv,
+  importTableCsv,
+  previewTableCsvImport,
+  type ImportPreview,
+} from '@/ipc/export'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { buildDataTabSql } from '@/lib/dataTabSql'
 import { isSystemSchema } from '@/lib/systemObjects'
@@ -610,8 +616,14 @@ function DataTabPanel({
   onOpenSqlTab: () => void
   onExport: () => void
 }) {
+  const notifyError = useUiStore((state) => state.notifyError)
+  const notify = useUiStore((state) => state.notify)
+  const upsertTask = useTaskStore((state) => state.upsertTask)
   const [limitText, setLimitText] = useState(String(tab.dataContext.limit))
   const [whereText, setWhereText] = useState(tab.dataContext.wherePredicate ?? '')
+  const [importPath, setImportPath] = useState('')
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
   const page = Math.floor(tab.dataContext.offset / tab.dataContext.limit) + 1
   const hasPrimaryKeyOrder =
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length > 0
@@ -642,6 +654,94 @@ function DataTabPanel({
       sortDirection: column ? tab.dataContext.sortDirection ?? 'asc' : null,
       offset: 0,
     })
+  }
+
+  async function exportSelectedTable() {
+    if (!tab.connectionId) {
+      return
+    }
+
+    try {
+      const directory = await downloadDir()
+      const fileName = `${safeFileName(`${tab.dataContext.schema}-${tab.dataContext.object}`)}-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, '-')}.csv`
+      const path = await join(directory, fileName)
+      const task = await exportTableCsv({
+        connectionId: tab.connectionId,
+        driverType: tab.dataContext.driverType,
+        schema: tab.dataContext.schema,
+        table: tab.dataContext.object,
+        path,
+        includeHeader: true,
+      })
+      upsertTask(task)
+      notify({
+        kind: 'info',
+        title: '整表 CSV 导出已开始',
+        message: fileName,
+      })
+    } catch (exportError) {
+      notifyError(normalizeAppError(exportError), '启动整表导出失败')
+    }
+  }
+
+  async function previewCsvImport() {
+    if (!tab.connectionId || !importPath.trim()) {
+      return
+    }
+
+    setImportBusy(true)
+    try {
+      const preview = await previewTableCsvImport({
+        connectionId: tab.connectionId,
+        schema: tab.dataContext.schema,
+        table: tab.dataContext.object,
+        path: importPath.trim(),
+        hasHeader: true,
+        previewRows: 20,
+      })
+      setImportPreview(preview)
+      notify({
+        kind: preview.canImport && preview.invalidRows.length === 0 ? 'info' : 'warning',
+        title: 'CSV 导入预览完成',
+        message: `${preview.validRows.toLocaleString()} valid / ${preview.totalRows.toLocaleString()} rows`,
+      })
+    } catch (previewError) {
+      setImportPreview(null)
+      notifyError(normalizeAppError(previewError), 'CSV 导入预览失败')
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
+  async function startCsvImport() {
+    if (!tab.connectionId || !importPreview?.canImport) {
+      return
+    }
+
+    setImportBusy(true)
+    try {
+      const task = await importTableCsv({
+        connectionId: tab.connectionId,
+        driverType: tab.dataContext.driverType,
+        schema: tab.dataContext.schema,
+        table: tab.dataContext.object,
+        path: importPreview.path,
+        hasHeader: true,
+        emptyAsNull: true,
+      })
+      upsertTask(task)
+      notify({
+        kind: 'info',
+        title: 'CSV 导入已开始',
+        message: `${importPreview.validRows.toLocaleString()} rows queued`,
+      })
+    } catch (importError) {
+      notifyError(normalizeAppError(importError), '启动 CSV 导入失败')
+    } finally {
+      setImportBusy(false)
+    }
   }
 
   return (
@@ -692,6 +792,16 @@ function DataTabPanel({
           >
             <Download className="size-3.5" />
             导出 CSV
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={!tab.connectionId}
+            onClick={() => void exportSelectedTable()}
+          >
+            <Download className="size-3.5" />
+            导出整表
           </Button>
         </div>
       </div>
@@ -772,6 +882,52 @@ function DataTabPanel({
           >
             下一页
           </Button>
+        </div>
+        <div className="flex min-h-10 items-center gap-2 border-b bg-muted/10 px-3 py-1.5 text-xs">
+          <Upload className="size-3.5 shrink-0 text-muted-foreground" />
+          <input
+            className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-[11px]"
+            placeholder="CSV import path"
+            value={importPath}
+            onChange={(event) => {
+              setImportPath(event.target.value)
+              setImportPreview(null)
+            }}
+          />
+          <Button
+            type="button"
+            size="xs"
+            variant="secondary"
+            disabled={importBusy || !importPath.trim()}
+            onClick={() => void previewCsvImport()}
+          >
+            预览导入
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={importBusy || !importPreview?.canImport}
+            onClick={() => void startCsvImport()}
+          >
+            执行导入
+          </Button>
+          {importPreview && (
+            <span
+              className={
+                importPreview.invalidRows.length > 0
+                  ? 'max-w-80 truncate text-amber-600'
+                  : 'max-w-80 truncate text-muted-foreground'
+              }
+              title={importPreview.invalidRows[0]?.message}
+            >
+              {importPreview.validRows.toLocaleString()} valid /{' '}
+              {importPreview.totalRows.toLocaleString()} rows
+              {importPreview.invalidRows.length > 0
+                ? ` · ${importPreview.invalidRows.length} invalid`
+                : ''}
+            </span>
+          )}
         </div>
         <textarea
           className="h-20 shrink-0 resize-none border-b bg-muted/20 p-2 font-mono text-[11px] text-muted-foreground outline-none"

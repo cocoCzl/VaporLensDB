@@ -126,6 +126,27 @@
     "status": "active"
   },
   {
+    "name": "export_table_csv",
+    "namespace": "export",
+    "args": "{ input: ExportTableCsvInput }",
+    "response": "TaskInfo",
+    "status": "active"
+  },
+  {
+    "name": "preview_table_csv_import",
+    "namespace": "export",
+    "args": "{ input: PreviewTableCsvImportInput }",
+    "response": "ImportPreview",
+    "status": "active"
+  },
+  {
+    "name": "import_table_csv",
+    "namespace": "export",
+    "args": "{ input: ImportTableCsvInput }",
+    "response": "TaskInfo",
+    "status": "active"
+  },
+  {
     "name": "get_databases",
     "namespace": "metadata",
     "args": "{ connectionId: string }",

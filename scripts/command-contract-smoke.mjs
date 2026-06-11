@@ -66,6 +66,7 @@ for (const name of frontendNames) {
 const ipcSources = [
   'src/ipc/connection.ts',
   'src/ipc/driver.ts',
+  'src/ipc/export.ts',
   'src/ipc/health.ts',
   'src/ipc/metadata.ts',
   'src/ipc/query.ts',

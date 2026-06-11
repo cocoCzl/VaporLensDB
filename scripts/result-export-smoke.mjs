@@ -48,7 +48,7 @@ includesAll(
   mainPanel,
   [
     "import { downloadDir, join } from '@tauri-apps/api/path'",
-    "import { exportQueryResultCsv } from '@/ipc/export'",
+    'exportQueryResultCsv',
     'const directory = await downloadDir()',
     'const path = await join(directory, fileName)',
     'upsertTask(task)',
