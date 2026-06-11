@@ -13,7 +13,6 @@ export interface DriverDefinition {
   urlTemplate?: string | null
   driverArtifact?: string | null
   driverArtifacts: string[]
-  odbcDriverName?: string | null
   userDriverRequired: boolean
   builtIn: boolean
   notes?: string | null
@@ -22,7 +21,7 @@ export interface DriverDefinition {
   capabilities: DriverDefinitionCapabilities
 }
 
-export type DriverBackend = 'nativeRust' | 'jdbc' | 'odbc' | 'planned'
+export type DriverBackend = 'nativeRust' | 'jdbc' | 'planned'
 
 export type DriverStatus = 'ready' | 'configurable' | 'planned'
 

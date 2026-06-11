@@ -1010,6 +1010,21 @@ fn normalize_jdbc_error_message(message: &str) -> String {
     if lower.contains("no suitable driver") {
         return format!("JDBC driver class or JAR is not usable. {normalized}");
     }
+    if lower.contains("classnotfoundexception")
+        || lower.contains("class not found")
+        || lower.contains("could not find or load main class")
+    {
+        return format!(
+            "JDBC driver class or bridge class is missing from the classpath. {normalized}"
+        );
+    }
+    if lower.contains("jdbc url")
+        || lower.contains("invalid url")
+        || lower.contains("malformed")
+        || lower.contains("invalid connection string")
+    {
+        return format!("JDBC URL is invalid for this driver. {normalized}");
+    }
     if lower.contains("unknown host")
         || lower.contains("network adapter could not establish the connection")
         || lower.contains("the network adapter could not establish the connection")
@@ -1227,6 +1242,19 @@ mod tests {
             normalize_jdbc_error_message("ORA-01017: invalid username/password; logon denied");
         assert!(message.contains("authentication failed"));
         assert!(message.contains("ORA-01017"));
+    }
+
+    #[test]
+    fn normalizes_jdbc_runtime_configuration_errors() {
+        let missing_class =
+            normalize_jdbc_error_message("java.lang.ClassNotFoundException: org.example.Driver");
+        assert!(missing_class.contains("missing from the classpath"));
+
+        let invalid_url = normalize_jdbc_error_message("Invalid URL format");
+        assert!(invalid_url.contains("JDBC URL is invalid"));
+
+        let no_driver = normalize_jdbc_error_message("No suitable driver found for jdbc:unknown:x");
+        assert!(no_driver.contains("JDBC driver class or JAR is not usable"));
     }
 
     fn query_result(names: &[&str], rows: Vec<Vec<serde_json::Value>>) -> QueryResult {

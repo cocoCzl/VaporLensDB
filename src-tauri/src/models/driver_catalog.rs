@@ -19,7 +19,6 @@ pub struct DriverDefinition {
     pub url_template: Option<String>,
     pub driver_artifact: Option<String>,
     pub driver_artifacts: Vec<String>,
-    pub odbc_driver_name: Option<String>,
     pub user_driver_required: bool,
     pub built_in: bool,
     pub notes: Option<String>,
@@ -33,7 +32,6 @@ pub struct DriverDefinition {
 pub enum DriverBackend {
     NativeRust,
     Jdbc,
-    Odbc,
     Planned,
 }
 
@@ -42,7 +40,6 @@ impl fmt::Display for DriverBackend {
         let value = match self {
             Self::NativeRust => "nativeRust",
             Self::Jdbc => "jdbc",
-            Self::Odbc => "odbc",
             Self::Planned => "planned",
         };
         f.write_str(value)
@@ -56,7 +53,6 @@ impl FromStr for DriverBackend {
         match value {
             "nativeRust" => Ok(Self::NativeRust),
             "jdbc" => Ok(Self::Jdbc),
-            "odbc" => Ok(Self::Odbc),
             "planned" => Ok(Self::Planned),
             _ => Err(format!("unsupported driver backend: {value}")),
         }

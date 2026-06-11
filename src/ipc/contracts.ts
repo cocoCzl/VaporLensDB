@@ -41,7 +41,6 @@ export const COMMANDS = {
   deleteCustomDriverDefinition: 'delete_custom_driver_definition',
   importJdbcDriverArtifacts: 'import_jdbc_driver_artifacts',
   removeJdbcDriverArtifact: 'remove_jdbc_driver_artifact',
-  listSystemOdbcDrivers: 'list_system_odbc_drivers',
   validateExternalDriver: 'validate_external_driver',
   exportQueryResultCsv: 'export_query_result_csv',
   getDatabases: 'get_databases',

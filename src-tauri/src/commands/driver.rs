@@ -3,7 +3,6 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 use tauri::State;
 
@@ -13,7 +12,7 @@ use crate::{
         driver_catalog::DriverDefinition,
         error::AppError,
     },
-    services::external_driver::{validate_jdbc_prerequisites, validate_odbc_prerequisites},
+    services::external_driver::validate_jdbc_prerequisites,
     AppState,
 };
 
@@ -177,11 +176,6 @@ pub fn remove_jdbc_driver_artifact(
         .map_err(Into::into)
 }
 
-#[tauri::command]
-pub fn list_system_odbc_drivers() -> Result<Vec<String>, String> {
-    list_odbc_drivers()
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValidateExternalDriverInput {
@@ -267,37 +261,6 @@ fn is_managed_artifact_path(config_dir: &Path, path: &Path) -> bool {
     path.starts_with(managed_root)
 }
 
-fn list_odbc_drivers() -> Result<Vec<String>, String> {
-    let output = Command::new("odbcinst")
-        .arg("-q")
-        .arg("-d")
-        .output()
-        .map_err(|error| format!("failed to list system ODBC drivers with odbcinst: {error}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            "odbcinst failed while listing system ODBC drivers".to_string()
-        } else {
-            stderr
-        });
-    }
-
-    let drivers = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            line.strip_prefix('[')
-                .and_then(|value| value.strip_suffix(']'))
-                .or_else(|| if line.is_empty() { None } else { Some(line) })
-                .map(str::to_string)
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    Ok(drivers)
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalDriverValidation {
@@ -331,7 +294,6 @@ pub async fn validate_external_driver(
 
     let result = match config.driver_type {
         DriverType::Oracle | DriverType::Jdbc => validate_jdbc_prerequisites(&config).await,
-        DriverType::Odbc => validate_odbc_prerequisites(&config),
         _ => Err(AppError::UnsupportedOperation {
             driver: config.driver_type.to_string(),
             operation: "external driver validation".to_string(),

@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import {
   deleteCustomDriverDefinition,
   importJdbcDriverArtifacts,
-  listSystemOdbcDrivers,
   listDriverDefinitions,
   removeJdbcDriverArtifact,
   saveCustomDriverDefinition,
@@ -21,7 +20,6 @@ interface DriverState {
   deleteDriver: (id: string) => Promise<boolean>
   importJdbcArtifacts: (driverDefinitionId: string, paths: string[]) => Promise<DriverDefinition | null>
   removeJdbcArtifact: (driverDefinitionId: string, path: string) => Promise<DriverDefinition | null>
-  loadOdbcDrivers: () => Promise<string[]>
   validateDriver: (driver: DriverDefinition) => Promise<ExternalDriverValidation>
 }
 
@@ -98,15 +96,6 @@ export const useDriverStore = create<DriverState>((set, get) => ({
       set({ error: appError.message, loading: false })
       useUiStore.getState().notifyError(appError, '移除 JDBC JAR 失败')
       return null
-    }
-  },
-  loadOdbcDrivers: async () => {
-    try {
-      return await listSystemOdbcDrivers()
-    } catch (error) {
-      const appError = normalizeAppError(error)
-      useUiStore.getState().notifyError(appError, '读取系统 ODBC 驱动失败')
-      return []
     }
   },
   validateDriver: async (driver) => {

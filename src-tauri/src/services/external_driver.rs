@@ -31,11 +31,6 @@ pub async fn validate_jdbc_prerequisites(config: &ConnectionConfig) -> Result<()
     resolve_jdbc_bridge_jar().map(|_| ())
 }
 
-pub fn validate_odbc_prerequisites(config: &ConnectionConfig) -> Result<(), AppError> {
-    required(config.connection_url.as_deref(), "ODBC connection string")?;
-    Ok(())
-}
-
 fn validate_jar_path(path: &str) -> Result<(), AppError> {
     let path = Path::new(path);
     if !path.exists() {

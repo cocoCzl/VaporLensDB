@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     drivers::{
-        jdbc::JdbcDriver, mysql::MysqlDriver, postgres::PostgresDriver, sqlite::SqliteDriver,
-        trait_def::DatabaseDriver,
+        jdbc::JdbcDriver, mssql::MssqlDriver, mysql::MysqlDriver, postgres::PostgresDriver,
+        sqlite::SqliteDriver, trait_def::DatabaseDriver,
     },
     models::{
         connection::{ConnectionConfig, ConnectionRuntimeStatus, ConnectionStatus, DriverType},
@@ -14,7 +14,6 @@ use crate::{
         metadata::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo},
         query_result::{ExplainResult, QueryResult},
     },
-    services::external_driver::validate_odbc_prerequisites,
 };
 
 pub struct ConnectionManager {
@@ -36,10 +35,6 @@ impl ConnectionManager {
         password: Option<&str>,
         definition: Option<&DriverDefinition>,
     ) -> Result<(), AppError> {
-        if config.driver_type == DriverType::Odbc {
-            return validate_odbc_prerequisites(config);
-        }
-
         let driver = create_driver(config, password, definition).await?;
         driver.ping().await
     }
@@ -266,16 +261,22 @@ async fn create_driver(
             let driver = SqliteDriver::connect(path).await?;
             Ok(Arc::new(driver))
         }
+        DriverType::Mssql => {
+            let driver = if let Some(connection_url) = config.connection_url.as_deref() {
+                MssqlDriver::connect(connection_url).await?
+            } else {
+                let host = required(config.host.as_deref(), "host")?;
+                let port = config.port.unwrap_or(1433);
+                let database = config.database.as_deref().unwrap_or("master");
+                let username = required(config.username.as_deref(), "username")?;
+                let password = password.unwrap_or("");
+                MssqlDriver::connect_with_params(host, port, database, username, password).await?
+            };
+            Ok(Arc::new(driver))
+        }
         DriverType::Jdbc => {
             let driver = JdbcDriver::connect(config, password, definition).await?;
             Ok(Arc::new(driver))
-        }
-        DriverType::Odbc => {
-            validate_odbc_prerequisites(config)?;
-            Err(AppError::UnsupportedOperation {
-                driver: "odbc".to_string(),
-                operation: "connect via ODBC bridge runtime".to_string(),
-            })
         }
         _ => Err(AppError::UnsupportedOperation {
             driver: config.driver_type.to_string(),

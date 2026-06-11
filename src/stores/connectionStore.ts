@@ -110,7 +110,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       useUiStore.getState().notify({
         kind: 'success',
         title:
-          input.driverType === 'oracle' || input.driverType === 'jdbc' || input.driverType === 'odbc'
+          input.driverType === 'oracle' || input.driverType === 'jdbc'
             ? '驱动配置校验成功'
             : '连接测试成功',
         message: input.name,

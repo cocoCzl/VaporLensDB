@@ -20,6 +20,12 @@ function includesAll(source, values, label) {
   }
 }
 
+function excludesAll(source, values, label) {
+  for (const value of values) {
+    assert(!source.includes(value), `${label} should not include: ${value}`)
+  }
+}
+
 const sidebar = read('src/components/layout/Sidebar.tsx')
 const connectionForm = read('src/components/connection/ConnectionForm.tsx')
 const driverStore = read('src/stores/driverStore.ts')
@@ -33,7 +39,7 @@ includesAll(
   driverTypes,
   [
     'builtIn: boolean',
-    "export type DriverBackend = 'nativeRust' | 'jdbc' | 'odbc' | 'planned'",
+    "export type DriverBackend = 'nativeRust' | 'jdbc' | 'planned'",
     "export type DriverStatus = 'ready' | 'configurable' | 'planned'",
     'connectionVariants: DriverConnectionVariant[]',
     'metadataDialectSql?: string | null',
@@ -81,8 +87,6 @@ includesAll(
     '导入 JAR',
     '导入路径',
     '移除 JAR',
-    '选择系统 ODBC 驱动',
-    '刷新 ODBC 驱动',
     '元数据 SQL',
     '校验驱动',
     'newCustomDriverDefinition',
@@ -99,7 +103,6 @@ includesAll(
     'deleteDriver',
     'importJdbcArtifacts',
     'removeJdbcArtifact',
-    'loadOdbcDrivers',
     'validateDriver',
   ],
   'driver store operations',
@@ -113,7 +116,6 @@ includesAll(
     'deleteCustomDriverDefinition',
     'importJdbcDriverArtifacts',
     'removeJdbcDriverArtifact',
-    'listSystemOdbcDrivers',
     'validateExternalDriver',
   ],
   'driver IPC operations',
@@ -127,13 +129,27 @@ includesAll(
     'delete_custom_driver_definition',
     'import_jdbc_driver_artifacts',
     'remove_jdbc_driver_artifact',
-    'list_system_odbc_drivers',
     'validate_external_driver',
     'validate_jdbc_prerequisites',
-    'validate_odbc_prerequisites',
     'ensure_custom_jdbc_definition',
   ],
   'driver command operations',
+)
+
+excludesAll(
+  sidebar + connectionForm + driverStore + driverIpc + driverCommands + driverTypes + rustDriverTypes,
+  [
+    '选择系统 ODBC 驱动',
+    '刷新 ODBC 驱动',
+    'loadOdbcDrivers',
+    'listSystemOdbcDrivers',
+    'list_system_odbc_drivers',
+    'validate_odbc_prerequisites',
+    "'odbc'",
+    'DriverBackend::Odbc',
+    'DriverType::Odbc',
+  ],
+  'removed ODBC product surface',
 )
 
 includesAll(

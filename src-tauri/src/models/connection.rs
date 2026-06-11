@@ -36,7 +36,6 @@ pub enum DriverType {
     Mssql,
     Mongo,
     Redis,
-    Odbc,
     Jdbc,
 }
 
@@ -50,7 +49,6 @@ impl fmt::Display for DriverType {
             Self::Mssql => "mssql",
             Self::Mongo => "mongo",
             Self::Redis => "redis",
-            Self::Odbc => "odbc",
             Self::Jdbc => "jdbc",
         };
         f.write_str(value)
@@ -69,7 +67,6 @@ impl FromStr for DriverType {
             "mssql" => Ok(Self::Mssql),
             "mongo" => Ok(Self::Mongo),
             "redis" => Ok(Self::Redis),
-            "odbc" => Ok(Self::Odbc),
             "jdbc" => Ok(Self::Jdbc),
             _ => Err(format!("unsupported driver type: {value}")),
         }

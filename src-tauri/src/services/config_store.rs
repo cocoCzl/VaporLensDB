@@ -193,6 +193,7 @@ impl ConfigStore {
                    password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
                    color_tag, created_at, updated_at
             FROM connections
+            WHERE driver_type <> 'odbc'
             ORDER BY group_name IS NOT NULL, group_name, name
             ",
         )?;
@@ -205,11 +206,12 @@ impl ConfigStore {
         self.conn()?
             .query_row(
                 "
-                SELECT id, name, driver_definition_id, driver_type, host, port, database_name, connection_url, username,
-                       password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
-                       color_tag, created_at, updated_at
+            SELECT id, name, driver_definition_id, driver_type, host, port, database_name, connection_url, username,
+                   password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
+                   color_tag, created_at, updated_at
                 FROM connections
                 WHERE id = ?1
+                  AND driver_type <> 'odbc'
                 ",
                 params![id.to_string()],
                 row_to_connection,
@@ -290,9 +292,11 @@ impl ConfigStore {
             "
             SELECT id, driver_type, name, backend, status, default_port, default_username,
                    default_database, jdbc_driver_class, url_template, driver_artifact,
-                   driver_artifacts_json, odbc_driver_name, user_driver_required, built_in,
+                   driver_artifacts_json, user_driver_required, built_in,
                    notes, connection_variants_json, metadata_dialect_sql, capabilities_json
             FROM driver_definitions
+            WHERE driver_type <> 'odbc'
+              AND backend <> 'odbc'
             ORDER BY built_in DESC,
                      CASE status
                        WHEN 'ready' THEN 0
@@ -313,10 +317,12 @@ impl ConfigStore {
                 "
                 SELECT id, driver_type, name, backend, status, default_port, default_username,
                        default_database, jdbc_driver_class, url_template, driver_artifact,
-                       driver_artifacts_json, odbc_driver_name, user_driver_required, built_in,
+                       driver_artifacts_json, user_driver_required, built_in,
                        notes, connection_variants_json, metadata_dialect_sql, capabilities_json
                 FROM driver_definitions
                 WHERE id = ?1
+                  AND driver_type <> 'odbc'
+                  AND backend <> 'odbc'
                 ",
                 params![id],
                 row_to_driver_definition,
@@ -562,11 +568,11 @@ fn upsert_driver_definition(
         "
         INSERT INTO driver_definitions (
             id, driver_type, name, backend, status, default_port, default_username, default_database,
-            jdbc_driver_class, url_template, driver_artifact, driver_artifacts_json, odbc_driver_name,
+            jdbc_driver_class, url_template, driver_artifact, driver_artifacts_json,
             user_driver_required, built_in,
             notes, connection_variants_json, metadata_dialect_sql, capabilities_json, updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, datetime('now'))
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, datetime('now'))
         ON CONFLICT(id) DO UPDATE SET
             driver_type = excluded.driver_type,
             name = excluded.name,
@@ -579,7 +585,6 @@ fn upsert_driver_definition(
             url_template = excluded.url_template,
             driver_artifact = excluded.driver_artifact,
             driver_artifacts_json = excluded.driver_artifacts_json,
-            odbc_driver_name = excluded.odbc_driver_name,
             user_driver_required = excluded.user_driver_required,
             built_in = excluded.built_in,
             notes = excluded.notes,
@@ -602,7 +607,6 @@ fn upsert_driver_definition(
             &definition.url_template,
             &definition.driver_artifact,
             driver_artifacts,
-            &definition.odbc_driver_name,
             definition.user_driver_required as i64,
             definition.built_in as i64,
             &definition.notes,
@@ -675,26 +679,14 @@ fn validate_custom_driver_definition(definition: &DriverDefinition) -> Result<()
             "driver definition name is required".to_string(),
         ));
     }
-    if !matches!(definition.driver_type, DriverType::Jdbc | DriverType::Odbc) {
+    if !matches!(definition.driver_type, DriverType::Jdbc) {
         return Err(AppError::ConfigError(
-            "custom driver definitions currently support only JDBC or ODBC".to_string(),
+            "custom driver definitions currently support only JDBC".to_string(),
         ));
     }
     if definition.connection_variants.is_empty() {
         return Err(AppError::ConfigError(
             "at least one connection variant is required".to_string(),
-        ));
-    }
-    if definition.driver_type == DriverType::Odbc
-        && definition
-            .odbc_driver_name
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or("")
-            .is_empty()
-    {
-        return Err(AppError::ConfigError(
-            "ODBC custom driver definitions require a system driver name".to_string(),
         ));
     }
     Ok(())
@@ -843,10 +835,10 @@ fn row_to_driver_definition(row: &Row<'_>) -> Result<DriverDefinition, rusqlite:
     let status: String = row.get(4)?;
     let default_port: Option<i64> = row.get(5)?;
     let driver_artifacts_json: String = row.get(11)?;
-    let user_driver_required: i64 = row.get(13)?;
-    let built_in: i64 = row.get(14)?;
-    let connection_variants_json: String = row.get(16)?;
-    let capabilities_json: String = row.get(18)?;
+    let user_driver_required: i64 = row.get(12)?;
+    let built_in: i64 = row.get(13)?;
+    let connection_variants_json: String = row.get(15)?;
+    let capabilities_json: String = row.get(17)?;
 
     Ok(DriverDefinition {
         id,
@@ -862,15 +854,14 @@ fn row_to_driver_definition(row: &Row<'_>) -> Result<DriverDefinition, rusqlite:
         driver_artifact: row.get(10)?,
         driver_artifacts: serde_json::from_str::<Vec<String>>(&driver_artifacts_json)
             .map_err(parse_error)?,
-        odbc_driver_name: row.get(12)?,
         user_driver_required: user_driver_required != 0,
         built_in: built_in != 0,
-        notes: row.get(15)?,
+        notes: row.get(14)?,
         connection_variants: serde_json::from_str::<Vec<DriverConnectionVariant>>(
             &connection_variants_json,
         )
         .map_err(parse_error)?,
-        metadata_dialect_sql: row.get(17)?,
+        metadata_dialect_sql: row.get(16)?,
         capabilities: serde_json::from_str::<DriverDefinitionCapabilities>(&capabilities_json)
             .map_err(parse_error)?,
     })
@@ -1282,6 +1273,70 @@ mod tests {
     }
 
     #[test]
+    fn hides_legacy_odbc_records_from_runtime_lists() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir =
+            std::env::temp_dir().join(format!("vaporlensdb-legacy-odbc-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let conn = store.conn().expect("open config db");
+        let now = Utc::now().to_rfc3339();
+
+        conn.execute(
+            "
+            INSERT INTO driver_definitions (
+                id, driver_type, name, backend, status, driver_artifacts_json,
+                user_driver_required, built_in, notes, connection_variants_json,
+                metadata_dialect_sql, capabilities_json, updated_at
+            )
+            VALUES (?1, 'odbc', 'Legacy ODBC', 'odbc', 'configurable', '[]', 1, 0, NULL, ?2, NULL, ?3, datetime('now'))
+            ",
+            params![
+                "legacy-odbc",
+                serde_json::json!([{ "id": "urlOnly", "label": "URL only", "requiredFields": ["connectionUrl"] }]).to_string(),
+                serde_json::json!({
+                    "canConnect": false,
+                    "canQuery": false,
+                    "canStream": false,
+                    "canReadMetadata": false,
+                    "canCancel": false,
+                    "canGenerateDdl": false
+                })
+                .to_string(),
+            ],
+        )
+        .expect("insert legacy ODBC driver");
+
+        conn.execute(
+            "
+            INSERT INTO connections (
+                id, name, driver_definition_id, driver_type, host, port, database_name,
+                connection_url, username, password_encrypted, driver_class, driver_paths,
+                ssl_mode, group_name, color_tag, created_at, updated_at
+            )
+            VALUES (?1, 'Legacy ODBC connection', 'legacy-odbc', 'odbc', NULL, NULL, NULL,
+                    'DSN=legacy', NULL, NULL, NULL, '[]', NULL, NULL, NULL, ?2, ?2)
+            ",
+            params![Uuid::new_v4().to_string(), now],
+        )
+        .expect("insert legacy ODBC connection");
+
+        assert!(store
+            .list_driver_definitions()
+            .expect("list drivers")
+            .iter()
+            .all(|driver| driver.id != "legacy-odbc"));
+        assert!(store
+            .get_driver_definition("legacy-odbc")
+            .expect("get legacy ODBC driver")
+            .is_none());
+        assert!(store
+            .list_connections()
+            .expect("list connections")
+            .iter()
+            .all(|connection| connection.driver_definition_id.as_deref() != Some("legacy-odbc")));
+    }
+
+    #[test]
     fn creates_updates_and_deletes_custom_driver_definition() {
         std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
         let dir =
@@ -1302,7 +1357,6 @@ mod tests {
                 url_template: Some("jdbc:example://{host}:{port}/{database}".to_string()),
                 driver_artifact: Some("example.jar".to_string()),
                 driver_artifacts: vec!["/tmp/example.jar".to_string()],
-                odbc_driver_name: None,
                 user_driver_required: true,
                 built_in: true,
                 notes: Some("custom test driver".to_string()),

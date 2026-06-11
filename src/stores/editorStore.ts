@@ -51,7 +51,7 @@ export interface DefinitionTabContext {
 export interface TableEditContext {
   schema: string
   table: string
-  driverType: 'postgres' | 'mysql' | 'oracle' | 'sqlite' | 'mssql' | 'mongo' | 'redis' | 'odbc' | 'jdbc'
+  driverType: 'postgres' | 'mysql' | 'oracle' | 'sqlite' | 'mssql' | 'mongo' | 'redis' | 'jdbc'
   primaryKeyColumns: string[]
 }
 

@@ -1,18 +1,25 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use tokio::sync::mpsc;
 use vapor_lens_db_lib::drivers::{sqlite::SqliteDriver, trait_def::DatabaseDriver};
 
+static SQLITE_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn sqlite_test_path(name: &str) -> PathBuf {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time")
         .as_nanos();
-    std::env::temp_dir().join(format!("vaporlensdb-{name}-{suffix}.sqlite"))
+    let sequence = SQLITE_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "vaporlensdb-{name}-{}-{suffix}-{sequence}.sqlite",
+        std::process::id()
+    ))
 }
 
 struct TempSqliteDb {

@@ -25,7 +25,6 @@ export type DriverType =
   | 'mssql'
   | 'mongo'
   | 'redis'
-  | 'odbc'
   | 'jdbc'
 
 export type ConnectionRuntimeStatus = 'disconnected' | 'connecting' | 'connected' | 'failed'

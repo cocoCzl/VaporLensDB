@@ -63,7 +63,6 @@ pub fn run() {
             commands::driver::delete_custom_driver_definition,
             commands::driver::import_jdbc_driver_artifacts,
             commands::driver::remove_jdbc_driver_artifact,
-            commands::driver::list_system_odbc_drivers,
             commands::driver::validate_external_driver,
             commands::export::export_query_result_csv,
             commands::metadata::get_databases,

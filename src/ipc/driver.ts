@@ -28,10 +28,6 @@ export function removeJdbcDriverArtifact(input: RemoveJdbcDriverArtifactInput) {
   return invokeCommand<DriverDefinition>(COMMANDS.removeJdbcDriverArtifact, { input })
 }
 
-export function listSystemOdbcDrivers() {
-  return invokeCommand<string[]>(COMMANDS.listSystemOdbcDrivers)
-}
-
 export function validateExternalDriver(input: ValidateExternalDriverInput) {
   return invokeCommand<ExternalDriverValidation>(COMMANDS.validateExternalDriver, { input })
 }

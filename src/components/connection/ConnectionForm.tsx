@@ -60,7 +60,7 @@ export function ConnectionForm({
     ? driverDefinitions.filter(
         (driver) =>
           PRIMARY_DRIVER_IDS.includes(driver.driverType) ||
-          (!driver.builtIn && (driver.driverType === 'jdbc' || driver.driverType === 'odbc')),
+          (!driver.builtIn && driver.driverType === 'jdbc'),
       ).sort(compareDriverChoices)
     : FALLBACK_DRIVER_OPTIONS
   const selectedDriver =
@@ -328,42 +328,30 @@ export function ConnectionForm({
 
                 {driverProfile.externalDriver && (
                   <>
-                    {form.driverType !== 'odbc' ? (
-                      <>
-                        <FormRow label="驱动类:">
-                          <Input
-                            id="driver-class"
-                            value={form.driverClass ?? ''}
-                            placeholder={driverProfile.driverClass}
-                            onChange={(event) => update('driverClass', event.target.value)}
-                          />
-                        </FormRow>
-                        <FormRow label="驱动文件:">
-                          <Input
-                            id="driver-paths"
-                            value={form.driverPaths?.join('\n') ?? ''}
-                            placeholder="/Users/me/drivers/ojdbc11.jar"
-                            onChange={(event) =>
-                              update(
-                                'driverPaths',
-                                event.target.value
-                                  .split(/\r?\n|,/)
-                                  .map((value) => value.trim())
-                                  .filter(Boolean),
-                              )
-                            }
-                          />
-                        </FormRow>
-                      </>
-                    ) : (
-                      <FormRow label="系统驱动:">
-                        <Input
-                          value={selectedDriver?.odbcDriverName ?? ''}
-                          placeholder="在驱动定义中选择系统 ODBC driver"
-                          readOnly
-                        />
-                      </FormRow>
-                    )}
+                    <FormRow label="驱动类:">
+                      <Input
+                        id="driver-class"
+                        value={form.driverClass ?? ''}
+                        placeholder={driverProfile.driverClass}
+                        onChange={(event) => update('driverClass', event.target.value)}
+                      />
+                    </FormRow>
+                    <FormRow label="驱动文件:">
+                      <Input
+                        id="driver-paths"
+                        value={form.driverPaths?.join('\n') ?? ''}
+                        placeholder="/Users/me/drivers/ojdbc11.jar"
+                        onChange={(event) =>
+                          update(
+                            'driverPaths',
+                            event.target.value
+                              .split(/\r?\n|,/)
+                              .map((value) => value.trim())
+                              .filter(Boolean),
+                          )
+                        }
+                      />
+                    </FormRow>
                   </>
                 )}
 
@@ -507,7 +495,6 @@ function driverOriginBadgeClass(driver: DriverDefinition) {
 function driverBackendLabel(backend: DriverDefinition['backend']) {
   if (backend === 'nativeRust') return 'Native Rust'
   if (backend === 'jdbc') return 'JDBC'
-  if (backend === 'odbc') return 'ODBC'
   return 'Planned'
 }
 
@@ -591,7 +578,7 @@ function normalizeInput(
     database: emptyToNull(input.database),
     connectionUrl:
       profile.usesUrl && variant !== 'urlOnly'
-        ? profile.defaultUrl(input, variant)
+        ? emptyToNull(profile.defaultUrl(input, variant))
         : emptyToNull(input.connectionUrl),
     username: emptyToNull(input.username),
     password: emptyToNull(input.password),
@@ -717,7 +704,7 @@ function profileForDriver(
     urlPlaceholder: definition.urlTemplate ?? fallback.urlPlaceholder,
     connectionVariants: variants.length ? variants : fallback.connectionVariants,
     defaultUrl: definition.urlTemplate
-      ? (input) => applyUrlTemplate(urlTemplate, input, definition)
+      ? (input) => applyUrlTemplate(urlTemplate, input)
       : fallback.defaultUrl,
   }
 }
@@ -730,13 +717,12 @@ function isConnectionVariant(value: string): value is ConnectionVariant {
     value === 'file'
 }
 
-function applyUrlTemplate(template: string, input: ConnectionInput, definition?: DriverDefinition) {
+function applyUrlTemplate(template: string, input: ConnectionInput) {
   const values: Record<string, string | number | null | undefined> = {
     host: input.host || 'localhost',
     port: input.port,
     database: input.database,
     username: input.username,
-    name: definition?.odbcDriverName,
   }
 
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''))
@@ -803,19 +789,6 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     connectionVariants: [{ id: 'urlOnly', label: 'URL only' }],
     defaultUrl: (input) => input.connectionUrl || '',
   },
-  odbc: {
-    defaultName: 'Custom ODBC',
-    defaultPort: 0,
-    defaultDatabase: '',
-    defaultUsername: '',
-    status: 'configurable',
-    usesUrl: true,
-    externalDriver: true,
-    description: '自定义 ODBC 会保存连接字符串，用于后续 ODBC bridge 调用系统驱动。',
-    urlPlaceholder: 'Driver={Driver Name};Server=host;Port=port;Database=db;',
-    connectionVariants: [{ id: 'urlOnly', label: 'URL only' }],
-    defaultUrl: (input) => input.connectionUrl || '',
-  },
   sqlite: {
     defaultName: 'SQLite',
     defaultPort: 0,
@@ -833,7 +806,9 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultPort: 1433,
     defaultDatabase: 'master',
     defaultUsername: 'sa',
-    status: 'planned',
+    status: 'ready',
+    usesUrl: true,
+    urlPlaceholder: 'server=tcp:host,1433;database=master;user=sa;password=secret;TrustServerCertificate=true',
     connectionVariants: HOST_PORT_VARIANTS,
     defaultUrl: () => '',
   },
@@ -877,7 +852,7 @@ const FALLBACK_DRIVER_OPTIONS: Array<Pick<DriverDefinition, 'id' | 'driverType' 
   { id: 'mysql', driverType: 'mysql', name: 'MySQL', status: 'ready', builtIn: true },
   { id: 'oracle', driverType: 'oracle', name: 'Oracle（需要本地 ojdbc）', status: 'configurable', builtIn: true },
   { id: 'sqlite', driverType: 'sqlite', name: 'SQLite', status: 'ready', builtIn: true },
-  { id: 'mssql', driverType: 'mssql', name: 'SQL Server', status: 'planned', builtIn: true },
+  { id: 'mssql', driverType: 'mssql', name: 'SQL Server', status: 'ready', builtIn: true },
 ]
 
 function compareDriverChoices(

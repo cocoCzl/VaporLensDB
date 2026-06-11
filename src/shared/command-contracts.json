@@ -112,13 +112,6 @@
     "status": "active"
   },
   {
-    "name": "list_system_odbc_drivers",
-    "namespace": "driver",
-    "args": "void",
-    "response": "string[]",
-    "status": "active"
-  },
-  {
     "name": "validate_external_driver",
     "namespace": "driver",
     "args": "{ input: ValidateExternalDriverInput }",
