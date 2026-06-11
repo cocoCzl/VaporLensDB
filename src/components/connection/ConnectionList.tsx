@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Database, Link, Link2Off, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig } from '@/types/connection'
 
 export function ConnectionList() {
+  const { t } = useTranslation()
   const {
     connections,
     statuses,
@@ -19,7 +21,11 @@ export function ConnectionList() {
     setActiveConnection,
   } = useConnectionStore()
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
-  const groupedConnections = useMemo(() => groupConnections(connections), [connections])
+  const ungroupedLabel = t('connection.ungrouped')
+  const groupedConnections = useMemo(
+    () => groupConnections(connections, ungroupedLabel),
+    [connections, ungroupedLabel],
+  )
 
   useEffect(() => {
     loadConnections()
@@ -37,8 +43,8 @@ export function ConnectionList() {
     <div className="flex max-h-[43%] min-h-44 flex-col ide-surface">
       <div className="flex h-12 items-center justify-between border-b px-3">
         <div className="min-w-0">
-          <div className="text-[15px] font-semibold tracking-normal">数据库资源管理器</div>
-          <div className="text-[11px] text-muted-foreground">Data Sources</div>
+          <div className="text-[15px] font-semibold tracking-normal">{t('connection.explorerTitle')}</div>
+          <div className="text-[11px] text-muted-foreground">{t('connection.dataSources')}</div>
         </div>
       </div>
 
@@ -51,7 +57,7 @@ export function ConnectionList() {
       <div className="flex h-10 items-center gap-1 border-b px-2">
         <ConnectionDialog
           trigger={
-            <Button type="button" size="icon-sm" variant="ghost" title="新建连接">
+            <Button type="button" size="icon-sm" variant="ghost" title={t('connection.new')}>
               <Plus className="size-4" />
             </Button>
           }
@@ -60,14 +66,14 @@ export function ConnectionList() {
           type="button"
           size="icon-sm"
           variant="ghost"
-          title="刷新连接"
+          title={t('connection.refresh')}
           disabled={loading}
           onClick={() => loadConnections()}
         >
           <RefreshCw className="size-4" />
         </Button>
         <div className="mx-1 h-5 w-px bg-border" />
-        <span className="text-[11px] text-muted-foreground">连接</span>
+        <span className="text-[11px] text-muted-foreground">{t('connection.connections')}</span>
       </div>
 
       <div className="flex-1 overflow-auto px-1 py-1">
@@ -75,7 +81,7 @@ export function ConnectionList() {
           <div className="grid h-32 place-items-center text-center text-xs text-muted-foreground">
             <div>
               <Database className="mx-auto mb-2 size-7 opacity-60" />
-              <div>暂无数据源</div>
+              <div>{t('connection.empty')}</div>
             </div>
           </div>
         ) : (
@@ -109,6 +115,7 @@ export function ConnectionList() {
                         }}
                         onDisconnect={() => disconnectConnection(connection.id)}
                         onDelete={() => removeConnection(connection.id)}
+                        t={t}
                       />
                     ))}
                 </section>
@@ -130,6 +137,7 @@ function ConnectionCard({
   onConnect,
   onDisconnect,
   onDelete,
+  t,
 }: {
   connection: ConnectionConfig
   status: string
@@ -139,6 +147,7 @@ function ConnectionCard({
   onConnect: () => void
   onDisconnect: () => void
   onDelete: () => void
+  t: ReturnType<typeof useTranslation>['t']
 }) {
   const connected = status === 'connected'
   const readinessIssue = connectionReadinessIssue(connection)
@@ -177,9 +186,9 @@ function ConnectionCard({
                 'shrink-0 rounded border px-1 py-0 text-[10px] leading-4',
                 environmentBadgeClass(connection.colorTag),
               ].join(' ')}
-              title={`环境: ${environmentLabel(connection.colorTag)}`}
+              title={t('connection.environmentTitle', { label: environmentLabel(connection.colorTag, t) })}
             >
-              {environmentLabel(connection.colorTag)}
+              {environmentLabel(connection.colorTag, t)}
             </span>
           )}
           <span
@@ -195,7 +204,7 @@ function ConnectionCard({
           />
         </div>
         <div className="truncate text-[11px] leading-4 text-muted-foreground">
-          {connection.driverType} · {readinessIssue ? '未就绪' : compactConnectionTarget(connection)}
+          {connection.driverType} · {readinessIssue ? t('connection.notReady') : compactConnectionTarget(connection)}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
@@ -203,7 +212,7 @@ function ConnectionCard({
           type="button"
           size="icon-xs"
           variant="ghost"
-          title={connected ? '断开连接' : '连接'}
+          title={connected ? t('connection.disconnect') : t('connection.connect')}
           disabled={loading || Boolean(readinessIssue)}
           onClick={(event) => {
             event.stopPropagation()
@@ -223,7 +232,7 @@ function ConnectionCard({
               type="button"
               size="icon-xs"
               variant="ghost"
-              title="编辑连接"
+              title={t('connection.edit')}
             >
               <Pencil />
             </Button>
@@ -233,7 +242,7 @@ function ConnectionCard({
           type="button"
           size="icon-xs"
           variant="ghost"
-          title="删除连接"
+          title={t('connection.delete')}
           disabled={loading}
           onClick={(event) => {
             event.stopPropagation()
@@ -259,23 +268,25 @@ function connectionReadinessIssue(connection: ConnectionConfig) {
     return null
   }
   if (!connection.driverClass?.trim()) {
-    return '缺少 JDBC 驱动类'
+    return 'Missing JDBC driver class'
   }
   if (!connection.driverPaths?.length) {
-    return '缺少本地 JDBC JAR'
+    return 'Missing local JDBC JAR'
   }
   return null
 }
 
-function groupConnections(connections: ConnectionConfig[]) {
+function groupConnections(connections: ConnectionConfig[], ungroupedLabel: string) {
   const groups = new Map<string, ConnectionConfig[]>()
   for (const connection of connections) {
-    const group = connection.group?.trim() || '未分组'
+    const group = connection.group?.trim() || ungroupedLabel
     groups.set(group, [...(groups.get(group) ?? []), connection])
   }
 
   return [...groups.entries()]
-    .sort(([left], [right]) => groupSortKey(left).localeCompare(groupSortKey(right)))
+    .sort(([left], [right]) =>
+      groupSortKey(left, ungroupedLabel).localeCompare(groupSortKey(right, ungroupedLabel)),
+    )
     .map(([name, groupConnections]) => ({
       name,
       connections: groupConnections
@@ -284,8 +295,8 @@ function groupConnections(connections: ConnectionConfig[]) {
     }))
 }
 
-function groupSortKey(group: string) {
-  return group === '未分组' ? '\uffff' : group
+function groupSortKey(group: string, ungroupedLabel: string) {
+  return group === ungroupedLabel ? '\uffff' : group
 }
 
 function environmentBadgeClass(tag: string) {
@@ -296,10 +307,10 @@ function environmentBadgeClass(tag: string) {
   return 'border-muted-foreground/30 bg-muted/40 text-muted-foreground'
 }
 
-function environmentLabel(tag: string) {
+function environmentLabel(tag: string, t: ReturnType<typeof useTranslation>['t']) {
   if (tag === 'prod') return 'prod'
   if (tag === 'stage') return 'stage'
   if (tag === 'test') return 'test'
   if (tag === 'dev') return 'dev'
-  return '无环境标签'
+  return t('connection.noEnvironment')
 }

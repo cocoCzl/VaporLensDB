@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Plus } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ConnectionForm } from '@/components/connection/ConnectionForm'
 import { useConnectionStore } from '@/stores/connectionStore'
@@ -17,6 +18,7 @@ export function ConnectionDialog({
   triggerLabel,
   trigger,
 }: ConnectionDialogProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const { saveConnection, testConnectionInput, connectConnection, loading } = useConnectionStore()
   const { drivers, loadDrivers } = useDriverStore()
@@ -46,7 +48,7 @@ export function ConnectionDialog({
           onClick={() => setOpen(true)}
         >
           {!connection && <Plus />}
-          {triggerLabel ?? (connection ? '编辑' : '新建连接')}
+          {triggerLabel ?? (connection ? t('connection.edit') : t('connection.new'))}
         </Button>
       )}
 
@@ -59,16 +61,16 @@ export function ConnectionDialog({
               </div>
               <div className="min-w-0">
                 <h2 className="text-base font-semibold">
-                  {connection ? '编辑连接' : '新建连接'}
+                  {connection ? t('connection.editTitle') : t('connection.newTitle')}
                 </h2>
                 <p className="text-xs text-muted-foreground">
-                  配置 PostgreSQL、MySQL、Oracle 或自定义驱动的数据源。
+                  {t('connection.dialogSubtitle')}
                 </p>
               </div>
             </div>
             <div className="min-h-0 overflow-auto p-4">
               <p className="mb-4 text-xs text-muted-foreground">
-                PostgreSQL 和 MySQL 使用内置驱动；Oracle 需要本地 ojdbc，连接、查询、对象浏览、DDL/source 和补全可用。
+                {t('connection.driverHelp')}
               </p>
               <ConnectionForm
                 connection={connection}

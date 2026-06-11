@@ -1,4 +1,5 @@
 import { Activity, Database, Play, Square, Wand2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { ConnectionConfig } from '@/types/connection'
 import type { DatabaseInfo, SchemaInfo } from '@/types/metadata'
@@ -36,7 +37,7 @@ export function EditorToolbar({
   running = false,
   canCancel = false,
   canExplain = true,
-  explainUnsupportedReason = '当前驱动暂不支持 Explain',
+  explainUnsupportedReason,
   disabled = false,
   onConnectionChange,
   onDatabaseChange,
@@ -46,6 +47,9 @@ export function EditorToolbar({
   onExplain,
   onFormat,
 }: EditorToolbarProps) {
+  const { t } = useTranslation()
+  const explainTitle = canExplain ? 'Explain' : (explainUnsupportedReason ?? t('editor.explainUnsupported'))
+
   return (
     <div className="flex h-11 items-center gap-2 border-b ide-toolbar px-3">
       <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -55,11 +59,11 @@ export function EditorToolbar({
           value={connectionId ?? ''}
           onChange={(event) => onConnectionChange(event.target.value || null)}
         >
-          {!connectionId && <option value="">选择连接</option>}
+          {!connectionId && <option value="">{t('connection.select')}</option>}
           {connections.map((connection) => (
             <option key={connection.id} value={connection.id}>
               {connection.name}
-              {connectionStatuses[connection.id] === 'connected' ? '' : ' (未连接)'}
+              {connectionStatuses[connection.id] === 'connected' ? '' : ` (${t('connection.disconnected')})`}
             </option>
           ))}
         </select>
@@ -67,10 +71,10 @@ export function EditorToolbar({
           className="ide-select min-w-36"
           value={database ?? ''}
           disabled={!connectionId || databases.length === 0}
-          title="PostgreSQL 查询仍运行在连接配置的数据库中；切换数据库需要重新连接。"
+          title={t('editor.databaseSelectHint')}
           onChange={(event) => onDatabaseChange?.(event.target.value || null)}
         >
-          {!database && <option value="">数据库</option>}
+          {!database && <option value="">{t('metadata.database')}</option>}
           {databases.map((item) => (
             <option key={item.name} value={item.name}>
               {item.name}
@@ -95,17 +99,17 @@ export function EditorToolbar({
       {running && canCancel ? (
         <Button type="button" size="sm" variant="destructive" onClick={onCancel}>
           <Square />
-          取消
+          {t('editor.cancel')}
         </Button>
       ) : running ? (
         <Button type="button" size="sm" disabled>
           <Play />
-          执行中
+          {t('editor.running')}
         </Button>
       ) : (
         <Button type="button" size="sm" disabled={disabled} onClick={onRun}>
           <Play />
-          执行
+          {t('editor.run')}
         </Button>
       )}
       <Button
@@ -113,7 +117,7 @@ export function EditorToolbar({
         size="sm"
         variant="outline"
         disabled={disabled || running || !canExplain}
-        title={canExplain ? 'Explain' : explainUnsupportedReason}
+        title={explainTitle}
         aria-disabled={!canExplain}
         onClick={onExplain}
       >

@@ -13,8 +13,9 @@ i18n.use(initReactI18next).init({
     zh: { translation: zh },
     en: { translation: en },
   },
-  lng: 'zh',
+  lng: window.localStorage.getItem('vaporlensdb.language') ?? 'zh',
   fallbackLng: 'en',
+  supportedLngs: ['zh', 'en'],
   interpolation: { escapeValue: false },
 })
 

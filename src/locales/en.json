@@ -2,22 +2,158 @@
   "app": {
     "name": "VaporLensDB"
   },
-  "connection": {
-    "new": "New Connection",
-    "test": "Test Connection",
-    "connect": "Connect",
-    "disconnect": "Disconnect"
-  },
-  "editor": {
-    "run": "Run",
-    "format": "Format",
-    "cancel": "Cancel"
+  "nav": {
+    "dataSources": "Data Sources",
+    "sql": "SQL",
+    "sessions": "Sessions",
+    "settings": "Settings"
   },
   "common": {
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",
     "confirm": "Confirm",
+    "confirmClear": "Confirm clear",
+    "clear": "Clear",
     "loading": "Loading..."
+  },
+  "connection": {
+    "explorerTitle": "Database Explorer",
+    "dataSources": "Data Sources",
+    "connections": "Connections",
+    "new": "New Connection",
+    "newTitle": "New Connection",
+    "edit": "Edit",
+    "editTitle": "Edit Connection",
+    "delete": "Delete Connection",
+    "test": "Test Connection",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "disconnected": "Disconnected",
+    "select": "Select connection",
+    "refresh": "Refresh connections",
+    "empty": "No data sources",
+    "ungrouped": "Ungrouped",
+    "notReady": "Not ready",
+    "noEnvironment": "No environment tag",
+    "environmentTitle": "Environment: {{label}}",
+    "dialogSubtitle": "Configure a PostgreSQL, MySQL, Oracle, or custom-driver data source.",
+    "driverHelp": "PostgreSQL and MySQL use built-in drivers. Oracle requires a local ojdbc JAR and supports connection, query execution, object browsing, DDL/source, and completion."
+  },
+  "editor": {
+    "run": "Run",
+    "format": "Format",
+    "cancel": "Cancel",
+    "running": "Running",
+    "explainUnsupported": "The current driver does not support Explain",
+    "databaseSelectHint": "PostgreSQL queries still run against the database configured on the connection. Reconnect to change databases."
+  },
+  "metadata": {
+    "database": "Database",
+    "schema": "Schema"
+  },
+  "result": {
+    "empty": "No query result",
+    "receiving": "Receiving results",
+    "statementComplete": "Statement complete. {{count}} rows affected in {{elapsedMs}} ms",
+    "truncated": "Showing {{count}} rows. The result reached the interactive query limit{{maxRows}}.",
+    "maxRowsSuffix": " of {{count}} rows",
+    "pendingChange": "Pending change",
+    "selectCellHint": "Select a cell to inspect the full value",
+    "cell": "Cell",
+    "row": "Row"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Local Preferences",
+    "theme": {
+      "label": "Theme",
+      "system": "System",
+      "dark": "Dark",
+      "light": "Light",
+      "current": "Theme: {{label}}"
+    },
+    "language": {
+      "label": "Language",
+      "zh": "中文",
+      "en": "English"
+    },
+    "queryMaxRows": "Maximum returned rows",
+    "dataPreviewRows": "Default data preview rows",
+    "editorFontSize": "Editor font size",
+    "showSystemObjects": "Show system objects",
+    "showSystemObjectsHint": "Include vendor/internal schemas in the Object Tree and SQL completion.",
+    "historyCount": "{{count}} recent records saved.",
+    "configStore": "Config store",
+    "passwordStorage": "Password",
+    "passwordStorageValue": "AES-GCM encrypted at rest",
+    "macosKey": "macOS key",
+    "macosKeyValue": "System Keychain"
+  },
+  "sql": {
+    "workspace": "SQL Workspace",
+    "new": "New SQL",
+    "editorPageCount": "{{count}} editor pages",
+    "emptyTitle": "No SQL tabs yet",
+    "emptyText": "New SQL tabs will appear here.",
+    "running": "Running",
+    "history": "Query History",
+    "historyCleared": "Query history cleared",
+    "clearHistory": "Clear query history",
+    "confirmClearHistory": "Click again to confirm clear",
+    "historyEmpty": "Executed SQL is recorded here automatically.",
+    "historyTabTitle": "History SQL",
+    "blankQuery": "Blank query",
+    "rows": "{{count}} rows",
+    "affectedRows": "{{count}} rows affected"
+  },
+  "sessions": {
+    "title": "Session Management",
+    "subtitle": "{{sessions}} active sessions · {{queries}} running queries",
+    "disconnected": "Connection disconnected",
+    "emptyTitle": "No active sessions",
+    "emptyText": "Sessions and running queries appear after connecting to a database.",
+    "disconnect": "Disconnect session",
+    "noRunningQueries": "No running queries.",
+    "runningQueriesUnavailable": "The current driver does not report cancellable running queries.",
+    "cancelUnsupported": "The current driver does not support cancel"
+  },
+  "drivers": {
+    "title": "Driver Definitions",
+    "summary": "{{count}} definitions. Custom definitions are editable.",
+    "add": "Add",
+    "viewBuiltIn": "View built-in driver",
+    "editCustom": "Edit custom driver",
+    "name": "Name",
+    "runtime": "Runtime",
+    "driverClass": "Driver class",
+    "urlTemplate": "URL template",
+    "driverFiles": "Driver files",
+    "importJar": "Import JAR",
+    "managedJarCount": "{{count}} managed JARs",
+    "noneImported": "None imported",
+    "removeJar": "Remove JAR",
+    "importPath": "Import path",
+    "metadataSql": "Metadata SQL",
+    "validate": "Validate driver"
+  },
+  "dbeaver": {
+    "title": "DBeaver Configuration Import",
+    "description": "Choose data-sources.json/XML, then preview connections and driver mapping before importing.",
+    "choose": "Choose",
+    "import": "Import",
+    "importing": "Importing",
+    "previewComplete": "DBeaver import preview complete",
+    "previewFailed": "DBeaver import preview failed",
+    "previewFailedMessage": "DBeaver configuration preview failed.",
+    "importComplete": "DBeaver import complete",
+    "noImportableConnections": "No importable connections"
+  },
+  "status": {
+    "backendHealthTitle": "Tauri/Rust backend health check",
+    "backendOk": "Backend: OK {{version}}",
+    "backendChecking": "Backend: checking",
+    "backendUnavailable": "Backend: unavailable",
+    "backendOther": "Backend: {{status}}"
   }
 }

@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { Button } from '@/components/ui/button'
@@ -37,12 +38,13 @@ import type { DriverDefinition } from '@/types/driver'
 import type { LucideIcon } from 'lucide-react'
 
 const RAIL_ITEMS = [
-  { view: 'dataSources', icon: Database, label: '数据源' },
-  { view: 'sql', icon: FileCode2, label: 'SQL' },
-  { view: 'sessions', icon: Activity, label: '会话' },
+  { view: 'dataSources', icon: Database, labelKey: 'nav.dataSources' },
+  { view: 'sql', icon: FileCode2, labelKey: 'nav.sql' },
+  { view: 'sessions', icon: Activity, labelKey: 'nav.sessions' },
 ] as const
 
 export function Sidebar() {
+  const { t } = useTranslation()
   const sidebarView = useUiStore((state) => state.sidebarView)
   const setSidebarView = useUiStore((state) => state.setSidebarView)
 
@@ -54,7 +56,7 @@ export function Sidebar() {
             key={item.view}
             active={sidebarView === item.view}
             icon={item.icon}
-            label={item.label}
+            label={t(item.labelKey)}
             onClick={() => setSidebarView(item.view)}
           />
         ))}
@@ -62,7 +64,7 @@ export function Sidebar() {
         <RailButton
           active={sidebarView === 'settings'}
           icon={Settings}
-          label="设置"
+          label={t('nav.settings')}
           onClick={() => setSidebarView('settings')}
         />
       </nav>
@@ -125,6 +127,7 @@ function RailButton({
 }
 
 function SqlWorkspacePanel() {
+  const { t } = useTranslation()
   const { tabs, activeTabId, setActiveTab, addTab } = useEditorStore()
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
@@ -163,22 +166,26 @@ function SqlWorkspacePanel() {
     const cleared = await clearHistory()
     setConfirmClearHistory(false)
     if (cleared) {
-      notify({ kind: 'success', title: '查询历史已清空' })
+      notify({ kind: 'success', title: t('sql.historyCleared') })
     }
   }
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PanelHeader title="SQL 工作区" subtitle={`${tabs.length} 个编辑页`} icon={TerminalSquare} />
+      <PanelHeader
+        title={t('sql.workspace')}
+        subtitle={t('sql.editorPageCount', { count: tabs.length })}
+        icon={TerminalSquare}
+      />
       <div className="border-b p-2">
         <Button type="button" size="sm" variant="secondary" className="w-full" onClick={createTab}>
           <Plus className="size-3.5" />
-          新建 SQL
+          {t('sql.new')}
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {tabs.length === 0 ? (
-          <EmptyPanel icon={FileCode2} title="还没有 SQL Tab" text="新建 SQL 后会显示在这里。" />
+          <EmptyPanel icon={FileCode2} title={t('sql.emptyTitle')} text={t('sql.emptyText')} />
         ) : (
           <div className="space-y-1">
             {tabs.map((tab) => {
@@ -202,7 +209,7 @@ function SqlWorkspacePanel() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{tab.title}</span>
                     <span className="block truncate opacity-75">
-                      {tab.running ? '正在执行' : sqlPreview(tab.sql)}
+                      {tab.running ? t('sql.running') : sqlPreview(tab.sql, t)}
                     </span>
                   </span>
                 </button>
@@ -212,12 +219,12 @@ function SqlWorkspacePanel() {
         )}
         <div className="mt-4 border-t pt-3">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-xs font-semibold">查询历史</h3>
+            <h3 className="text-xs font-semibold">{t('sql.history')}</h3>
             <Button
               type="button"
               size="icon-xs"
               variant={confirmClearHistory ? 'destructive' : 'ghost'}
-              title={confirmClearHistory ? '再次点击确认清空' : '清空查询历史'}
+              title={confirmClearHistory ? t('sql.confirmClearHistory') : t('sql.clearHistory')}
               disabled={history.length === 0 || historyLoading}
               onClick={() => {
                 void handleClearHistory()
@@ -228,7 +235,7 @@ function SqlWorkspacePanel() {
           </div>
           {history.length === 0 ? (
             <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-              执行 SQL 后会自动记录到这里。
+              {t('sql.historyEmpty')}
             </div>
           ) : (
             <div className="space-y-1">
@@ -242,14 +249,14 @@ function SqlWorkspacePanel() {
                     addTab({
                       id: crypto.randomUUID(),
                       kind: 'sql',
-                      title: '历史 SQL',
+                      title: t('sql.historyTabTitle'),
                       sql: entry.sql,
                       connectionId: entry.connectionId,
                     })
                   }}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-mono text-[11px]">{sqlPreview(entry.sql)}</span>
+                    <span className="truncate font-mono text-[11px]">{sqlPreview(entry.sql, t)}</span>
                     <span
                       className={
                         entry.status === 'success'
@@ -263,8 +270,8 @@ function SqlWorkspacePanel() {
                   <div className="mt-1 text-[11px] text-muted-foreground">
                       {formatHistoryTime(entry.startedAt)}
                       {entry.elapsedMs ? ` · ${entry.elapsedMs} ms` : ''}
-                      {entry.rowCount != null ? ` · ${entry.rowCount} 行` : ''}
-                      {entry.affectedRows != null ? ` · 影响 ${entry.affectedRows} 行` : ''}
+                      {entry.rowCount != null ? ` · ${t('sql.rows', { count: entry.rowCount })}` : ''}
+                      {entry.affectedRows != null ? ` · ${t('sql.affectedRows', { count: entry.affectedRows })}` : ''}
                   </div>
                 </button>
               ))}
@@ -277,6 +284,7 @@ function SqlWorkspacePanel() {
 }
 
 function SessionManagementPanel() {
+  const { t } = useTranslation()
   const connections = useConnectionStore((state) => state.connections)
   const statuses = useConnectionStore((state) => state.statuses)
   const disconnectConnection = useConnectionStore((state) => state.disconnectConnection)
@@ -310,7 +318,7 @@ function SessionManagementPanel() {
     setBusyConnectionId(connectionId)
     try {
       await disconnectConnection(connectionId)
-      notify({ kind: 'info', title: '连接已断开' })
+      notify({ kind: 'info', title: t('sessions.disconnected') })
     } finally {
       setBusyConnectionId(null)
     }
@@ -319,13 +327,16 @@ function SessionManagementPanel() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PanelHeader
-        title="会话管理"
-        subtitle={`${runtimeSessions.length} active sessions · ${runningQueryCount} running queries`}
+        title={t('sessions.title')}
+        subtitle={t('sessions.subtitle', {
+          sessions: runtimeSessions.length,
+          queries: runningQueryCount,
+        })}
         icon={Activity}
       />
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {runtimeSessions.length === 0 ? (
-          <EmptyPanel icon={Activity} title="没有活动会话" text="连接数据库后会显示 session 和运行中查询。" />
+          <EmptyPanel icon={Activity} title={t('sessions.emptyTitle')} text={t('sessions.emptyText')} />
         ) : (
           <div className="space-y-2">
             {runtimeSessions.map(({ connection, status, message, runningTabs }) => {
@@ -354,7 +365,7 @@ function SessionManagementPanel() {
                       type="button"
                       size="icon-xs"
                       variant="ghost"
-                      title="断开 session"
+                      title={t('sessions.disconnect')}
                       disabled={disconnecting || status === 'disconnected'}
                       onClick={() => {
                         void handleDisconnect(connection.id)
@@ -377,8 +388,8 @@ function SessionManagementPanel() {
                     {runningTabs.length === 0 ? (
                       <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">
                         {canCancel
-                          ? '当前没有运行中的查询。'
-                          : '当前驱动暂不报告可取消的 running queries。'}
+                          ? t('sessions.noRunningQueries')
+                          : t('sessions.runningQueriesUnavailable')}
                       </div>
                     ) : (
                       runningTabs.map((tab) => (
@@ -396,14 +407,14 @@ function SessionManagementPanel() {
                           >
                             <span className="block truncate text-xs font-medium">{tab.title}</span>
                             <span className="block truncate font-mono text-[11px] text-muted-foreground">
-                              {sqlPreview(tab.sql)}
+                              {sqlPreview(tab.sql, t)}
                             </span>
                           </button>
                           <Button
                             type="button"
                             size="icon-xs"
                             variant="ghost"
-                            title={canCancel ? '取消查询' : '当前驱动不支持取消'}
+                            title={canCancel ? t('editor.cancel') : t('sessions.cancelUnsupported')}
                             disabled={!canCancel || !tab.runningQueryId}
                             onClick={() => {
                               if (tab.runningQueryId) {
@@ -428,6 +439,7 @@ function SessionManagementPanel() {
 }
 
 function SettingsPanel() {
+  const { t, i18n } = useTranslation()
   const saveConnection = useConnectionStore((state) => state.saveConnection)
   const theme = useUiStore((state) => state.theme)
   const setTheme = useUiStore((state) => state.setTheme)
@@ -465,24 +477,40 @@ function SettingsPanel() {
     const cleared = await clearHistory()
     setConfirmClearHistory(false)
     if (cleared) {
-      notify({ kind: 'success', title: '查询历史已清空' })
+      notify({ kind: 'success', title: t('sql.historyCleared') })
     }
   }
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PanelHeader title="设置" subtitle="本地偏好" icon={Settings} />
+      <PanelHeader title={t('settings.title')} subtitle={t('settings.subtitle')} icon={Settings} />
       <section className="border-b p-3">
-        <h3 className="mb-2 text-xs font-semibold text-foreground">主题</h3>
+        <h3 className="mb-2 text-xs font-semibold text-foreground">{t('settings.theme.label')}</h3>
         <div className="grid grid-cols-3 gap-1 rounded-md border bg-muted/30 p-1">
-          <ThemeButton active={theme === 'system'} label="系统" icon={Settings} onClick={() => setTheme('system')} />
-          <ThemeButton active={theme === 'dark'} label="深色" icon={Moon} onClick={() => setTheme('dark')} />
-          <ThemeButton active={theme === 'light'} label="浅色" icon={Sun} onClick={() => setTheme('light')} />
+          <ThemeButton active={theme === 'system'} label={t('settings.theme.system')} icon={Settings} onClick={() => setTheme('system')} />
+          <ThemeButton active={theme === 'dark'} label={t('settings.theme.dark')} icon={Moon} onClick={() => setTheme('dark')} />
+          <ThemeButton active={theme === 'light'} label={t('settings.theme.light')} icon={Sun} onClick={() => setTheme('light')} />
         </div>
+      </section>
+      <section className="border-b p-3 text-xs">
+        <label className="grid gap-1">
+          <span className="font-semibold text-foreground">{t('settings.language.label')}</span>
+          <select
+            className="ide-select"
+            value={i18n.language.startsWith('en') ? 'en' : 'zh'}
+            onChange={(event) => {
+              window.localStorage.setItem('vaporlensdb.language', event.target.value)
+              void i18n.changeLanguage(event.target.value)
+            }}
+          >
+            <option value="zh">{t('settings.language.zh')}</option>
+            <option value="en">{t('settings.language.en')}</option>
+          </select>
+        </label>
       </section>
       <section className="space-y-3 border-b p-3 text-xs">
         <NumberSetting
-          label="最大返回行数"
+          label={t('settings.queryMaxRows')}
           value={queryMaxRows}
           min={100}
           max={1_000_000}
@@ -490,7 +518,7 @@ function SettingsPanel() {
           onChange={setQueryMaxRows}
         />
         <NumberSetting
-          label="数据预览默认行数"
+          label={t('settings.dataPreviewRows')}
           value={dataPreviewDefaultRows}
           min={1}
           max={10_000}
@@ -498,7 +526,7 @@ function SettingsPanel() {
           onChange={setDataPreviewDefaultRows}
         />
         <NumberSetting
-          label="编辑器字号"
+          label={t('settings.editorFontSize')}
           value={editorFontSize}
           min={10}
           max={24}
@@ -507,9 +535,9 @@ function SettingsPanel() {
         />
         <label className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-2 py-2">
           <span className="min-w-0">
-            <span className="block font-medium text-foreground">显示系统对象</span>
+            <span className="block font-medium text-foreground">{t('settings.showSystemObjects')}</span>
             <span className="mt-0.5 block text-[11px] text-muted-foreground">
-              对象树和 SQL 补全包含 vendor/internal schema。
+              {t('settings.showSystemObjectsHint')}
             </span>
           </span>
           <input
@@ -523,9 +551,9 @@ function SettingsPanel() {
       <section className="space-y-2 border-b p-3 text-xs">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <h3 className="font-semibold text-foreground">查询历史</h3>
+            <h3 className="font-semibold text-foreground">{t('sql.history')}</h3>
             <p className="mt-1 text-muted-foreground">
-              当前保存 {history.length} 条最近记录。
+              {t('settings.historyCount', { count: history.length })}
             </p>
           </div>
           <Button
@@ -538,7 +566,7 @@ function SettingsPanel() {
             }}
           >
             <Trash2 className="size-3.5" />
-            {confirmClearHistory ? '确认清空' : '清空'}
+            {confirmClearHistory ? t('common.confirmClear') : t('common.clear')}
           </Button>
         </div>
       </section>
@@ -549,15 +577,16 @@ function SettingsPanel() {
       />
       <DriverDefinitionsSettings />
       <section className="space-y-2 p-3 text-xs">
-        <SettingFact label="配置存储" value="~/.vaporlensdb/config.db" />
-        <SettingFact label="密码" value="AES-GCM 加密保存" />
-        <SettingFact label="macOS 密钥" value="系统 Keychain" />
+        <SettingFact label={t('settings.configStore')} value="~/.vaporlensdb/config.db" />
+        <SettingFact label={t('settings.passwordStorage')} value={t('settings.passwordStorageValue')} />
+        <SettingFact label={t('settings.macosKey')} value={t('settings.macosKeyValue')} />
       </section>
     </div>
   )
 }
 
 function DriverDefinitionsSettings() {
+  const { t } = useTranslation()
   const drivers = useDriverStore((state) => state.drivers)
   const loading = useDriverStore((state) => state.loading)
   const loadDrivers = useDriverStore((state) => state.loadDrivers)
@@ -664,9 +693,9 @@ function DriverDefinitionsSettings() {
     <section className="space-y-2 border-b p-3 text-xs">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="font-semibold text-foreground">驱动定义</h3>
+          <h3 className="font-semibold text-foreground">{t('drivers.title')}</h3>
           <p className="mt-1 text-muted-foreground">
-            {drivers.length} 个定义，custom 可编辑。
+            {t('drivers.summary', { count: drivers.length })}
           </p>
         </div>
         <Button
@@ -676,7 +705,7 @@ function DriverDefinitionsSettings() {
           onClick={() => setEditing(newCustomDriverDefinition())}
         >
           <Plus className="size-3.5" />
-          新增
+          {t('drivers.add')}
         </Button>
       </div>
 
@@ -709,14 +738,14 @@ function DriverDefinitionsSettings() {
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1.5 font-medium">
               <HardDrive className="size-3.5 text-primary" />
-              <span className="truncate">{editing.builtIn ? '查看内置驱动' : '编辑自定义驱动'}</span>
+              <span className="truncate">{editing.builtIn ? t('drivers.viewBuiltIn') : t('drivers.editCustom')}</span>
             </div>
             <Button type="button" size="icon-sm" variant="ghost" onClick={() => setEditing(null)}>
               <X className="size-3.5" />
             </Button>
           </div>
 
-          <DriverField label="名称">
+          <DriverField label={t('drivers.name')}>
             <input
               className="ide-input h-7 text-xs"
               value={editing.name}
@@ -724,7 +753,7 @@ function DriverDefinitionsSettings() {
               onChange={(event) => setEditing({ ...editing, name: event.target.value })}
             />
           </DriverField>
-          <DriverField label="运行时">
+          <DriverField label={t('drivers.runtime')}>
             <select
               className="ide-input h-7 text-xs"
               value={editing.driverType}
@@ -741,7 +770,7 @@ function DriverDefinitionsSettings() {
               <option value="jdbc">JDBC</option>
             </select>
           </DriverField>
-          <DriverField label="驱动类">
+          <DriverField label={t('drivers.driverClass')}>
             <input
               className="ide-input h-7 text-xs"
               value={editing.jdbcDriverClass ?? ''}
@@ -749,7 +778,7 @@ function DriverDefinitionsSettings() {
               onChange={(event) => setEditing({ ...editing, jdbcDriverClass: event.target.value })}
             />
           </DriverField>
-          <DriverField label="URL 模板">
+          <DriverField label={t('drivers.urlTemplate')}>
             <input
               className="ide-input h-7 text-xs"
               value={editing.urlTemplate ?? ''}
@@ -757,7 +786,7 @@ function DriverDefinitionsSettings() {
               onChange={(event) => setEditing({ ...editing, urlTemplate: event.target.value })}
             />
           </DriverField>
-          <DriverField label="驱动文件">
+          <DriverField label={t('drivers.driverFiles')}>
             <div className="grid gap-2">
               <input
                 ref={fileInputRef}
@@ -778,12 +807,12 @@ function DriverDefinitionsSettings() {
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <Upload className="size-3.5" />
-                  导入 JAR
+                  {t('drivers.importJar')}
                 </Button>
                 <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
                   {editing.driverArtifacts.length
-                    ? `${editing.driverArtifacts.length} 个 managed JAR`
-                    : '尚未导入'}
+                    ? t('drivers.managedJarCount', { count: editing.driverArtifacts.length })
+                    : t('drivers.noneImported')}
                 </span>
               </div>
               {editing.driverArtifacts.length > 0 && (
@@ -801,7 +830,7 @@ function DriverDefinitionsSettings() {
                         size="icon-xs"
                         variant="ghost"
                         disabled={loading}
-                        title="移除 JAR"
+                        title={t('drivers.removeJar')}
                         onClick={() => {
                           void handleRemoveJdbcArtifact(path)
                         }}
@@ -830,13 +859,13 @@ function DriverDefinitionsSettings() {
                     }}
                   >
                     <Upload className="size-3.5" />
-                    导入路径
+                    {t('drivers.importPath')}
                   </Button>
                 </div>
               )}
             </div>
           </DriverField>
-          <DriverField label="元数据 SQL">
+          <DriverField label={t('drivers.metadataSql')}>
             <textarea
               className="ide-input min-h-16 resize-y text-xs"
               value={editing.metadataDialectSql ?? ''}
@@ -857,7 +886,7 @@ function DriverDefinitionsSettings() {
                 }}
               >
                 <HardDrive className="size-3.5" />
-                校验驱动
+                {t('drivers.validate')}
               </Button>
               {validationMessage && (
                 <div
@@ -886,7 +915,7 @@ function DriverDefinitionsSettings() {
                 }}
               >
                 <Trash2 className="size-3.5" />
-                {confirmDeleteId === editing.id ? '确认删除' : '删除'}
+                {confirmDeleteId === editing.id ? t('common.confirm') : t('common.delete')}
               </Button>
               <Button
                 type="button"
@@ -897,7 +926,7 @@ function DriverDefinitionsSettings() {
                 }}
               >
                 <Save className="size-3.5" />
-                保存
+                {t('common.save')}
               </Button>
             </div>
           )}
@@ -916,6 +945,7 @@ function DbeaverImportSettings({
   onNotify: (notification: { kind: 'success' | 'error' | 'info' | 'warning'; title: string; message?: string }) => void
   onNotifyError: (error: { code: string; message: string; detail?: string }, title?: string) => void
 }) {
+  const { t } = useTranslation()
   const [preview, setPreview] = useState<DbeaverImportPreview | null>(null)
   const [importing, setImporting] = useState(false)
   const [report, setReport] = useState<{ imported: number; failed: number } | null>(null)
@@ -932,7 +962,7 @@ function DbeaverImportSettings({
       setPreview(nextPreview)
       onNotify({
         kind: nextPreview.connections.length > 0 ? 'info' : 'warning',
-        title: 'DBeaver 导入预览完成',
+        title: t('dbeaver.previewComplete'),
         message: `${nextPreview.connections.length} supported / ${nextPreview.skipped.length} skipped`,
       })
     } catch (error) {
@@ -940,9 +970,9 @@ function DbeaverImportSettings({
       onNotifyError(
         {
           code: 'DBEAVER_IMPORT_PREVIEW_FAILED',
-          message: error instanceof Error ? error.message : 'DBeaver 配置预览失败。',
+          message: error instanceof Error ? error.message : t('dbeaver.previewFailedMessage'),
         },
-        'DBeaver 导入预览失败',
+        t('dbeaver.previewFailed'),
       )
     } finally {
       if (fileInputRef.current) {
@@ -971,7 +1001,7 @@ function DbeaverImportSettings({
     setReport({ imported, failed })
     onNotify({
       kind: failed === 0 ? 'success' : 'warning',
-      title: 'DBeaver 导入完成',
+      title: t('dbeaver.importComplete'),
       message: `${imported} imported / ${failed} failed / ${preview.skipped.length} skipped`,
     })
   }
@@ -980,9 +1010,9 @@ function DbeaverImportSettings({
     <section className="space-y-2 border-b p-3 text-xs">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="font-semibold text-foreground">DBeaver 配置导入</h3>
+          <h3 className="font-semibold text-foreground">{t('dbeaver.title')}</h3>
           <p className="mt-1 text-muted-foreground">
-            选择 data-sources.json/XML，导入前先预览连接和驱动映射。
+            {t('dbeaver.description')}
           </p>
         </div>
         <Button
@@ -993,7 +1023,7 @@ function DbeaverImportSettings({
           onClick={() => fileInputRef.current?.click()}
         >
           <Upload className="size-3.5" />
-          选择
+          {t('dbeaver.choose')}
         </Button>
       </div>
       <input
@@ -1026,13 +1056,13 @@ function DbeaverImportSettings({
               }}
             >
               <Save className="size-3.5" />
-              {importing ? '导入中' : '导入'}
+              {importing ? t('dbeaver.importing') : t('dbeaver.import')}
             </Button>
           </div>
 
           <PreviewList title="Connections">
             {preview.connections.length === 0 ? (
-              <PreviewEmpty label="没有可导入连接" />
+              <PreviewEmpty label={t('dbeaver.noImportableConnections')} />
             ) : (
               preview.connections.slice(0, 8).map((connection) => (
                 <div key={connection.id} className="rounded border bg-background/70 px-2 py-1.5">
@@ -1292,9 +1322,9 @@ function NumberSetting({
   )
 }
 
-function sqlPreview(sql: string) {
+function sqlPreview(sql: string, t: ReturnType<typeof useTranslation>['t']) {
   const preview = sql.trim().replace(/\s+/g, ' ')
-  return preview.length > 90 ? `${preview.slice(0, 90)}...` : preview || '空白查询'
+  return preview.length > 90 ? `${preview.slice(0, 90)}...` : preview || t('sql.blankQuery')
 }
 
 function driverCanCancel(driverType: DriverType) {

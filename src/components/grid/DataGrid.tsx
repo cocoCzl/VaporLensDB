@@ -2,6 +2,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Check, Copy, Pencil, Rows3, X } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { PendingCellChange } from '@/lib/dataEditSql'
 import type { QueryResult } from '@/types/query'
@@ -25,6 +26,7 @@ export function DataGrid({
   failedChanges = [],
   onEditCell,
 }: DataGridProps) {
+  const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [selectedCell, setSelectedCell] = useState<{
     rowIndex: number
@@ -54,7 +56,7 @@ export function DataGrid({
   if (!result) {
     return (
       <div className="grid h-full place-items-center text-xs text-muted-foreground">
-        暂无查询结果
+        {t('result.empty')}
       </div>
     )
   }
@@ -63,14 +65,14 @@ export function DataGrid({
     if (result.elapsedMs === 0 && result.affectedRows === 0) {
       return (
         <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-          正在接收结果
+          {t('result.receiving')}
         </div>
       )
     }
 
     return (
       <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-        语句完成，影响 {result.affectedRows} 行，用时 {result.elapsedMs} ms
+        {t('result.statementComplete', { count: result.affectedRows, elapsedMs: result.elapsedMs })}
       </div>
     )
   }
@@ -81,8 +83,10 @@ export function DataGrid({
         <div className="relative" style={{ minWidth: minGridWidth }}>
           {result.truncated && (
             <div className="sticky top-0 z-30 border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-amber-900">
-              已显示 {result.rowCount.toLocaleString()} 行，结果达到交互查询上限
-              {result.maxRows ? ` ${result.maxRows.toLocaleString()} 行` : ''}。
+              {t('result.truncated', {
+                count: result.rowCount,
+                maxRows: result.maxRows ? t('result.maxRowsSuffix', { count: result.maxRows }) : '',
+              })}
             </div>
           )}
           <div
@@ -160,7 +164,7 @@ export function DataGrid({
                           pending ? 'bg-amber-50 text-amber-950' : '',
                           failed ? 'bg-destructive/10 text-destructive' : '',
                         ].join(' ')}
-                        title={failed?.error ?? (pending ? '待提交变更' : formatted)}
+                        title={failed?.error ?? (pending ? t('result.pendingChange') : formatted)}
                       >
                         {editing ? (
                           <InlineCellEditor
@@ -210,6 +214,7 @@ export function DataGrid({
       <CellInspector
         result={result}
         selectedCell={selectedCell}
+        t={t}
       />
     </div>
   )
@@ -257,15 +262,17 @@ function InlineCellEditor({
 function CellInspector({
   result,
   selectedCell,
+  t,
 }: {
   result: QueryResult
   selectedCell: { rowIndex: number; columnIndex: number } | null
+  t: ReturnType<typeof useTranslation>['t']
 }) {
   if (!selectedCell) {
     return (
       <div className="flex h-9 shrink-0 items-center gap-2 border-t px-3 text-xs text-muted-foreground">
         <Rows3 className="size-3.5" />
-        选择一个单元格可查看完整值
+        {t('result.selectCellHint')}
       </div>
     )
   }
@@ -285,11 +292,11 @@ function CellInspector({
       </div>
       <Button type="button" size="xs" variant="ghost" onClick={() => copyToClipboard(value)}>
         <Copy className="size-3.5" />
-        单元格
+        {t('result.cell')}
       </Button>
       <Button type="button" size="xs" variant="ghost" onClick={() => copyToClipboard(rowValue)}>
         <Rows3 className="size-3.5" />
-        行
+        {t('result.row')}
       </Button>
     </div>
   )

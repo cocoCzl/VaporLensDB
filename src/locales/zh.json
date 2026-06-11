@@ -2,22 +2,158 @@
   "app": {
     "name": "VaporLensDB"
   },
-  "connection": {
-    "new": "新建连接",
-    "test": "测试连接",
-    "connect": "连接",
-    "disconnect": "断开"
-  },
-  "editor": {
-    "run": "执行",
-    "format": "格式化",
-    "cancel": "取消"
+  "nav": {
+    "dataSources": "数据源",
+    "sql": "SQL",
+    "sessions": "会话",
+    "settings": "设置"
   },
   "common": {
     "save": "保存",
     "cancel": "取消",
     "delete": "删除",
     "confirm": "确认",
+    "confirmClear": "确认清空",
+    "clear": "清空",
     "loading": "加载中..."
+  },
+  "connection": {
+    "explorerTitle": "数据库资源管理器",
+    "dataSources": "Data Sources",
+    "connections": "连接",
+    "new": "新建连接",
+    "newTitle": "新建连接",
+    "edit": "编辑",
+    "editTitle": "编辑连接",
+    "delete": "删除连接",
+    "test": "测试连接",
+    "connect": "连接",
+    "disconnect": "断开连接",
+    "disconnected": "未连接",
+    "select": "选择连接",
+    "refresh": "刷新连接",
+    "empty": "暂无数据源",
+    "ungrouped": "未分组",
+    "notReady": "未就绪",
+    "noEnvironment": "无环境标签",
+    "environmentTitle": "环境: {{label}}",
+    "dialogSubtitle": "配置 PostgreSQL、MySQL、Oracle 或自定义驱动的数据源。",
+    "driverHelp": "PostgreSQL 和 MySQL 使用内置驱动；Oracle 需要本地 ojdbc，连接、查询、对象浏览、DDL/source 和补全可用。"
+  },
+  "editor": {
+    "run": "执行",
+    "format": "格式化",
+    "cancel": "取消",
+    "running": "执行中",
+    "explainUnsupported": "当前驱动暂不支持 Explain",
+    "databaseSelectHint": "PostgreSQL 查询仍运行在连接配置的数据库中；切换数据库需要重新连接。"
+  },
+  "metadata": {
+    "database": "数据库",
+    "schema": "Schema"
+  },
+  "result": {
+    "empty": "暂无查询结果",
+    "receiving": "正在接收结果",
+    "statementComplete": "语句完成，影响 {{count}} 行，用时 {{elapsedMs}} ms",
+    "truncated": "已显示 {{count}} 行，结果达到交互查询上限{{maxRows}}。",
+    "maxRowsSuffix": " {{count}} 行",
+    "pendingChange": "待提交变更",
+    "selectCellHint": "选择一个单元格可查看完整值",
+    "cell": "单元格",
+    "row": "行"
+  },
+  "settings": {
+    "title": "设置",
+    "subtitle": "本地偏好",
+    "theme": {
+      "label": "主题",
+      "system": "系统",
+      "dark": "深色",
+      "light": "浅色",
+      "current": "主题：{{label}}"
+    },
+    "language": {
+      "label": "语言",
+      "zh": "中文",
+      "en": "English"
+    },
+    "queryMaxRows": "最大返回行数",
+    "dataPreviewRows": "数据预览默认行数",
+    "editorFontSize": "编辑器字号",
+    "showSystemObjects": "显示系统对象",
+    "showSystemObjectsHint": "对象树和 SQL 补全包含 vendor/internal schema。",
+    "historyCount": "当前保存 {{count}} 条最近记录。",
+    "configStore": "配置存储",
+    "passwordStorage": "密码",
+    "passwordStorageValue": "AES-GCM 加密保存",
+    "macosKey": "macOS 密钥",
+    "macosKeyValue": "系统 Keychain"
+  },
+  "sql": {
+    "workspace": "SQL 工作区",
+    "new": "新建 SQL",
+    "editorPageCount": "{{count}} 个编辑页",
+    "emptyTitle": "还没有 SQL Tab",
+    "emptyText": "新建 SQL 后会显示在这里。",
+    "running": "正在执行",
+    "history": "查询历史",
+    "historyCleared": "查询历史已清空",
+    "clearHistory": "清空查询历史",
+    "confirmClearHistory": "再次点击确认清空",
+    "historyEmpty": "执行 SQL 后会自动记录到这里。",
+    "historyTabTitle": "历史 SQL",
+    "blankQuery": "空白查询",
+    "rows": "{{count}} 行",
+    "affectedRows": "影响 {{count}} 行"
+  },
+  "sessions": {
+    "title": "会话管理",
+    "subtitle": "{{sessions}} active sessions · {{queries}} running queries",
+    "disconnected": "连接已断开",
+    "emptyTitle": "没有活动会话",
+    "emptyText": "连接数据库后会显示 session 和运行中查询。",
+    "disconnect": "断开 session",
+    "noRunningQueries": "当前没有运行中的查询。",
+    "runningQueriesUnavailable": "当前驱动暂不报告可取消的 running queries。",
+    "cancelUnsupported": "当前驱动不支持取消"
+  },
+  "drivers": {
+    "title": "驱动定义",
+    "summary": "{{count}} 个定义，custom 可编辑。",
+    "add": "新增",
+    "viewBuiltIn": "查看内置驱动",
+    "editCustom": "编辑自定义驱动",
+    "name": "名称",
+    "runtime": "运行时",
+    "driverClass": "驱动类",
+    "urlTemplate": "URL 模板",
+    "driverFiles": "驱动文件",
+    "importJar": "导入 JAR",
+    "managedJarCount": "{{count}} 个 managed JAR",
+    "noneImported": "尚未导入",
+    "removeJar": "移除 JAR",
+    "importPath": "导入路径",
+    "metadataSql": "元数据 SQL",
+    "validate": "校验驱动"
+  },
+  "dbeaver": {
+    "title": "DBeaver 配置导入",
+    "description": "选择 data-sources.json/XML，导入前先预览连接和驱动映射。",
+    "choose": "选择",
+    "import": "导入",
+    "importing": "导入中",
+    "previewComplete": "DBeaver 导入预览完成",
+    "previewFailed": "DBeaver 导入预览失败",
+    "previewFailedMessage": "DBeaver 配置预览失败。",
+    "importComplete": "DBeaver 导入完成",
+    "noImportableConnections": "没有可导入连接"
+  },
+  "status": {
+    "backendHealthTitle": "Tauri/Rust 后端健康检查",
+    "backendOk": "后端: 正常 {{version}}",
+    "backendChecking": "后端: 检查中",
+    "backendUnavailable": "后端: 不可用",
+    "backendOther": "后端: {{status}}"
   }
 }
