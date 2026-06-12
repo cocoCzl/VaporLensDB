@@ -29,7 +29,7 @@ function excludesAll(source, values, label) {
 const sidebar = read('src/components/layout/Sidebar.tsx')
 includesAll(sidebar, ["view: 'dataSources'", "view: 'sql'", "sidebarView === 'settings'"], 'left rail')
 excludesAll(sidebar, ["view: 'structure'", 'StructurePanel', 'ObjectDetails'], 'left rail')
-includesAll(sidebar, ['查询历史', 'handleClearHistory', 'clearHistory'], 'settings history clear')
+includesAll(sidebar, ["t('sql.history')", 'handleClearHistory', 'clearHistory'], 'settings history clear')
 
 const uiStore = read('src/stores/uiStore.ts')
 assert(

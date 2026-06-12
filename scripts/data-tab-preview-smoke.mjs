@@ -78,7 +78,12 @@ includesAll(
 )
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ['数据预览默认行数', 'setDataPreviewDefaultRows'], 'settings panel')
+includesAll(sidebar, ["t('settings.dataPreviewRows')", 'setDataPreviewDefaultRows'], 'settings panel')
+
+const zh = read('src/locales/zh.json')
+const en = read('src/locales/en.json')
+includesAll(zh, ['"dataPreviewRows": "数据预览默认行数"'], 'Chinese data preview locale')
+includesAll(en, ['"dataPreviewRows": "Default data preview rows"'], 'English data preview locale')
 
 const packageJson = read('package.json')
 includesAll(

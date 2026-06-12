@@ -80,19 +80,32 @@ includesAll(
   sidebar,
   [
     'DriverDefinitionsSettings',
-    'custom 可编辑',
+    "t('drivers.summary'",
     "driver.builtIn ? 'built-in' : 'custom'",
-    '查看内置驱动',
-    '编辑自定义驱动',
-    '导入 JAR',
-    '导入路径',
-    '移除 JAR',
-    '元数据 SQL',
-    '校验驱动',
+    "t('drivers.viewBuiltIn')",
+    "t('drivers.editCustom')",
+    "t('drivers.importJar')",
+    "t('drivers.importPath')",
+    "t('drivers.removeJar')",
+    "t('drivers.metadataSql')",
+    "t('drivers.validate')",
     'newCustomDriverDefinition',
     'normalizeDriverDefinition',
   ],
   'settings driver manager UI',
+)
+
+const zh = read('src/locales/zh.json')
+const en = read('src/locales/en.json')
+includesAll(
+  zh,
+  ['"viewBuiltIn": "查看内置驱动"', '"editCustom": "编辑自定义驱动"', '"importJar": "导入 JAR"', '"validate": "校验驱动"'],
+  'Chinese driver manager locale',
+)
+includesAll(
+  en,
+  ['"viewBuiltIn": "View built-in driver"', '"editCustom": "Edit custom driver"', '"importJar": "Import JAR"', '"validate": "Validate driver"'],
+  'English driver manager locale',
 )
 
 includesAll(

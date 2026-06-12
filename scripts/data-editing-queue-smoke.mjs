@@ -47,10 +47,15 @@ includesAll(
     'onEditCell?:',
     'onDoubleClick',
     'InlineCellEditor',
-    '待提交变更',
+    "t('result.pendingChange')",
   ],
   'editable data grid',
 )
+
+const zh = read('src/locales/zh.json')
+const en = read('src/locales/en.json')
+includesAll(zh, ['"pendingChange": "待提交变更"'], 'Chinese pending change locale')
+includesAll(en, ['"pendingChange": "Pending change"'], 'English pending change locale')
 
 const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(

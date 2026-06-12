@@ -46,7 +46,7 @@ includesAll(
     'DbeaverImportSettings',
     'previewDbeaverConfiguration(Array.from(files))',
     'dbeaverPreviewToConnectionInput(connection)',
-    'DBeaver 配置导入',
+    "t('dbeaver.title')",
     'Driver templates',
     'Import report',
     'password manual entry',
@@ -54,6 +54,11 @@ includesAll(
   ],
   'DBeaver import settings UI',
 )
+
+const zh = read('src/locales/zh.json')
+const en = read('src/locales/en.json')
+includesAll(zh, ['"title": "DBeaver 配置导入"'], 'Chinese DBeaver import locale')
+includesAll(en, ['"title": "DBeaver Configuration Import"'], 'English DBeaver import locale')
 
 const packageJson = read('package.json')
 includesAll(

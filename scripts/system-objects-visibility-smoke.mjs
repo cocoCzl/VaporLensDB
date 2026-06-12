@@ -77,7 +77,12 @@ includesAll(
 )
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ['显示系统对象', 'setShowSystemObjects', 'type="checkbox"'], 'settings toggle')
+includesAll(sidebar, ["t('settings.showSystemObjects')", 'setShowSystemObjects', 'type="checkbox"'], 'settings toggle')
+
+const zh = read('src/locales/zh.json')
+const en = read('src/locales/en.json')
+includesAll(zh, ['"showSystemObjects": "显示系统对象"'], 'Chinese system object locale')
+includesAll(en, ['"showSystemObjects": "Show system objects"'], 'English system object locale')
 
 if (failures.length > 0) {
   console.error('System objects visibility smoke failed:')
