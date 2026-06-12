@@ -27,6 +27,7 @@ export const COMMAND_CONTRACTS = commandContracts as CommandContract[]
 export const COMMANDS = {
   listCommandContracts: 'list_command_contracts',
   healthCheck: 'health_check',
+  exportDiagnosticsPackage: 'export_diagnostics_package',
   createConnection: 'create_connection',
   updateConnection: 'update_connection',
   deleteConnection: 'delete_connection',

@@ -2,6 +2,7 @@ import {
   Activity,
   Ban,
   Database,
+  Download,
   FileCode2,
   HardDrive,
   Loader2,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { downloadDir, join } from '@tauri-apps/api/path'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { Button } from '@/components/ui/button'
@@ -28,6 +30,8 @@ import {
   previewDbeaverConfiguration,
   type DbeaverImportPreview,
 } from '@/lib/dbeaverImport'
+import { exportDiagnosticsPackage } from '@/ipc/diagnostics'
+import { normalizeAppError } from '@/ipc/client'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useDriverStore } from '@/stores/driverStore'
@@ -458,6 +462,8 @@ function SettingsPanel() {
   const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
   const clearHistory = useQueryHistoryStore((state) => state.clear)
   const [confirmClearHistory, setConfirmClearHistory] = useState(false)
+  const [includeDiagnosticsSqlText, setIncludeDiagnosticsSqlText] = useState(false)
+  const [diagnosticsExporting, setDiagnosticsExporting] = useState(false)
 
   useEffect(() => {
     loadHistory()
@@ -478,6 +484,32 @@ function SettingsPanel() {
     setConfirmClearHistory(false)
     if (cleared) {
       notify({ kind: 'success', title: t('sql.historyCleared') })
+    }
+  }
+
+  async function handleExportDiagnostics() {
+    if (diagnosticsExporting) {
+      return
+    }
+
+    setDiagnosticsExporting(true)
+    try {
+      const baseDir = await downloadDir()
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const outputPath = await join(baseDir, `vaporlensdb-diagnostics-${stamp}.json`)
+      const exported = await exportDiagnosticsPackage({
+        outputPath,
+        includeSqlText: includeDiagnosticsSqlText,
+      })
+      notify({
+        kind: 'success',
+        title: t('settings.diagnostics.exportComplete'),
+        message: exported.path,
+      })
+    } catch (error) {
+      notifyError(normalizeAppError(error), t('settings.diagnostics.exportFailed'))
+    } finally {
+      setDiagnosticsExporting(false)
     }
   }
 
@@ -575,6 +607,46 @@ function SettingsPanel() {
         onNotify={notify}
         onNotifyError={notifyError}
       />
+      <section className="space-y-3 border-b p-3 text-xs">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-foreground">{t('settings.diagnostics.title')}</h3>
+            <p className="mt-1 text-muted-foreground">{t('settings.diagnostics.description')}</p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={diagnosticsExporting}
+            onClick={() => {
+              void handleExportDiagnostics()
+            }}
+          >
+            {diagnosticsExporting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Download className="size-3.5" />
+            )}
+            {t('settings.diagnostics.export')}
+          </Button>
+        </div>
+        <label className="flex items-start gap-2 rounded-md border bg-background/60 px-2 py-2">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-4 accent-primary"
+            checked={includeDiagnosticsSqlText}
+            onChange={(event) => setIncludeDiagnosticsSqlText(event.target.checked)}
+          />
+          <span className="min-w-0">
+            <span className="block font-medium text-foreground">
+              {t('settings.diagnostics.includeSqlText')}
+            </span>
+            <span className="mt-0.5 block text-[11px] text-muted-foreground">
+              {t('settings.diagnostics.includeSqlTextHint')}
+            </span>
+          </span>
+        </label>
+      </section>
       <DriverDefinitionsSettings />
       <section className="space-y-2 p-3 text-xs">
         <SettingFact label={t('settings.configStore')} value="~/.vaporlensdb/config.db" />

@@ -49,6 +49,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::contract::list_command_contracts,
             commands::health::health_check,
+            commands::config::export_diagnostics_package,
             commands::connection::create_connection,
             commands::connection::update_connection,
             commands::connection::delete_connection,

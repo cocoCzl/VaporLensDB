@@ -84,6 +84,15 @@
     "showSystemObjects": "显示系统对象",
     "showSystemObjectsHint": "对象树和 SQL 补全包含 vendor/internal schema。",
     "historyCount": "当前保存 {{count}} 条最近记录。",
+    "diagnostics": {
+      "title": "诊断包",
+      "description": "导出版本、系统信息、连接类型、失败命令元数据和任务日志。",
+      "export": "导出",
+      "exportComplete": "诊断包已导出",
+      "exportFailed": "诊断包导出失败",
+      "includeSqlText": "包含 SQL 文本",
+      "includeSqlTextHint": "默认脱敏 SQL；仅在需要排查语句本身时勾选。结果数据和密码永不导出。"
+    },
     "configStore": "配置存储",
     "passwordStorage": "密码",
     "passwordStorageValue": "AES-GCM 加密保存",

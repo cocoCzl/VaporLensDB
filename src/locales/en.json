@@ -84,6 +84,15 @@
     "showSystemObjects": "Show system objects",
     "showSystemObjectsHint": "Include vendor/internal schemas in the Object Tree and SQL completion.",
     "historyCount": "{{count}} recent records saved.",
+    "diagnostics": {
+      "title": "Diagnostics Package",
+      "description": "Export version, system info, connection types, failed command metadata, and task logs.",
+      "export": "Export",
+      "exportComplete": "Diagnostics package exported",
+      "exportFailed": "Diagnostics export failed",
+      "includeSqlText": "Include SQL text",
+      "includeSqlTextHint": "SQL is redacted by default. Enable only when the statement itself is needed. Result data and passwords are never exported."
+    },
     "configStore": "Config store",
     "passwordStorage": "Password",
     "passwordStorageValue": "AES-GCM encrypted at rest",

@@ -37,6 +37,7 @@
     "test:session-management": "node scripts/session-management-smoke.mjs",
     "test:dbeaver-import": "node scripts/dbeaver-import-smoke.mjs",
     "test:i18n": "node scripts/i18n-smoke.mjs",
+    "test:diagnostics-export": "node scripts/diagnostics-export-smoke.mjs",
     "test:command-contracts": "node scripts/command-contract-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",

@@ -14,6 +14,13 @@
     "status": "active"
   },
   {
+    "name": "export_diagnostics_package",
+    "namespace": "settings",
+    "args": "{ input: ExportDiagnosticsPackageInput }",
+    "response": "ExportDiagnosticsPackageResponse",
+    "status": "active"
+  },
+  {
     "name": "create_connection",
     "namespace": "connection",
     "args": "{ input: ConnectionInput }",
