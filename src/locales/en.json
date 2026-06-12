@@ -93,11 +93,13 @@
       "includeSqlText": "Include SQL text",
       "includeSqlTextHint": "SQL is redacted by default. Enable only when the statement itself is needed. Result data and passwords are never exported."
     },
+    "backendVersion": "Backend version",
     "configStore": "Config store",
+    "configSchema": "Config schema",
+    "configSchemaValue": "migration v{{version}}",
     "passwordStorage": "Password",
-    "passwordStorageValue": "AES-GCM encrypted at rest",
-    "macosKey": "macOS key",
-    "macosKeyValue": "System Keychain"
+    "keyBackend": "Key backend",
+    "unavailable": "Unavailable"
   },
   "sql": {
     "workspace": "SQL Workspace",

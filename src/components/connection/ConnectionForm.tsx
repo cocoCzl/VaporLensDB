@@ -1,5 +1,5 @@
 import { FormEvent, useState, type ReactNode } from 'react'
-import { Database, Download, PlugZap } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Database, Download, PlugZap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -239,6 +239,12 @@ export function ConnectionForm({
                     </span>
                   </div>
                   {selectedDriver && <DriverDefinitionSummary driver={selectedDriver} />}
+                  <DriverSupportSummary
+                    driver={selectedDriver}
+                    profile={driverProfile}
+                    input={form}
+                    readinessIssue={readinessIssue}
+                  />
                   </div>
                 </FormRow>
 
@@ -609,6 +615,122 @@ function DriverDefinitionSummary({ driver }: { driver: DriverDefinition }) {
       )}
     </div>
   )
+}
+
+function DriverSupportSummary({
+  driver,
+  profile,
+  input,
+  readinessIssue,
+}: {
+  driver?: DriverDefinition
+  profile: DriverProfile
+  input: ConnectionInput
+  readinessIssue: string | null
+}) {
+  const capabilities = driver?.capabilities ?? profileCapabilities(profile)
+  const missing = externalDriverMissingItems(input, profile, driver)
+  const ready = !readinessIssue && missing.length === 0 && profile.status !== 'planned'
+
+  return (
+    <div className="rounded-md border bg-background/70 p-2 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium text-foreground">驱动支持状态</span>
+            <span className="rounded-md border bg-muted/45 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+              {driverBackendLabel(driver?.backend ?? profileBackend(profile))}
+            </span>
+            <span className={ready ? supportBadgeClass('ready') : supportBadgeClass('blocked')}>
+              {ready ? '可连接' : driverSupportStateLabel(profile.status, missing)}
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {driverCapabilityBadges(capabilities).map((item) => (
+              <span key={item.label} className={item.enabled ? capabilityOnClass : capabilityOffClass}>
+                {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
+        {ready ? (
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+        ) : (
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+        )}
+      </div>
+      {(profile.externalDriver || driver?.userDriverRequired) && (
+        <div className="mt-2 border-t pt-2 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground">外部驱动要求：</span>
+          {missing.length > 0 ? missing.join('、') : '驱动类和本地 JAR 已填写'}
+        </div>
+      )}
+      {profile.description && (
+        <div className="mt-1 text-[11px] text-muted-foreground">{profile.description}</div>
+      )}
+    </div>
+  )
+}
+
+const capabilityOnClass =
+  'rounded-md border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-800'
+const capabilityOffClass =
+  'rounded-md border bg-muted/45 px-1.5 py-0.5 text-[11px] text-muted-foreground'
+
+function supportBadgeClass(state: 'ready' | 'blocked') {
+  return state === 'ready'
+    ? 'rounded-md border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-800'
+    : 'rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800'
+}
+
+function driverSupportStateLabel(status: DriverDefinition['status'], missing: string[]) {
+  if (status === 'planned') return '计划中'
+  if (missing.length > 0) return `缺少${missing.join('、')}`
+  if (status === 'configurable') return '需配置'
+  return '未就绪'
+}
+
+function externalDriverMissingItems(
+  input: ConnectionInput,
+  profile: DriverProfile,
+  driver?: DriverDefinition,
+) {
+  if (!profile.externalDriver && !driver?.userDriverRequired) {
+    return []
+  }
+
+  const missing: string[] = []
+  if (!input.driverClass?.trim()) missing.push('驱动类')
+  if (!input.driverPaths?.length) missing.push('本地 JAR')
+  return missing
+}
+
+function driverCapabilityBadges(capabilities: DriverDefinition['capabilities']) {
+  return [
+    { label: '连接', enabled: capabilities.canConnect },
+    { label: '查询', enabled: capabilities.canQuery },
+    { label: '流式结果', enabled: capabilities.canStream },
+    { label: '对象浏览', enabled: capabilities.canReadMetadata },
+    { label: 'DDL', enabled: capabilities.canGenerateDdl },
+    { label: '取消查询', enabled: capabilities.canCancel },
+  ]
+}
+
+function profileCapabilities(profile: DriverProfile): DriverDefinition['capabilities'] {
+  const queryable = profile.status !== 'planned'
+  return {
+    canConnect: queryable,
+    canQuery: queryable,
+    canStream: queryable,
+    canReadMetadata: queryable,
+    canCancel: false,
+    canGenerateDdl: queryable,
+  }
+}
+
+function profileBackend(profile: DriverProfile): DriverDefinition['backend'] {
+  if (profile.status === 'planned') return 'planned'
+  return profile.externalDriver ? 'jdbc' : 'nativeRust'
 }
 
 function driverOriginLabel(driver: DriverDefinition) {

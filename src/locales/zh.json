@@ -93,11 +93,13 @@
       "includeSqlText": "包含 SQL 文本",
       "includeSqlTextHint": "默认脱敏 SQL；仅在需要排查语句本身时勾选。结果数据和密码永不导出。"
     },
+    "backendVersion": "后端版本",
     "configStore": "配置存储",
+    "configSchema": "配置 Schema",
+    "configSchemaValue": "migration v{{version}}",
     "passwordStorage": "密码",
-    "passwordStorageValue": "AES-GCM 加密保存",
-    "macosKey": "macOS 密钥",
-    "macosKeyValue": "系统 Keychain"
+    "keyBackend": "密钥后端",
+    "unavailable": "不可用"
   },
   "sql": {
     "workspace": "SQL 工作区",

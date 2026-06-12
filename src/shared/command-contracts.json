@@ -10,7 +10,7 @@
     "name": "health_check",
     "namespace": "settings",
     "args": "void",
-    "response": "HealthCheckResponse",
+    "response": "HealthCheckResponse { status, app, version, configPath, configSchemaVersion, passwordStorage, keyBackend }",
     "status": "active"
   },
   {

@@ -32,6 +32,7 @@ import {
 } from '@/lib/dbeaverImport'
 import { exportDiagnosticsPackage } from '@/ipc/diagnostics'
 import { normalizeAppError } from '@/ipc/client'
+import { healthCheck, type HealthCheckResponse } from '@/ipc/health'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useDriverStore } from '@/stores/driverStore'
@@ -464,10 +465,32 @@ function SettingsPanel() {
   const [confirmClearHistory, setConfirmClearHistory] = useState(false)
   const [includeDiagnosticsSqlText, setIncludeDiagnosticsSqlText] = useState(false)
   const [diagnosticsExporting, setDiagnosticsExporting] = useState(false)
+  const [health, setHealth] = useState<HealthCheckResponse | null>(null)
+  const [healthUnavailable, setHealthUnavailable] = useState(false)
 
   useEffect(() => {
     loadHistory()
   }, [loadHistory])
+
+  useEffect(() => {
+    let cancelled = false
+    healthCheck()
+      .then((value) => {
+        if (!cancelled) {
+          setHealth(value)
+          setHealthUnavailable(false)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHealthUnavailable(true)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   async function handleClearHistory() {
     if (history.length === 0 || historyLoading) {
@@ -649,9 +672,32 @@ function SettingsPanel() {
       </section>
       <DriverDefinitionsSettings />
       <section className="space-y-2 p-3 text-xs">
-        <SettingFact label={t('settings.configStore')} value="~/.vaporlensdb/config.db" />
-        <SettingFact label={t('settings.passwordStorage')} value={t('settings.passwordStorageValue')} />
-        <SettingFact label={t('settings.macosKey')} value={t('settings.macosKeyValue')} />
+        <SettingFact
+          label={t('settings.backendVersion')}
+          value={health ? `${health.app} ${health.version}` : healthUnavailable ? t('settings.unavailable') : t('common.loading')}
+        />
+        <SettingFact
+          label={t('settings.configStore')}
+          value={health?.configPath ?? (healthUnavailable ? t('settings.unavailable') : t('common.loading'))}
+        />
+        <SettingFact
+          label={t('settings.configSchema')}
+          value={
+            health
+              ? t('settings.configSchemaValue', { version: health.configSchemaVersion })
+              : healthUnavailable
+                ? t('settings.unavailable')
+                : t('common.loading')
+          }
+        />
+        <SettingFact
+          label={t('settings.passwordStorage')}
+          value={health?.passwordStorage ?? (healthUnavailable ? t('settings.unavailable') : t('common.loading'))}
+        />
+        <SettingFact
+          label={t('settings.keyBackend')}
+          value={health?.keyBackend ?? (healthUnavailable ? t('settings.unavailable') : t('common.loading'))}
+        />
       </section>
     </div>
   )

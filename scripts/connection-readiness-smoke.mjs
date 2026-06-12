@@ -55,8 +55,8 @@ const dialog = read('src/components/connection/ConnectionDialog.tsx')
 includesAll(
   dialog,
   [
-    'PostgreSQL、MySQL、Oracle',
-    'Oracle 需要本地 ojdbc',
+    "t('connection.dialogSubtitle')",
+    "t('connection.driverHelp')",
     'onSaveOnly={async (input) =>',
     'onSaveAndConnect={async (input) =>',
     'await connectConnection(saved.id)',
@@ -72,12 +72,17 @@ includesAll(
   [
     'connectionReadinessIssue(connection)',
     "? 'bg-amber-500'",
-    "readinessIssue ? '未就绪'",
+    "readinessIssue ? t('connection.notReady')",
     'disabled={loading || Boolean(readinessIssue)}',
-    '缺少本地 JDBC JAR',
+    'Missing local JDBC JAR',
   ],
   'connection list readiness',
 )
+
+const zh = read('src/locales/zh.json')
+const en = read('src/locales/en.json')
+includesAll(zh, ['配置 PostgreSQL、MySQL、Oracle', 'Oracle 需要本地 ojdbc'], 'Chinese connection dialog copy')
+includesAll(en, ['PostgreSQL, MySQL, Oracle', 'Oracle requires a local ojdbc'], 'English connection dialog copy')
 
 const store = read('src/stores/connectionStore.ts')
 includesAll(

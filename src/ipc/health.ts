@@ -5,6 +5,10 @@ export interface HealthCheckResponse {
   status: 'ok'
   app: string
   version: string
+  configPath: string
+  configSchemaVersion: number
+  passwordStorage: string
+  keyBackend: string
 }
 
 export function healthCheck() {

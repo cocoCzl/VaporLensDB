@@ -99,6 +99,19 @@ impl ConfigStore {
         &self.config_dir
     }
 
+    pub fn db_path(&self) -> &Path {
+        &self.db_path
+    }
+
+    pub fn applied_schema_version(&self) -> Result<i64, AppError> {
+        self.conn()?
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+            .map(|version| version.unwrap_or(0))
+            .map_err(AppError::from)
+    }
+
     pub fn create_connection(
         &self,
         mut config: ConnectionConfig,

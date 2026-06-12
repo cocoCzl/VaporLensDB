@@ -16,6 +16,17 @@ const KEY_FILE: &str = "dev-secret.key";
 const KEYCHAIN_SERVICE: &str = "com.vaporlensdb.encryption-key";
 const KEYCHAIN_ACCOUNT: &str = "VaporLensDB";
 
+pub fn key_backend_label() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        if std::env::var("VAPORLENSDB_USE_DEV_KEY").as_deref() != Ok("1") {
+            return "macOS Keychain";
+        }
+    }
+
+    "local development key file"
+}
+
 pub fn encrypt_password(config_dir: &Path, plaintext: &str) -> Result<String, AppError> {
     let cipher = cipher(config_dir)?;
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
