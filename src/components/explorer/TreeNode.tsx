@@ -16,6 +16,8 @@ import {
   TriangleAlert,
   Zap,
   CalendarClock,
+  Code2,
+  PanelRightOpen,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
@@ -53,6 +55,13 @@ export interface DatabaseTreeNodeData {
   selected?: boolean
 }
 
+export interface TreeNodeQuickAction {
+  id: string
+  label: string
+  icon: 'data' | 'structure' | 'ddl'
+  onSelect: () => void
+}
+
 interface TreeNodeProps {
   node: DatabaseTreeNodeData
   selected?: boolean
@@ -62,6 +71,7 @@ interface TreeNodeProps {
   onDoubleClick?: (id: string) => void
   onNodeKeyDown?: (node: DatabaseTreeNodeData, event: KeyboardEvent<HTMLDivElement>) => void
   onNodeContextMenu?: (node: DatabaseTreeNodeData, position: { x: number; y: number }) => void
+  quickActions?: TreeNodeQuickAction[]
 }
 
 const NODE_ICONS: Record<DatabaseTreeNodeKind, LucideIcon> = {
@@ -83,6 +93,12 @@ const NODE_ICONS: Record<DatabaseTreeNodeKind, LucideIcon> = {
   event: CalendarClock,
 }
 
+const QUICK_ACTION_ICONS: Record<TreeNodeQuickAction['icon'], LucideIcon> = {
+  data: Table2,
+  structure: PanelRightOpen,
+  ddl: Code2,
+}
+
 const CATEGORY_KINDS = new Set<DatabaseTreeNodeKind>(['folder'])
 const KEY_KINDS = new Set<DatabaseTreeNodeKind>(['index', 'foreignKey'])
 const CODE_KINDS = new Set<DatabaseTreeNodeKind>(['procedure', 'function', 'package', 'trigger'])
@@ -96,6 +112,7 @@ export function TreeNode({
   onDoubleClick,
   onNodeKeyDown,
   onNodeContextMenu,
+  quickActions = [],
 }: TreeNodeProps) {
   const Icon = NODE_ICONS[node.kind]
   const hasToggle = node.expandable || node.loading
@@ -159,7 +176,7 @@ export function TreeNode({
       <span className={['min-w-0 flex-1 truncate', node.muted ? 'text-muted-foreground' : ''].join(' ')}>
         {node.label}
       </span>
-      {node.detail && (
+      {node.detail && quickActions.length === 0 && (
         <span
           className={[
             'inline-flex shrink-0 items-center gap-1 truncate text-[11px]',
@@ -169,6 +186,37 @@ export function TreeNode({
           {warning && <TriangleAlert className="size-3" />}
           {node.detail}
         </span>
+      )}
+      {quickActions.length > 0 && (
+        <div
+          className={[
+            'ml-auto flex shrink-0 items-center gap-0.5 rounded bg-background/80 px-0.5 opacity-0 shadow-sm ring-1 ring-border/60 transition-opacity',
+            'group-hover:opacity-100 group-focus-within:opacity-100',
+            selected ? 'opacity-100' : '',
+          ].join(' ')}
+          aria-label={`${node.label} quick actions`}
+        >
+          {quickActions.map((action) => {
+            const ActionIcon = QUICK_ACTION_ICONS[action.icon]
+            return (
+              <button
+                key={action.id}
+                type="button"
+                className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                title={action.label}
+                aria-label={action.label}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onSelect?.(node.id)
+                  action.onSelect()
+                }}
+                onDoubleClick={(event) => event.stopPropagation()}
+              >
+                <ActionIcon className="size-3.5" />
+              </button>
+            )
+          })}
+        </div>
       )}
       {onRefresh && node.expandable && (
         <Button

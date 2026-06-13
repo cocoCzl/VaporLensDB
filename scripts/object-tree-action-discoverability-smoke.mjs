@@ -1,0 +1,68 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const root = resolve(import.meta.dirname, '..')
+const failures = []
+
+function read(path) {
+  return readFileSync(resolve(root, path), 'utf8')
+}
+
+function assert(condition, message) {
+  if (!condition) failures.push(message)
+}
+
+function includesAll(source, values, label) {
+  for (const value of values) {
+    assert(source.includes(value), `${label} missing: ${value}`)
+  }
+}
+
+const treeNode = read('src/components/explorer/TreeNode.tsx')
+includesAll(
+  treeNode,
+  [
+    'export interface TreeNodeQuickAction',
+    "icon: 'data' | 'structure' | 'ddl'",
+    'QUICK_ACTION_ICONS',
+    'PanelRightOpen',
+    'group-hover:opacity-100',
+    'group-focus-within:opacity-100',
+    'action.onSelect()',
+    'aria-label={action.label}',
+  ],
+  'object tree quick action node UI',
+)
+
+const databaseTree = read('src/components/explorer/DatabaseTree.tsx')
+includesAll(
+  databaseTree,
+  [
+    'type TreeNodeQuickAction',
+    'function quickActions(node: NodeRecord): TreeNodeQuickAction[]',
+    'isTableLikeNode(node)',
+    "id: 'open-data'",
+    "id: 'open-structure'",
+    "id: 'view-ddl'",
+    'void openTableData(node.id)',
+    'openTableStructure(node.id)',
+    'openTableDdl(node.id)',
+    'quickActions={quickActions(nodes[node.id])}',
+  ],
+  'object tree quick action wiring',
+)
+
+const packageJson = read('package.json')
+includesAll(
+  packageJson,
+  ['test:object-tree-action-discoverability', 'scripts/object-tree-action-discoverability-smoke.mjs'],
+  'object tree action discoverability smoke registration',
+)
+
+if (failures.length > 0) {
+  console.error('Object Tree action discoverability smoke failed:')
+  for (const failure of failures) console.error(`- ${failure}`)
+  process.exit(1)
+}
+
+console.log('Object Tree action discoverability smoke passed.')

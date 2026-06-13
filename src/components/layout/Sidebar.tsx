@@ -1,6 +1,8 @@
 import {
   Activity,
   Ban,
+  ChevronDown,
+  ChevronRight,
   Database,
   Download,
   FileCode2,
@@ -38,8 +40,9 @@ import { useEditorStore } from '@/stores/editorStore'
 import { useDriverStore } from '@/stores/driverStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { ConnectionInput, DriverType } from '@/types/connection'
+import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
 import type { DriverDefinition } from '@/types/driver'
+import type { QueryHistoryStatus } from '@/types/queryHistory'
 import type { LucideIcon } from 'lucide-react'
 
 const RAIL_ITEMS = [
@@ -140,8 +143,20 @@ function SqlWorkspacePanel() {
   const clearHistory = useQueryHistoryStore((state) => state.clear)
   const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
   const historyLoading = useQueryHistoryStore((state) => state.loading)
+  const connections = useConnectionStore((state) => state.connections)
   const notify = useUiStore((state) => state.notify)
   const [confirmClearHistory, setConfirmClearHistory] = useState(false)
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | QueryHistoryStatus>('all')
+  const [historyConnectionFilter, setHistoryConnectionFilter] = useState('all')
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
+
+  const historyConnectionOptions = uniqueHistoryConnections(history, connections)
+  const filteredHistory = history.filter((entry) => {
+    const statusMatches = historyStatusFilter === 'all' || entry.status === historyStatusFilter
+    const connectionMatches =
+      historyConnectionFilter === 'all' || entry.connectionId === historyConnectionFilter
+    return statusMatches && connectionMatches
+  })
 
   useEffect(() => {
     loadHistory()
@@ -238,47 +253,133 @@ function SqlWorkspacePanel() {
               <Trash2 className="size-3.5" />
             </Button>
           </div>
+          <div className="mb-2 grid grid-cols-2 gap-1">
+            <label className="grid gap-1">
+              <span className="text-[10px] font-medium uppercase text-muted-foreground">
+                {t('sql.historyStatusFilter')}
+              </span>
+              <select
+                className="ide-select h-7 text-xs"
+                value={historyStatusFilter}
+                onChange={(event) =>
+                  setHistoryStatusFilter(event.target.value as 'all' | QueryHistoryStatus)
+                }
+              >
+                <option value="all">{t('sql.historyFilterAll')}</option>
+                <option value="success">{t('sql.historyFilterSuccess')}</option>
+                <option value="failed">{t('sql.historyFilterFailed')}</option>
+              </select>
+            </label>
+            <label className="grid gap-1">
+              <span className="text-[10px] font-medium uppercase text-muted-foreground">
+                {t('sql.historyConnectionFilter')}
+              </span>
+              <select
+                className="ide-select h-7 text-xs"
+                value={historyConnectionFilter}
+                onChange={(event) => setHistoryConnectionFilter(event.target.value)}
+              >
+                <option value="all">{t('sql.historyFilterAllConnections')}</option>
+                {historyConnectionOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           {history.length === 0 ? (
             <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
               {t('sql.historyEmpty')}
             </div>
+          ) : filteredHistory.length === 0 ? (
+            <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+              {t('sql.historyFilteredEmpty')}
+            </div>
           ) : (
             <div className="space-y-1">
-              {history.slice(0, 25).map((entry) => (
-                <button
+              {filteredHistory.slice(0, 25).map((entry) => (
+                <section
                   key={entry.id}
-                  type="button"
-                  className="w-full rounded-md border bg-background/60 px-2 py-1.5 text-left text-xs hover:bg-muted"
-                  onClick={() => {
-                    setActiveConnection(entry.connectionId)
-                    addTab({
-                      id: crypto.randomUUID(),
-                      kind: 'sql',
-                      title: t('sql.historyTabTitle'),
-                      sql: entry.sql,
-                      connectionId: entry.connectionId,
-                    })
-                  }}
+                  className="rounded-md border bg-background/60 text-xs hover:bg-muted/45"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-mono text-[11px]">{sqlPreview(entry.sql, t)}</span>
-                    <span
-                      className={
-                        entry.status === 'success'
-                          ? 'shrink-0 text-emerald-500'
-                          : 'shrink-0 text-destructive'
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-1 px-2 py-1.5">
+                    <button
+                      type="button"
+                      className="min-w-0 text-left"
+                      onClick={() => {
+                        setActiveConnection(entry.connectionId)
+                        addTab({
+                          id: crypto.randomUUID(),
+                          kind: 'sql',
+                          title: t('sql.historyTabTitle'),
+                          sql: entry.sql,
+                          connectionId: entry.connectionId,
+                        })
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-mono text-[11px]">
+                          {sqlPreview(entry.sql, t)}
+                        </span>
+                        <span
+                          className={
+                            entry.status === 'success'
+                              ? 'shrink-0 text-emerald-500'
+                              : 'shrink-0 text-destructive'
+                          }
+                        >
+                          {entry.status === 'success' ? 'OK' : 'ERR'}
+                        </span>
+                      </div>
+                      <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                        {entry.connectionNameSnapshot} · {formatHistoryTime(entry.startedAt)}
+                        {entry.elapsedMs ? ` · ${entry.elapsedMs} ms` : ''}
+                        {entry.rowCount != null ? ` · ${t('sql.rows', { count: entry.rowCount })}` : ''}
+                        {entry.affectedRows != null ? ` · ${t('sql.affectedRows', { count: entry.affectedRows })}` : ''}
+                      </div>
+                    </button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      title={t('sql.historyPreview')}
+                      aria-label={t('sql.historyPreview')}
+                      onClick={() =>
+                        setExpandedHistoryId(expandedHistoryId === entry.id ? null : entry.id)
                       }
                     >
-                      {entry.status === 'success' ? 'OK' : 'ERR'}
-                    </span>
+                      {expandedHistoryId === entry.id ? (
+                        <ChevronDown className="size-3.5" />
+                      ) : (
+                        <ChevronRight className="size-3.5" />
+                      )}
+                    </Button>
                   </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">
-                      {formatHistoryTime(entry.startedAt)}
-                      {entry.elapsedMs ? ` · ${entry.elapsedMs} ms` : ''}
-                      {entry.rowCount != null ? ` · ${t('sql.rows', { count: entry.rowCount })}` : ''}
-                      {entry.affectedRows != null ? ` · ${t('sql.affectedRows', { count: entry.affectedRows })}` : ''}
-                  </div>
-                </button>
+                  {expandedHistoryId === entry.id && (
+                    <div className="grid gap-2 border-t px-2 py-2">
+                      <div>
+                        <div className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
+                          {t('sql.historySqlPreview')}
+                        </div>
+                        <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-muted/35 p-2 font-mono text-[11px] leading-relaxed">
+                          {entry.sql.trim() || t('sql.blankQuery')}
+                        </pre>
+                      </div>
+                      {(entry.errorCode || entry.errorMessage) && (
+                        <div>
+                          <div className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
+                            {t('sql.historyErrorPreview')}
+                          </div>
+                          <div className="max-h-24 overflow-auto whitespace-pre-wrap rounded border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
+                            {entry.errorCode ? `${entry.errorCode}: ` : ''}
+                            {entry.errorMessage}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
               ))}
             </div>
           )}
@@ -1443,6 +1544,21 @@ function NumberSetting({
 function sqlPreview(sql: string, t: ReturnType<typeof useTranslation>['t']) {
   const preview = sql.trim().replace(/\s+/g, ' ')
   return preview.length > 90 ? `${preview.slice(0, 90)}...` : preview || t('sql.blankQuery')
+}
+
+function uniqueHistoryConnections(
+  history: { connectionId: string; connectionNameSnapshot: string }[],
+  connections: ConnectionConfig[],
+) {
+  const names = new Map(connections.map((connection) => [connection.id, connection.name]))
+  for (const entry of history) {
+    if (!names.has(entry.connectionId)) {
+      names.set(entry.connectionId, entry.connectionNameSnapshot)
+    }
+  }
+  return Array.from(names, ([id, name]) => ({ id, name })).sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )
 }
 
 function driverCanCancel(driverType: DriverType) {

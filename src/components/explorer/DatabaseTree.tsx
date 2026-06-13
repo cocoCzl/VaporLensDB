@@ -13,7 +13,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
-import { TreeNode, type DatabaseTreeNodeData } from '@/components/explorer/TreeNode'
+import {
+  TreeNode,
+  type DatabaseTreeNodeData,
+  type TreeNodeQuickAction,
+} from '@/components/explorer/TreeNode'
 import type { ConnectionConfig, ConnectionRuntimeStatus, DriverType } from '@/types/connection'
 import type { DbObjectKind } from '@/types/metadata'
 
@@ -1052,6 +1056,35 @@ export function DatabaseTree() {
     return []
   }
 
+  function quickActions(node: NodeRecord): TreeNodeQuickAction[] {
+    if (!isTableLikeNode(node)) {
+      return []
+    }
+
+    return [
+      {
+        id: 'open-data',
+        label: `打开前 ${dataPreviewDefaultRows} 行`,
+        icon: 'data',
+        onSelect: () => {
+          void openTableData(node.id)
+        },
+      },
+      {
+        id: 'open-structure',
+        label: '打开 Structure Tab',
+        icon: 'structure',
+        onSelect: () => openTableStructure(node.id),
+      },
+      {
+        id: 'view-ddl',
+        label: '查看 DDL',
+        icon: 'ddl',
+        onSelect: () => openTableDdl(node.id),
+      },
+    ]
+  }
+
   return (
     <section className="flex min-h-0 flex-1 flex-col border-t ide-surface">
       <div className="flex items-center gap-2 border-b px-3 py-2">
@@ -1191,6 +1224,7 @@ export function DatabaseTree() {
                     }
                     setContextMenu({ nodeId: targetNode.id, ...position })
                   }}
+                  quickActions={quickActions(nodes[node.id])}
                 />
               ))}
             </div>

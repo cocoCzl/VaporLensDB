@@ -1,7 +1,7 @@
 {
   "name": "vapor-lens-db",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.4.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,6 +24,7 @@
     "test:catalog-schema-linkage": "node scripts/catalog-schema-linkage-smoke.mjs",
     "test:connection-readiness": "node scripts/connection-readiness-smoke.mjs",
     "test:object-tree-visual-polish": "node scripts/object-tree-visual-polish-smoke.mjs",
+    "test:object-tree-action-discoverability": "node scripts/object-tree-action-discoverability-smoke.mjs",
     "test:ddl-refresh-prompt": "node scripts/ddl-refresh-prompt-smoke.mjs",
     "test:object-tree-workflow": "node scripts/object-tree-workflow-smoke.mjs",
     "test:driver-manager": "node scripts/driver-manager-smoke.mjs",
@@ -40,6 +41,7 @@
     "test:diagnostics-export": "node scripts/diagnostics-export-smoke.mjs",
     "test:settings-diagnostics": "node scripts/settings-diagnostics-smoke.mjs",
     "test:connection-dialog-clarity": "node scripts/connection-dialog-clarity-smoke.mjs",
+    "test:query-history-workflow": "node scripts/query-history-workflow-smoke.mjs",
     "test:command-contracts": "node scripts/command-contract-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",

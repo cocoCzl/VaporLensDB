@@ -1,14 +1,41 @@
 # VaporLensDB
 
-VaporLensDB is a Tauri + Rust + React database management tool. The project goal is a modern, lightweight desktop alternative to DBeaver.
+VaporLensDB is a Tauri 2 + Rust + React database IDE. It focuses on a fast Object Tree, SQL editing, read-only inspection workflows, and practical database operations without becoming a heavy all-purpose administration console.
 
-## Current Phase
+Current version: `0.4.1`.
 
-VaporLensDB has completed the v1 usable loop and post-v1 foundation Tasks 1-4. The current next task is the full driver manager, tracked in `docs/TASKS.md`.
+## Current Status
 
-PostgreSQL and MySQL use native Rust drivers. Oracle is experimental JDBC support: users provide `ojdbc` locally, and the current Oracle path only promises connection testing and basic SQL querying. SQLite, SQL Server, ODBC, custom JDBC, SSH tunnels, data editing, import/export, ER diagrams, and the full driver manager remain hidden or disabled until their task acceptance criteria are met.
+The v1 usable loop, Object Tree and IDE workflow, and current post-v1 backlog are complete as tracked in `docs/TASKS.md`.
 
-The default shell intentionally exposes only Data Sources, SQL, and Settings. Query history is stored in `config.db`, result grids are read-only, and dangerous SQL requires confirmation before execution.
+Supported connection paths:
+
+- PostgreSQL: native Rust driver for connection management, SQL execution, metadata browsing, DDL, completion, query cancel, and live integration tests.
+- MySQL: native Rust driver for connection management, SQL execution, metadata browsing, DDL, completion, and live integration tests.
+- Oracle: JDBC support with user-provided `ojdbc` JAR for connection, SQL execution, Object Tree metadata, DDL/source, and completion.
+- SQLite: native file-based connections, SQL execution, metadata browsing, and local integration tests.
+- SQL Server: native `tiberius` path for connection, SQL execution, metadata browsing, DDL, and Explain where supported.
+- Custom JDBC: user-defined JDBC runtime support through the driver manager.
+
+Completed workflows include:
+
+- Data Sources, SQL workspace, Sessions, and Settings shell.
+- Lazy Object Tree with catalog/schema linkage, system-object filtering, search, keyboard navigation, right-click actions, and table/view quick actions.
+- Read-only Data tabs with pagination, filtering, sorting, generated SQL, and CSV export.
+- Structure, DDL, Source, Object Inspector, and ER Diagram workspaces.
+- Background task manager for long-running export/import work with progress and cancellation.
+- CSV table import/export tasks and transactional data editing queue.
+- SSH tunnel support for password and private-key authentication.
+- DBeaver configuration import preview/import.
+- Query history with status/connection filtering, long SQL preview, and error detail preview.
+- Diagnostics package export with SQL redaction by default.
+- Complete English/Chinese locale key coverage for the main UI flows.
+
+Out of current scope:
+
+- ODBC support has been removed from the product scope.
+- Workspace/project isolation is deferred.
+- Full configurable dangerous-SQL policy UI is intentionally not planned; the app keeps the lightweight confirmation model.
 
 ## Development
 
@@ -36,35 +63,85 @@ Build the frontend:
 pnpm build
 ```
 
-Run the v1 UI scope smoke test:
+Run lint:
 
 ```bash
-pnpm test:v1-ui-scope
+pnpm lint
 ```
 
-Build the Rust backend:
+Run Rust tests:
 
 ```bash
-cd src-tauri
-cargo build
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 Validate and package the desktop app:
 
 ```bash
-./build.sh check      # lint, frontend build, Rust tests
-./build.sh mac        # macOS .app and .dmg
+./build.sh check
+./build.sh mac
 ```
 
 macOS artifacts are written to:
 
 ```text
 src-tauri/target/release/bundle/macos/VaporLensDB.app
-src-tauri/target/release/bundle/dmg/VaporLensDB_0.1.1_aarch64.dmg
+src-tauri/target/release/bundle/dmg/VaporLensDB_0.4.1_aarch64.dmg
 ```
+
+## Smoke Tests
+
+The project uses focused Node smoke scripts for frontend and contract regressions. Common commands:
+
+```bash
+pnpm test:v1-ui-scope
+pnpm test:object-tree-workflow
+pnpm test:driver-manager
+pnpm test:result-export
+pnpm test:table-import-export
+pnpm test:data-editing-queue
+pnpm test:er-diagram
+pnpm test:object-inspector-workspace
+pnpm test:session-management
+pnpm test:dbeaver-import
+pnpm test:i18n
+pnpm test:diagnostics-export
+pnpm test:query-history-workflow
+pnpm test:object-tree-action-discoverability
+pnpm test:command-contracts
+```
+
+`docs/TASKS.md` contains the authoritative full verification command list.
+
+## Live Integration Tests
+
+Ignored integration tests require real database endpoints:
+
+```bash
+TEST_PG_JDBC_URL='jdbc:postgresql://host:5432/' \
+TEST_PG_USER='develop' \
+TEST_PG_PASSWORD='develop' \
+cargo test --manifest-path src-tauri/Cargo.toml --test postgres_driver -- --ignored
+
+TEST_MYSQL_JDBC_URL='jdbc:mysql://host:3306/' \
+TEST_MYSQL_USER='root' \
+TEST_MYSQL_PASSWORD='password' \
+cargo test --manifest-path src-tauri/Cargo.toml --test mysql_driver -- --ignored
+
+TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//host:1521/service' \
+TEST_ORACLE_USER='develop' \
+TEST_ORACLE_PASSWORD='develop' \
+TEST_ORACLE_JDBC_DRIVER_PATH='/path/to/ojdbc11.jar' \
+cargo test --manifest-path src-tauri/Cargo.toml --test oracle_jdbc_driver -- --ignored
+```
+
+The latest recorded live verification passed against PostgreSQL, MySQL, and Oracle; see `docs/TASKS.md` for exact status.
 
 ## Important Documents
 
+- `CONTEXT.md`: terminology and project context.
+- `docs/TASKS.md`: current progress, completed work, verification commands, and remaining scope.
+- `docs/PRD-object-tree-and-ide-workflow.md`: Object Tree and IDE workflow product requirements.
 - `docs/VaporLensDB-Design.md`: product and architecture design.
-- `docs/VaporLensDB-Technical-Selection.md`: technical selection rationale for Rust/Tauri, native drivers, JDBC sidecar, and ODBC.
-- `docs/TASKS.md`: current progress, completed work, and remaining task checklist.
+- `docs/VaporLensDB-Technical-Selection.md`: technical selection rationale.
+- `docs/adr/`: architecture decision records.
