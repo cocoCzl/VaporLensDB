@@ -2,11 +2,11 @@
 
 VaporLensDB is a Tauri 2 + Rust + React database IDE. It focuses on a fast Object Tree, SQL editing, read-only inspection workflows, and practical database operations without becoming a heavy all-purpose administration console.
 
-Current version: `0.4.1`.
+Current version: `0.4.2`.
 
 ## Current Status
 
-The v1 usable loop, Object Tree and IDE workflow, and current post-v1 backlog are complete as tracked in `docs/TASKS.md`.
+The v1 usable loop, Object Tree and IDE workflow, and current post-v1 backlog are complete as tracked in `docs/TESTING.md`.
 
 Supported connection paths:
 
@@ -86,7 +86,7 @@ macOS artifacts are written to:
 
 ```text
 src-tauri/target/release/bundle/macos/VaporLensDB.app
-src-tauri/target/release/bundle/dmg/VaporLensDB_0.4.1_aarch64.dmg
+src-tauri/target/release/bundle/dmg/VaporLensDB_0.4.2_aarch64.dmg
 ```
 
 ## Smoke Tests
@@ -111,7 +111,7 @@ pnpm test:object-tree-action-discoverability
 pnpm test:command-contracts
 ```
 
-`docs/TASKS.md` contains the authoritative full verification command list.
+`docs/TESTING.md` contains the authoritative full verification command list.
 
 ## Live Integration Tests
 
@@ -135,12 +135,12 @@ TEST_ORACLE_JDBC_DRIVER_PATH='/path/to/ojdbc11.jar' \
 cargo test --manifest-path src-tauri/Cargo.toml --test oracle_jdbc_driver -- --ignored
 ```
 
-The latest recorded live verification passed against PostgreSQL, MySQL, and Oracle; see `docs/TASKS.md` for exact status.
+The latest recorded live verification passed against PostgreSQL, MySQL, and Oracle; see `docs/TESTING.md` for exact status.
 
 ## Important Documents
 
 - `CONTEXT.md`: terminology and project context.
-- `docs/TASKS.md`: current progress, completed work, verification commands, and remaining scope.
+- `docs/TESTING.md`: current progress, completed work, verification commands, and remaining scope.
 - `docs/PRD-object-tree-and-ide-workflow.md`: Object Tree and IDE workflow product requirements.
 - `docs/VaporLensDB-Design.md`: product and architecture design.
 - `docs/VaporLensDB-Technical-Selection.md`: technical selection rationale.

@@ -21,7 +21,7 @@ function includesAll(source, values, label) {
 }
 
 const packageJson = read('package.json')
-const tasks = read('docs/TASKS.md')
+const tasks = read('docs/TESTING.md')
 const databaseTree = read('src/components/explorer/DatabaseTree.tsx')
 const mainPanel = read('src/components/layout/MainPanel.tsx')
 const connectionForm = read('src/components/connection/ConnectionForm.tsx')
