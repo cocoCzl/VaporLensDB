@@ -1,7 +1,7 @@
 // Requires a real PostgreSQL database.
 // Run with:
-// TEST_PG_URL='host=localhost port=5432 dbname=penguin_farm user=postgres password=postgres123' cargo test --test postgres_driver -- --ignored
-// TEST_PG_JDBC_URL='jdbc:postgresql://localhost:5432/penguin_farm' TEST_PG_USER=postgres TEST_PG_PASSWORD=postgres123 cargo test --test postgres_driver -- --ignored
+// TEST_PG_URL='host=<postgres-host> port=5432 dbname=<postgres-database> user=<postgres-user> password=<postgres-password>' cargo test --test postgres_driver -- --ignored
+// TEST_PG_JDBC_URL='jdbc:postgresql://<postgres-host>:5432/<postgres-database>' TEST_PG_USER=<postgres-user> TEST_PG_PASSWORD=<postgres-password> cargo test --test postgres_driver -- --ignored
 
 use std::{sync::Arc, time::Duration};
 

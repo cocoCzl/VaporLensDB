@@ -1,6 +1,6 @@
 // Requires a real MySQL database.
 // Run with:
-// TEST_MYSQL_JDBC_URL='jdbc:mysql://localhost:3306/mysql' TEST_MYSQL_USER=root TEST_MYSQL_PASSWORD=password cargo test --test mysql_driver -- --ignored
+// TEST_MYSQL_JDBC_URL='jdbc:mysql://<mysql-host>:3306/<mysql-database>' TEST_MYSQL_USER=<mysql-user> TEST_MYSQL_PASSWORD=<mysql-password> cargo test --test mysql_driver -- --ignored
 
 use tokio::sync::mpsc;
 use uuid::Uuid;

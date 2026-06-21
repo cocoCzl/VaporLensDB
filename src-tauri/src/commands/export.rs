@@ -1,4 +1,8 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -138,8 +142,14 @@ pub async fn export_query_result_csv(
             emit_task_update(&app_for_task, &task);
         }
 
-        match write_query_result_csv(&input.result, &path, input.include_header, &manager, &handle)
-            .await
+        match write_query_result_csv(
+            &input.result,
+            &path,
+            input.include_header,
+            &manager,
+            &handle,
+        )
+        .await
         {
             Ok(report) => {
                 if let Ok(task) = manager
@@ -199,7 +209,10 @@ pub async fn export_table_csv(
 
     let app_for_task = app.clone();
     tokio::spawn(async move {
-        if let Ok(task) = manager.start_task(handle.id, "Starting table CSV export").await {
+        if let Ok(task) = manager
+            .start_task(handle.id, "Starting table CSV export")
+            .await
+        {
             emit_task_update(&app_for_task, &task);
         }
 
@@ -284,7 +297,10 @@ pub async fn import_table_csv(
 
     let app_for_task = app.clone();
     tokio::spawn(async move {
-        if let Ok(task) = manager.start_task(handle.id, "Starting table CSV import").await {
+        if let Ok(task) = manager
+            .start_task(handle.id, "Starting table CSV import")
+            .await
+        {
             emit_task_update(&app_for_task, &task);
         }
 
@@ -292,7 +308,10 @@ pub async fn import_table_csv(
             Ok(report) => {
                 let failed = report.invalid_rows.len() + report.failed_writes.len();
                 let message = if failed == 0 {
-                    format!("Imported {} rows into {}", report.inserted_rows, report.table)
+                    format!(
+                        "Imported {} rows into {}",
+                        report.inserted_rows, report.table
+                    )
                 } else {
                     format!(
                         "Imported {} rows into {}; {} rows reported in {}",
@@ -505,8 +524,17 @@ async fn import_csv_rows(
             continue;
         }
 
-        let sql = build_insert_sql(input.driver_type, &table, &import_columns, &row, input.empty_as_null);
-        match driver.execute_query(&sql, Some(&format!("table-import-{}", handle.id))).await {
+        let sql = build_insert_sql(
+            input.driver_type,
+            &table,
+            &import_columns,
+            &row,
+            input.empty_as_null,
+        );
+        match driver
+            .execute_query(&sql, Some(&format!("table-import-{}", handle.id)))
+            .await
+        {
             Ok(_) => inserted_rows += 1,
             Err(error) => failed_writes.push(RowReport {
                 row_number,
@@ -516,7 +544,7 @@ async fn import_csv_rows(
         }
 
         let current = index as u64 + 1;
-        if current == preview.total_rows || current % 100 == 0 {
+        if current == preview.total_rows || current.is_multiple_of(100) {
             manager
                 .update_progress(
                     handle.id,
@@ -525,7 +553,7 @@ async fn import_csv_rows(
                 )
                 .await?;
         }
-        if current % 100 == 0 {
+        if current.is_multiple_of(100) {
             yield_now().await;
         }
     }
@@ -593,7 +621,7 @@ async fn write_query_result_csv(
         wrote_any = true;
 
         let current = index as u64 + 1;
-        if current == result.rows.len() as u64 || current % 500 == 0 {
+        if current == result.rows.len() as u64 || current.is_multiple_of(500) {
             manager
                 .update_progress(
                     handle.id,
@@ -604,7 +632,7 @@ async fn write_query_result_csv(
                 .map_err(ExportTaskError::from)?;
         }
 
-        if current % 500 == 0 {
+        if current.is_multiple_of(500) {
             yield_now().await;
         }
     }
@@ -787,7 +815,10 @@ fn quote_identifier(driver_type: DriverType, value: &str) -> String {
     } else {
         '"'
     };
-    format!("{quote}{}{quote}", value.replace(quote, &format!("{quote}{quote}")))
+    format!(
+        "{quote}{}{quote}",
+        value.replace(quote, &format!("{quote}{quote}"))
+    )
 }
 
 async fn write_csv_line(
@@ -852,7 +883,7 @@ fn csv_cell(value: &str) -> String {
     }
 }
 
-fn display_file_name(path: &PathBuf) -> String {
+fn display_file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("query-result.csv")

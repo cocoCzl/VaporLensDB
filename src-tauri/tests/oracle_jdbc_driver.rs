@@ -1,6 +1,6 @@
 // Requires a real Oracle database and a local ojdbc jar.
 // Run with:
-// TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//localhost:1521/ORCLPDB1' TEST_ORACLE_USER=system TEST_ORACLE_PASSWORD=password TEST_ORACLE_JDBC_DRIVER_PATH=/path/to/ojdbc11.jar cargo test --test oracle_jdbc_driver -- --ignored
+// TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//<oracle-host>:1521/<oracle-service>' TEST_ORACLE_USER=<oracle-user> TEST_ORACLE_PASSWORD=<oracle-password> TEST_ORACLE_JDBC_DRIVER_PATH=/path/to/ojdbc11.jar cargo test --test oracle_jdbc_driver -- --ignored
 
 use chrono::Utc;
 use uuid::Uuid;

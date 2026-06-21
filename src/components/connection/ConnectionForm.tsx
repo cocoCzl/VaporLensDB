@@ -382,7 +382,7 @@ export function ConnectionForm({
                       <Input
                         id="driver-paths"
                         value={form.driverPaths?.join('\n') ?? ''}
-                        placeholder="/Users/me/drivers/ojdbc11.jar"
+                        placeholder="/path/to/ojdbc11.jar"
                         onChange={(event) =>
                           update(
                             'driverPaths',

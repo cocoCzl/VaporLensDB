@@ -564,6 +564,15 @@ fn sqlite_object_ddl(
         })
 }
 
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(char::from_digit((byte >> 4) as u32, 16).unwrap_or('0'));
+        output.push(char::from_digit((byte & 0x0f) as u32, 16).unwrap_or('0'));
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::{encode_hex, sqlite_database_name, sqlite_value_to_json};
@@ -581,13 +590,4 @@ mod tests {
         assert_eq!(value, serde_json::json!("deadbeef"));
         assert_eq!(encode_hex(&[0x0a, 0x1b]), "0a1b");
     }
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(char::from_digit((byte >> 4) as u32, 16).unwrap_or('0'));
-        output.push(char::from_digit((byte & 0x0f) as u32, 16).unwrap_or('0'));
-    }
-    output
 }

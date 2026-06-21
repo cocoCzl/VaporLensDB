@@ -82,11 +82,13 @@ Validate and package the desktop app:
 ./build.sh mac
 ```
 
+`./build.sh check` is the release gate. It builds the JDBC bridge and runs frontend lint, frontend build, Rust clippy with warnings denied, and Rust tests. GitHub Actions runs the same default verification on pushes and pull requests to `main` or `master`.
+
 macOS artifacts are written to:
 
 ```text
 src-tauri/target/release/bundle/macos/VaporLensDB.app
-src-tauri/target/release/bundle/dmg/VaporLensDB_0.4.2_aarch64.dmg
+src-tauri/target/release/bundle/dmg/*.dmg
 ```
 
 ## Smoke Tests
@@ -115,22 +117,22 @@ pnpm test:command-contracts
 
 ## Live Integration Tests
 
-Ignored integration tests require real database endpoints:
+Ignored integration tests require real database endpoints and are not part of default CI. Keep credentials in an untracked `.env` or your shell session; `.env.example` contains placeholder names only.
 
 ```bash
-TEST_PG_JDBC_URL='jdbc:postgresql://host:5432/' \
-TEST_PG_USER='develop' \
-TEST_PG_PASSWORD='develop' \
+TEST_PG_JDBC_URL='jdbc:postgresql://<postgres-host>:5432/<postgres-database>' \
+TEST_PG_USER='<postgres-user>' \
+TEST_PG_PASSWORD='<postgres-password>' \
 cargo test --manifest-path src-tauri/Cargo.toml --test postgres_driver -- --ignored
 
-TEST_MYSQL_JDBC_URL='jdbc:mysql://host:3306/' \
-TEST_MYSQL_USER='root' \
-TEST_MYSQL_PASSWORD='password' \
+TEST_MYSQL_JDBC_URL='jdbc:mysql://<mysql-host>:3306/<mysql-database>' \
+TEST_MYSQL_USER='<mysql-user>' \
+TEST_MYSQL_PASSWORD='<mysql-password>' \
 cargo test --manifest-path src-tauri/Cargo.toml --test mysql_driver -- --ignored
 
-TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//host:1521/service' \
-TEST_ORACLE_USER='develop' \
-TEST_ORACLE_PASSWORD='develop' \
+TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//<oracle-host>:1521/<oracle-service>' \
+TEST_ORACLE_USER='<oracle-user>' \
+TEST_ORACLE_PASSWORD='<oracle-password>' \
 TEST_ORACLE_JDBC_DRIVER_PATH='/path/to/ojdbc11.jar' \
 cargo test --manifest-path src-tauri/Cargo.toml --test oracle_jdbc_driver -- --ignored
 ```
@@ -140,6 +142,9 @@ The latest recorded live verification passed against PostgreSQL, MySQL, and Orac
 ## Important Documents
 
 - `CONTEXT.md`: terminology and project context.
+- `CHANGELOG.md`: public version history from the first public-ready snapshot.
+- `CONTRIBUTING.md`: setup, verification, and contribution expectations.
+- `SECURITY.md`: security reporting and sensitive-data handling.
 - `docs/TESTING.md`: current progress, completed work, verification commands, and remaining scope.
 - `docs/PRD-object-tree-and-ide-workflow.md`: Object Tree and IDE workflow product requirements.
 - `docs/VaporLensDB-Design.md`: product and architecture design.

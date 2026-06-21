@@ -276,7 +276,7 @@ impl JdbcBridgeSidecar {
             return Ok(());
         };
 
-        let request = format!("CLOSE\t0\t-\n");
+        let request = "CLOSE\t0\t-\n".to_string();
         let _ = timeout(
             Duration::from_secs(2),
             process.stdin.write_all(request.as_bytes()),
