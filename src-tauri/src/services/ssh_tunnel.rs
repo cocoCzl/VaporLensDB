@@ -27,7 +27,9 @@ pub struct SshTunnel {
 }
 
 impl SshTunnel {
-    pub async fn open(config: &ConnectionConfig) -> Result<Option<(Self, ConnectionConfig)>, AppError> {
+    pub async fn open(
+        config: &ConnectionConfig,
+    ) -> Result<Option<(Self, ConnectionConfig)>, AppError> {
         let Some(tunnel_config) = config.ssh_tunnel.as_ref().filter(|tunnel| tunnel.enabled) else {
             return Ok(None);
         };
@@ -40,18 +42,26 @@ impl SshTunnel {
             .ok_or_else(|| AppError::SshTunnelError {
                 message: "database host is required for SSH tunnel".to_string(),
             })?;
-        let remote_port = tunnel_config.remote_port.or(config.port).ok_or_else(|| {
-            AppError::SshTunnelError {
-                message: "database port is required for SSH tunnel".to_string(),
-            }
-        })?;
+        let remote_port =
+            tunnel_config
+                .remote_port
+                .or(config.port)
+                .ok_or_else(|| AppError::SshTunnelError {
+                    message: "database port is required for SSH tunnel".to_string(),
+                })?;
         let local_host = tunnel_config
             .local_host
             .clone()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "127.0.0.1".to_string());
         let local_port = allocate_local_port(&local_host)?;
-        let mut args = ssh_args(tunnel_config, &local_host, local_port, remote_host, remote_port);
+        let mut args = ssh_args(
+            tunnel_config,
+            &local_host,
+            local_port,
+            remote_host,
+            remote_port,
+        );
         let mut askpass_path = None;
 
         let secret = match tunnel_config.auth_method {
@@ -166,7 +176,11 @@ fn ssh_args(
     ];
 
     if matches!(config.auth_method, SshAuthMethod::PrivateKey) {
-        if let Some(path) = config.private_key_path.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(path) = config
+            .private_key_path
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             args.push("-i".to_string());
             args.push(path.to_string());
         }

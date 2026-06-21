@@ -5,11 +5,24 @@ node_modules/
 dist/
 dist-ssr/
 
+# Local database files
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+
 # Rust / Cargo
 target/
 src-tauri/target/
 tools/**/build/
 tools/**/target/
+
+# Local/proprietary driver artifacts
+*.jar
+*.class
 
 # Logs
 logs/
@@ -46,3 +59,7 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+
+# Local export / diagnostics output
+*.import-report.json
+vaporlensdb-diagnostics-*.json

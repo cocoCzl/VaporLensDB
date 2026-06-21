@@ -42,6 +42,11 @@ Before opening a pull request or publishing a release, run:
 That command builds the JDBC bridge and runs frontend lint, frontend build,
 Rust clippy with warnings denied, and Rust tests.
 
+GitHub Actions runs the default clone-safe checks on pushes and pull requests
+to `main` and `master`, including the sensitive information scan, frontend
+checks, the Object Tree workflow smoke test, Rust formatting, clippy, and Rust
+tests.
+
 For focused workflow checks, see `docs/TESTING.md`. A commonly useful smoke
 test is:
 
