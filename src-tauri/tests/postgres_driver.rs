@@ -6,6 +6,7 @@
 use std::{sync::Arc, time::Duration};
 
 use tokio::sync::mpsc;
+use uuid::Uuid;
 use vapor_lens_db_lib::drivers::{postgres::PostgresDriver, trait_def::DatabaseDriver};
 
 fn test_pg_url() -> Option<String> {
@@ -148,4 +149,141 @@ async fn stream_respects_max_rows() {
     assert!(summary.truncated);
     assert_eq!(summary.max_rows, Some(3));
     assert_eq!(row_count, 3);
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn reads_postgres_schema_objects_and_ddl() {
+    let url = test_pg_url().expect("TEST_PG_URL or TEST_PG_JDBC_URL must be set");
+    let driver = PostgresDriver::connect(&url)
+        .await
+        .expect("connect postgres");
+    let schema = format!("vaporlensdb_it_{}", Uuid::new_v4().simple());
+    let parent = "parent_items";
+    let child = "child_items";
+    let view = "child_item_view";
+    let function = "child_count";
+
+    driver
+        .execute_query(&format!("CREATE SCHEMA \"{schema}\""), None)
+        .await
+        .expect("create postgres integration schema");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE TABLE "{schema}".parent_items (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(64) NOT NULL
+                )
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres parent table");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE TABLE "{schema}".child_items (
+                    id INTEGER PRIMARY KEY,
+                    parent_id INTEGER NOT NULL REFERENCES "{schema}".parent_items(id),
+                    note VARCHAR(128)
+                )
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres child table");
+    driver
+        .execute_query(
+            &format!(r#"CREATE INDEX idx_child_parent ON "{schema}".child_items(parent_id)"#),
+            None,
+        )
+        .await
+        .expect("create postgres index");
+    driver
+        .execute_query(
+            &format!(
+                r#"CREATE VIEW "{schema}".child_item_view AS SELECT id, parent_id, note FROM "{schema}".child_items"#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres view");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE FUNCTION "{schema}".child_count() RETURNS integer
+                LANGUAGE sql
+                AS $$ SELECT count(*)::integer FROM "{schema}".child_items $$
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres function");
+
+    let schemas = driver
+        .get_schemas(None)
+        .await
+        .expect("get postgres schemas");
+    assert!(schemas.iter().any(|item| item.name == schema));
+
+    let tables = driver
+        .get_tables(&schema)
+        .await
+        .expect("get postgres tables");
+    assert!(tables.iter().any(|item| item.name == child));
+
+    let columns = driver
+        .get_columns(&schema, child)
+        .await
+        .expect("get postgres columns");
+    assert!(columns
+        .iter()
+        .any(|item| item.name == "id" && item.is_primary_key));
+    assert!(columns.iter().any(|item| item.name == "parent_id"));
+
+    let indexes = driver
+        .get_indexes(&schema, child)
+        .await
+        .expect("get postgres indexes");
+    assert!(indexes.iter().any(|item| item.name == "idx_child_parent"));
+
+    let foreign_keys = driver
+        .get_foreign_keys(&schema, child)
+        .await
+        .expect("get postgres foreign keys");
+    assert!(foreign_keys.iter().any(|item| {
+        item.columns == vec!["parent_id"]
+            && item.referenced_schema.as_deref() == Some(schema.as_str())
+            && item.referenced_table == parent
+            && item.referenced_columns == vec!["id"]
+    }));
+
+    let views = driver.get_views(&schema).await.expect("get postgres views");
+    assert!(views.iter().any(|item| item.name == view));
+
+    let functions = driver
+        .get_functions(&schema)
+        .await
+        .expect("get postgres functions");
+    assert!(functions.iter().any(|item| item == function));
+
+    let table_ddl = driver
+        .get_table_ddl(&schema, child)
+        .await
+        .expect("get postgres table ddl");
+    assert!(table_ddl.contains("CREATE TABLE"));
+    assert!(table_ddl.contains(child));
+    assert!(table_ddl.contains("idx_child_parent"));
+
+    driver
+        .execute_query(&format!("DROP SCHEMA \"{schema}\" CASCADE"), None)
+        .await
+        .expect("drop postgres integration schema");
 }

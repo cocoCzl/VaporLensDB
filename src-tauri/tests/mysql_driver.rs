@@ -3,6 +3,7 @@
 // TEST_MYSQL_JDBC_URL='jdbc:mysql://localhost:3306/mysql' TEST_MYSQL_USER=root TEST_MYSQL_PASSWORD=password cargo test --test mysql_driver -- --ignored
 
 use tokio::sync::mpsc;
+use uuid::Uuid;
 use vapor_lens_db_lib::drivers::{mysql::MysqlDriver, trait_def::DatabaseDriver};
 
 #[derive(Debug)]
@@ -98,6 +99,136 @@ async fn streams_mysql_query_in_chunks() {
     assert!(summary.truncated);
     assert_eq!(summary.max_rows, Some(3));
     assert_eq!(row_count, 3);
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_MYSQL_JDBC_URL"]
+async fn reads_mysql_schema_objects_and_ddl() {
+    let admin = connect_mysql().await;
+    let schema = format!("vaporlensdb_it_{}", Uuid::new_v4().simple());
+    let parent = "parent_items";
+    let child = "child_items";
+    let view = "child_item_view";
+    let function = "child_count";
+
+    admin
+        .execute_query(&format!("CREATE DATABASE `{schema}`"), None)
+        .await
+        .expect("create mysql integration schema");
+
+    let driver = connect_mysql_database(&schema).await;
+    driver
+        .execute_query(
+            r#"
+            CREATE TABLE parent_items (
+                id INT NOT NULL PRIMARY KEY,
+                name VARCHAR(64) NOT NULL
+            )
+            "#,
+            None,
+        )
+        .await
+        .expect("create mysql parent table");
+    driver
+        .execute_query(
+            r#"
+            CREATE TABLE child_items (
+                id INT NOT NULL PRIMARY KEY,
+                parent_id INT NOT NULL,
+                note VARCHAR(128),
+                INDEX idx_child_parent (parent_id),
+                CONSTRAINT fk_child_parent FOREIGN KEY (parent_id) REFERENCES parent_items(id)
+            )
+            "#,
+            None,
+        )
+        .await
+        .expect("create mysql child table");
+    driver
+        .execute_query(
+            "CREATE VIEW child_item_view AS SELECT id, parent_id, note FROM child_items",
+            None,
+        )
+        .await
+        .expect("create mysql view");
+    driver
+        .execute_query(
+            "CREATE FUNCTION child_count() RETURNS INT DETERMINISTIC RETURN (SELECT COUNT(*) FROM child_items)",
+            None,
+        )
+        .await
+        .expect("create mysql function");
+
+    let schemas = driver.get_schemas(None).await.expect("get mysql schemas");
+    assert!(schemas.iter().any(|item| item.name == schema));
+
+    let tables = driver.get_tables(&schema).await.expect("get mysql tables");
+    assert!(tables.iter().any(|item| item.name == child));
+
+    let columns = driver
+        .get_columns(&schema, child)
+        .await
+        .expect("get mysql columns");
+    assert!(columns
+        .iter()
+        .any(|item| item.name == "id" && item.is_primary_key));
+    assert!(columns.iter().any(|item| item.name == "parent_id"));
+
+    let indexes = driver
+        .get_indexes(&schema, child)
+        .await
+        .expect("get mysql indexes");
+    assert!(indexes
+        .iter()
+        .any(|item| item.name == "PRIMARY" && item.unique));
+    assert!(indexes.iter().any(|item| item.name == "idx_child_parent"));
+
+    let foreign_keys = driver
+        .get_foreign_keys(&schema, child)
+        .await
+        .expect("get mysql foreign keys");
+    assert!(foreign_keys.iter().any(|item| {
+        item.name == "fk_child_parent"
+            && item.columns == vec!["parent_id"]
+            && item.referenced_table == parent
+            && item.referenced_columns == vec!["id"]
+    }));
+
+    let views = driver.get_views(&schema).await.expect("get mysql views");
+    assert!(views.iter().any(|item| item.name == view));
+
+    let functions = driver
+        .get_functions(&schema)
+        .await
+        .expect("get mysql functions");
+    assert!(functions.iter().any(|item| item == function));
+
+    let table_ddl = driver
+        .get_table_ddl(&schema, child)
+        .await
+        .expect("get mysql table ddl");
+    assert!(table_ddl.contains("CREATE TABLE"));
+    assert!(table_ddl.contains(child));
+    assert!(table_ddl.contains("fk_child_parent"));
+
+    admin
+        .execute_query(&format!("DROP DATABASE `{schema}`"), None)
+        .await
+        .expect("drop mysql integration schema");
+}
+
+async fn connect_mysql_database(database: &str) -> MysqlDriver {
+    let mut config = test_mysql_config().expect("TEST_MYSQL_JDBC_URL must be set");
+    config.database = database.to_string();
+    MysqlDriver::connect_with_params(
+        &config.host,
+        config.port,
+        &config.database,
+        &config.user,
+        &config.password,
+    )
+    .await
+    .expect("connect mysql database")
 }
 
 fn assert_one(value: &serde_json::Value) {

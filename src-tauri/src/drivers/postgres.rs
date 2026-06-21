@@ -317,7 +317,7 @@ impl DatabaseDriver for PostgresDriver {
                 c.data_type,
                 c.is_nullable = 'YES' AS nullable,
                 c.column_default,
-                c.character_maximum_length,
+                c.character_maximum_length::bigint,
                 c.numeric_precision,
                 c.numeric_scale,
                 EXISTS (
@@ -355,7 +355,7 @@ impl DatabaseDriver for PostgresDriver {
                 indexname,
                 indexdef,
                 indisunique,
-                COALESCE(array_agg(a.attname ORDER BY key_order.ordinality)
+                COALESCE(array_agg(a.attname::text ORDER BY key_order.ordinality)
                     FILTER (WHERE a.attname IS NOT NULL), '{}') AS columns
             FROM pg_indexes i
             JOIN pg_class tbl
@@ -408,10 +408,10 @@ impl DatabaseDriver for PostgresDriver {
                 tc.table_schema,
                 tc.table_name,
                 tc.constraint_name,
-                array_agg(kcu.column_name ORDER BY kcu.ordinal_position) AS columns,
+                array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) AS columns,
                 ccu.table_schema AS foreign_table_schema,
                 ccu.table_name AS foreign_table_name,
-                array_agg(ccu.column_name ORDER BY kcu.ordinal_position) AS foreign_columns
+                array_agg(ccu.column_name::text ORDER BY kcu.ordinal_position) AS foreign_columns
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
               ON tc.constraint_name = kcu.constraint_name

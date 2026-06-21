@@ -995,10 +995,10 @@ fn parse_sidecar_response(response: &str, expected_request_id: u64) -> Result<St
 }
 
 fn normalize_jdbc_error_message(message: &str) -> String {
-    let normalized = message.trim();
+    let normalized = compact_jdbc_error_message(message);
     let lower = normalized.to_ascii_lowercase();
     if lower.contains("io error: connection failed") || lower.contains("connection refused") {
-        return normalized.to_string();
+        return normalized;
     }
     if lower.contains("ora-01017")
         || lower.contains("access denied")
@@ -1026,12 +1026,48 @@ fn normalize_jdbc_error_message(message: &str) -> String {
         return format!("JDBC URL is invalid for this driver. {normalized}");
     }
     if lower.contains("unknown host")
+        || lower.contains("ora-17820")
         || lower.contains("network adapter could not establish the connection")
         || lower.contains("the network adapter could not establish the connection")
     {
         return format!("database host is unreachable. {normalized}");
     }
-    normalized.to_string()
+    normalized
+}
+
+fn compact_jdbc_error_message(message: &str) -> String {
+    let mut lines = Vec::new();
+    for line in message
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let lower = line.to_ascii_lowercase();
+        if line.starts_with("at ")
+            || line.starts_with("... ")
+            || line.starts_with("Caused by: oracle.net.ns.NetException")
+            || line.starts_with("Caused by: java.io.IOException")
+            || lower.starts_with("信息:")
+            || lower.starts_with("info:")
+        {
+            continue;
+        }
+
+        let line = line.strip_prefix("Caused by: ").unwrap_or(line);
+        if !lines.iter().any(|existing| existing == line) {
+            lines.push(line.to_string());
+        }
+
+        if lines.len() >= 4 {
+            break;
+        }
+    }
+
+    if lines.is_empty() {
+        message.trim().to_string()
+    } else {
+        lines.join(": ")
+    }
 }
 
 fn broken_sidecar(message: &str) -> AppError {
@@ -1255,6 +1291,26 @@ mod tests {
 
         let no_driver = normalize_jdbc_error_message("No suitable driver found for jdbc:unknown:x");
         assert!(no_driver.contains("JDBC driver class or JAR is not usable"));
+    }
+
+    #[test]
+    fn compacts_jdbc_stack_trace_errors() {
+        let message = normalize_jdbc_error_message(
+            r#"
+            java.sql.SQLRecoverableException: ORA-17820: 网络适配器无法建立连接
+                at oracle.jdbc.driver.T4CConnection.logon(T4CConnection.java:879)
+            Caused by: oracle.net.ns.NetException: ORA-17820: 网络适配器无法建立连接
+                at oracle.net.nt.ConnStrategy.execute(ConnStrategy.java:739)
+            Caused by: java.net.SocketException: Operation not permitted
+                at java.base/sun.nio.ch.Net.connect0(Native Method)
+            "#,
+        );
+
+        assert!(message.contains("database host is unreachable"));
+        assert!(message.contains("ORA-17820"));
+        assert!(message.contains("Operation not permitted"));
+        assert!(!message.contains("T4CConnection.java"));
+        assert!(!message.contains("ConnStrategy.java"));
     }
 
     fn query_result(names: &[&str], rows: Vec<Vec<serde_json::Value>>) -> QueryResult {
