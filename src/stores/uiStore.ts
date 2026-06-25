@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { AppError } from '@/types/error'
 
 type Theme = 'light' | 'dark' | 'system'
-type SidebarView = 'dataSources' | 'sql' | 'sessions' | 'settings'
+type SidebarView = 'explorer' | 'settings'
 type NotificationKind = 'success' | 'error' | 'info' | 'warning'
 
 export interface AppNotification {
@@ -52,7 +52,7 @@ interface UiState {
 export const useUiStore = create<UiState>((set) => ({
   theme: readStoredTheme(),
   ...readStoredSettings(),
-  sidebarView: 'dataSources',
+  sidebarView: 'explorer',
   sidebarWidth: 256,
   bottomPanelHeight: 240,
   notifications: [],

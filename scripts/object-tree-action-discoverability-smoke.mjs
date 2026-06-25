@@ -38,6 +38,15 @@ const databaseTree = read('src/components/explorer/DatabaseTree.tsx')
 includesAll(
   databaseTree,
   [
+    'setShowSystemObjects',
+    'title="刷新对象"',
+    "title={showSystemObjects ? '隐藏系统对象' : '显示系统对象'}",
+    'onClick={() => setShowSystemObjects(!showSystemObjects)}',
+    'placeholder="搜索对象"',
+    'function openObjectSummary(node: NodeRecord | undefined)',
+    "tab.kind === 'objectSummary'",
+    "kind: 'objectSummary'",
+    'objectSummaryContext',
     'type TreeNodeQuickAction',
     'function quickActions(node: NodeRecord): TreeNodeQuickAction[]',
     'isTableLikeNode(node)',
@@ -51,12 +60,42 @@ includesAll(
   ],
   'object tree quick action wiring',
 )
+assert(!databaseTree.includes('title="连接"'), 'Object Tree toolbar should not expose connection switching')
+assert(!databaseTree.includes('placeholder="搜索连接"'), 'Object Tree search should not search connections')
 
 const packageJson = read('package.json')
 includesAll(
   packageJson,
   ['test:object-tree-action-discoverability', 'scripts/object-tree-action-discoverability-smoke.mjs'],
   'object tree action discoverability smoke registration',
+)
+
+const mainPanel = read('src/components/layout/MainPanel.tsx')
+includesAll(
+  mainPanel,
+  [
+    "activeTab.kind === 'objectSummary'",
+    'ObjectSummaryTabPanel',
+    'onOpenDataPreview',
+    "kind: 'data'",
+    "kind: 'structure'",
+    "kind: 'definition'",
+    "kind: 'diagram'",
+    'void inspectTable(',
+    'Preview data',
+    'Structure',
+    'DDL',
+    'Inspector',
+    'ER Diagram',
+  ],
+  'object summary workspace panel',
+)
+
+const editorStore = read('src/stores/editorStore.ts')
+includesAll(
+  editorStore,
+  ["'objectSummary'", 'ObjectSummaryContext', 'objectSummaryContext'],
+  'object summary tab contract',
 )
 
 if (failures.length > 0) {

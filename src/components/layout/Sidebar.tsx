@@ -7,10 +7,12 @@ import {
   Download,
   FileCode2,
   HardDrive,
+  Link,
   Loader2,
   Moon,
   Plus,
   Save,
+  Search,
   Settings,
   Square,
   Sun,
@@ -23,9 +25,10 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useQuery } from '@/hooks/useQuery'
 import {
   dbeaverPreviewToConnectionInput,
@@ -46,9 +49,7 @@ import type { QueryHistoryStatus } from '@/types/queryHistory'
 import type { LucideIcon } from 'lucide-react'
 
 const RAIL_ITEMS = [
-  { view: 'dataSources', icon: Database, labelKey: 'nav.dataSources' },
-  { view: 'sql', icon: FileCode2, labelKey: 'nav.sql' },
-  { view: 'sessions', icon: Activity, labelKey: 'nav.sessions' },
+  { view: 'explorer', icon: Database, labelKey: 'connection.explorerTitle' },
 ] as const
 
 export function Sidebar() {
@@ -84,22 +85,280 @@ export function Sidebar() {
 function SidebarPanel() {
   const sidebarView = useUiStore((state) => state.sidebarView)
 
-  if (sidebarView === 'sql') {
-    return <SqlWorkspacePanel />
-  }
-
-  if (sidebarView === 'sessions') {
-    return <SessionManagementPanel />
-  }
-
   if (sidebarView === 'settings') {
     return <SettingsPanel />
   }
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <ConnectionList />
+      <DataSourceHeader />
       <DatabaseTree />
+    </div>
+  )
+}
+
+function DataSourceHeader() {
+  const { t } = useTranslation()
+  const {
+    connections,
+    statuses,
+    loading,
+    error,
+    activeConnectionId,
+    recentDataSourceIds,
+    loadConnections,
+    connectConnection,
+    setActiveConnection,
+  } = useConnectionStore()
+  const tabs = useEditorStore((state) => state.tabs)
+  const addTab = useEditorStore((state) => state.addTab)
+  const setActiveTab = useEditorStore((state) => state.setActiveTab)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    void loadConnections()
+  }, [loadConnections])
+
+  useEffect(() => {
+    if (open) {
+      window.setTimeout(() => searchInputRef.current?.focus(), 0)
+    }
+  }, [open])
+
+  const activeConnection =
+    connections.find((connection) => connection.id === activeConnectionId) ?? null
+  const activeStatus = activeConnection
+    ? statuses[activeConnection.id]?.status ?? 'disconnected'
+    : 'disconnected'
+  const filteredConnections = filterConnections(connections, query)
+  const recentConnections = recentDataSourceIds
+    .map((id) => connections.find((connection) => connection.id === id))
+    .filter((connection): connection is ConnectionConfig => Boolean(connection))
+  const visibleConnections =
+    query.trim() || recentConnections.length === 0
+      ? filteredConnections
+      : filteredConnections.filter(
+          (connection) =>
+            !recentConnections.some((recentConnection) => recentConnection.id === connection.id),
+        )
+  const groupedVisibleConnections = groupConnectionsByEnvironment(
+    visibleConnections,
+    t('connection.ungrouped'),
+  )
+
+  async function handleConnect(connection: ConnectionConfig) {
+    setActiveConnection(connection.id)
+    setOpen(false)
+    await connectConnection(connection.id)
+  }
+
+  function handleSelect(connection: ConnectionConfig) {
+    setActiveConnection(connection.id)
+    setOpen(false)
+  }
+
+  function openDataSourceManagement() {
+    const existingTab = tabs.find((tab) => tab.kind === 'dataSources')
+    if (existingTab) {
+      setActiveTab(existingTab.id)
+    } else {
+      addTab({
+        id: crypto.randomUUID(),
+        kind: 'dataSources',
+        title: t('connection.dataSources'),
+        sql: '',
+        connectionId: null,
+      })
+    }
+    setOpen(false)
+  }
+
+  return (
+    <div className="shrink-0 border-b bg-card">
+      <div className="px-2.5 py-2">
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                className={[
+                  'group flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors',
+                  isProductionConnection(activeConnection)
+                    ? 'border-red-500/35 bg-red-500/5 hover:bg-red-500/10'
+                    : 'border-border bg-background/65 hover:bg-muted/70',
+                ].join(' ')}
+              />
+            }
+          >
+            <Database className="size-4 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-sm font-semibold">
+                  {activeConnection?.name ?? t('connection.select')}
+                </span>
+                {activeConnection && (
+                  <EnvironmentBadge connection={activeConnection} />
+                )}
+              </div>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className={runtimeStatusDotClass(activeStatus)} />
+                <span className="truncate">
+                  {activeConnection
+                    ? `${activeConnection.driverType} · ${runtimeStatusLabel(activeStatus, t)}`
+                    : t('connection.disconnected')}
+                </span>
+              </div>
+            </div>
+            <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[popup-open]:rotate-180" />
+          </PopoverTrigger>
+          <PopoverContent align="start" sideOffset={6} className="w-[320px] p-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={searchInputRef}
+                className="h-8 pl-8 text-xs"
+                value={query}
+                placeholder={t('connection.searchDataSources')}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+            <div className="max-h-[360px] overflow-auto pt-1">
+              {filteredConnections.length === 0 ? (
+                <div className="grid h-24 place-items-center rounded-md border border-dashed text-center text-xs text-muted-foreground">
+                  {connections.length === 0 ? t('connection.empty') : t('connection.noMatches')}
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  {!query.trim() && recentConnections.length > 0 && (
+                    <ConnectionSwitcherSection title={t('connection.recent')}>
+                      {recentConnections.map((connection) => (
+                        <ConnectionSwitcherRow
+                          key={`recent-${connection.id}`}
+                          connection={connection}
+                          status={statuses[connection.id]?.status ?? 'disconnected'}
+                          selected={connection.id === activeConnectionId}
+                          loading={loading}
+                          onSelect={() => handleSelect(connection)}
+                          onConnect={() => {
+                            void handleConnect(connection)
+                          }}
+                          t={t}
+                        />
+                      ))}
+                    </ConnectionSwitcherSection>
+                  )}
+                  {groupedVisibleConnections.map((group) => (
+                    <ConnectionSwitcherSection key={group.name} title={group.name}>
+                      {group.connections.map((connection) => (
+                        <ConnectionSwitcherRow
+                          key={connection.id}
+                          connection={connection}
+                          status={statuses[connection.id]?.status ?? 'disconnected'}
+                          selected={connection.id === activeConnectionId}
+                          loading={loading}
+                          onSelect={() => handleSelect(connection)}
+                          onConnect={() => {
+                            void handleConnect(connection)
+                          }}
+                          t={t}
+                        />
+                      ))}
+                    </ConnectionSwitcherSection>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="border-t pt-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="w-full justify-start"
+                onClick={openDataSourceManagement}
+              >
+                <Settings className="size-3.5" />
+                {t('connection.manageDataSources')}
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+      {error && (
+        <div className="border-t px-3 py-1.5 text-xs text-destructive" title={error}>
+          <div className="truncate">{error}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ConnectionSwitcherSection({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <section className="grid gap-1">
+      <div className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </div>
+      <div className="grid gap-1">{children}</div>
+    </section>
+  )
+}
+
+function ConnectionSwitcherRow({
+  connection,
+  status,
+  selected,
+  loading,
+  onSelect,
+  onConnect,
+  t,
+}: {
+  connection: ConnectionConfig
+  status: string
+  selected: boolean
+  loading: boolean
+  onSelect: () => void
+  onConnect: () => void
+  t: ReturnType<typeof useTranslation>['t']
+}) {
+  const connected = status === 'connected'
+
+  return (
+    <div
+      className={[
+        'group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors',
+        selected
+          ? 'border-primary/35 bg-primary/10'
+          : 'border-transparent hover:border-border hover:bg-muted/70',
+      ].join(' ')}
+    >
+      <button type="button" className="min-w-0 text-left" onClick={onSelect}>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className={runtimeStatusDotClass(status)} />
+          <span className="truncate font-medium">{connection.name}</span>
+          <EnvironmentBadge connection={connection} />
+        </div>
+        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+          {connection.driverType} · {connection.group?.trim() || t('connection.ungrouped')}
+        </div>
+      </button>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        title={connected ? t('connection.connected') : t('connection.connect')}
+        disabled={loading || connected}
+        onClick={onConnect}
+      >
+        {loading ? <Loader2 className="animate-spin" /> : <Link />}
+      </Button>
     </div>
   )
 }
@@ -1430,6 +1689,124 @@ function filePath(file: File) {
 
 function fileName(path: string) {
   return path.split(/[\\/]/).pop() || path
+}
+
+function filterConnections(connections: ConnectionConfig[], query: string) {
+  const normalizedQuery = query.trim().toLowerCase()
+  const sorted = connections
+    .slice()
+    .sort((left, right) => left.name.localeCompare(right.name))
+
+  if (!normalizedQuery) {
+    return sorted
+  }
+
+  return sorted.filter((connection) =>
+    [
+      connection.name,
+      connection.driverType,
+      connection.group,
+      connection.colorTag,
+      connection.host,
+      connection.database,
+      connection.username,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(normalizedQuery),
+  )
+}
+
+function groupConnectionsByEnvironment(connections: ConnectionConfig[], ungroupedLabel: string) {
+  const groups = new Map<string, ConnectionConfig[]>()
+  for (const connection of connections) {
+    const group = environmentLabel(connection) ?? ungroupedLabel
+    groups.set(group, [...(groups.get(group) ?? []), connection])
+  }
+
+  return Array.from(groups.entries())
+    .sort(([left], [right]) =>
+      environmentSortKey(left, ungroupedLabel).localeCompare(
+        environmentSortKey(right, ungroupedLabel),
+      ),
+    )
+    .map(([name, groupConnections]) => ({
+      name,
+      connections: groupConnections
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    }))
+}
+
+function environmentSortKey(label: string, ungroupedLabel: string) {
+  const normalized = label.toLowerCase()
+  if (/\b(local|dev|development|本地)\b/.test(normalized)) return '0'
+  if (/\b(test|qa|测试)\b/.test(normalized)) return '1'
+  if (/\b(stage|staging|预发)\b/.test(normalized)) return '2'
+  if (/\b(prod|production|生产)\b/.test(normalized)) return '3'
+  return label === ungroupedLabel ? 'z' : `4-${normalized}`
+}
+
+function EnvironmentBadge({ connection }: { connection: ConnectionConfig }) {
+  const label = environmentLabel(connection)
+  if (!label) {
+    return null
+  }
+
+  return (
+    <span
+      className={[
+        'shrink-0 rounded border px-1 py-0 text-[10px] font-medium leading-4',
+        environmentBadgeClass(connection),
+      ].join(' ')}
+    >
+      {label}
+    </span>
+  )
+}
+
+function environmentLabel(connection: ConnectionConfig) {
+  return connection.colorTag?.trim() || connection.group?.trim() || null
+}
+
+function environmentBadgeClass(connection: ConnectionConfig) {
+  if (isProductionConnection(connection)) {
+    return 'border-red-500/45 bg-red-500/10 text-red-400'
+  }
+  if (connection.colorTag === 'stage') {
+    return 'border-amber-500/45 bg-amber-500/10 text-amber-500'
+  }
+  if (connection.colorTag === 'test') {
+    return 'border-sky-500/45 bg-sky-500/10 text-sky-500'
+  }
+  if (connection.colorTag === 'dev') {
+    return 'border-emerald-500/45 bg-emerald-500/10 text-emerald-500'
+  }
+  return 'border-border bg-muted/40 text-muted-foreground'
+}
+
+function isProductionConnection(connection: ConnectionConfig | null) {
+  if (!connection) {
+    return false
+  }
+  return [connection.colorTag, connection.group, connection.name]
+    .filter(Boolean)
+    .some((value) => /\b(prod|production|生产)\b/i.test(String(value)))
+}
+
+function runtimeStatusDotClass(status: string) {
+  if (status === 'connected') return 'size-1.5 shrink-0 rounded-full bg-emerald-500'
+  if (status === 'connecting') return 'size-1.5 shrink-0 rounded-full bg-amber-500'
+  if (status === 'failed') return 'size-1.5 shrink-0 rounded-full bg-destructive'
+  return 'size-1.5 shrink-0 rounded-full bg-muted-foreground/45'
+}
+
+function runtimeStatusLabel(status: string, t: ReturnType<typeof useTranslation>['t']) {
+  if (status === 'connected') return t('connection.connected')
+  if (status === 'connecting') return t('connection.connecting')
+  if (status === 'failed') return t('connection.failed')
+  return t('connection.disconnected')
 }
 
 function PanelHeader({

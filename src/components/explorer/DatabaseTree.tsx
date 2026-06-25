@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { ListFilter, RefreshCw, Search, Server } from 'lucide-react'
+import { Eye, EyeOff, ListFilter, RefreshCw, Search, Server } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
 import { useQuery } from '@/hooks/useQuery'
 import { buildDataTabSql, qualifiedName, quoteIdentifier } from '@/lib/dataTabSql'
@@ -141,10 +141,13 @@ const OBJECT_CATEGORY_ORDER: ObjectCategoryDefinition[] = [
 
 export function DatabaseTree() {
   const { activeConnectionId, connections, statuses, setActiveConnection } = useConnectionStore()
+  const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
+  const setActiveTab = useEditorStore((state) => state.setActiveTab)
   const notifyError = useUiStore((state) => state.notifyError)
   const notify = useUiStore((state) => state.notify)
   const showSystemObjects = useUiStore((state) => state.showSystemObjects)
+  const setShowSystemObjects = useUiStore((state) => state.setShowSystemObjects)
   const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
   const metadata = useMetadataStore()
   const inspectTable = useObjectInspectorStore((state) => state.inspectTable)
@@ -844,6 +847,7 @@ export function DatabaseTree() {
   function selectNode(nodeId: string) {
     setSelectedNodeId(nodeId)
     const node = nodes[nodeId]
+    openObjectSummary(node)
     if (!activeConnectionId || node?.kind !== 'schema' || !node.meta?.schema) {
       return
     }
@@ -852,6 +856,44 @@ export function DatabaseTree() {
       database: node.meta.database ?? null,
       schema: node.meta.schema,
       schemaListAvailable: true,
+    })
+  }
+
+  function openObjectSummary(node: NodeRecord | undefined) {
+    if (!activeConnectionId || !activeConnection || !isTableLikeNode(node)) {
+      return
+    }
+    const schema = node.meta?.schema
+    const object = node.meta?.table
+    if (!schema || !object) {
+      return
+    }
+
+    const existingTab = tabs.find(
+      (tab) =>
+        tab.kind === 'objectSummary' &&
+        tab.connectionId === activeConnectionId &&
+        tab.objectSummaryContext?.schema === schema &&
+        tab.objectSummaryContext.object === object,
+    )
+    if (existingTab) {
+      setActiveTab(existingTab.id)
+      return
+    }
+
+    addTab({
+      id: crypto.randomUUID(),
+      kind: 'objectSummary',
+      title: `${object} summary`,
+      sql: '',
+      connectionId: activeConnectionId,
+      objectSummaryContext: {
+        database: node.meta.database,
+        schema,
+        object,
+        objectKind: node.kind,
+        driverType: activeConnection.driverType,
+      },
     })
   }
 
@@ -1106,6 +1148,15 @@ export function DatabaseTree() {
           onClick={() => refreshNode(ROOT_ID)}
         >
           <RefreshCw />
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant={showSystemObjects ? 'secondary' : 'ghost'}
+          title={showSystemObjects ? '隐藏系统对象' : '显示系统对象'}
+          onClick={() => setShowSystemObjects(!showSystemObjects)}
+        >
+          {showSystemObjects ? <EyeOff /> : <Eye />}
         </Button>
         <Button
           type="button"

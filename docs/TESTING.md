@@ -44,7 +44,7 @@ pnpm test:object-tree-workflow
 pnpm test:driver-manager
 pnpm test:result-export
 pnpm test:table-import-export
-pnpm test:data-editing-queue
+pnpm test:data-grid-read-only
 pnpm test:er-diagram
 pnpm test:object-inspector-workspace
 pnpm test:session-management
@@ -53,6 +53,9 @@ pnpm test:i18n
 pnpm test:diagnostics-export
 pnpm test:query-history-workflow
 pnpm test:object-tree-action-discoverability
+pnpm test:p0-opening-workflow
+pnpm test:p1-read-only-result-workflow
+pnpm test:p2-object-understanding-workflow
 pnpm test:command-contracts
 ```
 

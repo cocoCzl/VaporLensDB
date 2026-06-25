@@ -6,7 +6,7 @@ import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig } from '@/types/connection'
 
-export function ConnectionList() {
+export function ConnectionList({ mode = 'sidebar' }: { mode?: 'sidebar' | 'manager' }) {
   const { t } = useTranslation()
   const {
     connections,
@@ -40,7 +40,12 @@ export function ConnectionList() {
   }
 
   return (
-    <div className="flex max-h-[43%] min-h-44 flex-col ide-surface">
+    <div
+      className={[
+        'flex flex-col ide-surface',
+        mode === 'manager' ? 'h-full min-h-0 rounded-none border-0' : 'max-h-[43%] min-h-44',
+      ].join(' ')}
+    >
       <div className="flex h-12 items-center justify-between border-b px-3">
         <div className="min-w-0">
           <div className="text-[15px] font-semibold tracking-normal">{t('connection.explorerTitle')}</div>

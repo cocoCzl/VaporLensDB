@@ -27,14 +27,18 @@ function excludesAll(source, values, label) {
 }
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ["view: 'dataSources'", "view: 'sql'", "sidebarView === 'settings'"], 'left rail')
-excludesAll(sidebar, ["view: 'structure'", 'StructurePanel', 'ObjectDetails'], 'left rail')
+includesAll(sidebar, ["view: 'explorer'", "sidebarView === 'settings'", '<DatabaseTree />'], 'left rail')
+excludesAll(
+  sidebar,
+  ["view: 'dataSources'", "view: 'sql'", "view: 'sessions'", "sidebarView === 'sql'", "sidebarView === 'sessions'", "view: 'structure'", 'StructurePanel', 'ObjectDetails'],
+  'left rail',
+)
 includesAll(sidebar, ["t('sql.history')", 'handleClearHistory', 'clearHistory'], 'settings history clear')
 
 const uiStore = read('src/stores/uiStore.ts')
 assert(
-  uiStore.includes("type SidebarView = 'dataSources' | 'sql' | 'sessions' | 'settings'"),
-  'SidebarView should expose current task-approved views',
+  uiStore.includes("type SidebarView = 'explorer' | 'settings'"),
+  'SidebarView should expose only Explorer and Settings',
 )
 
 const connectionForm = read('src/components/connection/ConnectionForm.tsx')

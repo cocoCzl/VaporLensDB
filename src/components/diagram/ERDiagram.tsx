@@ -32,9 +32,54 @@ interface DiagramTable {
   error?: string | null
 }
 
+interface DiagramMetadataLoader {
+  loadColumns: (connectionId: string, schema: string, table: string, force?: boolean) => Promise<ColumnInfo[]>
+  loadForeignKeys: (connectionId: string, schema: string, table: string, force?: boolean) => Promise<ForeignKeyInfo[]>
+}
+
 const nodeTypes = { table: TableNode }
 const edgeTypes = { relation: RelationEdge }
 const MAX_SCHEMA_TABLES = 40
+
+async function loadDiagramTables(
+  connectionId: string,
+  schema: string,
+  tableNames: string[],
+  force: boolean,
+  metadata: DiagramMetadataLoader,
+) {
+  return Promise.all(
+    tableNames.map(async (table) => {
+      try {
+        const [columns, foreignKeys] = await Promise.all([
+          metadata.loadColumns(connectionId, schema, table, force),
+          metadata.loadForeignKeys(connectionId, schema, table, force),
+        ])
+        return { name: table, columns, foreignKeys }
+      } catch (loadError) {
+        const appError = normalizeAppError(loadError)
+        return { name: table, columns: [], foreignKeys: [], error: appError.message }
+      }
+    }),
+  )
+}
+
+function directRelatedTableNames(seedTables: DiagramTable[], schema: string, seedNames: string[]) {
+  const existing = new Set(seedNames)
+  const related = new Set<string>()
+  for (const table of seedTables) {
+    for (const foreignKey of table.foreignKeys) {
+      if (
+        foreignKey.referencedTable &&
+        !existing.has(foreignKey.referencedTable) &&
+        (!foreignKey.referencedSchema || foreignKey.referencedSchema === schema)
+      ) {
+        related.add(foreignKey.referencedTable)
+      }
+    }
+  }
+  return Array.from(related)
+}
 
 export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramProps) {
   const metadata = useMetadataStore()
@@ -54,32 +99,27 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
     setLoading(true)
     setError(null)
     try {
-      const tableNames =
+      const seedTableNames =
         tables && tables.length > 0
           ? tables
           : (await metadata.loadTables(connectionId, schema, force)).map((table) => table.name)
-      const limitedNames = tableNames.slice(0, MAX_SCHEMA_TABLES)
-      setTruncated(tableNames.length > limitedNames.length)
+      const seedNames = seedTableNames.slice(0, MAX_SCHEMA_TABLES)
+      setTruncated(seedTableNames.length > seedNames.length)
+      const loadedSeeds = await loadDiagramTables(connectionId, schema, seedNames, force, metadata)
+      const relatedNames =
+        tables && tables.length > 0
+          ? directRelatedTableNames(loadedSeeds, schema, seedNames).slice(0, MAX_SCHEMA_TABLES - seedNames.length)
+          : []
+      const limitedNames = [...seedNames, ...relatedNames]
       if (limitedNames.length === 0) {
         setDiagramTables([])
         return
       }
 
-      const loaded = await Promise.all(
-        limitedNames.map(async (table) => {
-          try {
-            const [columns, foreignKeys] = await Promise.all([
-              metadata.loadColumns(connectionId, schema, table, force),
-              metadata.loadForeignKeys(connectionId, schema, table, force),
-            ])
-            return { name: table, columns, foreignKeys }
-          } catch (loadError) {
-            const appError = normalizeAppError(loadError)
-            return { name: table, columns: [], foreignKeys: [], error: appError.message }
-          }
-        }),
-      )
-      setDiagramTables(loaded)
+      const related = relatedNames.length > 0
+        ? await loadDiagramTables(connectionId, schema, relatedNames, force, metadata)
+        : []
+      setDiagramTables([...loadedSeeds, ...related])
     } catch (loadError) {
       const appError = normalizeAppError(loadError)
       setError(appError.message)

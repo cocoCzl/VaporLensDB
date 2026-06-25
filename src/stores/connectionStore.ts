@@ -14,10 +14,14 @@ import { useMetadataStore } from '@/stores/metadataStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { ConnectionConfig, ConnectionInput, ConnectionStatus } from '@/types/connection'
 
+const RECENT_DATA_SOURCES_STORAGE_KEY = 'vaporlensdb.recentDataSources'
+const MAX_RECENT_DATA_SOURCES = 6
+
 interface ConnectionState {
   connections: ConnectionConfig[]
   statuses: Record<string, ConnectionStatus>
   activeConnectionId: string | null
+  recentDataSourceIds: string[]
   loading: boolean
   error: string | null
   loadConnections: () => Promise<void>
@@ -56,6 +60,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connections: [],
   statuses: {},
   activeConnectionId: null,
+  recentDataSourceIds: readStoredRecentDataSourceIds(),
   loading: false,
   error: null,
   loadConnections: async () => {
@@ -93,6 +98,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           Object.entries(state.statuses).filter(([connectionId]) => connectionId !== id),
         ),
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
+        recentDataSourceIds: forgetRecentDataSource(state.recentDataSourceIds, id),
         loading: false,
       }))
       useMetadataStore.getState().clearConnection(id)
@@ -128,6 +134,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       set((state) => ({
         statuses: { ...state.statuses, [id]: status },
         activeConnectionId: id,
+        recentDataSourceIds: rememberRecentDataSource(state.recentDataSourceIds, id),
         loading: false,
       }))
     } catch (error) {
@@ -167,5 +174,45 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   setConnections: (connections) => set({ connections }),
-  setActiveConnection: (id) => set({ activeConnectionId: id }),
+  setActiveConnection: (id) =>
+    set((state) => ({
+      activeConnectionId: id,
+      recentDataSourceIds: id
+        ? rememberRecentDataSource(state.recentDataSourceIds, id)
+        : state.recentDataSourceIds,
+    })),
 }))
+
+function readStoredRecentDataSourceIds() {
+  if (typeof window === 'undefined') {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(RECENT_DATA_SOURCES_STORAGE_KEY) ?? '[]')
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function rememberRecentDataSource(currentIds: string[], id: string) {
+  const next = [id, ...currentIds.filter((currentId) => currentId !== id)].slice(
+    0,
+    MAX_RECENT_DATA_SOURCES,
+  )
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(RECENT_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
+  }
+  return next
+}
+
+function forgetRecentDataSource(currentIds: string[], id: string) {
+  const next = currentIds.filter((currentId) => currentId !== id)
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(RECENT_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
+  }
+  return next
+}

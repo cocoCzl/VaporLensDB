@@ -6,7 +6,7 @@ Current version: `0.4.2`.
 
 ## Current Status
 
-The v1 usable loop, Object Tree and IDE workflow, and current post-v1 backlog are complete as tracked in `docs/TESTING.md`.
+The v1 usable loop, Object Tree and IDE workflow, and product optimization pass are complete. `docs/TESTING.md` tracks the current verification commands.
 
 Supported connection paths:
 
@@ -24,7 +24,7 @@ Completed workflows include:
 - Read-only Data tabs with pagination, filtering, sorting, generated SQL, and CSV export.
 - Structure, DDL, Source, Object Inspector, and ER Diagram workspaces.
 - Background task manager for long-running export/import work with progress and cancellation.
-- CSV table import/export tasks and transactional data editing queue.
+- Read-only table data browsing with CSV table import/export tasks.
 - SSH tunnel support for password and private-key authentication.
 - DBeaver configuration import preview/import.
 - Query history with status/connection filtering, long SQL preview, and error detail preview.
@@ -101,7 +101,7 @@ pnpm test:object-tree-workflow
 pnpm test:driver-manager
 pnpm test:result-export
 pnpm test:table-import-export
-pnpm test:data-editing-queue
+pnpm test:data-grid-read-only
 pnpm test:er-diagram
 pnpm test:object-inspector-workspace
 pnpm test:session-management
@@ -110,6 +110,9 @@ pnpm test:i18n
 pnpm test:diagnostics-export
 pnpm test:query-history-workflow
 pnpm test:object-tree-action-discoverability
+pnpm test:p0-opening-workflow
+pnpm test:p1-read-only-result-workflow
+pnpm test:p2-object-understanding-workflow
 pnpm test:command-contracts
 ```
 
@@ -145,7 +148,7 @@ The latest recorded live verification passed against PostgreSQL, MySQL, and Orac
 - `CHANGELOG.md`: public version history from the first public-ready snapshot.
 - `CONTRIBUTING.md`: setup, verification, and contribution expectations.
 - `SECURITY.md`: security reporting and sensitive-data handling.
-- `docs/TESTING.md`: current progress, completed work, verification commands, and remaining scope.
+- `docs/TESTING.md`: release gates, smoke tests, live integration tests, and sensitive-data checks.
 - `docs/PRD-object-tree-and-ide-workflow.md`: Object Tree and IDE workflow product requirements.
 - `docs/VaporLensDB-Design.md`: product and architecture design.
 - `docs/VaporLensDB-Technical-Selection.md`: technical selection rationale.

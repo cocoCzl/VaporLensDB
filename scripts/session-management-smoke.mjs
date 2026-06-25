@@ -21,15 +21,14 @@ function includesAll(source, values, label) {
 const uiStore = read('src/stores/uiStore.ts')
 includesAll(
   uiStore,
-  ["'sessions'", "type SidebarView = 'dataSources' | 'sql' | 'sessions' | 'settings'"],
-  'session sidebar view state',
+  ["type SidebarView = 'explorer' | 'settings'"],
+  'reduced sidebar view state',
 )
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
 includesAll(
   sidebar,
   [
-    "{ view: 'sessions', icon: Activity, labelKey: 'nav.sessions' }",
     'SessionManagementPanel',
     'runtimeSessions',
     'runningQueryCount',
@@ -43,17 +42,21 @@ includesAll(
   ],
   'session management panel',
 )
+assert(
+  !sidebar.includes("{ view: 'sessions'") && !sidebar.includes("sidebarView === 'sessions'"),
+  'sessions should not be exposed as a persistent left rail entry',
+)
 
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
 includesAll(
   zh,
-  ['"sessions": "会话"', '"runningQueriesUnavailable": "当前驱动暂不报告可取消的 running queries。"', '"cancelUnsupported": "当前驱动不支持取消"', '"emptyTitle": "没有活动会话"'],
+  ['"runningQueriesUnavailable": "当前驱动暂不报告可取消的 running queries。"', '"cancelUnsupported": "当前驱动不支持取消"', '"emptyTitle": "没有活动会话"'],
   'Chinese session management locale',
 )
 includesAll(
   en,
-  ['"sessions": "Sessions"', '"runningQueriesUnavailable": "The current driver does not report cancellable running queries."', '"cancelUnsupported": "The current driver does not support cancel"', '"emptyTitle": "No active sessions"'],
+  ['"runningQueriesUnavailable": "The current driver does not report cancellable running queries."', '"cancelUnsupported": "The current driver does not support cancel"', '"emptyTitle": "No active sessions"'],
   'English session management locale',
 )
 

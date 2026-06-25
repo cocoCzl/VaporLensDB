@@ -4,7 +4,7 @@ import type { DbObjectKind } from '@/types/metadata'
 
 export interface EditorTab {
   id: string
-  kind?: 'sql' | 'data' | 'structure' | 'definition' | 'diagram'
+  kind?: 'sql' | 'data' | 'structure' | 'definition' | 'diagram' | 'dataSources' | 'objectSummary'
   title: string
   sql: string
   connectionId: string | null
@@ -12,6 +12,7 @@ export interface EditorTab {
   structureContext?: StructureTabContext | null
   definitionContext?: DefinitionTabContext | null
   diagramContext?: DiagramTabContext | null
+  objectSummaryContext?: ObjectSummaryContext | null
   tableContext?: TableEditContext | null
   lastQueryId?: string | null
   runningQueryId?: string | null
@@ -55,6 +56,14 @@ export interface DiagramTabContext {
   tables?: string[] | null
 }
 
+export interface ObjectSummaryContext {
+  database?: string | null
+  schema: string
+  object: string
+  objectKind: 'table' | 'view' | 'materializedView'
+  driverType: TableEditContext['driverType']
+}
+
 export interface TableEditContext {
   schema: string
   table: string
@@ -68,6 +77,7 @@ interface EditorState {
   setActiveTab: (id: string) => void
   addTab: (tab: EditorTab) => void
   ensureTab: (connectionId: string | null) => string
+  renameTab: (id: string, title: string) => void
   updateTabSql: (id: string, sql: string) => void
   updateDataTabLimit: (id: string, limit: number, sql: string) => void
   updateDataTabContext: (id: string, dataContext: DataTabContext, sql: string) => void
@@ -103,6 +113,10 @@ export const useEditorStore = create<EditorState>((set) => ({
     })
     return id
   },
+  renameTab: (id, title) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, title: title.trim() || t.title } : t)),
+    })),
   updateTabSql: (id, sql) =>
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql } : t)) })),
   updateDataTabLimit: (id, limit, sql) =>
