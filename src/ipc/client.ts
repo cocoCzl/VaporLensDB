@@ -1,4 +1,5 @@
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
+import i18n from '@/i18n'
 import type { AppError } from '@/types/error'
 import type { CommandName } from '@/ipc/contracts'
 
@@ -6,7 +7,7 @@ export async function invokeCommand<T>(command: CommandName, args?: InvokeArgs):
   if (!isTauriRuntime()) {
     throw {
       code: 'TAURI_RUNTIME_UNAVAILABLE',
-      message: '当前页面不在 Tauri 桌面运行时中，请使用 pnpm tauri dev 启动应用',
+      message: i18n.t('runtime.tauriUnavailable'),
     } satisfies AppError
   }
 

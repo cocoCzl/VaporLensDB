@@ -21,7 +21,7 @@ function includesAll(source, values, label) {
 const uiStore = read('src/stores/uiStore.ts')
 includesAll(
   uiStore,
-  ["type SidebarView = 'explorer' | 'settings'"],
+  ["type SidebarView = 'explorer' | 'dataSources'"],
   'reduced sidebar view state',
 )
 

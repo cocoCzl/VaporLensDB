@@ -55,7 +55,7 @@ includesAll(
   [
     'selectCurrentDatabase(',
     'selectDefaultSchema(',
-    'objectCategoryFolders(driverType)',
+    'objectCategoryFolders(driverType, t)',
     "label: 'Tables'",
     "label: 'Views'",
     "label: 'Procedures'",
@@ -67,7 +67,7 @@ includesAll(
     "kind: 'definition'",
     'sourceLikeObjectKind',
     'supportsObjectBrowsing',
-    '对象浏览暂未支持',
+    "t('explorer.unsupportedTitle')",
   ],
   'object tree workflow coverage',
 )
@@ -85,8 +85,8 @@ includesAll(
     'loadViews(connectionId, selectedSchema)',
     'loadFunctions(connectionId, selectedSchema)',
     'read-only',
-    '刷新结构',
-    '刷新 ${context.definitionKind}',
+    "t('workbench.refreshStructure')",
+    "t('workbench.refreshDefinition'",
   ],
   'main panel workflow coverage',
 )
@@ -95,10 +95,10 @@ includesAll(
   connectionForm,
   [
     'requireExternalDriver: true',
-    'Oracle 需要用户提供本地 ojdbc.jar',
-    '未就绪：缺少本地 ojdbc/JDBC JAR',
-    '保存并连接',
-    '测试连接',
+    "t('connectionForm.description.oracle')",
+    "t('connectionForm.validation.missingJarReadiness')",
+    "t('connectionForm.saveAndConnect')",
+    "t('connectionForm.testConnection')",
   ],
   'oracle external driver readiness coverage',
 )
@@ -134,7 +134,11 @@ includesAll(
 includesAll(
   editorStore,
   [
-    "'sql' | 'data' | 'structure' | 'definition'",
+    "kind?:",
+    "| 'sql'",
+    "| 'data'",
+    "| 'structure'",
+    "| 'definition'",
     'DataTabContext',
     'StructureTabContext',
     'DefinitionTabContext',

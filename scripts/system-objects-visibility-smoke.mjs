@@ -58,6 +58,8 @@ includesAll(
     'filterDatabases',
     'filterSchemas',
     'showSystemObjects',
+    'setShowSystemObjects',
+    "title={showSystemObjects ? t('explorer.hideSystemObjects') : t('explorer.showSystemObjects')}",
     'isSystemDatabase',
     'isSystemSchema',
     "'system'",
@@ -77,7 +79,7 @@ includesAll(
 )
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ["t('settings.showSystemObjects')", 'setShowSystemObjects', 'type="checkbox"'], 'settings toggle')
+assert(!sidebar.includes("t('settings.showSystemObjects')"), 'settings panel should not duplicate system object toggle')
 
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')

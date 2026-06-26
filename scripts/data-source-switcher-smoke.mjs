@@ -32,9 +32,11 @@ includesAll(
     'function DataSourceHeader()',
     '<DataSourceHeader />',
     '<DatabaseTree />',
+    "sidebarView === 'dataSources'",
+    '<DataSourcesSelectorPanel />',
+    'function DataSourcesSelectorPanel()',
     'void loadConnections()',
-    'Popover open={open} onOpenChange={setOpen}',
-    'searchInputRef.current?.focus()',
+    "searchInputRef.current?.focus()",
     'filterConnections(connections, query)',
     'recentDataSourceIds',
     '<ConnectionSwitcherSection title={t(\'connection.recent\')}>',
@@ -43,9 +45,19 @@ includesAll(
     'groupConnectionsByEnvironment(',
     'environmentSortKey(',
     "t('connection.ungrouped')",
-    '{connection.driverType} · {connection.group?.trim() || t(\'connection.ungrouped\')}',
+    'connectionTargetSummary(connection)',
     'setActiveConnection(connection.id)',
     'connectConnection(connection.id)',
+    'disconnectConnection(connection.id)',
+    'function toggleActiveConnection(',
+    'event.stopPropagation()',
+    '<ConnectionDialog',
+    'connection={activeConnection}',
+    'connection={connection}',
+    "t('connection.disconnect')",
+    "t('connection.edit')",
+    "setSidebarView('explorer')",
+    "setSidebarView('dataSources')",
     'function openDataSourceManagement()',
     "tabs.find((tab) => tab.kind === 'dataSources')",
     "kind: 'dataSources'",
@@ -63,9 +75,10 @@ excludesAll(
   [
     "import { ConnectionList }",
     '<ConnectionList />',
-    "view: 'dataSources'",
     "view: 'sql'",
     "view: 'sessions'",
+    "title={t('connection.edit')}\n                      onClick={(event) => event.stopPropagation()}",
+    "title={t('connection.edit')}\n            onClick={(event) => event.stopPropagation()}",
   ],
   'Explorer default surface',
 )
@@ -74,7 +87,7 @@ const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
 includesAll(
   zh,
-  ['"connected": "已连接"', '"connecting": "连接中"', '"failed": "连接失败"', '"searchDataSources": "搜索 Data Sources"', '"noMatches": "没有匹配的数据源"', '"recent": "最近"', '"allDataSources": "全部数据源"', '"manageDataSources": "管理 Data Sources"'],
+  ['"connected": "已连接"', '"connecting": "连接中"', '"failed": "连接失败"', '"searchDataSources": "搜索数据源"', '"noMatches": "没有匹配的数据源"', '"recent": "最近"', '"allDataSources": "全部数据源"', '"manageDataSources": "管理数据源"'],
   'Chinese Data Source switcher locale',
 )
 includesAll(
@@ -108,6 +121,13 @@ includesAll(
     '<ConnectionList mode="manager" />',
   ],
   'Data Sources management workspace tab',
+)
+
+const app = read('src/App.tsx')
+includesAll(
+  app,
+  ['onContextMenu={(event) => {', 'event.preventDefault()'],
+  'native WebView context menu suppression',
 )
 
 const connectionList = read('src/components/connection/ConnectionList.tsx')

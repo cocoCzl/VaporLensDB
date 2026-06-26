@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import type { ConnectionInput, DriverType } from '@/types/connection'
 
 export interface DbeaverImportPreview {
@@ -69,7 +70,7 @@ const DRIVER_MAPPINGS: Array<{
 export async function previewDbeaverConfiguration(files: File[]) {
   const configFile = files.find((file) => isDbeaverConfigFile(file.name))
   if (!configFile) {
-    throw new Error('请选择 DBeaver data-sources.json 或 XML 配置文件。')
+    throw new Error(i18n.t('dbeaver.chooseConfigFile'))
   }
 
   const source = await configFile.text()
@@ -146,7 +147,7 @@ function parseDbeaverXml(source: string): RawDbeaverConnection[] {
   const document = new DOMParser().parseFromString(source, 'application/xml')
   const parseError = document.querySelector('parsererror')
   if (parseError) {
-    throw new Error('DBeaver XML 配置解析失败。')
+    throw new Error(i18n.t('dbeaver.xmlParseFailed'))
   }
 
   return Array.from(document.querySelectorAll('data-source, datasource, connection')).map((node, index) => {

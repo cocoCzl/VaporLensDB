@@ -66,7 +66,7 @@ includesAll(
     "drivers: ['postgres', 'mysql', 'oracle']",
     "drivers: ['postgres', 'oracle']",
     "drivers: ['mysql']",
-    'objectCategoryFolders(driverType)',
+    'objectCategoryFolders(driverType, t)',
   ],
   'category driver support',
 )

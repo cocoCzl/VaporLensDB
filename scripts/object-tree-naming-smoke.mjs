@@ -27,8 +27,8 @@ includesAll(
   [
     'tooltip:',
     'rawPath',
-    '复制名称',
-    '复制全限定名',
+    "t('explorer.copyName')",
+    "t('explorer.copyQualifiedName')",
     'qualifiedNodeName',
     "driverType === 'mysql' ? '`' : '\"'",
     'quoteIdentifier',

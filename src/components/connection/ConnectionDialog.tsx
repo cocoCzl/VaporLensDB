@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Plus } from 'lucide-react'
+import { Database, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ConnectionForm } from '@/components/connection/ConnectionForm'
@@ -57,7 +57,7 @@ export function ConnectionDialog({
           <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border bg-card shadow-2xl">
             <div className="flex h-14 items-center gap-3 border-b px-4">
               <div className="grid size-8 place-items-center rounded-md bg-primary/15 text-primary">
-                <Plus className="size-4" />
+                <Database className="size-4" />
               </div>
               <div className="min-w-0">
                 <h2 className="text-base font-semibold">

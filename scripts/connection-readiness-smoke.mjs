@@ -32,20 +32,20 @@ includesAll(
   [
     "PRIMARY_DRIVER_IDS: DriverType[] = ['postgres', 'mysql', 'oracle'",
     'compareDriverChoices',
-    'Oracle 需要用户提供本地 ojdbc.jar；连接、查询、对象浏览、DDL/source 和补全可用。',
-    '需要本地 ojdbc；连接、查询、对象浏览、DDL/source 和补全可用。',
+    "t('connectionForm.description.oracle')",
+    "t('connectionForm.oracleRequirement')",
     'onSaveOnly',
     'onSaveAndConnect',
-    '仅保存',
-    '保存并连接',
+    "t('connectionForm.saveOnly')",
+    "t('connectionForm.saveAndConnect')",
     'connectionReadinessIssue',
-    '未就绪：缺少本地 ojdbc/JDBC JAR',
+    "t('connectionForm.validation.missingJarReadiness')",
     'requireExternalDriver: false',
     'requireExternalDriver: true',
-    '不保存',
-    '本次会话',
-    '系统钥匙串或安全存储',
-    '测试连接',
+    "t('connectionForm.doNotSave')",
+    "t('connectionForm.sessionOnly')",
+    "t('connectionForm.secureStorage')",
+    "t('connectionForm.testConnection')",
   ],
   'connection form readiness and actions',
 )
@@ -81,8 +81,8 @@ includesAll(
 
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
-includesAll(zh, ['配置 PostgreSQL、MySQL、Oracle', 'Oracle 需要本地 ojdbc'], 'Chinese connection dialog copy')
-includesAll(en, ['PostgreSQL, MySQL, Oracle', 'Oracle requires a local ojdbc'], 'English connection dialog copy')
+includesAll(zh, ['配置 PostgreSQL、MySQL、Oracle', 'Oracle 需要本地 ojdbc', '"saveAndConnect": "保存并连接"'], 'Chinese connection dialog copy')
+includesAll(en, ['PostgreSQL, MySQL, Oracle', 'Oracle requires a local ojdbc', '"saveAndConnect": "Save and connect"'], 'English connection dialog copy')
 
 const store = read('src/stores/connectionStore.ts')
 includesAll(

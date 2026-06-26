@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 
 export type DatabaseTreeNodeKind =
@@ -114,6 +115,7 @@ export function TreeNode({
   onNodeContextMenu,
   quickActions = [],
 }: TreeNodeProps) {
+  const { t } = useTranslation()
   const Icon = NODE_ICONS[node.kind]
   const hasToggle = node.expandable || node.loading
   const ToggleIcon = node.expanded ? ChevronDown : ChevronRight
@@ -229,7 +231,7 @@ export function TreeNode({
             onRefresh(node.id)
           }}
         >
-          刷新
+          {t('common.refresh')}
         </Button>
       )}
     </div>

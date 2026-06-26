@@ -70,7 +70,7 @@ pub fn import_jdbc_driver_artifacts(
                 input.driver_definition_id
             )
         })?;
-    ensure_custom_jdbc_definition(&definition)?;
+    ensure_managed_jdbc_artifacts_supported(&definition)?;
 
     if input.paths.is_empty() {
         return Err("at least one JDBC driver jar path is required".to_string());
@@ -117,7 +117,11 @@ pub fn import_jdbc_driver_artifacts(
     );
     state
         .config_store
-        .save_custom_driver_definition(definition)
+        .update_driver_definition_artifacts(
+            &definition.id,
+            definition.driver_artifacts,
+            definition.driver_artifact,
+        )
         .map_err(Into::into)
 }
 
@@ -143,7 +147,7 @@ pub fn remove_jdbc_driver_artifact(
                 input.driver_definition_id
             )
         })?;
-    ensure_custom_jdbc_definition(&definition)?;
+    ensure_managed_jdbc_artifacts_supported(&definition)?;
 
     definition
         .driver_artifacts
@@ -172,7 +176,11 @@ pub fn remove_jdbc_driver_artifact(
 
     state
         .config_store
-        .save_custom_driver_definition(definition)
+        .update_driver_definition_artifacts(
+            &definition.id,
+            definition.driver_artifacts,
+            definition.driver_artifact,
+        )
         .map_err(Into::into)
 }
 
@@ -185,8 +193,17 @@ pub struct ValidateExternalDriverInput {
     pub driver_paths: Option<Vec<String>>,
 }
 
-fn ensure_custom_jdbc_definition(definition: &DriverDefinition) -> Result<(), String> {
-    if definition.built_in || definition.driver_type != DriverType::Jdbc {
+fn ensure_managed_jdbc_artifacts_supported(definition: &DriverDefinition) -> Result<(), String> {
+    if definition.driver_type == DriverType::Jdbc {
+        return Ok(());
+    }
+    if definition.built_in && definition.driver_type == DriverType::Oracle {
+        return Ok(());
+    }
+    if definition.built_in {
+        return Err("managed JDBC artifacts are supported only for Oracle and custom JDBC driver definitions".to_string());
+    }
+    if definition.driver_type != DriverType::Jdbc {
         return Err(
             "managed JDBC artifacts are supported only for custom JDBC driver definitions"
                 .to_string(),

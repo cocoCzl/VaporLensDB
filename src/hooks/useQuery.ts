@@ -7,6 +7,7 @@ import {
   onQueryResultError,
   explainQuery,
 } from '@/ipc/query'
+import i18n from '@/i18n'
 import { normalizeAppError } from '@/ipc/client'
 import { useEditorStore } from '@/stores/editorStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
@@ -55,9 +56,9 @@ export function useQuery() {
             startedAt,
             elapsedMs: Math.round(performance.now() - startedMs),
             errorCode: 'QUERY_STREAM_FAILED',
-            errorMessage: '流式查询失败',
+            errorMessage: i18n.t('notifications.queryStreamFailed'),
           })
-          notify({ kind: 'error', title: '查询执行失败' })
+          notify({ kind: 'error', title: i18n.t('notifications.queryFailed') })
           return false
         }
       } else {
@@ -67,8 +68,8 @@ export function useQuery() {
       if (containsLikelyDdl(sql)) {
         notify({
           kind: 'info',
-          title: '对象结构可能已变化',
-          message: '可手动刷新对象树、Structure tab 或 DDL/Source tab。',
+          title: i18n.t('notifications.objectStructureChanged'),
+          message: i18n.t('notifications.refreshObjectStructureHint'),
         })
       }
       recordQueryHistory(connectionId, sql, queryId, startedAt, performance.now() - startedMs)
@@ -86,7 +87,7 @@ export function useQuery() {
         errorMessage: appError.message,
       })
       setTabQueryState(tabId, queryId, formatLocalError(appError))
-      notify({ kind: 'error', title: '查询执行失败' })
+      notify({ kind: 'error', title: i18n.t('notifications.queryFailed') })
       return false
     }
   }
@@ -101,7 +102,7 @@ export function useQuery() {
     } catch (error) {
       const appError = normalizeAppError(error)
       setTabQueryState(tabId, queryId, appError.message)
-      notifyError(appError, '执行计划失败')
+      notifyError(appError, i18n.t('notifications.explainFailed'))
     }
   }
 
@@ -111,7 +112,7 @@ export function useQuery() {
     } catch (error) {
       const appError = normalizeAppError(error)
       setTabQueryState(tabId, queryId, appError.message)
-      notifyError(appError, '取消查询失败')
+      notifyError(appError, i18n.t('notifications.cancelQueryFailed'))
     }
   }
 

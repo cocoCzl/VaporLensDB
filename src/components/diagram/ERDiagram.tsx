@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Background,
   Controls,
@@ -82,6 +83,7 @@ function directRelatedTableNames(seedTables: DiagramTable[], schema: string, see
 }
 
 export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramProps) {
+  const { t } = useTranslation()
   const metadata = useMetadataStore()
   const notifyError = useUiStore((state) => state.notifyError)
   const [diagramTables, setDiagramTables] = useState<DiagramTable[]>([])
@@ -92,7 +94,7 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
   async function loadDiagram(force = false) {
     if (!connectionId) {
       setDiagramTables([])
-      setError('连接后可打开 ER diagram。')
+      setError(t('diagram.connectFirst'))
       return
     }
 
@@ -123,7 +125,7 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
     } catch (loadError) {
       const appError = normalizeAppError(loadError)
       setError(appError.message)
-      notifyError(appError, '加载 ER diagram 失败')
+      notifyError(appError, t('diagram.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -147,8 +149,8 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
   function exportSvg() {
     if (!canExport) {
       notifyError(
-        { code: 'ER_DIAGRAM_EXPORT_UNAVAILABLE', message: '当前 ER diagram 没有可导出的内容。' },
-        'ER diagram 导出失败',
+        { code: 'ER_DIAGRAM_EXPORT_UNAVAILABLE', message: t('diagram.exportUnavailable') },
+        t('diagram.exportFailed'),
       )
       return
     }
@@ -164,7 +166,7 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
       })
       downloadTextFile(`${safeFileName(`${schema}-er-diagram`)}.svg`, svg, 'image/svg+xml')
     } catch (exportError) {
-      notifyError(normalizeAppError(exportError), 'ER diagram 导出失败')
+      notifyError(normalizeAppError(exportError), t('diagram.exportFailed'))
     }
   }
 
@@ -194,11 +196,11 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
             onClick={exportSvg}
           >
             <Download className="size-3.5" />
-            导出 SVG
+            {t('diagram.exportSvg')}
           </Button>
           <Button type="button" size="sm" variant="outline" disabled={loading} onClick={() => loadDiagram(true)}>
             <RefreshCw />
-            {loading ? '刷新中' : '刷新图'}
+            {loading ? t('workbench.refreshing') : t('diagram.refreshDiagram')}
           </Button>
         </div>
       </div>
@@ -207,11 +209,11 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
         {error ? (
           <DiagramState title="ER diagram unavailable" detail={error} />
         ) : loading && diagramTables.length === 0 ? (
-          <DiagramState title="Loading ER diagram" detail="正在读取 columns 和 foreign keys。" />
+          <DiagramState title="Loading ER diagram" detail={t('diagram.loadingDetail')} />
         ) : diagramTables.length === 0 ? (
-          <DiagramState title="No tables" detail="当前 schema 没有可绘制的表。" />
+          <DiagramState title="No tables" detail={t('diagram.noTablesDetail')} />
         ) : nodes.length === 0 ? (
-          <DiagramState title="Missing metadata" detail="未能读取 columns 或 foreign keys。" />
+          <DiagramState title="Missing metadata" detail={t('diagram.missingMetadataDetail')} />
         ) : (
           <ReactFlow
             nodes={nodes}

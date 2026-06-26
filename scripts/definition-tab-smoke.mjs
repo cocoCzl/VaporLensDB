@@ -30,7 +30,11 @@ const editorStore = read('src/stores/editorStore.ts')
 includesAll(
   editorStore,
   [
-    "'sql' | 'data' | 'structure' | 'definition'",
+    "kind?:",
+    "| 'sql'",
+    "| 'data'",
+    "| 'structure'",
+    "| 'definition'",
     'definitionContext?: DefinitionTabContext | null',
     'export interface DefinitionTabContext',
     "definitionKind: 'DDL' | 'Source'",
@@ -92,7 +96,7 @@ includesAll(
     "operation: 'tableDdl'",
     "operation: 'objectDdl'",
     'sourceLikeObjectKind',
-    '查看 DDL/Source',
+    "t('explorer.viewDdlSource')",
   ],
   'object tree definition actions',
 )
@@ -106,11 +110,11 @@ includesAll(
     'getTableDdl(tab.connectionId, context.schema, context.object, force)',
     'getObjectDdl(',
     'readOnly',
-    '复制',
-    '在 SQL Tab 中打开',
-    '刷新 ${context.definitionKind}',
+    "t('common.copy')",
+    "t('workbench.openInSqlTab')",
+    "t('workbench.refreshDefinition'",
     'DefinitionError',
-    '可能原因：权限不足、对象不存在或驱动不支持该对象定义。',
+    "t('workbench.definitionFailureReason')",
   ],
   'definition tab panel',
 )

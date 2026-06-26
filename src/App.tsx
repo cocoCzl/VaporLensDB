@@ -81,7 +81,12 @@ export default function App() {
   }, [theme])
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+    <div
+      className="flex h-screen flex-col overflow-hidden bg-background text-foreground"
+      onContextMenu={(event) => {
+        event.preventDefault()
+      }}
+    >
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <div className="flex flex-col flex-1 overflow-hidden">

@@ -26,8 +26,8 @@ includesAll(
   [
     'emptyCategoryNode',
     'errorCategoryNode',
-    'No ${parent.label}',
-    'Load failed',
+    "t('explorer.emptyCategory'",
+    "t('explorer.loadFailed')",
     'children.length === 0 && isObjectCategoryNode(node)',
     'setChildIds((state) => ({ ...state, [id]: [errorNode.id] }))',
     'clearNodeMetadataCache(node)',

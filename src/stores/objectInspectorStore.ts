@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import i18n from '@/i18n'
 import { getTableDdl } from '@/ipc/metadata'
 import { normalizeAppError } from '@/ipc/client'
 import { useMetadataStore } from '@/stores/metadataStore'
@@ -69,7 +70,7 @@ export const useObjectInspectorStore = create<ObjectInspectorState>((set) => ({
       })
     } catch (error) {
       const appError = normalizeAppError(error)
-      useUiStore.getState().notifyError(appError, '加载对象结构失败')
+      useUiStore.getState().notifyError(appError, i18n.t('notifications.loadObjectStructureFailed'))
       set((state) => ({
         selected: state.selected
           ? { ...state.selected, loading: false, error: appError.message }

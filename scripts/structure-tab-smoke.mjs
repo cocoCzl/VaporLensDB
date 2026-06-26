@@ -24,7 +24,10 @@ const editorStore = read('src/stores/editorStore.ts')
 includesAll(
   editorStore,
   [
-    "'sql' | 'data' | 'structure'",
+    "kind?:",
+    "| 'sql'",
+    "| 'data'",
+    "| 'structure'",
     'structureContext?: StructureTabContext | null',
     'export interface StructureTabContext',
     "objectKind: 'table' | 'view' | 'materializedView'",
@@ -42,7 +45,7 @@ includesAll(
     'database: node.meta.database',
     'schema: node.meta.schema',
     'object: node.meta.table',
-    '打开 Structure Tab',
+    "t('explorer.openStructure')",
   ],
   'object tree structure tab action',
 )
@@ -64,8 +67,8 @@ includesAll(
     'IndexesView',
     'ForeignKeysView',
     'TriggersView',
-    '打开 Source/DDL',
-    '刷新结构',
+    "t('workbench.openSourceDdl')",
+    "t('workbench.refreshStructure')",
     'Structure tab · read-only',
   ],
   'structure tab panel',

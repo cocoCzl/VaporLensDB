@@ -1,4 +1,5 @@
 import { Clipboard, Code2, RefreshCw, Table2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 export interface ContextMenuAction {
   id: string
@@ -24,12 +25,13 @@ const ICONS = {
 }
 
 export function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {
+  const { t } = useTranslation()
   return (
     <>
       <button
         type="button"
         className="fixed inset-0 z-40 cursor-default"
-        aria-label="关闭菜单"
+        aria-label={t('common.closeMenu', { defaultValue: 'Close menu' })}
         onClick={onClose}
       />
       <div

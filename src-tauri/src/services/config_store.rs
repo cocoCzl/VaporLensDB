@@ -342,7 +342,9 @@ impl ConfigStore {
                    notes, connection_variants_json, metadata_dialect_sql, capabilities_json
             FROM driver_definitions
             WHERE driver_type <> 'odbc'
+              AND driver_type NOT IN ('mongo', 'redis')
               AND backend <> 'odbc'
+              AND status <> 'planned'
             ORDER BY built_in DESC,
                      CASE status
                        WHEN 'ready' THEN 0
@@ -368,7 +370,9 @@ impl ConfigStore {
                 FROM driver_definitions
                 WHERE id = ?1
                   AND driver_type <> 'odbc'
+                  AND driver_type NOT IN ('mongo', 'redis')
                   AND backend <> 'odbc'
+                  AND status <> 'planned'
                 ",
                 params![id],
                 row_to_driver_definition,
@@ -417,6 +421,37 @@ impl ConfigStore {
         Ok(())
     }
 
+    pub fn update_driver_definition_artifacts(
+        &self,
+        id: &str,
+        driver_artifacts: Vec<String>,
+        driver_artifact: Option<String>,
+    ) -> Result<DriverDefinition, AppError> {
+        let driver_artifacts_json = serde_json::to_string(&driver_artifacts)?;
+        let conn = self.conn()?;
+        let affected = conn.execute(
+            "
+            UPDATE driver_definitions
+            SET driver_artifacts_json = ?2,
+                driver_artifact = ?3,
+                updated_at = datetime('now')
+            WHERE id = ?1
+            ",
+            params![id, driver_artifacts_json, driver_artifact],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound {
+                resource: "driver definition".to_string(),
+                id: id.to_string(),
+            });
+        }
+        self.get_driver_definition(id)?
+            .ok_or_else(|| AppError::NotFound {
+                resource: "driver definition".to_string(),
+                id: id.to_string(),
+            })
+    }
+
     fn init(&self) -> Result<(), AppError> {
         let conn = self.conn()?;
         run_config_migrations(&conn)
@@ -424,7 +459,13 @@ impl ConfigStore {
 
     fn seed_builtin_driver_definitions(&self) -> Result<(), AppError> {
         let conn = self.conn()?;
-        for definition in driver_catalog::driver_definitions() {
+        for mut definition in driver_catalog::driver_definitions() {
+            if let Some(existing) = self.get_driver_definition(&definition.id)? {
+                if existing.built_in && !existing.driver_artifacts.is_empty() {
+                    definition.driver_artifacts = existing.driver_artifacts;
+                    definition.driver_artifact = existing.driver_artifact;
+                }
+            }
             upsert_builtin_driver_definition(&conn, &definition)?;
         }
         Ok(())
@@ -1030,6 +1071,9 @@ mod tests {
         assert!(drivers
             .iter()
             .any(|driver| driver.id == "oracle" && driver.driver_type == DriverType::Oracle));
+        assert!(!drivers
+            .iter()
+            .any(|driver| matches!(driver.driver_type, DriverType::Mongo | DriverType::Redis)));
     }
 
     #[test]
@@ -1518,6 +1562,83 @@ mod tests {
             .expect("list connections")
             .iter()
             .all(|connection| connection.driver_definition_id.as_deref() != Some("legacy-odbc")));
+    }
+
+    #[test]
+    fn hides_planned_mongo_and_redis_driver_records_from_runtime_lists() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-planned-driver-test-{}",
+            Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let conn = store.conn().expect("open config db");
+
+        conn.execute(
+            "
+            INSERT OR REPLACE INTO driver_definitions (
+                id, driver_type, name, backend, status, driver_artifacts_json,
+                user_driver_required, built_in, notes, connection_variants_json,
+                metadata_dialect_sql, capabilities_json, updated_at
+            )
+            VALUES (?1, ?2, ?3, 'planned', 'planned', '[]', 0, 1, NULL, ?4, NULL, ?5, datetime('now'))
+            ",
+            params![
+                "mongo",
+                "mongo",
+                "MongoDB",
+                serde_json::json!([{ "id": "hostPort", "label": "Host/Port", "requiredFields": ["host"] }]).to_string(),
+                serde_json::json!({
+                    "canConnect": false,
+                    "canQuery": false,
+                    "canStream": false,
+                    "canReadMetadata": false,
+                    "canCancel": false,
+                    "canGenerateDdl": false
+                })
+                .to_string(),
+            ],
+        )
+        .expect("insert planned MongoDB driver");
+
+        assert!(store
+            .list_driver_definitions()
+            .expect("list drivers")
+            .iter()
+            .all(|driver| driver.id != "mongo"));
+        assert!(store
+            .get_driver_definition("mongo")
+            .expect("get MongoDB driver")
+            .is_none());
+    }
+
+    #[test]
+    fn preserves_builtin_oracle_driver_artifacts_when_reseeding() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-oracle-artifact-test-{}",
+            Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir.clone()).expect("create config store");
+
+        let updated = store
+            .update_driver_definition_artifacts(
+                "oracle",
+                vec!["/tmp/ojdbc11.jar".to_string()],
+                Some("ojdbc11.jar".to_string()),
+            )
+            .expect("update oracle artifacts");
+        assert!(updated.built_in);
+        assert_eq!(updated.driver_artifacts, vec!["/tmp/ojdbc11.jar"]);
+
+        let reopened = ConfigStore::new(dir).expect("reopen config store");
+        let oracle = reopened
+            .get_driver_definition("oracle")
+            .expect("get oracle")
+            .expect("oracle exists");
+        assert!(oracle.built_in);
+        assert_eq!(oracle.driver_artifacts, vec!["/tmp/ojdbc11.jar"]);
+        assert_eq!(oracle.driver_artifact.as_deref(), Some("ojdbc11.jar"));
     }
 
     #[test]

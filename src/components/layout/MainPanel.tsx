@@ -1,11 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import i18n from '@/i18n'
+import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, LockKeyhole, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Link, Loader2, LockKeyhole, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DataGrid } from '@/components/grid/DataGrid'
 import { ERDiagram } from '@/components/diagram/ERDiagram'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
+import { SettingsWorkspacePanel } from '@/components/settings/SettingsWorkspacePanel'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/hooks/useQuery'
 import {
@@ -59,6 +62,7 @@ function loadSqlEditor() {
 const SqlEditor = lazy(loadSqlEditor)
 
 export function MainPanel() {
+  const { t } = useTranslation()
   const { connections, statuses, activeConnectionId, setActiveConnection } = useConnectionStore()
   const {
     tabs,
@@ -173,7 +177,7 @@ export function MainPanel() {
       })
       .catch((error) => {
         if (!cancelled) {
-          notifyError(normalizeAppError(error), '加载补全元数据失败')
+          notifyError(normalizeAppError(error), t('workbench.loadCompletionMetadataFailed'))
         }
       })
 
@@ -192,6 +196,7 @@ export function MainPanel() {
     loadSchemas,
     setCatalogSchemaPath,
     notifyError,
+    t,
   ])
 
   useEffect(() => {
@@ -211,7 +216,7 @@ export function MainPanel() {
       loadFunctions(connectionId, selectedSchema),
     ]).catch((error) => {
       if (!cancelled) {
-        notifyError(normalizeAppError(error), '加载补全对象失败')
+        notifyError(normalizeAppError(error), t('workbench.loadCompletionObjectsFailed'))
       }
     })
 
@@ -227,6 +232,7 @@ export function MainPanel() {
     loadTables,
     loadViews,
     notifyError,
+    t,
   ])
 
   async function execute() {
@@ -241,7 +247,7 @@ export function MainPanel() {
         return
       }
     } catch (error) {
-      notifyError(normalizeAppError(error), 'SQL 风险检查失败')
+      notifyError(normalizeAppError(error), t('workbench.sqlRiskCheckFailed'))
       return
     }
 
@@ -274,7 +280,7 @@ export function MainPanel() {
       setTabQueryState(
         activeTab.id,
         activeTab.lastQueryId ?? null,
-        error instanceof Error ? error.message : 'SQL 格式化失败',
+        error instanceof Error ? error.message : t('workbench.formatSqlFailed'),
       )
     }
   }
@@ -309,7 +315,16 @@ export function MainPanel() {
               connectionId: null,
             })
           }}
-          onFocusExplorer={() => useUiStore.getState().setSidebarView('explorer')}
+          onFocusExplorer={(hasSelectedConnection = Boolean(activeConnectionId)) => {
+            if (!hasSelectedConnection) {
+              useUiStore.getState().setSidebarView('dataSources')
+              return
+            }
+            useUiStore.getState().setSidebarView('explorer')
+            window.setTimeout(() => {
+              document.getElementById('object-tree-search-input')?.focus()
+            }, 0)
+          }}
         />
       </main>
     )
@@ -320,6 +335,14 @@ export function MainPanel() {
     return (
       <main className="flex flex-1 overflow-hidden bg-background">
         <DataSourcesManagementPanel />
+      </main>
+    )
+  }
+
+  if (activeTab.kind === 'settings') {
+    return (
+      <main className="flex flex-1 overflow-hidden bg-background">
+        <SettingsWorkspacePanel />
       </main>
     )
   }
@@ -348,7 +371,7 @@ export function MainPanel() {
               addTab({
                 id: tabId,
                 kind: 'data',
-                title: `${activeObjectSummaryContext.object} 数据`,
+                title: t('explorer.dataTabTitle', { name: activeObjectSummaryContext.object }),
                 sql,
                 connectionId: activeTab.connectionId,
                 dataContext: {
@@ -452,8 +475,8 @@ export function MainPanel() {
               if (limit > 10_000) {
                 notify({
                   kind: 'warning',
-                  title: '数据预览行数过大',
-                  message: '单个 Data tab 最多 10000 行，已回退到当前值。',
+                  title: t('workbench.dataPreviewLimitTitle'),
+                  message: t('workbench.dataPreviewLimitMessage'),
                 })
                 return
               }
@@ -576,7 +599,7 @@ export function MainPanel() {
         running={activeTab.running}
         canCancel={Boolean(activeTab.runningQueryId && queryCapabilities.canCancel)}
         canExplain={queryCapabilities.canExplain}
-        explainUnsupportedReason="当前驱动暂不支持 Explain"
+        explainUnsupportedReason={t('workbench.explainUnsupported')}
         disabled={!canRun}
         onConnectionChange={(id) => {
           updateTabConnection(activeTab.id, id)
@@ -620,7 +643,7 @@ export function MainPanel() {
           <Suspense
             fallback={
               <div className="grid h-full place-items-center bg-card text-xs text-muted-foreground">
-                正在加载 SQL 编辑器
+                {t('workbench.loadingSqlEditor')}
               </div>
             }
           >
@@ -639,7 +662,7 @@ export function MainPanel() {
           <div className="flex h-full flex-col bg-card">
             <div className="flex h-9 items-center justify-between border-b px-3 text-xs text-muted-foreground">
               <span className="min-w-0 truncate">
-                轻量 SQL 输入{completionHint ? ` · ${completionHint}` : ''}
+                {t('workbench.lightSqlInput')}{completionHint ? ` · ${completionHint}` : ''}
               </span>
               <Button
                 type="button"
@@ -650,7 +673,7 @@ export function MainPanel() {
                 onClick={() => setEditorLoaded(true)}
                 onPointerEnter={loadSqlEditor}
               >
-                加载高级编辑器
+                {t('workbench.loadAdvancedEditor')}
               </Button>
             </div>
             <textarea
@@ -677,7 +700,7 @@ export function MainPanel() {
         <section className="flex h-[38%] min-h-48 flex-col border-t bg-background">
         <div className="flex h-9 items-center justify-between border-b px-3 text-xs">
           <div className="flex items-center gap-3">
-            <span className="font-medium">结果</span>
+            <span className="font-medium">{t('workbench.results')}</span>
             {activeResult && (
               <span
                 className={activeResult.truncated ? 'text-amber-600' : 'text-muted-foreground'}
@@ -691,7 +714,7 @@ export function MainPanel() {
               </span>
             )}
             {activeResults && activeResults.length > 1 && (
-              <span className="text-muted-foreground">{activeResults.length} 个结果集</span>
+              <span className="text-muted-foreground">{t('workbench.resultSets', { count: activeResults.length })}</span>
             )}
             {activeExplain && (
               <span className="text-muted-foreground">Explain · {activeExplain.elapsedMs} ms</span>
@@ -718,12 +741,12 @@ export function MainPanel() {
               }
             >
               <Download className="size-3.5" />
-              导出 CSV
+              {t('workbench.exportCsv')}
             </Button>
           {activeTab.error && (
             <div className="flex min-w-0 items-center gap-1 text-destructive">
               <AlertCircle className="size-3.5 shrink-0" />
-              <span className="truncate">查询执行失败</span>
+              <span className="truncate">{t('workbench.queryFailed')}</span>
             </div>
           )}
           </div>
@@ -782,13 +805,14 @@ export function MainPanel() {
 }
 
 function DataSourcesManagementPanel() {
+  const { t } = useTranslation()
   return (
     <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">Data Sources</h1>
+          <h1 className="truncate text-sm font-semibold">{t('connection.dataSources')}</h1>
           <p className="truncate text-xs text-muted-foreground">
-            Manage saved connections, drivers, imports, SSH, and advanced options.
+            {t('workbench.dataSourcesSubtitle')}
           </p>
         </div>
       </div>
@@ -810,14 +834,27 @@ function WorkbenchHome({
   activeConnectionId: string | null
   onNewSql: () => void
   onManageDataSources: () => void
-  onFocusExplorer: () => void
+  onFocusExplorer: (hasSelectedConnection?: boolean) => void
 }) {
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
+  const statuses = useConnectionStore((state) => state.statuses)
+  const loading = useConnectionStore((state) => state.loading)
+  const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
+  const connectConnection = useConnectionStore((state) => state.connectConnection)
   const recentDataSourceIds = useConnectionStore((state) => state.recentDataSourceIds)
   const recentConnections = recentDataSourceIds
     .map((id) => connections.find((connection) => connection.id === id))
     .filter((connection): connection is ConnectionConfig => Boolean(connection))
     .slice(0, 4)
+
+  async function connectRecent(connection: ConnectionConfig) {
+    setActiveConnection(connection.id)
+    try {
+      await connectConnection(connection.id)
+    } catch {
+      // The connection store surfaces the failure toast and row status.
+    }
+  }
 
   return (
     <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -862,14 +899,16 @@ function WorkbenchHome({
             <button
               type="button"
               className="rounded-md border bg-card p-4 text-left hover:bg-muted/45"
-              onClick={onFocusExplorer}
+              onClick={() => onFocusExplorer()}
             >
               <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
                 <Search className="size-4 text-primary" />
                 Search objects
               </div>
               <div className="text-xs text-muted-foreground">
-                Use the Explorer object tree for the current Data Source.
+                {activeConnection
+                  ? 'Focus the Explorer object search for the current Data Source.'
+                  : 'Select a Data Source first, then search its objects.'}
               </div>
             </button>
           </div>
@@ -877,23 +916,56 @@ function WorkbenchHome({
             <div className="border-b px-3 py-2 text-xs font-semibold">Recent Data Sources</div>
             <div className="grid gap-1 p-2">
               {recentConnections.length === 0 ? (
-                <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">
+                <button
+                  type="button"
+                  className="rounded border border-dashed p-3 text-left text-xs text-muted-foreground hover:border-border hover:bg-muted/45"
+                  onClick={onManageDataSources}
+                >
                   Manage or connect a Data Source to populate recents.
-                </div>
+                </button>
               ) : (
                 recentConnections.map((connection) => (
-                  <button
+                  <div
                     key={connection.id}
-                    type="button"
-                    className="rounded px-2 py-2 text-left text-xs hover:bg-muted"
-                    onClick={onFocusExplorer}
+                    className={[
+                      'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border px-2 py-2 text-xs',
+                      connection.id === activeConnectionId
+                        ? 'border-primary/35 bg-primary/10'
+                        : 'border-transparent hover:border-border hover:bg-muted',
+                    ].join(' ')}
                   >
-                    <span className="block truncate font-medium">{connection.name}</span>
-                    <span className="block truncate text-muted-foreground">
-                      {connection.driverType}
-                      {connection.colorTag ? ` · ${connection.colorTag}` : ''}
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      className="min-w-0 text-left"
+                      onClick={() => {
+                        setActiveConnection(connection.id)
+                        onFocusExplorer(true)
+                      }}
+                    >
+                      <span className="block truncate font-medium">{connection.name}</span>
+                      <span className="block truncate text-muted-foreground">
+                        {connection.driverType}
+                        {connection.colorTag ? ` · ${connection.colorTag}` : ''}
+                      </span>
+                      <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                        {workbenchConnectionTarget(connection)}
+                      </span>
+                    </button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      title={
+                        statuses[connection.id]?.status === 'connected' ? 'Connected' : 'Connect'
+                      }
+                      disabled={loading || statuses[connection.id]?.status === 'connected'}
+                      onClick={() => {
+                        void connectRecent(connection)
+                      }}
+                    >
+                      {loading ? <Loader2 className="animate-spin" /> : <Link />}
+                    </Button>
+                  </div>
                 ))
               )}
             </div>
@@ -1140,6 +1212,7 @@ function DataTabPanel({
   onOpenSqlTab: () => void
   onExport: () => void
 }) {
+  const { t } = useTranslation()
   const notifyError = useUiStore((state) => state.notifyError)
   const notify = useUiStore((state) => state.notify)
   const upsertTask = useTaskStore((state) => state.upsertTask)
@@ -1202,11 +1275,11 @@ function DataTabPanel({
       upsertTask(task)
       notify({
         kind: 'info',
-        title: '整表 CSV 导出已开始',
+        title: t('workbench.tableCsvExportStarted'),
         message: fileName,
       })
     } catch (exportError) {
-      notifyError(normalizeAppError(exportError), '启动整表导出失败')
+      notifyError(normalizeAppError(exportError), t('workbench.startTableCsvExportFailed'))
     }
   }
 
@@ -1228,12 +1301,12 @@ function DataTabPanel({
       setImportPreview(preview)
       notify({
         kind: preview.canImport && preview.invalidRows.length === 0 ? 'info' : 'warning',
-        title: 'CSV 导入预览完成',
+        title: t('workbench.csvImportPreviewComplete'),
         message: `${preview.validRows.toLocaleString()} valid / ${preview.totalRows.toLocaleString()} rows`,
       })
     } catch (previewError) {
       setImportPreview(null)
-      notifyError(normalizeAppError(previewError), 'CSV 导入预览失败')
+      notifyError(normalizeAppError(previewError), t('workbench.csvImportPreviewFailed'))
     } finally {
       setImportBusy(false)
     }
@@ -1258,11 +1331,11 @@ function DataTabPanel({
       upsertTask(task)
       notify({
         kind: 'info',
-        title: 'CSV 导入已开始',
+        title: t('workbench.csvImportStarted'),
         message: `${importPreview.validRows.toLocaleString()} rows queued`,
       })
     } catch (importError) {
-      notifyError(normalizeAppError(importError), '启动 CSV 导入失败')
+      notifyError(normalizeAppError(importError), t('workbench.startCsvImportFailed'))
     } finally {
       setImportBusy(false)
     }
@@ -1303,10 +1376,10 @@ function DataTabPanel({
           </label>
           <Button type="button" size="sm" variant="outline" disabled={running} onClick={onRefresh}>
             <RefreshCw />
-            {running ? '刷新中' : '刷新'}
+            {running ? t('workbench.refreshing') : t('common.refresh')}
           </Button>
           <Button type="button" size="sm" variant="ghost" onClick={onOpenSqlTab}>
-            在 SQL Tab 中打开
+            {t('workbench.openInSqlTab')}
           </Button>
           <Button
             type="button"
@@ -1316,7 +1389,7 @@ function DataTabPanel({
             onClick={onExport}
           >
             <Download className="size-3.5" />
-            导出 CSV
+            {t('workbench.exportCsv')}
           </Button>
           <Button
             type="button"
@@ -1326,16 +1399,16 @@ function DataTabPanel({
             onClick={() => void exportSelectedTable()}
           >
             <Download className="size-3.5" />
-            导出整表
+            {t('workbench.exportTable')}
           </Button>
         </div>
       </div>
       <div className="flex h-8 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
-        <span>只读数据预览</span>
+        <span>{t('workbench.readOnlyDataPreview')}</span>
         {result && <span>{resultSummary(result)}</span>}
         <span>Page {page}</span>
-        {hasPrimaryKeyOrder && <span>按主键升序</span>}
-        {hasNoStableOrder && <span className="text-amber-600">无主键，结果顺序不保证</span>}
+        {hasPrimaryKeyOrder && <span>{t('workbench.primaryKeyAscending')}</span>}
+        {hasNoStableOrder && <span className="text-amber-600">{t('workbench.noPrimaryKeyUnstable')}</span>}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex min-h-10 items-center gap-2 border-b px-3 py-1.5 text-xs">
@@ -1352,14 +1425,14 @@ function DataTabPanel({
             }}
           />
           <Button type="button" size="xs" variant="secondary" disabled={running} onClick={applyWhere}>
-            应用过滤
+            {t('workbench.applyFilter')}
           </Button>
           <select
             className="ide-select h-7 min-w-32"
             value={tab.dataContext.sortColumn ?? ''}
             onChange={(event) => changeSort(event.target.value || null)}
           >
-            <option value="">排序</option>
+            <option value="">{t('workbench.sort')}</option>
             {result?.columns.map((column) => (
               <option key={column.name} value={column.name}>
                 {column.name}
@@ -1371,7 +1444,7 @@ function DataTabPanel({
             size="icon-xs"
             variant="ghost"
             disabled={!tab.dataContext.sortColumn}
-            title="切换排序方向"
+            title={t('workbench.toggleSortDirection')}
             onClick={() =>
               onContextChange({
                 sortDirection: tab.dataContext.sortDirection === 'desc' ? 'asc' : 'desc',
@@ -1392,7 +1465,7 @@ function DataTabPanel({
               })
             }
           >
-            上一页
+            {t('workbench.previousPage')}
           </Button>
           <Button
             type="button"
@@ -1405,7 +1478,7 @@ function DataTabPanel({
               })
             }
           >
-            下一页
+            {t('workbench.nextPage')}
           </Button>
         </div>
         <div className="flex min-h-10 items-center gap-2 border-b bg-muted/10 px-3 py-1.5 text-xs">
@@ -1426,7 +1499,7 @@ function DataTabPanel({
             disabled={importBusy || !importPath.trim()}
             onClick={() => void previewCsvImport()}
           >
-            预览导入
+            {t('workbench.previewImport')}
           </Button>
           <Button
             type="button"
@@ -1435,7 +1508,7 @@ function DataTabPanel({
             disabled={importBusy || !importPreview?.canImport}
             onClick={() => void startCsvImport()}
           >
-            执行导入
+            {t('workbench.runImport')}
           </Button>
           {importPreview && (
             <span
@@ -1484,6 +1557,7 @@ function StructureTabPanel({
     context: NonNullable<EditorTab['definitionContext']>,
   ) => void
 }) {
+  const { t } = useTranslation()
   const metadata = useMetadataStore()
   const notifyError = useUiStore((state) => state.notifyError)
   const [section, setSection] = useState<StructureSection>('columns')
@@ -1520,7 +1594,7 @@ function StructureTabPanel({
     } catch (loadError) {
       const appError = normalizeAppError(loadError)
       setError(appError.message)
-      notifyError(appError, '加载结构失败')
+      notifyError(appError, t('workbench.loadStructureFailed'))
     } finally {
       setLoading(false)
     }
@@ -1566,7 +1640,7 @@ function StructureTabPanel({
           onClick={() => loadStructure(true)}
         >
           <RefreshCw />
-          {loading ? '刷新中' : '刷新结构'}
+          {loading ? t('workbench.refreshing') : t('workbench.refreshStructure')}
         </Button>
       </div>
 
@@ -1583,10 +1657,10 @@ function StructureTabPanel({
             ].join(' ')}
             onClick={() => setSection(item.id)}
           >
-            {item.label}
+            {t(item.labelKey)}
           </button>
         ))}
-        <span className="ml-auto text-[11px] text-muted-foreground">只读结构信息</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">{t('workbench.readOnlyStructure')}</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
@@ -1594,7 +1668,7 @@ function StructureTabPanel({
           <ErrorDetails message={error} />
         ) : loading && columns.length === 0 && ddl.length === 0 ? (
           <div className="grid h-full place-items-center text-xs text-muted-foreground">
-            正在加载结构
+            {t('workbench.loadingStructure')}
           </div>
         ) : section === 'columns' ? (
           <ColumnsView columns={columns} />
@@ -1618,12 +1692,12 @@ function StructureTabPanel({
   )
 }
 
-const structureSections: Array<{ id: StructureSection; label: string }> = [
-  { id: 'columns', label: 'Columns' },
-  { id: 'indexes', label: 'Indexes' },
-  { id: 'foreignKeys', label: 'Foreign Keys' },
-  { id: 'triggers', label: 'Triggers' },
-  { id: 'ddl', label: 'DDL' },
+const structureSections: Array<{ id: StructureSection; labelKey: string }> = [
+  { id: 'columns', labelKey: 'explorer.folders.columns' },
+  { id: 'indexes', labelKey: 'explorer.folders.indexes' },
+  { id: 'foreignKeys', labelKey: 'explorer.folders.foreignKeys' },
+  { id: 'triggers', labelKey: 'explorer.folders.triggers' },
+  { id: 'ddl', labelKey: 'workbench.ddl' },
 ]
 
 function ColumnsView({ columns }: { columns: ColumnInfo[] }) {
@@ -1689,6 +1763,7 @@ function TriggersView({
   triggers: DbObjectInfo[]
   onOpenDefinition: (trigger: DbObjectInfo) => void
 }) {
+  const { t } = useTranslation()
   if (triggers.length === 0) {
     return <StructureEmpty label="No triggers" />
   }
@@ -1716,7 +1791,7 @@ function TriggersView({
               variant="ghost"
               onClick={() => onOpenDefinition(trigger)}
             >
-              打开 Source/DDL
+              {t('workbench.openSourceDdl')}
             </Button>
           </div>
         </div>
@@ -1775,6 +1850,7 @@ function DefinitionTabPanel({
   onTextLoaded: (text: string) => void
   onOpenSqlTab: () => void
 }) {
+  const { t } = useTranslation()
   const notify = useUiStore((state) => state.notify)
   const notifyError = useUiStore((state) => state.notifyError)
   const [loading, setLoading] = useState(false)
@@ -1803,7 +1879,7 @@ function DefinitionTabPanel({
     } catch (loadError) {
       const appError = normalizeAppError(loadError)
       setError(appError.message)
-      notifyError(appError, `加载 ${context.definitionKind} 失败`)
+      notifyError(appError, t('workbench.loadDefinitionFailed', { kind: context.definitionKind }))
     } finally {
       setLoading(false)
     }
@@ -1822,9 +1898,9 @@ function DefinitionTabPanel({
   async function copyDefinition() {
     try {
       await navigator.clipboard.writeText(tab.sql)
-      notify({ kind: 'success', title: `已复制 ${context.definitionKind}` })
+      notify({ kind: 'success', title: t('workbench.copiedDefinition', { kind: context.definitionKind }) })
     } catch (copyError) {
-      notifyError(normalizeAppError(copyError), '复制失败')
+      notifyError(normalizeAppError(copyError), t('notifications.copyFailed'))
     }
   }
 
@@ -1850,10 +1926,10 @@ function DefinitionTabPanel({
             disabled={!tab.sql}
             onClick={copyDefinition}
           >
-            复制
+            {t('common.copy')}
           </Button>
           <Button type="button" size="sm" variant="ghost" disabled={!tab.sql} onClick={onOpenSqlTab}>
-            在 SQL Tab 中打开
+            {t('workbench.openInSqlTab')}
           </Button>
           <Button
             type="button"
@@ -1863,26 +1939,26 @@ function DefinitionTabPanel({
             onClick={() => loadDefinition(true)}
           >
             <RefreshCw />
-            {loading ? '刷新中' : `刷新 ${context.definitionKind}`}
+            {loading ? t('workbench.refreshing') : t('workbench.refreshDefinition', { kind: context.definitionKind })}
           </Button>
         </div>
       </div>
       <div className="flex h-8 shrink-0 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
-        <span>只读定义</span>
-        <span>查找使用编辑器内置 Cmd/Ctrl+F</span>
+        <span>{t('workbench.readOnlyDefinition')}</span>
+        <span>{t('workbench.findHint')}</span>
       </div>
       <div className="min-h-0 flex-1">
         {error ? (
           <DefinitionError context={context} message={error} />
         ) : loading && !tab.sql ? (
           <div className="grid h-full place-items-center text-xs text-muted-foreground">
-            正在加载 {context.definitionKind}
+            {t('workbench.loadingDefinition', { kind: context.definitionKind })}
           </div>
         ) : (
           <Suspense
             fallback={
               <div className="grid h-full place-items-center bg-card text-xs text-muted-foreground">
-                正在加载只读编辑器
+                {t('workbench.loadingReadOnlyEditor')}
               </div>
             }
           >
@@ -1908,17 +1984,18 @@ function DefinitionError({
   context: NonNullable<EditorTab['definitionContext']>
   message: string
 }) {
+  const { t } = useTranslation()
   return (
     <div className="h-full overflow-auto bg-destructive/5 p-3">
       <div className="rounded-md border border-destructive/25 bg-background p-3 text-xs">
         <div className="mb-2 flex items-center gap-2 font-medium text-destructive">
           <AlertCircle className="size-4 shrink-0" />
-          <span>加载 {context.definitionKind} 失败</span>
+          <span>{t('workbench.loadDefinitionFailed', { kind: context.definitionKind })}</span>
         </div>
         <div className="grid gap-1 text-muted-foreground">
-          <div>对象：{context.schema}.{context.object}</div>
-          <div>操作：{context.operation === 'tableDdl' ? '读取表结构 DDL' : '读取对象 Source/DDL'}</div>
-          <div>可能原因：权限不足、对象不存在或驱动不支持该对象定义。</div>
+          <div>{t('workbench.definitionObject', { name: `${context.schema}.${context.object}` })}</div>
+          <div>{t('workbench.definitionOperation', { operation: context.operation === 'tableDdl' ? t('workbench.readTableDdl') : t('workbench.readObjectSourceDdl') })}</div>
+          <div>{t('workbench.definitionFailureReason')}</div>
         </div>
         <pre className="mt-3 max-h-56 overflow-auto rounded border bg-muted/45 p-2 text-[11px] leading-5 text-destructive">
           {message}
@@ -1929,6 +2006,7 @@ function DefinitionError({
 }
 
 function ErrorDetails({ message, sql }: { message: string; sql?: string }) {
+  const { t } = useTranslation()
   const [summary, ...details] = message.split('\n')
   const detail = details.join('\n').trim()
   const copyText = [message, sql ? `\nSQL:\n${sql}` : ''].join('')
@@ -1939,7 +2017,7 @@ function ErrorDetails({ message, sql }: { message: string; sql?: string }) {
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 font-medium text-destructive">
             <AlertCircle className="size-4 shrink-0" />
-            <span>查询执行失败</span>
+            <span>{t('workbench.queryFailed')}</span>
           </div>
           <Button
             type="button"
@@ -1948,7 +2026,7 @@ function ErrorDetails({ message, sql }: { message: string; sql?: string }) {
             onClick={() => navigator.clipboard?.writeText(copyText)}
           >
             <Copy className="size-3.5" />
-            Copy
+            {t('common.copy')}
           </Button>
         </div>
         <div className="whitespace-pre-wrap break-words text-destructive">{summary}</div>
@@ -1983,6 +2061,7 @@ function ResultSetTabs({
   selectedIndex: number
   onSelect: (index: number) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b bg-muted/20 px-2 text-xs">
       {results.map((result, index) => {
@@ -1999,7 +2078,7 @@ function ResultSetTabs({
             ].join(' ')}
             onClick={() => onSelect(index)}
           >
-            <span className="font-medium">结果 {index + 1}</span>
+            <span className="font-medium">{t('workbench.resultLabel', { index: index + 1 })}</span>
             <span className="ml-2 text-muted-foreground">{compactResultSummary(result)}</span>
           </button>
         )
@@ -2010,14 +2089,14 @@ function ResultSetTabs({
 
 function confirmDangerousSql(risk: SqlRiskAnalysis, production: boolean) {
   const title = production
-    ? '生产环境危险 SQL 确认'
-    : '危险 SQL 确认'
+    ? i18n.t('workbench.dangerousProdSqlTitle')
+    : i18n.t('workbench.dangerousSqlTitle')
   const environmentLine = production
-    ? '当前连接标记为 prod，请确认你确实要在生产环境执行。'
-    : '此 SQL 可能修改或删除大量数据。'
+    ? i18n.t('workbench.dangerousProdSqlBody')
+    : i18n.t('workbench.dangerousSqlBody')
   const reasons = risk.reasons.map(formatSqlRiskReason).join('\n')
 
-  return window.confirm(`${title}\n\n${environmentLine}\n\n检测到：\n${reasons}\n\n继续执行？`)
+  return window.confirm(`${title}\n\n${environmentLine}\n\n${i18n.t('workbench.dangerDetected')}\n${reasons}\n\n${i18n.t('workbench.continueExecute')}`)
 }
 
 function driverQueryCapabilities(driverType: DriverType): QueryCapabilities {
@@ -2090,29 +2169,36 @@ function emptyQueryCapabilities(): QueryCapabilities {
 function formatSqlRiskReason(reason: SqlRiskReason) {
   switch (reason) {
     case 'dropStatement':
-      return '- DROP 语句'
+      return i18n.t('workbench.riskDrop')
     case 'truncateStatement':
-      return '- TRUNCATE 语句'
+      return i18n.t('workbench.riskTruncate')
     case 'deleteWithoutWhere':
-      return '- DELETE 缺少 WHERE'
+      return i18n.t('workbench.riskDeleteWithoutWhere')
     case 'updateWithoutWhere':
-      return '- UPDATE 缺少 WHERE'
+      return i18n.t('workbench.riskUpdateWithoutWhere')
   }
 }
 
 function resultSummary(result: QueryResult) {
   if (result.columns.length === 0) {
     if (result.elapsedMs === 0 && result.affectedRows === 0) {
-      return '正在接收结果'
+      return i18n.t('workbench.receivingResults')
     }
-    return `影响 ${result.affectedRows.toLocaleString()} 行 · ${result.elapsedMs} ms`
+    return i18n.t('workbench.affectedRowsSummary', {
+      count: result.affectedRows.toLocaleString(),
+      elapsedMs: result.elapsedMs,
+    })
   }
 
-  return `${result.rowCount.toLocaleString()} 行${result.truncated ? '，已截断' : ''} · ${result.elapsedMs} ms`
+  return i18n.t('workbench.rowSummary', {
+    count: result.rowCount.toLocaleString(),
+    truncated: result.truncated ? i18n.t('workbench.truncatedSuffix') : '',
+    elapsedMs: result.elapsedMs,
+  })
 }
 
 function largeResultNotice(result: QueryResult) {
-  return `结果较大，已显示前 ${result.maxRows ?? result.rowCount} 行`
+  return i18n.t('workbench.largeResultNotice', { count: result.maxRows ?? result.rowCount })
 }
 
 function sqlPreview(sql: string) {
@@ -2151,10 +2237,27 @@ function nextSqlIndex(titles: string[]) {
   return index
 }
 
+function workbenchConnectionTarget(connection: ConnectionConfig) {
+  const url = connection.connectionUrl?.trim()
+  if (url) {
+    return url
+      .replace(/^jdbc:/, '')
+      .replace(/^oracle:thin:@/, 'oracle:')
+      .replace(/^postgresql:\/\//, 'postgres:')
+      .replace(/^mysql:\/\//, 'mysql:')
+  }
+
+  const host = connection.host?.trim()
+  const port = connection.port ? `:${connection.port}` : ''
+  const database = connection.database?.trim()
+  const target = host ? `${host}${port}` : connection.driverType
+  return database ? `${target}/${database}` : target
+}
+
 function compactResultSummary(result: QueryResult) {
   if (result.columns.length === 0) {
     return result.elapsedMs === 0 && result.affectedRows === 0
-      ? '接收中'
+      ? i18n.t('workbench.receivingShort')
       : `${result.affectedRows.toLocaleString()} affected`
   }
   return `${result.rowCount.toLocaleString()} rows`
@@ -2165,9 +2268,9 @@ function completionMetadataHint(
   canComplete: boolean,
   selectedSchema: string | null,
 ) {
-  if (!connected) return '连接后加载补全元数据'
-  if (!canComplete) return '当前驱动暂不支持元数据补全'
-  if (!selectedSchema) return '选择 Schema 后启用对象补全'
+  if (!connected) return i18n.t('workbench.completionConnectHint')
+  if (!canComplete) return i18n.t('workbench.completionUnsupportedHint')
+  if (!selectedSchema) return i18n.t('workbench.completionSchemaHint')
   return null
 }
 
@@ -2188,11 +2291,11 @@ async function exportCurrentResult(
     upsertTask(task)
     notify({
       kind: 'info',
-      title: 'CSV 导出已开始',
+      title: i18n.t('workbench.csvExportStarted'),
       message: fileName,
     })
   } catch (error) {
-    notifyError(normalizeAppError(error), '启动 CSV 导出失败')
+    notifyError(normalizeAppError(error), i18n.t('workbench.startCsvExportFailed'))
   }
 }
 

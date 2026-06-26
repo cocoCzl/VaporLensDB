@@ -62,9 +62,9 @@ includesAll(
   'diagnostics IPC wrapper',
 )
 
-const sidebar = read('src/components/layout/Sidebar.tsx')
+const settings = read('src/components/settings/SettingsWorkspacePanel.tsx')
 includesAll(
-  sidebar,
+  settings,
   [
     'exportDiagnosticsPackage',
     'includeDiagnosticsSqlText',

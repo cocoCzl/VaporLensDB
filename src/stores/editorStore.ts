@@ -4,7 +4,15 @@ import type { DbObjectKind } from '@/types/metadata'
 
 export interface EditorTab {
   id: string
-  kind?: 'sql' | 'data' | 'structure' | 'definition' | 'diagram' | 'dataSources' | 'objectSummary'
+  kind?:
+    | 'sql'
+    | 'data'
+    | 'structure'
+    | 'definition'
+    | 'diagram'
+    | 'dataSources'
+    | 'settings'
+    | 'objectSummary'
   title: string
   sql: string
   connectionId: string | null

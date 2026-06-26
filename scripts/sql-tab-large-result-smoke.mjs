@@ -48,7 +48,7 @@ includesAll(
     'const sql = sqlToRun()',
     'runQuery(activeTab.id, connectionId, sql)',
     'largeResultNotice(activeResult)',
-    '结果较大，已显示前 ${result.maxRows ?? result.rowCount} 行',
+    "i18n.t('workbench.largeResultNotice'",
     'runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {',
     'maxRows: activeDataContext.limit',
     'maxRows: nextContext.limit',

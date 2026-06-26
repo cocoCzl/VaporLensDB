@@ -36,6 +36,7 @@ export function TabBar() {
           const active = tab.id === activeTabId
           const connection = connections.find((item) => item.id === tab.connectionId)
           const editing = editingTabId === tab.id
+          const managementTab = tab.kind === 'dataSources' || tab.kind === 'settings'
           return (
             <button
               key={tab.id}
@@ -82,12 +83,14 @@ export function TabBar() {
               ) : (
                 <>
                   <span className="min-w-0 truncate">{tab.title}</span>
-                  <span
-                    className="max-w-24 shrink truncate rounded border bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                    title={connection?.name ?? 'No Data Source'}
-                  >
-                    {connection?.name ?? 'No DS'}
-                  </span>
+                  {!managementTab && (
+                    <span
+                      className="max-w-24 shrink truncate rounded border bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                      title={connection?.name ?? 'No Data Source'}
+                    >
+                      {connection?.name ?? 'No DS'}
+                    </span>
+                  )}
                   <Pencil className="size-3 opacity-0 transition-opacity group-hover:opacity-60" />
                 </>
               )}

@@ -1,5 +1,6 @@
 import { AlertCircle, Copy, FileText, KeyRound, RefreshCw, Table2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
 import type { ColumnInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
@@ -7,6 +8,7 @@ import type { ColumnInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
 const STRUCTURE_EDITING_ENABLED = false
 
 export function ObjectInspectorPanel() {
+  const { t } = useTranslation()
   const selected = useObjectInspectorStore((state) => state.selected)
   const inspectTable = useObjectInspectorStore((state) => state.inspectTable)
   const clear = useObjectInspectorStore((state) => state.clear)
@@ -41,14 +43,14 @@ export function ObjectInspectorPanel() {
         <div className="flex shrink-0 items-center gap-1">
           {STRUCTURE_EDITING_ENABLED && (
             <Button type="button" size="xs" variant="secondary">
-              编辑结构
+              {t('inspector.editStructure')}
             </Button>
           )}
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
-            title="刷新对象结构"
+            title={t('inspector.refreshStructure')}
             disabled={selected.loading}
             onClick={() =>
               inspectTable(selected.connectionId, selected.schema, selected.table, selected.kind)
@@ -56,7 +58,7 @@ export function ObjectInspectorPanel() {
           >
             <RefreshCw className={selected.loading ? 'animate-spin' : ''} />
           </Button>
-          <Button type="button" size="icon-sm" variant="ghost" title="关闭" onClick={clear}>
+          <Button type="button" size="icon-sm" variant="ghost" title={t('inspector.close')} onClick={clear}>
             <X />
           </Button>
         </div>
@@ -108,8 +110,9 @@ function InspectorSection({
 }
 
 function ColumnsTable({ columns, loading }: { columns: ColumnInfo[]; loading: boolean }) {
-  if (loading && columns.length === 0) return <EmptyState label="正在加载列" />
-  if (columns.length === 0) return <EmptyState label="暂无列信息" />
+  const { t } = useTranslation()
+  if (loading && columns.length === 0) return <EmptyState label={t('inspector.loadingColumns')} />
+  if (columns.length === 0) return <EmptyState label={t('inspector.noColumns')} />
 
   return (
     <div className="overflow-hidden rounded-md border">
@@ -141,8 +144,9 @@ function ColumnsTable({ columns, loading }: { columns: ColumnInfo[]; loading: bo
 }
 
 function IndexesTable({ indexes, loading }: { indexes: IndexInfo[]; loading: boolean }) {
-  if (loading && indexes.length === 0) return <EmptyState label="正在加载索引" />
-  if (indexes.length === 0) return <EmptyState label="暂无索引" />
+  const { t } = useTranslation()
+  if (loading && indexes.length === 0) return <EmptyState label={t('inspector.loadingIndexes')} />
+  if (indexes.length === 0) return <EmptyState label={t('inspector.noIndexes')} />
 
   return (
     <div className="grid gap-1">
@@ -155,7 +159,7 @@ function IndexesTable({ indexes, loading }: { indexes: IndexInfo[]; loading: boo
             </span>
           </div>
           <div className="mt-1 truncate text-[11px] text-muted-foreground">
-            {index.columns.join(', ') || '未返回列'}
+            {index.columns.join(', ') || t('inspector.noReturnedColumns')}
           </div>
         </div>
       ))}
@@ -170,8 +174,9 @@ function ForeignKeysTable({
   foreignKeys: ForeignKeyInfo[]
   loading: boolean
 }) {
-  if (loading && foreignKeys.length === 0) return <EmptyState label="正在加载外键" />
-  if (foreignKeys.length === 0) return <EmptyState label="暂无外键" />
+  const { t } = useTranslation()
+  if (loading && foreignKeys.length === 0) return <EmptyState label={t('inspector.loadingForeignKeys')} />
+  if (foreignKeys.length === 0) return <EmptyState label={t('inspector.noForeignKeys')} />
 
   return (
     <div className="grid gap-1">
@@ -189,8 +194,9 @@ function ForeignKeysTable({
 }
 
 function DdlBlock({ ddl, loading }: { ddl: string | null; loading: boolean }) {
-  if (loading && !ddl) return <EmptyState label="正在加载 DDL" />
-  if (!ddl) return <EmptyState label="暂无 DDL" />
+  const { t } = useTranslation()
+  if (loading && !ddl) return <EmptyState label={t('inspector.loadingDdl')} />
+  if (!ddl) return <EmptyState label={t('inspector.noDdl')} />
 
   return (
     <div className="overflow-hidden rounded-md border">
@@ -201,7 +207,7 @@ function DdlBlock({ ddl, loading }: { ddl: string | null; loading: boolean }) {
         </span>
         <Button type="button" size="xs" variant="ghost" onClick={() => navigator.clipboard?.writeText(ddl)}>
           <Copy className="size-3" />
-          复制
+          {t('common.copy')}
         </Button>
       </div>
       <pre className="max-h-64 overflow-auto p-2 text-[11px] leading-5">{ddl}</pre>

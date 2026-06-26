@@ -1,4 +1,6 @@
 import { FormEvent, useState, type ReactNode } from 'react'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, Database, Download, PlugZap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -35,6 +37,7 @@ export function ConnectionForm({
   onTest,
   onCancel,
 }: ConnectionFormProps) {
+  const { t } = useTranslation()
   const [form, setForm] = useState<ConnectionInput>({
     id: connection?.id,
     name: connection?.name ?? 'Local PostgreSQL',
@@ -81,9 +84,9 @@ export function ConnectionForm({
   const selectedDriver =
     driverDefinitions.find((driver) => driver.id === form.driverDefinitionId) ??
     driverDefinitions.find((driver) => driver.driverType === form.driverType)
-  const driverProfile = profileForDriver(form.driverType, selectedDriver)
+  const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
   const driverStatus = selectedDriver?.status ?? driverProfile.status
-  const readinessIssue = connectionReadinessIssue(form)
+  const readinessIssue = connectionReadinessIssue(form, t)
 
   const activeConnectionVariant = driverProfile.connectionVariants.some(
     (variant) => variant.id === connectionVariant,
@@ -141,7 +144,7 @@ export function ConnectionForm({
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true })
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true }, t)
     if (validationError) {
       setMessage(validationError)
       return
@@ -151,7 +154,7 @@ export function ConnectionForm({
 
   const saveOnly = async () => {
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: false })
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: false }, t)
     if (validationError) {
       setMessage(validationError)
       return
@@ -161,7 +164,7 @@ export function ConnectionForm({
 
   const test = async () => {
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true })
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true }, t)
     if (validationError) {
       setMessage(validationError)
       return
@@ -169,7 +172,7 @@ export function ConnectionForm({
 
     try {
       await onTest(normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver))
-      setMessage(driverProfile.externalDriver ? '本地驱动配置校验成功' : '连接测试成功')
+      setMessage(driverProfile.externalDriver ? t('connectionForm.localDriverValidated') : t('connectionForm.connectionTestSucceeded'))
     } catch (error) {
       const appError = normalizeAppError(error)
       setMessage(appError.detail ? `${appError.message}\n${appError.detail}` : appError.message)
@@ -180,24 +183,18 @@ export function ConnectionForm({
     <form className="grid min-h-[560px] grid-cols-[240px_1fr] overflow-hidden rounded-md border" onSubmit={submit}>
       <aside className="border-r bg-muted/35">
         <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
-          项目数据源
+          {t('connectionForm.projectDataSources')}
         </div>
-        <button
-          type="button"
-          className="m-2 flex h-9 w-[calc(100%-1rem)] items-center gap-2 rounded-md bg-primary/15 px-2 text-left text-sm text-primary ring-1 ring-primary/30"
-        >
+        <div className="m-2 flex h-9 w-[calc(100%-1rem)] items-center gap-2 rounded-md bg-primary/15 px-2 text-left text-sm text-primary ring-1 ring-primary/30">
           <Database className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate">{form.name || driverProfile.defaultName}</span>
-        </button>
-        <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-          问题 <span className="rounded-full bg-muted px-1.5 py-0.5">0</span>
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-col">
         <div className="grid grid-cols-[72px_minmax(0,1fr)_64px_180px] items-center gap-2 border-b p-4">
           <Label htmlFor="connection-name" className="text-right text-sm">
-            名称:
+            {t('connectionForm.name')}
           </Label>
           <Input
             id="connection-name"
@@ -206,18 +203,19 @@ export function ConnectionForm({
             required
           />
           <Label htmlFor="connection-color" className="text-right text-sm">
-            环境:
+            {t('connectionForm.environment')}
           </Label>
           <ColorTagInput
             value={form.colorTag ?? ''}
             onChange={(value) => update('colorTag', value)}
+            t={t}
           />
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-5">
           <div className="mx-auto grid max-w-4xl gap-3">
             <>
-                <FormRow label="驱动程序:">
+                <FormRow label={t('connectionForm.driver')}>
                   <div className="grid gap-2">
                   <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                     <select
@@ -229,21 +227,22 @@ export function ConnectionForm({
                       {selectableDrivers.map((driver) => (
                         <option key={driver.id} value={driver.id} disabled={driver.status === 'planned'}>
                           {driver.name}
-                          {!driver.builtIn ? '（custom）' : ''}
-                          {driver.status === 'planned' ? '（即将支持）' : ''}
+                          {!driver.builtIn ? ` (${t('connectionForm.custom')})` : ''}
+                          {driver.status === 'planned' ? ` (${t('connectionForm.planned')})` : ''}
                         </option>
                       ))}
                     </select>
                     <span className="inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs text-muted-foreground">
-                      {driverStatusLabel(driverStatus)}
+                      {driverStatusLabel(driverStatus, t)}
                     </span>
                   </div>
-                  {selectedDriver && <DriverDefinitionSummary driver={selectedDriver} />}
+                  {selectedDriver && <DriverDefinitionSummary driver={selectedDriver} t={t} />}
                   <DriverSupportSummary
                     driver={selectedDriver}
                     profile={driverProfile}
                     input={form}
                     readinessIssue={readinessIssue}
+                    t={t}
                   />
                   </div>
                 </FormRow>
@@ -253,15 +252,15 @@ export function ConnectionForm({
                     <div className="grid gap-2 rounded-md border bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="font-medium text-foreground">Oracle JDBC 驱动</div>
+                          <div className="font-medium text-foreground">{t('connectionForm.oracleJdbcDriver')}</div>
                           <div className="mt-1">{selectedDriver?.notes ?? driverProfile.description}</div>
                         </div>
                         <span className="shrink-0 rounded-md border bg-background px-2 py-1">
-                          {externalDriverStatus(form)}
+                          {externalDriverStatus(form, t)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-3 border-t pt-2">
-                        <span>需要本地 ojdbc；连接、查询、对象浏览、DDL/source 和补全可用。缺少 JAR 时可仅保存，稍后补齐。</span>
+                        <span>{t('connectionForm.oracleRequirement')}</span>
                         <Button
                           type="button"
                           size="xs"
@@ -270,14 +269,14 @@ export function ConnectionForm({
                           onClick={() => window.open(ORACLE_JDBC_DOWNLOAD_URL, '_blank', 'noopener,noreferrer')}
                         >
                           <Download className="size-3" />
-                          打开下载页
+                          {t('connectionForm.openDownloadPage')}
                         </Button>
                       </div>
                     </div>
                   </FormRow>
                 )}
 
-                <FormRow label="连接类型:">
+                <FormRow label={t('connectionForm.connectionType')}>
                   <SegmentedControl
                     options={driverProfile.connectionVariants}
                     value={activeConnectionVariant}
@@ -286,7 +285,7 @@ export function ConnectionForm({
                 </FormRow>
 
                 {activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file' && (
-                  <FormRow label="主机:">
+                  <FormRow label={t('connectionForm.host')}>
                     <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
                       <Input
                         id="connection-host"
@@ -295,7 +294,7 @@ export function ConnectionForm({
                         required
                       />
                       <Label htmlFor="connection-port" className="self-center text-right text-sm">
-                        端口:
+                        {t('connectionForm.port')}
                       </Label>
                       <Input
                         id="connection-port"
@@ -308,13 +307,13 @@ export function ConnectionForm({
                   </FormRow>
                 )}
 
-                <FormRow label="身份验证:">
+                <FormRow label={t('connectionForm.authentication')}>
                   <select className="ide-input">
-                    <option>用户与密码</option>
+                    <option>{t('connectionForm.userPassword')}</option>
                   </select>
                 </FormRow>
 
-                <FormRow label="用户:">
+                <FormRow label={t('connectionForm.user')}>
                   <Input
                     id="connection-username"
                     value={form.username ?? ''}
@@ -323,26 +322,26 @@ export function ConnectionForm({
                   />
                 </FormRow>
 
-                <FormRow label="密码:">
+                <FormRow label={t('connectionForm.password')}>
                   <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
                     <Input
                       id="connection-password"
                       type="password"
                       value={form.password ?? ''}
-                      placeholder={connection ? '<已隐藏>' : ''}
+                      placeholder={connection ? t('common.hidden') : ''}
                       onChange={(event) => update('password', event.target.value)}
                     />
-                    <Label className="self-center text-right text-sm">保存:</Label>
+                    <Label className="self-center text-right text-sm">{t('connectionForm.savePassword')}</Label>
                     <select className="ide-input" defaultValue="secure">
-                      <option value="none">不保存</option>
-                      <option value="session">本次会话</option>
-                      <option value="secure">系统钥匙串或安全存储</option>
+                      <option value="none">{t('connectionForm.doNotSave')}</option>
+                      <option value="session">{t('connectionForm.sessionOnly')}</option>
+                      <option value="secure">{t('connectionForm.secureStorage')}</option>
                     </select>
                   </div>
                 </FormRow>
 
                 {activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file' && (
-                  <FormRow label={databaseFieldLabel(activeConnectionVariant)}>
+                  <FormRow label={databaseFieldLabel(activeConnectionVariant, t)}>
                     <Input
                       id="connection-database"
                       value={form.database ?? ''}
@@ -370,7 +369,7 @@ export function ConnectionForm({
 
                 {driverProfile.externalDriver && (
                   <>
-                    <FormRow label="驱动类:">
+                    <FormRow label={t('connectionForm.driverClass')}>
                       <Input
                         id="driver-class"
                         value={form.driverClass ?? ''}
@@ -378,7 +377,7 @@ export function ConnectionForm({
                         onChange={(event) => update('driverClass', event.target.value)}
                       />
                     </FormRow>
-                    <FormRow label="驱动文件:">
+                    <FormRow label={t('connectionForm.driverFiles')}>
                       <Input
                         id="driver-paths"
                         value={form.driverPaths?.join('\n') ?? ''}
@@ -397,7 +396,7 @@ export function ConnectionForm({
                   </>
                 )}
 
-                <FormRow label="分组:">
+                <FormRow label={t('connectionForm.group')}>
                   <Input
                     id="connection-group"
                     value={form.group ?? ''}
@@ -406,15 +405,15 @@ export function ConnectionForm({
                 </FormRow>
 
                 <details className="rounded-md border bg-muted/20 p-3">
-                  <summary className="cursor-pointer text-sm font-medium">高级连接设置</summary>
+                  <summary className="cursor-pointer text-sm font-medium">{t('connectionForm.advanced')}</summary>
                   <div className="mt-3 grid gap-3">
-                    <FormRow label="SSL 模式:">
+                    <FormRow label={t('connectionForm.sslMode')}>
                       <select
                         className="ide-input"
                         value={form.sslMode ?? ''}
                         onChange={(event) => update('sslMode', event.target.value || null)}
                       >
-                        <option value="">默认</option>
+                        <option value="">{t('common.default')}</option>
                         <option value="disable">disable</option>
                         <option value="prefer">prefer</option>
                         <option value="require">require</option>
@@ -423,27 +422,27 @@ export function ConnectionForm({
                       </select>
                     </FormRow>
 
-                    <FormRow label="SSH Tunnel:">
+                    <FormRow label={t('connectionForm.sshTunnel')}>
                       <label className="inline-flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
                           checked={Boolean(form.sshTunnel?.enabled)}
                           onChange={(event) => updateSshTunnel('enabled', event.target.checked)}
                         />
-                        <span>启用 SSH tunnel</span>
+                        <span>{t('connectionForm.enableSshTunnel')}</span>
                       </label>
                     </FormRow>
 
                     {form.sshTunnel?.enabled && (
                       <>
-                        <FormRow label="SSH 主机:">
+                        <FormRow label={t('connectionForm.sshHost')}>
                           <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
                             <Input
                               value={form.sshTunnel.host}
                               onChange={(event) => updateSshTunnel('host', event.target.value)}
                               required
                             />
-                            <Label className="self-center text-right text-sm">端口:</Label>
+                            <Label className="self-center text-right text-sm">{t('connectionForm.port')}</Label>
                             <Input
                               type="number"
                               value={form.sshTunnel.port}
@@ -452,14 +451,14 @@ export function ConnectionForm({
                             />
                           </div>
                         </FormRow>
-                        <FormRow label="SSH 用户:">
+                        <FormRow label={t('connectionForm.sshUser')}>
                           <Input
                             value={form.sshTunnel.username}
                             onChange={(event) => updateSshTunnel('username', event.target.value)}
                             required
                           />
                         </FormRow>
-                        <FormRow label="SSH 认证:">
+                        <FormRow label={t('connectionForm.sshAuth')}>
                           <select
                             className="ide-input"
                             value={form.sshTunnel.authMethod}
@@ -470,17 +469,17 @@ export function ConnectionForm({
                           </select>
                         </FormRow>
                         {form.sshTunnel.authMethod === 'password' ? (
-                          <FormRow label="SSH 密码:">
+                          <FormRow label={t('connectionForm.sshPassword')}>
                             <Input
                               type="password"
                               value={form.sshTunnel.password ?? ''}
-                              placeholder={connection?.sshTunnel ? '<已隐藏>' : ''}
+                              placeholder={connection?.sshTunnel ? t('common.hidden') : ''}
                               onChange={(event) => updateSshTunnel('password', event.target.value)}
                             />
                           </FormRow>
                         ) : (
                           <>
-                            <FormRow label="私钥路径:">
+                            <FormRow label={t('connectionForm.privateKeyPath')}>
                               <Input
                                 value={form.sshTunnel.privateKeyPath ?? ''}
                                 placeholder="/Users/me/.ssh/id_ed25519"
@@ -488,24 +487,24 @@ export function ConnectionForm({
                                 required
                               />
                             </FormRow>
-                            <FormRow label="私钥口令:">
+                            <FormRow label={t('connectionForm.privateKeyPassphrase')}>
                               <Input
                                 type="password"
                                 value={form.sshTunnel.privateKeyPassphrase ?? ''}
-                                placeholder={connection?.sshTunnel ? '<已隐藏>' : ''}
+                                placeholder={connection?.sshTunnel ? t('common.hidden') : ''}
                                 onChange={(event) => updateSshTunnel('privateKeyPassphrase', event.target.value)}
                               />
                             </FormRow>
                           </>
                         )}
-                        <FormRow label="远端地址:">
+                        <FormRow label={t('connectionForm.remoteAddress')}>
                           <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
                             <Input
                               value={form.sshTunnel.remoteHost ?? ''}
-                              placeholder={form.host ?? '数据库主机'}
+                              placeholder={form.host ?? t('connectionForm.databaseHost')}
                               onChange={(event) => updateSshTunnel('remoteHost', event.target.value)}
                             />
-                            <Label className="self-center text-right text-sm">端口:</Label>
+                            <Label className="self-center text-right text-sm">{t('connectionForm.port')}</Label>
                             <Input
                               type="number"
                               value={form.sshTunnel.remotePort ?? ''}
@@ -534,17 +533,17 @@ export function ConnectionForm({
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={test} disabled={loading}>
               <PlugZap />
-              测试连接
+              {t('connectionForm.testConnection')}
             </Button>
             <Button type="button" variant="ghost" onClick={onCancel}>
-              取消
+              {t('common.cancel')}
             </Button>
             <Button type="button" variant="secondary" disabled={loading} onClick={saveOnly}>
-              仅保存
+              {t('connectionForm.saveOnly')}
             </Button>
             <Button type="submit" disabled={loading || Boolean(readinessIssue)}>
               <Database />
-              保存并连接
+              {t('connectionForm.saveAndConnect')}
             </Button>
           </div>
         </div>
@@ -591,26 +590,26 @@ function SegmentedControl({
   )
 }
 
-function DriverDefinitionSummary({ driver }: { driver: DriverDefinition }) {
+function DriverDefinitionSummary({ driver, t }: { driver: DriverDefinition; t: TFunction }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-      <span className={driverOriginBadgeClass(driver)}>{driverOriginLabel(driver)}</span>
+      <span className={driverOriginBadgeClass(driver)}>{driverOriginLabel(driver, t)}</span>
       <span className="rounded-md border bg-background px-2 py-0.5">
         {driverBackendLabel(driver.backend)}
       </span>
       {driver.userDriverRequired && (
         <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-800">
-          需本地驱动文件
+          {t('connectionForm.localDriverRequired')}
         </span>
       )}
       {!driver.builtIn && (
         <span className="rounded-md border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-emerald-800">
-          可编辑
+          {t('connectionForm.editable')}
         </span>
       )}
       {driver.builtIn && (
         <span className="rounded-md border bg-muted/45 px-2 py-0.5">
-          内置定义只读
+          {t('connectionForm.builtInReadOnly')}
         </span>
       )}
     </div>
@@ -622,14 +621,16 @@ function DriverSupportSummary({
   profile,
   input,
   readinessIssue,
+  t,
 }: {
   driver?: DriverDefinition
   profile: DriverProfile
   input: ConnectionInput
   readinessIssue: string | null
+  t: TFunction
 }) {
   const capabilities = driver?.capabilities ?? profileCapabilities(profile)
-  const missing = externalDriverMissingItems(input, profile, driver)
+  const missing = externalDriverMissingItems(input, profile, driver, t)
   const ready = !readinessIssue && missing.length === 0 && profile.status !== 'planned'
 
   return (
@@ -637,16 +638,16 @@ function DriverSupportSummary({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-medium text-foreground">驱动支持状态</span>
+            <span className="font-medium text-foreground">{t('connectionForm.supportStatus')}</span>
             <span className="rounded-md border bg-muted/45 px-1.5 py-0.5 text-[11px] text-muted-foreground">
               {driverBackendLabel(driver?.backend ?? profileBackend(profile))}
             </span>
             <span className={ready ? supportBadgeClass('ready') : supportBadgeClass('blocked')}>
-              {ready ? '可连接' : driverSupportStateLabel(profile.status, missing)}
+              {ready ? t('connectionForm.connectable') : driverSupportStateLabel(profile.status, missing, t)}
             </span>
           </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            {driverCapabilityBadges(capabilities).map((item) => (
+            {driverCapabilityBadges(capabilities, t).map((item) => (
               <span key={item.label} className={item.enabled ? capabilityOnClass : capabilityOffClass}>
                 {item.label}
               </span>
@@ -661,8 +662,8 @@ function DriverSupportSummary({
       </div>
       {(profile.externalDriver || driver?.userDriverRequired) && (
         <div className="mt-2 border-t pt-2 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground">外部驱动要求：</span>
-          {missing.length > 0 ? missing.join('、') : '驱动类和本地 JAR 已填写'}
+          <span className="font-medium text-foreground">{t('connectionForm.externalDriverRequirement')}</span>
+          {missing.length > 0 ? missing.join(t('common.listSeparator', { defaultValue: ', ' })) : t('connectionForm.externalDriverReady')}
         </div>
       )}
       {profile.description && (
@@ -683,36 +684,37 @@ function supportBadgeClass(state: 'ready' | 'blocked') {
     : 'rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800'
 }
 
-function driverSupportStateLabel(status: DriverDefinition['status'], missing: string[]) {
-  if (status === 'planned') return '计划中'
-  if (missing.length > 0) return `缺少${missing.join('、')}`
-  if (status === 'configurable') return '需配置'
-  return '未就绪'
+function driverSupportStateLabel(status: DriverDefinition['status'], missing: string[], t: TFunction) {
+  if (status === 'planned') return t('connectionForm.statusPlanned')
+  if (missing.length > 0) return t('connectionForm.missing', { items: missing.join(t('common.listSeparator', { defaultValue: ', ' })) })
+  if (status === 'configurable') return t('connectionForm.statusConfigurable')
+  return t('connectionForm.statusNotReady')
 }
 
 function externalDriverMissingItems(
   input: ConnectionInput,
   profile: DriverProfile,
   driver?: DriverDefinition,
+  t?: TFunction,
 ) {
   if (!profile.externalDriver && !driver?.userDriverRequired) {
     return []
   }
 
   const missing: string[] = []
-  if (!input.driverClass?.trim()) missing.push('驱动类')
-  if (!input.driverPaths?.length) missing.push('本地 JAR')
+  if (!input.driverClass?.trim()) missing.push(t ? t('connectionForm.missingDriverClass') : 'driver class')
+  if (!input.driverPaths?.length) missing.push(t ? t('connectionForm.missingLocalJar') : 'local JAR')
   return missing
 }
 
-function driverCapabilityBadges(capabilities: DriverDefinition['capabilities']) {
+function driverCapabilityBadges(capabilities: DriverDefinition['capabilities'], t: TFunction) {
   return [
-    { label: '连接', enabled: capabilities.canConnect },
-    { label: '查询', enabled: capabilities.canQuery },
-    { label: '流式结果', enabled: capabilities.canStream },
-    { label: '对象浏览', enabled: capabilities.canReadMetadata },
+    { label: t('connectionForm.capability.connect'), enabled: capabilities.canConnect },
+    { label: t('connectionForm.capability.query'), enabled: capabilities.canQuery },
+    { label: t('connectionForm.capability.stream'), enabled: capabilities.canStream },
+    { label: t('connectionForm.capability.metadata'), enabled: capabilities.canReadMetadata },
     { label: 'DDL', enabled: capabilities.canGenerateDdl },
-    { label: '取消查询', enabled: capabilities.canCancel },
+    { label: t('connectionForm.capability.cancel'), enabled: capabilities.canCancel },
   ]
 }
 
@@ -733,10 +735,10 @@ function profileBackend(profile: DriverProfile): DriverDefinition['backend'] {
   return profile.externalDriver ? 'jdbc' : 'nativeRust'
 }
 
-function driverOriginLabel(driver: DriverDefinition) {
-  if (!driver.builtIn) return 'Custom'
-  if (driver.status === 'configurable') return 'Preset'
-  return 'Built-in'
+function driverOriginLabel(driver: DriverDefinition, t: TFunction) {
+  if (!driver.builtIn) return t('drivers.customOrigin', { defaultValue: 'Custom' })
+  if (driver.status === 'configurable') return t('drivers.presetOrigin', { defaultValue: 'Preset' })
+  return t('drivers.builtInOrigin', { defaultValue: 'Built-in' })
 }
 
 function driverOriginBadgeClass(driver: DriverDefinition) {
@@ -758,9 +760,11 @@ function driverBackendLabel(backend: DriverDefinition['backend']) {
 function ColorTagInput({
   value,
   onChange,
+  t,
 }: {
   value: string
   onChange: (value: string) => void
+  t: TFunction
 }) {
   const colors = ['', 'dev', 'test', 'stage', 'prod']
   return (
@@ -774,11 +778,11 @@ function ColorTagInput({
             colorSwatchClass(color),
             value === color ? 'ring-2 ring-ring ring-offset-1 ring-offset-background' : '',
           ].join(' ')}
-          title={environmentLabel(color)}
+          title={environmentLabel(color, t)}
           onClick={() => onChange(color)}
         />
       ))}
-      <span className="ml-1 min-w-12 text-xs text-muted-foreground">{environmentLabel(value)}</span>
+      <span className="ml-1 min-w-12 text-xs text-muted-foreground">{environmentLabel(value, t)}</span>
     </div>
   )
 }
@@ -791,12 +795,12 @@ function colorSwatchClass(color: string) {
   return 'bg-transparent'
 }
 
-function environmentLabel(color: string) {
+function environmentLabel(color: string, t: TFunction) {
   if (color === 'prod') return 'prod'
   if (color === 'stage') return 'stage'
   if (color === 'test') return 'test'
   if (color === 'dev') return 'dev'
-  return '无'
+  return t('common.none')
 }
 
 function normalizeEnvironmentTag(value: string | null | undefined) {
@@ -809,17 +813,17 @@ function normalizeEnvironmentTag(value: string | null | undefined) {
     : null
 }
 
-function driverStatusLabel(status?: DriverDefinition['status'] | DriverProfile['status']) {
-  if (status === 'ready') return '可用'
-  if (status === 'configurable') return '需配置'
-  if (status === 'planned') return '计划中'
-  return '未知'
+function driverStatusLabel(status: DriverDefinition['status'] | DriverProfile['status'] | undefined, t: TFunction) {
+  if (status === 'ready') return t('connectionForm.statusReady')
+  if (status === 'configurable') return t('connectionForm.statusConfigurable')
+  if (status === 'planned') return t('connectionForm.statusPlanned')
+  return t('connectionForm.statusUnknown')
 }
 
-function externalDriverStatus(input: ConnectionInput) {
-  if (!input.driverClass?.trim()) return '未配置驱动类'
-  if (!input.driverPaths?.length) return '未配置 JAR'
-  return '已填写配置'
+function externalDriverStatus(input: ConnectionInput, t: TFunction) {
+  if (!input.driverClass?.trim()) return t('connectionForm.driverClassMissing')
+  if (!input.driverPaths?.length) return t('connectionForm.jarMissing')
+  return t('connectionForm.configured')
 }
 
 function normalizeInput(
@@ -873,17 +877,18 @@ function validateRequiredFields(
   input: ConnectionInput,
   variant: ConnectionVariant,
   validationMode: { requireExternalDriver: boolean },
+  t: TFunction,
 ) {
   if (!input.name.trim()) {
-    return '连接名称必填'
+    return t('connectionForm.validation.nameRequired')
   }
 
   if (validationMode.requireExternalDriver && requiresExternalDriverConfig(input.driverType)) {
     if (!input.driverClass?.trim()) {
-      return 'Oracle JDBC 驱动类必填，默认应为 oracle.jdbc.OracleDriver'
+      return t('connectionForm.validation.oracleDriverClassRequired')
     }
     if (!input.driverPaths?.length) {
-      return 'Oracle 需要至少填写一个本地 ojdbc JAR 路径'
+      return t('connectionForm.validation.oracleJarRequired')
     }
   }
 
@@ -897,35 +902,35 @@ function validateRequiredFields(
 
   if (variant === 'urlOnly') {
     if (!input.connectionUrl?.trim()) {
-      return 'URL 必填'
+      return t('connectionForm.validation.urlRequired')
     }
     return null
   }
 
   if (!input.host?.trim() && variant !== 'file') {
-    return '主机必填'
+    return t('connectionForm.validation.hostRequired')
   }
 
   if (!input.database?.trim() && requiresDatabase(input.driverType)) {
-    return '数据库必填，PostgreSQL 本地默认可填 postgres'
+    return t('connectionForm.validation.databaseRequired')
   }
 
   if (!input.username?.trim() && requiresUsername(input.driverType)) {
-    return '用户名必填'
+    return t('connectionForm.validation.usernameRequired')
   }
 
   return null
 }
 
-function connectionReadinessIssue(input: ConnectionInput) {
+function connectionReadinessIssue(input: ConnectionInput, t: TFunction) {
   if (!requiresExternalDriverConfig(input.driverType)) {
     return null
   }
   if (!input.driverClass?.trim()) {
-    return '未就绪：缺少 JDBC 驱动类。可仅保存，补齐后再连接。'
+    return t('connectionForm.validation.missingJdbcClassReadiness')
   }
   if (!input.driverPaths?.length) {
-    return '未就绪：缺少本地 ojdbc/JDBC JAR。可仅保存，补齐后再连接。'
+    return t('connectionForm.validation.missingJarReadiness')
   }
   return null
 }
@@ -993,6 +998,19 @@ function profileForDriver(
   }
 }
 
+function localizedProfile(profile: DriverProfile, driverType: DriverType, t: TFunction): DriverProfile {
+  if (driverType === 'oracle') {
+    return { ...profile, description: t('connectionForm.description.oracle') }
+  }
+  if (driverType === 'jdbc') {
+    return { ...profile, description: t('connectionForm.description.jdbc') }
+  }
+  if (driverType === 'sqlite') {
+    return { ...profile, description: t('connectionForm.description.sqlite') }
+  }
+  return profile
+}
+
 function isConnectionVariant(value: string): value is ConnectionVariant {
   return value === 'hostPort' ||
     value === 'urlOnly' ||
@@ -1044,7 +1062,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     status: 'configurable',
     usesUrl: true,
     externalDriver: true,
-    description: 'Oracle 需要用户提供本地 ojdbc.jar；连接、查询、对象浏览、DDL/source 和补全可用。',
+    description: 'Oracle requires a user-provided local ojdbc.jar.',
     driverClass: 'oracle.jdbc.OracleDriver',
     urlPlaceholder: 'jdbc:oracle:thin:@//localhost:1521/ORCLPDB1',
     connectionVariants: [
@@ -1068,7 +1086,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     status: 'configurable',
     usesUrl: true,
     externalDriver: true,
-    description: '自定义 JDBC 会通过 JDBC bridge 动态加载驱动类、JDBC URL 和 jar 路径。',
+    description: 'Custom JDBC loads the driver class, JDBC URL, and JAR paths through the JDBC bridge.',
     urlPlaceholder: 'jdbc:vendor://host:port/database',
     connectionVariants: [{ id: 'urlOnly', label: 'URL only' }],
     defaultUrl: (input) => input.connectionUrl || '',
@@ -1080,7 +1098,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUsername: '',
     status: 'ready',
     usesUrl: true,
-    description: '本地 SQLite 文件，支持查询、对象浏览、DDL 和只读数据预览。',
+    description: 'Local SQLite file with query execution, object browsing, DDL, and read-only data preview.',
     urlPlaceholder: '/path/to/database.sqlite',
     connectionVariants: [{ id: 'file', label: 'File' }],
     defaultUrl: (input) => input.connectionUrl || '',
@@ -1120,10 +1138,10 @@ function defaultConnectionVariant(driverType: DriverType) {
   return DRIVER_PROFILES[driverType].connectionVariants[0].id
 }
 
-function databaseFieldLabel(variant: ConnectionVariant) {
+function databaseFieldLabel(variant: ConnectionVariant, t: TFunction) {
   if (variant === 'oracleSid') return 'SID:'
-  if (variant === 'oracleService') return '服务名:'
-  return '数据库:'
+  if (variant === 'oracleService') return t('connectionForm.serviceName')
+  return t('connectionForm.database')
 }
 
 const PRIMARY_DRIVER_IDS: DriverType[] = ['postgres', 'mysql', 'oracle', 'sqlite', 'mssql']
@@ -1134,7 +1152,7 @@ const PRIMARY_DRIVER_ORDER = new Map<DriverType, number>(
 const FALLBACK_DRIVER_OPTIONS: Array<Pick<DriverDefinition, 'id' | 'driverType' | 'name' | 'status' | 'builtIn'>> = [
   { id: 'postgres', driverType: 'postgres', name: 'PostgreSQL', status: 'ready', builtIn: true },
   { id: 'mysql', driverType: 'mysql', name: 'MySQL', status: 'ready', builtIn: true },
-  { id: 'oracle', driverType: 'oracle', name: 'Oracle（需要本地 ojdbc）', status: 'configurable', builtIn: true },
+  { id: 'oracle', driverType: 'oracle', name: 'Oracle (local ojdbc required)', status: 'configurable', builtIn: true },
   { id: 'sqlite', driverType: 'sqlite', name: 'SQLite', status: 'ready', builtIn: true },
   { id: 'mssql', driverType: 'mssql', name: 'SQL Server', status: 'ready', builtIn: true },
 ]

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import i18n from '@/i18n'
 import { cancelTask, listTasks, startNoopTask } from '@/ipc/task'
 import { normalizeAppError } from '@/ipc/client'
 import { useUiStore } from '@/stores/uiStore'
@@ -22,7 +23,7 @@ export const useTaskStore = create<TaskState>((set) => ({
       const tasks = await listTasks()
       set({ tasks: sortTasks(tasks) })
     } catch (error) {
-      useUiStore.getState().notifyError(normalizeAppError(error), '加载后台任务失败')
+      useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.loadTasksFailed'))
     } finally {
       set({ loading: false })
     }
@@ -39,7 +40,7 @@ export const useTaskStore = create<TaskState>((set) => ({
       const task = await startNoopTask(input)
       useTaskStore.getState().upsertTask(task)
     } catch (error) {
-      useUiStore.getState().notifyError(normalizeAppError(error), '启动后台任务失败')
+      useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.startTaskFailed'))
     }
   },
   cancel: async (taskId) => {
@@ -47,7 +48,7 @@ export const useTaskStore = create<TaskState>((set) => ({
       const task = await cancelTask(taskId)
       useTaskStore.getState().upsertTask(task)
     } catch (error) {
-      useUiStore.getState().notifyError(normalizeAppError(error), '取消后台任务失败')
+      useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.cancelTaskFailed'))
     }
   },
 }))

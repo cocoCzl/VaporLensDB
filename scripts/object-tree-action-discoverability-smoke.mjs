@@ -39,10 +39,10 @@ includesAll(
   databaseTree,
   [
     'setShowSystemObjects',
-    'title="刷新对象"',
-    "title={showSystemObjects ? '隐藏系统对象' : '显示系统对象'}",
+    "title={t('explorer.refreshObjects')}",
+    "title={showSystemObjects ? t('explorer.hideSystemObjects') : t('explorer.showSystemObjects')}",
     'onClick={() => setShowSystemObjects(!showSystemObjects)}',
-    'placeholder="搜索对象"',
+    "placeholder={t('explorer.searchPlaceholder')}",
     'function openObjectSummary(node: NodeRecord | undefined)',
     "tab.kind === 'objectSummary'",
     "kind: 'objectSummary'",

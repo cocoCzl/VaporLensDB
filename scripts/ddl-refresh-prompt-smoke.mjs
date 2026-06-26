@@ -31,8 +31,8 @@ includesAll(
   useQuery,
   [
     'if (containsLikelyDdl(sql)) {',
-    "title: '对象结构可能已变化'",
-    "message: '可手动刷新对象树、Structure tab 或 DDL/Source tab。'",
+    "title: i18n.t('notifications.objectStructureChanged')",
+    "message: i18n.t('notifications.refreshObjectStructureHint')",
     'function containsLikelyDdl(sql: string)',
     "normalized.startsWith('create ')",
     "normalized.startsWith('alter ')",
@@ -51,7 +51,7 @@ excludesAll(
 const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
-  ['刷新结构', '刷新 ${context.definitionKind}'],
+  ["t('workbench.refreshStructure')", "t('workbench.refreshDefinition'"],
   'manual refresh affordances for structure and definition tabs',
 )
 

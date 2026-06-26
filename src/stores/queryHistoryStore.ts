@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import i18n from '@/i18n'
 import { addQueryHistory, clearQueryHistory, listQueryHistory } from '@/ipc/queryHistory'
 import { normalizeAppError } from '@/ipc/client'
 import { useUiStore } from '@/stores/uiStore'
@@ -29,7 +30,7 @@ export const useQueryHistoryStore = create<QueryHistoryState>((set, get) => ({
     } catch (error) {
       const appError = normalizeAppError(error)
       set({ error: appError.message, loading: false })
-      notifyError(error, '加载查询历史失败')
+      notifyError(error, i18n.t('notifications.loadQueryHistoryFailed'))
     }
   },
   addEntry: async (entry) => {
@@ -37,7 +38,7 @@ export const useQueryHistoryStore = create<QueryHistoryState>((set, get) => ({
       const saved = await addQueryHistory(entry)
       set((state) => ({ entries: [saved, ...state.entries].slice(0, 200) }))
     } catch (error) {
-      notifyError(error, '保存查询历史失败')
+      notifyError(error, i18n.t('notifications.saveQueryHistoryFailed'))
       await get().loadHistory()
     }
   },
@@ -50,7 +51,7 @@ export const useQueryHistoryStore = create<QueryHistoryState>((set, get) => ({
     } catch (error) {
       const appError = normalizeAppError(error)
       set({ error: appError.message, loading: false })
-      notifyError(error, '清空查询历史失败')
+      notifyError(error, i18n.t('notifications.clearQueryHistoryFailed'))
       return false
     }
   },

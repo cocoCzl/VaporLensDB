@@ -61,10 +61,10 @@ includesAll(
     'exportTableCsv({',
     'previewTableCsvImport({',
     'importTableCsv({',
-    '导出整表',
+    "t('workbench.exportTable')",
     'CSV import path',
-    '预览导入',
-    '执行导入',
+    "t('workbench.previewImport')",
+    "t('workbench.runImport')",
   ],
   'Data tab table import/export UI',
 )

@@ -2,7 +2,7 @@
 
 VaporLensDB is a Tauri 2 + Rust + React database IDE. It focuses on a fast Object Tree, SQL editing, read-only inspection workflows, and practical database operations without becoming a heavy all-purpose administration console.
 
-Current version: `0.4.2`.
+Current version: `0.5.1`.
 
 ## Current Status
 

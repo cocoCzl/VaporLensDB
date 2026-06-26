@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
@@ -35,20 +35,18 @@ if (missingRequired.length) {
   process.exit(1)
 }
 
-const reviewFiles = [
-  'src/App.tsx',
-  'src/components/layout/Sidebar.tsx',
-  'src/components/layout/StatusBar.tsx',
-  'src/components/layout/TabBar.tsx',
-  'src/components/connection/ConnectionList.tsx',
-  'src/components/connection/ConnectionDialog.tsx',
-  'src/components/editor/EditorToolbar.tsx',
-  'src/components/grid/DataGrid.tsx',
-]
+const reviewFiles = walk(resolve(root, 'src')).filter((file) => {
+  const normalized = relative(root, file)
+  return (
+    /\.(ts|tsx)$/.test(normalized) &&
+    !normalized.startsWith('src/locales/') &&
+    !normalized.endsWith('.d.ts')
+  )
+})
 
 const hardcoded = []
 for (const file of reviewFiles) {
-  const source = readFileSync(resolve(root, file), 'utf8')
+  const source = readFileSync(file, 'utf8')
   source.split(/\r?\n/).forEach((line, index) => {
     if (/[\p{Script=Han}]/u.test(line) && !line.includes('i18n-hardcoded-ok')) {
       hardcoded.push(`${relative(root, file)}:${index + 1}: ${line.trim()}`)
@@ -57,11 +55,12 @@ for (const file of reviewFiles) {
 }
 
 if (hardcoded.length) {
-  console.warn('i18n hardcoded-string review items:')
-  for (const item of hardcoded) console.warn(`- ${item}`)
+  console.error('Hardcoded user-facing Han characters found. Use locale keys or mark non-UI parsing rules with i18n-hardcoded-ok:')
+  for (const item of hardcoded) console.error(`- ${item}`)
+  process.exit(1)
 }
 
-console.log(`i18n smoke passed: ${zhKeys.size} locale keys, ${hardcoded.length} review items.`)
+console.log(`i18n smoke passed: ${zhKeys.size} locale keys, ${reviewFiles.length} source files scanned.`)
 
 function flattenKeys(value, prefix = '', keys = new Set()) {
   for (const [key, nested] of Object.entries(value)) {
@@ -73,4 +72,19 @@ function flattenKeys(value, prefix = '', keys = new Set()) {
     }
   }
   return keys
+}
+
+function walk(directory) {
+  const entries = readdirSync(directory)
+  const files = []
+  for (const entry of entries) {
+    const path = resolve(directory, entry)
+    const stat = statSync(path)
+    if (stat.isDirectory()) {
+      files.push(...walk(path))
+    } else {
+      files.push(path)
+    }
+  }
+  return files
 }

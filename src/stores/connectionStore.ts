@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import i18n from '@/i18n'
 import {
   connect,
   createConnection,
@@ -51,7 +52,7 @@ function summarizeConnectionError(message: string) {
   const noRoute = normalized.match(/No route to host[^.。]*/i)?.[0]
   if (noRoute) return noRoute
   if (/The Network Adapter could not establish the connection/i.test(normalized)) {
-    return '目标数据库网络不可达，请检查主机、端口、防火墙或 VPN。'
+    return i18n.t('notifications.networkUnreachable')
   }
   return normalized.length > 120 ? `${normalized.slice(0, 120)}...` : normalized
 }
@@ -73,7 +74,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       set({ connections, statuses: indexStatuses(statuses), loading: false })
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
-      notifyError(error, '加载连接失败')
+      notifyError(error, i18n.t('notifications.loadConnectionsFailed'))
     }
   },
   saveConnection: async (input) => {
@@ -84,7 +85,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       return saved
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
-      notifyError(error, '保存连接失败')
+      notifyError(error, i18n.t('notifications.saveConnectionFailed'))
       throw error
     }
   },
@@ -104,7 +105,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       useMetadataStore.getState().clearConnection(id)
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
-      notifyError(error, '删除连接失败')
+      notifyError(error, i18n.t('notifications.deleteConnectionFailed'))
       throw error
     }
   },
@@ -117,13 +118,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         kind: 'success',
         title:
           input.driverType === 'oracle' || input.driverType === 'jdbc'
-            ? '驱动配置校验成功'
-            : '连接测试成功',
+            ? i18n.t('notifications.driverConfigValid')
+            : i18n.t('notifications.connectionTestSucceeded'),
         message: input.name,
       })
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
-      notifyError(error, '连接测试失败')
+      notifyError(error, i18n.t('notifications.testConnectionFailed'))
       throw error
     }
   },
@@ -153,7 +154,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         loading: false,
       }))
       useMetadataStore.getState().clearConnection(id)
-      notifyError(error, '连接失败')
+      notifyError(error, i18n.t('notifications.connectFailed'))
       throw error
     }
   },
@@ -169,7 +170,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       useMetadataStore.getState().clearConnection(id)
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
-      notifyError(error, '断开连接失败')
+      notifyError(error, i18n.t('notifications.disconnectFailed'))
       throw error
     }
   },

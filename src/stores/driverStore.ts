@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import i18n from '@/i18n'
 import {
   deleteCustomDriverDefinition,
   importJdbcDriverArtifacts,
@@ -39,7 +40,7 @@ export const useDriverStore = create<DriverState>((set, get) => ({
     } catch (error) {
       const appError = normalizeAppError(error)
       set({ error: appError.message, loading: false })
-      useUiStore.getState().notifyError(appError, '加载驱动目录失败')
+      useUiStore.getState().notifyError(appError, i18n.t('notifications.loadDriverCatalogFailed'))
     }
   },
   saveDriver: async (driver) => {
@@ -47,12 +48,12 @@ export const useDriverStore = create<DriverState>((set, get) => ({
     try {
       const saved = await saveCustomDriverDefinition(driver)
       await get().loadDrivers(true)
-      useUiStore.getState().notify({ kind: 'success', title: '驱动定义已保存' })
+      useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.driverDefinitionSaved') })
       return saved
     } catch (error) {
       const appError = normalizeAppError(error)
       set({ error: appError.message, loading: false })
-      useUiStore.getState().notifyError(appError, '保存驱动定义失败')
+      useUiStore.getState().notifyError(appError, i18n.t('notifications.saveDriverDefinitionFailed'))
       return null
     }
   },
@@ -61,12 +62,12 @@ export const useDriverStore = create<DriverState>((set, get) => ({
     try {
       await deleteCustomDriverDefinition(id)
       await get().loadDrivers(true)
-      useUiStore.getState().notify({ kind: 'success', title: '驱动定义已删除' })
+      useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.driverDefinitionDeleted') })
       return true
     } catch (error) {
       const appError = normalizeAppError(error)
       set({ error: appError.message, loading: false })
-      useUiStore.getState().notifyError(appError, '删除驱动定义失败')
+      useUiStore.getState().notifyError(appError, i18n.t('notifications.deleteDriverDefinitionFailed'))
       return false
     }
   },
@@ -75,12 +76,12 @@ export const useDriverStore = create<DriverState>((set, get) => ({
     try {
       const saved = await importJdbcDriverArtifacts({ driverDefinitionId, paths })
       await get().loadDrivers(true)
-      useUiStore.getState().notify({ kind: 'success', title: 'JDBC JAR 已导入' })
+      useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.jdbcJarImported') })
       return saved
     } catch (error) {
       const appError = normalizeAppError(error)
       set({ error: appError.message, loading: false })
-      useUiStore.getState().notifyError(appError, '导入 JDBC JAR 失败')
+      useUiStore.getState().notifyError(appError, i18n.t('notifications.importJdbcJarFailed'))
       return null
     }
   },
@@ -89,12 +90,12 @@ export const useDriverStore = create<DriverState>((set, get) => ({
     try {
       const saved = await removeJdbcDriverArtifact({ driverDefinitionId, path })
       await get().loadDrivers(true)
-      useUiStore.getState().notify({ kind: 'success', title: 'JDBC JAR 已移除' })
+      useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.jdbcJarRemoved') })
       return saved
     } catch (error) {
       const appError = normalizeAppError(error)
       set({ error: appError.message, loading: false })
-      useUiStore.getState().notifyError(appError, '移除 JDBC JAR 失败')
+      useUiStore.getState().notifyError(appError, i18n.t('notifications.removeJdbcJarFailed'))
       return null
     }
   },
@@ -106,7 +107,7 @@ export const useDriverStore = create<DriverState>((set, get) => ({
         driverClass: driver.jdbcDriverClass,
         driverPaths: driver.driverArtifacts,
       })
-      useUiStore.getState().notify({ kind: 'success', title: '外部驱动校验通过' })
+      useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.externalDriverValidated') })
       return result
     } catch (error) {
       const appError = normalizeAppError(error)

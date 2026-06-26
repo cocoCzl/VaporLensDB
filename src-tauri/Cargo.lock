@@ -4982,7 +4982,7 @@ dependencies = [
 
 [[package]]
 name = "vapor-lens-db"
-version = "0.4.2"
+version = "0.5.1"
 dependencies = [
  "aes-gcm",
  "anyhow",

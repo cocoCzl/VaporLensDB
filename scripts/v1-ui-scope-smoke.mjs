@@ -27,22 +27,25 @@ function excludesAll(source, values, label) {
 }
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ["view: 'explorer'", "sidebarView === 'settings'", '<DatabaseTree />'], 'left rail')
+includesAll(sidebar, ["view: 'explorer'", "kind: 'settings'", '<DatabaseTree />'], 'left rail')
 excludesAll(
   sidebar,
-  ["view: 'dataSources'", "view: 'sql'", "view: 'sessions'", "sidebarView === 'sql'", "sidebarView === 'sessions'", "view: 'structure'", 'StructurePanel', 'ObjectDetails'],
+  ["view: 'dataSources'", "view: 'sql'", "view: 'sessions'", "sidebarView === 'settings'", "sidebarView === 'sql'", "sidebarView === 'sessions'", "view: 'structure'", 'StructurePanel', 'ObjectDetails'],
   'left rail',
 )
 includesAll(sidebar, ["t('sql.history')", 'handleClearHistory', 'clearHistory'], 'settings history clear')
 
 const uiStore = read('src/stores/uiStore.ts')
 assert(
-  uiStore.includes("type SidebarView = 'explorer' | 'settings'"),
-  'SidebarView should expose only Explorer and Settings',
+  uiStore.includes("type SidebarView = 'explorer' | 'dataSources'"),
+  'SidebarView should expose only Explorer and the Data Sources selector',
 )
 
+const editorStore = read('src/stores/editorStore.ts')
+assert(editorStore.includes("| 'settings'"), 'Editor tabs should expose Settings as a workspace tab')
+
 const connectionForm = read('src/components/connection/ConnectionForm.tsx')
-excludesAll(connectionForm, ['SSH/SSL', '架构', 'Options', '选项'], 'connection dialog tabs')
+excludesAll(connectionForm, ['SSH/SSL', '架构', 'Options', '选项', '问题 <span'], 'connection dialog tabs')
 includesAll(
   connectionForm,
   ["{ id: 'postgres'", "{ id: 'mysql'", "{ id: 'oracle'", "{ id: 'sqlite'", "{ id: 'mssql'"],
@@ -52,7 +55,7 @@ assert(
   connectionForm.includes("disabled={driver.status === 'planned'}"),
   'planned database choices should be disabled',
 )
-includesAll(connectionForm, ['Oracle 需要至少填写一个本地 ojdbc JAR 路径'], 'Oracle local validation')
+includesAll(connectionForm, ["t('connectionForm.validation.oracleJarRequired')"], 'Oracle local validation')
 
 const dataGrid = read('src/components/grid/DataGrid.tsx')
 excludesAll(dataGrid, ['UPDATE '], 'data grid should not execute SQL directly')

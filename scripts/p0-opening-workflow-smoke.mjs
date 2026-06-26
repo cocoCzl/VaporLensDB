@@ -34,7 +34,7 @@ const sidebar = read('src/components/layout/Sidebar.tsx')
 assert(mockedDataSources.length >= 20, 'P0 smoke should mock at least 20 saved Data Sources')
 includesAll(
   sidebar,
-  ['const RAIL_ITEMS = [', "{ view: 'explorer'", "onClick={() => setSidebarView('settings')}", '<DataSourceHeader />', '<DatabaseTree />'],
+  ['const RAIL_ITEMS = [', "{ view: 'explorer'", 'function openSettings()', "kind: 'settings'", '<DataSourceHeader />', '<DatabaseTree />'],
   'Explorer-first left rail',
 )
 excludesAll(
@@ -59,6 +59,7 @@ includesAll(
     'Data Sources',
     'Search objects',
     'New SQL tab',
+    '<SettingsWorkspacePanel />',
   ],
   'main workspace opening workflow',
 )

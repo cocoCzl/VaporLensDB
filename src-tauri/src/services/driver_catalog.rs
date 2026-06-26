@@ -167,12 +167,6 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             metadata_dialect_sql: Some("mssql".to_string()),
             capabilities: ready_capabilities(false),
         },
-        planned_definition(
-            DriverType::Mongo,
-            "MongoDB",
-            Some("后续用官方 mongodb Rust driver 接入。"),
-        ),
-        planned_definition(DriverType::Redis, "Redis", Some("后续用 redis-rs 接入。")),
     ]
 }
 
@@ -213,39 +207,6 @@ fn oracle_metadata_sql() -> String {
         "objectDdl": "SELECT CASE WHEN CASE '{kind}' WHEN 'procedure' THEN 'SOURCE' WHEN 'function' THEN 'SOURCE' WHEN 'package' THEN 'SOURCE' WHEN 'trigger' THEN 'SOURCE' ELSE 'DDL' END = 'SOURCE' THEN (SELECT XMLAGG(XMLELEMENT(e, text).EXTRACT('//text()') ORDER BY CASE type WHEN 'PACKAGE' THEN 0 WHEN 'PACKAGE BODY' THEN 1 ELSE 0 END, line).GETCLOBVAL() FROM all_source WHERE owner = UPPER('{schema}') AND name = UPPER('{name}') AND type IN (CASE '{kind}' WHEN 'procedure' THEN 'PROCEDURE' WHEN 'function' THEN 'FUNCTION' WHEN 'package' THEN 'PACKAGE' WHEN 'trigger' THEN 'TRIGGER' ELSE 'PACKAGE' END, CASE '{kind}' WHEN 'package' THEN 'PACKAGE BODY' ELSE CASE '{kind}' WHEN 'trigger' THEN 'TRIGGER' WHEN 'procedure' THEN 'PROCEDURE' ELSE 'FUNCTION' END END)) ELSE DBMS_METADATA.GET_DDL(CASE '{kind}' WHEN 'table' THEN 'TABLE' WHEN 'view' THEN 'VIEW' WHEN 'materializedView' THEN 'MATERIALIZED_VIEW' WHEN 'index' THEN 'INDEX' WHEN 'sequence' THEN 'SEQUENCE' WHEN 'synonym' THEN 'SYNONYM' ELSE UPPER('{kind}') END, UPPER('{name}'), UPPER('{schema}')) END AS ddl FROM dual"
     })
     .to_string()
-}
-
-fn planned_definition(id: DriverType, name: &str, notes: Option<&str>) -> DriverDefinition {
-    DriverDefinition {
-        id: id.to_string(),
-        driver_type: id,
-        name: name.to_string(),
-        backend: DriverBackend::Planned,
-        status: DriverStatus::Planned,
-        default_port: None,
-        default_username: None,
-        default_database: None,
-        jdbc_driver_class: None,
-        url_template: None,
-        driver_artifact: None,
-        driver_artifacts: vec![],
-        user_driver_required: false,
-        built_in: true,
-        notes: notes.map(str::to_string),
-        connection_variants: match id {
-            DriverType::Sqlite => vec![variant("file", "File", &["connectionUrl"])],
-            _ => host_port_variants(),
-        },
-        metadata_dialect_sql: None,
-        capabilities: DriverDefinitionCapabilities {
-            can_connect: false,
-            can_query: false,
-            can_stream: false,
-            can_read_metadata: false,
-            can_cancel: false,
-            can_generate_ddl: false,
-        },
-    }
 }
 
 fn host_port_variants() -> Vec<DriverConnectionVariant> {
@@ -299,6 +260,17 @@ mod tests {
         assert!(definition.capabilities.can_read_metadata);
         assert!(definition.capabilities.can_generate_ddl);
         assert!(definition.metadata_dialect_sql.is_some());
+    }
+
+    #[test]
+    fn planned_mongo_and_redis_are_not_seeded_as_driver_definitions() {
+        let definitions = driver_definitions();
+        assert!(!definitions
+            .iter()
+            .any(|definition| definition.driver_type == DriverType::Mongo));
+        assert!(!definitions
+            .iter()
+            .any(|definition| definition.driver_type == DriverType::Redis));
     }
 
     #[test]

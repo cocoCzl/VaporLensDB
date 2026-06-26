@@ -39,11 +39,12 @@ includesAll(
   'DBeaver import parser',
 )
 
-const sidebar = read('src/components/layout/Sidebar.tsx')
+const settingsWorkspace = read('src/components/settings/SettingsWorkspacePanel.tsx')
 includesAll(
-  sidebar,
+  settingsWorkspace,
   [
     'DbeaverImportSettings',
+    "activeSection === 'import'",
     'previewDbeaverConfiguration(Array.from(files))',
     'dbeaverPreviewToConnectionInput(connection)',
     "t('dbeaver.title')",
@@ -54,6 +55,9 @@ includesAll(
   ],
   'DBeaver import settings UI',
 )
+
+const sidebar = read('src/components/layout/Sidebar.tsx')
+assert(!sidebar.includes('DbeaverImportSettings'), 'DBeaver import should not live in the left sidebar')
 
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')

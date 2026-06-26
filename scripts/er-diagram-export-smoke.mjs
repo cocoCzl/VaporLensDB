@@ -22,7 +22,7 @@ const erDiagram = read('src/components/diagram/ERDiagram.tsx')
 includesAll(
   erDiagram,
   [
-    '导出 SVG',
+    "t('diagram.exportSvg')",
     'buildDiagramSvg({',
     'downloadTextFile(',
     'image/svg+xml',
@@ -31,7 +31,7 @@ includesAll(
     'column.isPrimaryKey',
     'Large diagram limited to first',
     'ER_DIAGRAM_EXPORT_UNAVAILABLE',
-    'ER diagram 导出失败',
+    "t('diagram.exportFailed')",
     'safeFileName',
     'escapeXml',
   ],

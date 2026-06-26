@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import { Eye, EyeOff, ListFilter, RefreshCw, Search, Server } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
 import { useQuery } from '@/hooks/useQuery'
@@ -140,6 +142,7 @@ const OBJECT_CATEGORY_ORDER: ObjectCategoryDefinition[] = [
 ]
 
 export function DatabaseTree() {
+  const { t } = useTranslation()
   const { activeConnectionId, connections, statuses, setActiveConnection } = useConnectionStore()
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
@@ -238,7 +241,7 @@ export function DatabaseTree() {
         [databaseFolderId]: {
           id: databaseFolderId,
           parentId: ROOT_ID,
-          label: 'Databases',
+          label: t('explorer.folders.databases'),
           kind: 'folder',
           depth: 0,
           expandable: true,
@@ -277,6 +280,7 @@ export function DatabaseTree() {
             nextNodes[id],
             activeConnection.driverType,
             database.name,
+            t,
           )
           for (const category of categories) {
             nextNodes[category.id] = category
@@ -300,7 +304,7 @@ export function DatabaseTree() {
         nextNodes[schemasFolderId] = {
           id: schemasFolderId,
           parentId: id,
-          label: 'Schemas',
+          label: t('explorer.folders.schemas'),
           kind: 'folder',
           depth: 2,
           expandable: true,
@@ -336,6 +340,7 @@ export function DatabaseTree() {
             nextNodes[schemaNodeId],
             activeConnection?.driverType ?? 'postgres',
             defaultSchema.name,
+            t,
           )
           for (const category of categories) {
             nextNodes[category.id] = category
@@ -344,7 +349,7 @@ export function DatabaseTree() {
           schemaChildIds[schemaNodeId] = categories.map((category) => category.id)
         }
 
-        const showAllSchemasNode = showAllSchemasActionNode(nextNodes[schemasFolderId])
+        const showAllSchemasNode = showAllSchemasActionNode(nextNodes[schemasFolderId], t)
         nextNodes[showAllSchemasNode.id] = showAllSchemasNode
         schemaFolderChildIds.push(showAllSchemasNode.id)
         schemaChildIds[schemasFolderId] = schemaFolderChildIds
@@ -365,7 +370,7 @@ export function DatabaseTree() {
         ...schemaChildIds,
       })
     } catch (error) {
-      notifyError(normalizeAppError(error), '加载数据库失败')
+      notifyError(normalizeAppError(error), t('notifications.loadDatabasesFailed'))
     } finally {
       // Root loading is represented by empty-state text for now.
     }
@@ -419,10 +424,11 @@ export function DatabaseTree() {
         activeConnection?.driverType ?? 'postgres',
         node,
         showSystemObjects,
+        t,
         force,
       )
       const nextChildren =
-        children.length === 0 && isObjectCategoryNode(node) ? [emptyCategoryNode(node)] : children
+        children.length === 0 && isObjectCategoryNode(node) ? [emptyCategoryNode(node, t)] : children
       setNodes((state) =>
         replaceChildren(
           state,
@@ -433,12 +439,12 @@ export function DatabaseTree() {
       setChildIds((state) => ({ ...state, [id]: nextChildren.map((child) => child.id) }))
     } catch (error) {
       const appError = normalizeAppError(error)
-      const errorNode = errorCategoryNode(node, appError.message)
+      const errorNode = errorCategoryNode(node, appError.message, t)
       setNodes((state) =>
         replaceChildren(state, childIds[id] ?? [], { [errorNode.id]: errorNode }),
       )
       setChildIds((state) => ({ ...state, [id]: [errorNode.id] }))
-      notifyError(appError, '加载元数据失败')
+      notifyError(appError, t('notifications.loadMetadataFailed'))
     } finally {
       setNodes((state) => ({
         ...state,
@@ -543,7 +549,7 @@ export function DatabaseTree() {
         [schemasFolderId]: schemaNodes.map((schemaNode) => schemaNode.id),
       }))
     } catch (error) {
-      notifyError(normalizeAppError(error), '加载 Schema 失败')
+      notifyError(normalizeAppError(error), t('notifications.loadSchemaFailed'))
     } finally {
       setNodes((state) => ({
         ...state,
@@ -569,7 +575,7 @@ export function DatabaseTree() {
     if (!table || !entry.schema) {
       notify({
         kind: 'info',
-        title: '已切换连接',
+        title: t('explorer.connectionSwitched'),
         message: entry.path.join(' / '),
       })
       return
@@ -578,8 +584,8 @@ export function DatabaseTree() {
     if (statuses[entry.connectionId]?.status !== 'connected') {
       notify({
         kind: 'warning',
-        title: '连接未建立',
-        message: '请先连接该数据源，再打开对象。',
+        title: t('explorer.connectionNotOpen'),
+        message: t('explorer.connectBeforeOpening'),
       })
       return
     }
@@ -595,7 +601,7 @@ export function DatabaseTree() {
     const tabId = crypto.randomUUID()
     addTab({
       id: tabId,
-      title: `${table} 数据`,
+      title: t('explorer.dataTabTitle', { name: table }),
       kind: 'data',
       sql,
       connectionId: entry.connectionId,
@@ -626,7 +632,7 @@ export function DatabaseTree() {
         .filter((column) => column.isPrimaryKey)
         .map((column) => column.name)
     } catch (error) {
-      notifyError(normalizeAppError(error), '加载主键信息失败')
+      notifyError(normalizeAppError(error), t('notifications.loadPrimaryKeysFailed'))
     }
     const sql = buildDataTabSql({
       driverType: activeConnection.driverType,
@@ -638,7 +644,7 @@ export function DatabaseTree() {
     })
     addTab({
       id: tabId,
-      title: `${node.meta.table} 数据`,
+      title: t('explorer.dataTabTitle', { name: node.meta.table }),
       kind: 'data',
       sql,
       connectionId: activeConnectionId,
@@ -731,7 +737,7 @@ export function DatabaseTree() {
     }
     addTab({
       id: crypto.randomUUID(),
-      title: `${node.meta.table} 结构`,
+      title: t('explorer.structureTabTitle', { name: node.meta.table }),
       kind: 'structure',
       sql: '',
       connectionId: activeConnectionId,
@@ -809,7 +815,7 @@ export function DatabaseTree() {
       await navigator.clipboard.writeText(value)
       notify({ kind: 'success', title })
     } catch (error) {
-      notifyError(normalizeAppError(error), '复制失败')
+      notifyError(normalizeAppError(error), t('notifications.copyFailed'))
     }
   }
 
@@ -839,7 +845,7 @@ export function DatabaseTree() {
     })
     notify({
       kind: 'success',
-      title: '已设置当前 Schema',
+      title: t('explorer.currentSchemaSet'),
       message: node.tooltip ?? node.label,
     })
   }
@@ -884,7 +890,7 @@ export function DatabaseTree() {
     addTab({
       id: crypto.randomUUID(),
       kind: 'objectSummary',
-      title: `${object} summary`,
+      title: t('explorer.summaryTabTitle', { name: object }),
       sql: '',
       connectionId: activeConnectionId,
       objectSummaryContext: {
@@ -956,7 +962,10 @@ export function DatabaseTree() {
         event.shiftKey && activeConnection
           ? qualifiedNodeName(activeConnection.driverType, target)
           : null
-      void copyText(qualified ?? target.label, qualified ? '已复制全限定名' : '已复制名称')
+      void copyText(
+        qualified ?? target.label,
+        qualified ? t('explorer.copiedQualifiedName') : t('explorer.copiedName'),
+      )
     }
   }
 
@@ -968,55 +977,55 @@ export function DatabaseTree() {
       return [
         {
           id: 'inspect',
-          label: '打开 Object Inspector',
+          label: t('explorer.openInspector'),
           icon: 'ddl',
           onSelect: () => openTableInspector(node.id),
         },
         {
           id: 'open-structure',
-          label: '打开 Structure Tab',
+          label: t('explorer.openStructure'),
           icon: 'ddl',
           onSelect: () => openTableStructure(node.id),
         },
         {
           id: 'open-data',
-          label: `打开前 ${dataPreviewDefaultRows} 行`,
+          label: t('explorer.openRows', { count: dataPreviewDefaultRows }),
           icon: 'data',
           onSelect: () => openTableData(node.id),
         },
         {
           id: 'view-ddl',
-          label: '查看 DDL',
+          label: t('explorer.viewDdl'),
           icon: 'ddl',
           onSelect: () => openTableDdl(node.id),
         },
         {
           id: 'open-er-diagram',
-          label: '打开 ER Diagram',
+          label: t('explorer.openErDiagram'),
           icon: 'ddl',
           onSelect: () => openTableDiagram(node.id),
         },
         {
           id: 'generate-select',
-          label: '生成 SELECT',
+          label: t('explorer.generateSelect'),
           icon: 'ddl',
           onSelect: () => generateSelect(node.id),
         },
         {
           id: 'copy-name',
-          label: '复制名称',
+          label: t('explorer.copyName'),
           icon: 'copy',
-          onSelect: () => copyText(node.label, '已复制对象名'),
+          onSelect: () => copyText(node.label, t('explorer.copyObjectName')),
         },
         {
           id: 'copy-qualified-name',
-          label: '复制全限定名',
+          label: t('explorer.copyQualifiedName'),
           icon: 'copyFull',
-          onSelect: () => qualified && copyText(qualified, '已复制全限定名'),
+          onSelect: () => qualified && copyText(qualified, t('explorer.copiedQualifiedName')),
         },
         {
           id: 'refresh',
-          label: '刷新',
+          label: t('common.refresh'),
           icon: 'refresh',
           onSelect: () => refreshNode(node.id),
         },
@@ -1027,25 +1036,25 @@ export function DatabaseTree() {
       return [
         {
           id: 'view-ddl',
-          label: '查看 DDL/Source',
+          label: t('explorer.viewDdlSource'),
           icon: 'ddl',
           onSelect: () => openGenericObjectDdl(node.id),
         },
         {
           id: 'copy-name',
-          label: '复制名称',
+          label: t('explorer.copyName'),
           icon: 'copy',
-          onSelect: () => copyText(node.label, '已复制对象名'),
+          onSelect: () => copyText(node.label, t('explorer.copyObjectName')),
         },
         {
           id: 'copy-qualified-name',
-          label: '复制全限定名',
+          label: t('explorer.copyQualifiedName'),
           icon: 'copyFull',
-          onSelect: () => qualified && copyText(qualified, '已复制全限定名'),
+          onSelect: () => qualified && copyText(qualified, t('explorer.copiedQualifiedName')),
         },
         {
           id: 'refresh',
-          label: '刷新',
+          label: t('common.refresh'),
           icon: 'refresh',
           onSelect: () => refreshNodeOrParent(node),
         },
@@ -1058,13 +1067,13 @@ export function DatabaseTree() {
           ? [
               {
                 id: 'set-current-schema',
-                label: '设为当前 Schema',
+                label: t('explorer.setCurrentSchema'),
                 icon: 'ddl' as const,
                 onSelect: () => setCurrentSchema(node),
               },
               {
                 id: 'open-schema-er-diagram',
-                label: '打开 ER Diagram',
+                label: t('explorer.openErDiagram'),
                 icon: 'ddl' as const,
                 onSelect: () => openSchemaDiagram(node),
               },
@@ -1072,23 +1081,23 @@ export function DatabaseTree() {
           : []),
         {
           id: 'copy-name',
-          label: '复制名称',
+          label: t('explorer.copyName'),
           icon: 'copy',
-          onSelect: () => copyText(node.label, '已复制名称'),
+          onSelect: () => copyText(node.label, t('explorer.copiedName')),
         },
         ...(qualified
           ? [
               {
                 id: 'copy-qualified-name',
-                label: '复制全限定名',
+                label: t('explorer.copyQualifiedName'),
                 icon: 'copyFull' as const,
-                onSelect: () => copyText(qualified, '已复制全限定名'),
+                onSelect: () => copyText(qualified, t('explorer.copiedQualifiedName')),
               },
             ]
           : []),
         {
           id: 'refresh',
-          label: '刷新',
+          label: t('common.refresh'),
           icon: 'refresh',
           onSelect: () => refreshNode(node.id),
         },
@@ -1106,7 +1115,7 @@ export function DatabaseTree() {
     return [
       {
         id: 'open-data',
-        label: `打开前 ${dataPreviewDefaultRows} 行`,
+        label: t('explorer.openRows', { count: dataPreviewDefaultRows }),
         icon: 'data',
         onSelect: () => {
           void openTableData(node.id)
@@ -1114,13 +1123,13 @@ export function DatabaseTree() {
       },
       {
         id: 'open-structure',
-        label: '打开 Structure Tab',
+        label: t('explorer.openStructure'),
         icon: 'structure',
         onSelect: () => openTableStructure(node.id),
       },
       {
         id: 'view-ddl',
-        label: '查看 DDL',
+        label: t('explorer.viewDdl'),
         icon: 'ddl',
         onSelect: () => openTableDdl(node.id),
       },
@@ -1132,18 +1141,18 @@ export function DatabaseTree() {
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <Server className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">对象浏览器</div>
+          <div className="truncate text-sm font-semibold">{t('explorer.title')}</div>
           <div className="truncate text-xs text-muted-foreground">
             {activeConnection
-              ? `${activeConnection.name} · ${connectionStatusSummary(activeRuntimeStatus, activeStatus?.message)}`
-              : '未选择连接 · disconnected'}
+              ? `${activeConnection.name} · ${connectionStatusSummary(activeRuntimeStatus, t, activeStatus?.message)}`
+              : t('explorer.noConnectionStatus')}
           </div>
         </div>
         <Button
           type="button"
           size="icon-sm"
           variant="ghost"
-          title="刷新对象"
+          title={t('explorer.refreshObjects')}
           disabled={!isConnected || !objectBrowsingSupported}
           onClick={() => refreshNode(ROOT_ID)}
         >
@@ -1153,7 +1162,7 @@ export function DatabaseTree() {
           type="button"
           size="icon-sm"
           variant={showSystemObjects ? 'secondary' : 'ghost'}
-          title={showSystemObjects ? '隐藏系统对象' : '显示系统对象'}
+          title={showSystemObjects ? t('explorer.hideSystemObjects') : t('explorer.showSystemObjects')}
           onClick={() => setShowSystemObjects(!showSystemObjects)}
         >
           {showSystemObjects ? <EyeOff /> : <Eye />}
@@ -1162,7 +1171,7 @@ export function DatabaseTree() {
           type="button"
           size="icon-sm"
           variant="ghost"
-          title="索引当前连接对象"
+          title={t('explorer.indexCurrentConnection')}
           disabled={!isConnected || !objectBrowsingSupported || indexLoading}
           onClick={startMetadataIndex}
         >
@@ -1174,10 +1183,11 @@ export function DatabaseTree() {
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
+            id="object-tree-search-input"
             className="h-7 rounded-md pl-7 text-xs"
             value={filter}
             disabled={!isConnected || !objectBrowsingSupported}
-            placeholder="搜索对象"
+            placeholder={t('explorer.searchPlaceholder')}
             onChange={(event) => {
               setFilter(event.target.value)
               setIndexSearchActive(false)
@@ -1188,22 +1198,22 @@ export function DatabaseTree() {
 
       <div className="min-h-0 flex-1 overflow-auto p-1">
         {showIndexResults ? (
-          <MetadataSearchResults results={indexResults} onOpen={openIndexResult} />
+          <MetadataSearchResults results={indexResults} onOpen={openIndexResult} t={t} />
         ) : !activeConnection ? (
           <ObjectTreeEmptyState
-            title="连接后浏览对象"
-            detail="从 Data Sources 选择并连接一个数据源。"
+            title={t('explorer.browseAfterConnect')}
+            detail={t('explorer.chooseDataSourceDetail')}
           />
         ) : missingExternalDriver ? (
           <ObjectTreeEmptyState
-            title="缺少外部驱动"
-            detail="Oracle/JDBC 对象浏览需要先配置本地 JDBC JAR。"
+            title={t('explorer.missingExternalDriver')}
+            detail={t('explorer.missingExternalDriverDetail')}
             action={
               <ConnectionDialog
                 connection={activeConnection}
                 trigger={
                   <Button type="button" size="xs" variant="secondary">
-                    导入驱动
+                    {t('explorer.importDriver')}
                   </Button>
                 }
               />
@@ -1211,14 +1221,14 @@ export function DatabaseTree() {
           />
         ) : activeRuntimeStatus === 'failed' ? (
           <ObjectTreeEmptyState
-            title="连接失败"
-            detail={activeStatus?.message ?? '请检查连接配置后重试。'}
+            title={t('connection.failed')}
+            detail={activeStatus?.message ?? t('explorer.connectionFailedRetry')}
             action={
               <ConnectionDialog
                 connection={activeConnection}
                 trigger={
                   <Button type="button" size="xs" variant="secondary">
-                    编辑连接
+                    {t('explorer.editConnection')}
                   </Button>
                 }
               />
@@ -1226,21 +1236,21 @@ export function DatabaseTree() {
           />
         ) : !isConnected ? (
           <ObjectTreeEmptyState
-            title="连接后浏览对象"
-            detail={`${connectionStatusSummary(activeRuntimeStatus)} · ${activeConnection.name}`}
+            title={t('explorer.browseAfterConnect')}
+            detail={`${connectionStatusSummary(activeRuntimeStatus, t)} · ${activeConnection.name}`}
           />
         ) : !objectBrowsingSupported ? (
           <ObjectTreeEmptyState
-            title="对象浏览暂未支持"
-            detail="当前连接仍可用于执行基础 SQL。"
+            title={t('explorer.unsupportedTitle')}
+            detail={t('explorer.unsupportedDetail')}
           />
         ) : visibleNodes.length === 0 ? (
           <ObjectTreeEmptyState
-            title={hasLoadedTreeFilter ? '已加载节点无匹配' : '暂无对象'}
+            title={hasLoadedTreeFilter ? t('explorer.noLoadedMatches') : t('explorer.noObjects')}
             detail={
               hasLoadedTreeFilter
-                ? '当前搜索只过滤已加载节点，不会自动扫描全库。'
-                : '刷新当前连接以重新加载对象树。'
+                ? t('explorer.loadedFilterDetail')
+                : t('explorer.reloadTreeDetail')
             }
             action={
               hasLoadedTreeFilter && filter.trim().length >= 2 ? (
@@ -1251,7 +1261,7 @@ export function DatabaseTree() {
                   disabled={!canSearchCurrentConnection || indexLoading}
                   onClick={searchAllMetadata}
                 >
-                  搜索全部 Schema/Object
+                  {t('explorer.searchAll')}
                 </Button>
               ) : undefined
             }
@@ -1288,7 +1298,7 @@ export function DatabaseTree() {
                   disabled={!canSearchCurrentConnection || indexLoading}
                   onClick={searchAllMetadata}
                 >
-                  搜索全部 Schema/Object
+                  {t('explorer.searchAll')}
                 </Button>
               </div>
             )}
@@ -1330,14 +1340,16 @@ function ObjectTreeEmptyState({
 function MetadataSearchResults({
   results,
   onOpen,
+  t,
 }: {
   results: import('@/types/metadata').MetadataSearchResult[]
   onOpen: (result: import('@/types/metadata').MetadataSearchResult) => void
+  t: TFunction
 }) {
   if (results.length === 0) {
     return (
       <div className="grid h-24 place-items-center px-4 text-center text-xs text-muted-foreground">
-        暂无索引结果。可点击对象浏览器右上角索引按钮刷新当前连接索引。
+        {t('explorer.noIndexResults')}
       </div>
     )
   }
@@ -1354,7 +1366,7 @@ function MetadataSearchResults({
           <div className="flex items-center justify-between gap-2">
             <span className="truncate font-medium">{result.entry.name}</span>
             <span className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground">
-              {metadataKindLabel(result.entry.kind)}
+              {metadataKindLabel(result.entry.kind, t)}
             </span>
           </div>
           <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -1366,11 +1378,11 @@ function MetadataSearchResults({
   )
 }
 
-function showAllSchemasActionNode(parent: NodeRecord): NodeRecord {
+function showAllSchemasActionNode(parent: NodeRecord, t: TFunction): NodeRecord {
   return {
     id: `${parent.id}/__show_all_schemas`,
     parentId: parent.id,
-    label: 'Show all Schemas',
+    label: t('explorer.folders.showAllSchemas'),
     kind: 'folder',
     depth: parent.depth + 1,
     expandable: true,
@@ -1380,14 +1392,14 @@ function showAllSchemasActionNode(parent: NodeRecord): NodeRecord {
   }
 }
 
-function metadataKindLabel(kind: import('@/types/metadata').MetadataIndexKind) {
-  if (kind === 'connection') return '连接'
-  if (kind === 'database') return '库'
-  if (kind === 'schema') return 'Schema'
-  if (kind === 'table') return '表'
-  if (kind === 'view') return '视图'
-  if (kind === 'function') return '函数'
-  return '列'
+function metadataKindLabel(kind: import('@/types/metadata').MetadataIndexKind, t: TFunction) {
+  if (kind === 'connection') return t('explorer.metadataKind.connection')
+  if (kind === 'database') return t('explorer.metadataKind.database')
+  if (kind === 'schema') return t('explorer.metadataKind.schema')
+  if (kind === 'table') return t('explorer.metadataKind.table')
+  if (kind === 'view') return t('explorer.metadataKind.view')
+  if (kind === 'function') return t('explorer.metadataKind.function')
+  return t('explorer.metadataKind.column')
 }
 
 async function loadChildren(
@@ -1396,13 +1408,14 @@ async function loadChildren(
   driverType: DriverType,
   node: NodeRecord,
   showSystemObjects: boolean,
+  t: TFunction,
   force = false,
 ): Promise<NodeRecord[]> {
   if (node.kind === 'database') {
     if (driverType === 'mysql') {
-      return schemaCategoryNodes(node, driverType, required(node.meta?.database))
+      return schemaCategoryNodes(node, driverType, required(node.meta?.database), t)
     }
-    return [folderNode(node, 'schemas', 'Schemas', node.meta?.schema ?? '')]
+    return [folderNode(node, 'schemas', t('explorer.folders.schemas'), node.meta?.schema ?? '')]
   }
 
   if (node.kind === 'folder' && node.meta?.folder === 'schemas') {
@@ -1427,7 +1440,7 @@ async function loadChildren(
 
   if (node.kind === 'schema') {
     const schema = node.meta?.schema ?? node.label
-    return schemaCategoryNodes(node, driverType, schema)
+    return schemaCategoryNodes(node, driverType, schema, t)
   }
 
   if (node.kind === 'folder' && node.meta?.folder === 'tables') {
@@ -1455,9 +1468,9 @@ async function loadChildren(
 
   if (node.kind === 'table' || node.kind === 'view' || node.kind === 'materializedView') {
     return [
-      folderNode(node, 'columns', '列', required(node.meta?.schema), node.meta?.table),
-      folderNode(node, 'indexes', '索引', required(node.meta?.schema), node.meta?.table),
-      folderNode(node, 'foreignKeys', '外键', required(node.meta?.schema), node.meta?.table),
+      folderNode(node, 'columns', t('explorer.folders.columns'), required(node.meta?.schema), node.meta?.table),
+      folderNode(node, 'indexes', t('explorer.folders.indexes'), required(node.meta?.schema), node.meta?.table),
+      folderNode(node, 'foreignKeys', t('explorer.folders.foreignKeys'), required(node.meta?.schema), node.meta?.table),
     ]
   }
 
@@ -1564,40 +1577,41 @@ function schemaCategoryNodes(
   parent: NodeRecord,
   driverType: DriverType,
   schema: string,
+  t: TFunction,
 ): NodeRecord[] {
-  return objectCategoryFolders(driverType).map(({ folder, label }) =>
+  return objectCategoryFolders(driverType, t).map(({ folder, label }) =>
     folderNode(parent, folder, label, schema),
   )
 }
 
-function objectCategoryFolders(driverType: DriverType): Array<{
+function objectCategoryFolders(driverType: DriverType, t: TFunction): Array<{
   folder: NonNullable<NodeRecord['meta']>['folder']
   label: string
 }> {
   return OBJECT_CATEGORY_ORDER.filter((category) =>
     category.drivers.includes(driverType),
-  ).map(({ folder, label }) => ({ folder, label }))
+  ).map(({ folder }) => ({ folder, label: t(`explorer.folders.${folder}`) }))
 }
 
 function isObjectCategoryNode(node: NodeRecord) {
   return node.kind === 'folder' && schemaFolderObjectKind(node.meta?.folder) != null && !node.meta?.table
 }
 
-function emptyCategoryNode(parent: NodeRecord): NodeRecord {
+function emptyCategoryNode(parent: NodeRecord, t: TFunction): NodeRecord {
   return {
     id: `${parent.id}/__empty`,
     parentId: parent.id,
-    label: `No ${parent.label}`,
+    label: t('explorer.emptyCategory', { label: parent.label }),
     kind: 'folder',
     depth: parent.depth + 1,
   }
 }
 
-function errorCategoryNode(parent: NodeRecord, message: string): NodeRecord {
+function errorCategoryNode(parent: NodeRecord, message: string, t: TFunction): NodeRecord {
   return {
     id: `${parent.id}/__error`,
     parentId: parent.id,
-    label: 'Load failed',
+    label: t('explorer.loadFailed'),
     kind: 'folder',
     depth: parent.depth + 1,
     detail: message,
@@ -1751,14 +1765,15 @@ function requiresExternalDriver(connection: ConnectionConfig) {
 
 function connectionStatusSummary(
   status: ConnectionRuntimeStatus,
+  t: TFunction,
   message?: string | null,
 ) {
-  if (status === 'connected') return 'connected'
-  if (status === 'connecting') return 'connecting'
+  if (status === 'connected') return t('explorer.status.connected')
+  if (status === 'connecting') return t('explorer.status.connecting')
   if (status === 'failed') {
-    return message ? `failed: ${message}` : 'failed'
+    return message ? t('explorer.status.failedWithMessage', { message }) : t('explorer.status.failed')
   }
-  return 'disconnected'
+  return t('explorer.status.disconnected')
 }
 
 function isTableLikeNode(node?: NodeRecord): node is NodeRecord & {

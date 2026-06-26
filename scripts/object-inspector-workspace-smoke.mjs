@@ -43,7 +43,7 @@ includesAll(
     'IndexesTable',
     'ForeignKeysTable',
     'DdlBlock',
-    '编辑结构',
+    "t('inspector.editStructure')",
   ],
   'object inspector panel',
 )
@@ -54,8 +54,8 @@ includesAll(
   [
     'openTableInspector',
     'tableInspectorKind',
-    '打开 Object Inspector',
-    '打开 Structure Tab',
+    "t('explorer.openInspector')",
+    "t('explorer.openStructure')",
     'inspectTable(activeConnectionId',
   ],
   'object tree inspector actions',

@@ -26,13 +26,15 @@ function excludesAll(source, values, label) {
   }
 }
 
-const sidebar = read('src/components/layout/Sidebar.tsx')
+const settingsWorkspace = read('src/components/settings/SettingsWorkspacePanel.tsx')
 const connectionForm = read('src/components/connection/ConnectionForm.tsx')
 const driverStore = read('src/stores/driverStore.ts')
 const driverIpc = read('src/ipc/driver.ts')
 const driverCommands = read('src-tauri/src/commands/driver.rs')
 const driverTypes = read('src/types/driver.ts')
 const rustDriverTypes = read('src-tauri/src/models/driver_catalog.rs')
+const rustDriverCatalog = read('src-tauri/src/services/driver_catalog.rs')
+const configStore = read('src-tauri/src/services/config_store.rs')
 const packageJson = read('package.json')
 
 includesAll(
@@ -64,12 +66,12 @@ includesAll(
   [
     'DriverDefinitionSummary',
     'driverOriginLabel',
-    "return 'Custom'",
-    "return 'Preset'",
-    "return 'Built-in'",
+    "t('drivers.customOrigin'",
+    "t('drivers.presetOrigin'",
+    "t('drivers.builtInOrigin'",
     'driverOriginBadgeClass',
-    '内置定义只读',
-    '需本地驱动文件',
+    "t('connectionForm.builtInReadOnly')",
+    "t('connectionForm.localDriverRequired')",
     'connectionVariants',
     'applyUrlTemplate',
   ],
@@ -77,11 +79,20 @@ includesAll(
 )
 
 includesAll(
-  sidebar,
+  settingsWorkspace,
   [
     'DriverDefinitionsSettings',
     "t('drivers.summary'",
-    "driver.builtIn ? 'built-in' : 'custom'",
+    "activeSection === 'drivers'",
+    'createCustomDriver',
+    "setEditing(newCustomDriverDefinition())",
+    'DriverDefinitionEditor',
+    "grid min-h-[640px] grid-cols-[320px_minmax(0,1fr)]",
+    'isVisibleJdbcDriver',
+    'canManageJdbcArtifacts',
+    'driverOriginLabel',
+    "return driver.builtIn ? t('drivers.builtInTemplate') : t('drivers.customTemplate')",
+    'driverRuntimeLabel',
     "t('drivers.viewBuiltIn')",
     "t('drivers.editCustom')",
     "t('drivers.importJar')",
@@ -95,16 +106,25 @@ includesAll(
   'settings driver manager UI',
 )
 
+excludesAll(
+  settingsWorkspace,
+  ['nativeRust', "status !== 'planned' ? false", "'built-in'", "'custom'"],
+  'JDBC driver manager should not show native runtime copy or English origin tags',
+)
+
+const sidebar = read('src/components/layout/Sidebar.tsx')
+assert(!sidebar.includes('DriverDefinitionsSettings'), 'driver manager should not live in the left sidebar')
+
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
 includesAll(
   zh,
-  ['"viewBuiltIn": "查看内置驱动"', '"editCustom": "编辑自定义驱动"', '"importJar": "导入 JAR"', '"validate": "校验驱动"'],
+  ['"title": "JDBC 驱动"', '"summary": "{{count}} 个 JDBC 模板；内置模板只读，自定义可编辑。"', '"viewBuiltIn": "查看内置驱动"', '"editCustom": "编辑自定义驱动"', '"importJar": "导入 JAR"', '"validate": "校验驱动"'],
   'Chinese driver manager locale',
 )
 includesAll(
   en,
-  ['"viewBuiltIn": "View built-in driver"', '"editCustom": "Edit custom driver"', '"importJar": "Import JAR"', '"validate": "Validate driver"'],
+  ['"title": "JDBC Drivers"', '"summary": "{{count}} JDBC templates. Built-in templates are read-only; custom templates are editable."', '"viewBuiltIn": "View built-in driver"', '"editCustom": "Edit custom driver"', '"importJar": "Import JAR"', '"validate": "Validate driver"'],
   'English driver manager locale',
 )
 
@@ -144,9 +164,27 @@ includesAll(
     'remove_jdbc_driver_artifact',
     'validate_external_driver',
     'validate_jdbc_prerequisites',
-    'ensure_custom_jdbc_definition',
+    'ensure_managed_jdbc_artifacts_supported',
+    'definition.built_in && definition.driver_type == DriverType::Oracle',
   ],
   'driver command operations',
+)
+
+includesAll(
+  configStore,
+  [
+    'update_driver_definition_artifacts',
+    "driver_type NOT IN ('mongo', 'redis')",
+    "status <> 'planned'",
+    'existing.built_in && !existing.driver_artifacts.is_empty()',
+  ],
+  'driver definition storage filters and artifact preservation',
+)
+
+excludesAll(
+  rustDriverCatalog,
+  ['planned_definition(', '"MongoDB"', '"Redis"'],
+  'built-in driver catalog should not seed planned MongoDB or Redis',
 )
 
 excludesAll(

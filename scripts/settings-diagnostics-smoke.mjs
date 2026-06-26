@@ -46,9 +46,9 @@ includesAll(
   'health IPC type',
 )
 
-const sidebar = read('src/components/layout/Sidebar.tsx')
+const settingsWorkspace = read('src/components/settings/SettingsWorkspacePanel.tsx')
 includesAll(
-  sidebar,
+  settingsWorkspace,
   [
     'healthCheck',
     'settings.backendVersion',
@@ -56,9 +56,15 @@ includesAll(
     'health.configSchemaVersion',
     'health?.passwordStorage',
     'health?.keyBackend',
+    "activeSection === 'diagnostics'",
+    "t('settings.systemInfo')",
+    'exportDiagnosticsPackage',
   ],
   'settings diagnostics UI',
 )
+
+const sidebar = read('src/components/layout/Sidebar.tsx')
+assert(!sidebar.includes('healthCheck'), 'diagnostics should not live in the left sidebar')
 
 const contracts = read('src/shared/command-contracts.json')
 includesAll(

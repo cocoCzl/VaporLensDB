@@ -1,8 +1,9 @@
 import { create } from 'zustand'
+import i18n from '@/i18n'
 import type { AppError } from '@/types/error'
 
 type Theme = 'light' | 'dark' | 'system'
-type SidebarView = 'explorer' | 'settings'
+type SidebarView = 'explorer' | 'dataSources'
 type NotificationKind = 'success' | 'error' | 'info' | 'warning'
 
 export interface AppNotification {
@@ -114,7 +115,7 @@ export const useUiStore = create<UiState>((set) => ({
         { ...notification, id: crypto.randomUUID() },
       ],
     })),
-  notifyError: (error, title = '操作失败') =>
+  notifyError: (error, title = i18n.t('notifications.operationFailed')) =>
     set((state) => ({
       notifications: [
         ...state.notifications,

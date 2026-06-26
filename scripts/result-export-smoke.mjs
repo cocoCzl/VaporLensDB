@@ -52,7 +52,7 @@ includesAll(
     'const directory = await downloadDir()',
     'const path = await join(directory, fileName)',
     'upsertTask(task)',
-    "title: 'CSV 导出已开始'",
+    "title: i18n.t('workbench.csvExportStarted')",
   ],
   'CSV export UI task launch',
 )

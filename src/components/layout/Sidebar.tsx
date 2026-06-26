@@ -4,47 +4,31 @@ import {
   ChevronDown,
   ChevronRight,
   Database,
-  Download,
   FileCode2,
-  HardDrive,
   Link,
   Loader2,
-  Moon,
+  Pencil,
   Plus,
-  Save,
   Search,
   Settings,
   Square,
-  Sun,
   TerminalSquare,
   Trash2,
   Unplug,
-  Upload,
   X,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { downloadDir, join } from '@tauri-apps/api/path'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { useQuery } from '@/hooks/useQuery'
-import {
-  dbeaverPreviewToConnectionInput,
-  previewDbeaverConfiguration,
-  type DbeaverImportPreview,
-} from '@/lib/dbeaverImport'
-import { exportDiagnosticsPackage } from '@/ipc/diagnostics'
-import { normalizeAppError } from '@/ipc/client'
-import { healthCheck, type HealthCheckResponse } from '@/ipc/health'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
-import { useDriverStore } from '@/stores/driverStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
-import type { DriverDefinition } from '@/types/driver'
+import type { ConnectionConfig, DriverType } from '@/types/connection'
 import type { QueryHistoryStatus } from '@/types/queryHistory'
 import type { LucideIcon } from 'lucide-react'
 
@@ -56,6 +40,27 @@ export function Sidebar() {
   const { t } = useTranslation()
   const sidebarView = useUiStore((state) => state.sidebarView)
   const setSidebarView = useUiStore((state) => state.setSidebarView)
+  const tabs = useEditorStore((state) => state.tabs)
+  const activeTabId = useEditorStore((state) => state.activeTabId)
+  const addTab = useEditorStore((state) => state.addTab)
+  const setActiveTab = useEditorStore((state) => state.setActiveTab)
+  const settingsTab = tabs.find((tab) => tab.kind === 'settings')
+  const settingsActive = settingsTab?.id === activeTabId
+
+  function openSettings() {
+    if (settingsTab) {
+      setActiveTab(settingsTab.id)
+    } else {
+      addTab({
+        id: crypto.randomUUID(),
+        kind: 'settings',
+        title: t('settings.title'),
+        sql: '',
+        connectionId: null,
+      })
+    }
+    setSidebarView('explorer')
+  }
 
   return (
     <aside className="flex w-[348px] shrink-0 border-r bg-card">
@@ -71,10 +76,10 @@ export function Sidebar() {
         ))}
         <div className="flex-1" />
         <RailButton
-          active={sidebarView === 'settings'}
+          active={settingsActive}
           icon={Settings}
           label={t('nav.settings')}
-          onClick={() => setSidebarView('settings')}
+          onClick={openSettings}
         />
       </nav>
       <SidebarPanel />
@@ -85,8 +90,8 @@ export function Sidebar() {
 function SidebarPanel() {
   const sidebarView = useUiStore((state) => state.sidebarView)
 
-  if (sidebarView === 'settings') {
-    return <SettingsPanel />
+  if (sidebarView === 'dataSources') {
+    return <DataSourcesSelectorPanel />
   }
 
   return (
@@ -102,18 +107,132 @@ function DataSourceHeader() {
   const {
     connections,
     statuses,
+    activeConnectionId,
+    loading,
+    loadConnections,
+    connectConnection,
+    disconnectConnection,
+    setActiveConnection,
+  } = useConnectionStore()
+  const setSidebarView = useUiStore((state) => state.setSidebarView)
+
+  useEffect(() => {
+    void loadConnections()
+  }, [loadConnections])
+
+  const activeConnection =
+    connections.find((connection) => connection.id === activeConnectionId) ?? null
+  const activeStatus = activeConnection
+    ? statuses[activeConnection.id]?.status ?? 'disconnected'
+    : 'disconnected'
+  const connected = activeStatus === 'connected'
+
+  async function toggleActiveConnection(event: MouseEvent) {
+    event.stopPropagation()
+    if (!activeConnection) {
+      setSidebarView('dataSources')
+      return
+    }
+    setActiveConnection(activeConnection.id)
+    try {
+      if (connected) {
+        await disconnectConnection(activeConnection.id)
+      } else {
+        await connectConnection(activeConnection.id)
+      }
+    } catch {
+      // Store notifications already carry the actionable error.
+    }
+  }
+
+  return (
+    <div className="shrink-0 border-b bg-card">
+      <div className="px-2.5 py-2">
+        <div
+          className={[
+            'group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md border p-1.5 transition-colors',
+            isProductionConnection(activeConnection)
+              ? 'border-red-500/35 bg-red-500/5 hover:bg-red-500/10'
+              : 'border-border bg-background/65 hover:bg-muted/70',
+          ].join(' ')}
+        >
+          <button
+            type="button"
+            className="flex min-w-0 items-center gap-2 rounded px-1 py-1 text-left"
+            onClick={() => setSidebarView('dataSources')}
+          >
+            <Database className="size-4 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-sm font-semibold">
+                  {activeConnection?.name ?? t('connection.select')}
+                </span>
+                {activeConnection && <EnvironmentBadge connection={activeConnection} />}
+              </div>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className={runtimeStatusDotClass(activeStatus)} />
+                <span className="truncate">
+                  {activeConnection
+                    ? `${activeConnection.driverType} · ${runtimeStatusLabel(activeStatus, t)}`
+                    : t('connection.disconnected')}
+                </span>
+              </div>
+            </div>
+            <ChevronDown className="size-4 shrink-0 -rotate-90 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+          </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {activeConnection && (
+              <>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  title={connected ? t('connection.disconnect') : t('connection.connect')}
+                  disabled={loading}
+                  onClick={toggleActiveConnection}
+                >
+                  {loading ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
+                </Button>
+                <ConnectionDialog
+                  connection={activeConnection}
+                  trigger={
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      title={t('connection.edit')}
+                    >
+                      <Pencil />
+                    </Button>
+                  }
+                />
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DataSourcesSelectorPanel() {
+  const { t } = useTranslation()
+  const {
+    connections,
+    statuses,
     loading,
     error,
     activeConnectionId,
     recentDataSourceIds,
     loadConnections,
     connectConnection,
+    disconnectConnection,
     setActiveConnection,
   } = useConnectionStore()
+  const setSidebarView = useUiStore((state) => state.setSidebarView)
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
   const setActiveTab = useEditorStore((state) => state.setActiveTab)
-  const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -122,10 +241,8 @@ function DataSourceHeader() {
   }, [loadConnections])
 
   useEffect(() => {
-    if (open) {
-      window.setTimeout(() => searchInputRef.current?.focus(), 0)
-    }
-  }, [open])
+    window.setTimeout(() => searchInputRef.current?.focus(), 0)
+  }, [])
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null
@@ -150,13 +267,25 @@ function DataSourceHeader() {
 
   async function handleConnect(connection: ConnectionConfig) {
     setActiveConnection(connection.id)
-    setOpen(false)
-    await connectConnection(connection.id)
+    try {
+      await connectConnection(connection.id)
+      setSidebarView('explorer')
+    } catch {
+      // Store notifications already carry the actionable error.
+    }
+  }
+
+  async function handleDisconnect(connection: ConnectionConfig) {
+    try {
+      await disconnectConnection(connection.id)
+    } catch {
+      // Store notifications already carry the actionable error.
+    }
   }
 
   function handleSelect(connection: ConnectionConfig) {
     setActiveConnection(connection.id)
-    setOpen(false)
+    setSidebarView('explorer')
   }
 
   function openDataSourceManagement() {
@@ -172,124 +301,166 @@ function DataSourceHeader() {
         connectionId: null,
       })
     }
-    setOpen(false)
+    setSidebarView('explorer')
   }
 
   return (
-    <div className="shrink-0 border-b bg-card">
-      <div className="px-2.5 py-2">
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger
-            render={
-              <button
-                type="button"
-                className={[
-                  'group flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors',
-                  isProductionConnection(activeConnection)
-                    ? 'border-red-500/35 bg-red-500/5 hover:bg-red-500/10'
-                    : 'border-border bg-background/65 hover:bg-muted/70',
-                ].join(' ')}
-              />
-            }
+    <div className="flex min-w-0 flex-1 flex-col bg-card">
+      <div className="shrink-0 border-b p-3">
+        <div className="mb-3 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{t('connection.dataSources')}</div>
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">
+              {activeConnection
+                ? connectionTargetSummary(activeConnection)
+                : t('connection.disconnected')}
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            title={t('connection.explorerTitle')}
+            onClick={() => setSidebarView('explorer')}
           >
-            <Database className="size-4 shrink-0 text-primary" />
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <span className="truncate text-sm font-semibold">
-                  {activeConnection?.name ?? t('connection.select')}
-                </span>
-                {activeConnection && (
-                  <EnvironmentBadge connection={activeConnection} />
-                )}
-              </div>
-              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className={runtimeStatusDotClass(activeStatus)} />
-                <span className="truncate">
-                  {activeConnection
-                    ? `${activeConnection.driverType} · ${runtimeStatusLabel(activeStatus, t)}`
-                    : t('connection.disconnected')}
-                </span>
-              </div>
+            <X />
+          </Button>
+        </div>
+        {activeConnection && (
+          <div
+            className={[
+              'mb-3 rounded-md border px-2.5 py-2',
+              isProductionConnection(activeConnection)
+                ? 'border-red-500/35 bg-red-500/5'
+                : 'bg-background/70',
+            ].join(' ')}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <span className={runtimeStatusDotClass(activeStatus)} />
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold">
+                {activeConnection.name}
+              </span>
+              <EnvironmentBadge connection={activeConnection} />
             </div>
-            <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[popup-open]:rotate-180" />
-          </PopoverTrigger>
-          <PopoverContent align="start" sideOffset={6} className="w-[320px] p-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                ref={searchInputRef}
-                className="h-8 pl-8 text-xs"
-                value={query}
-                placeholder={t('connection.searchDataSources')}
-                onChange={(event) => setQuery(event.target.value)}
-              />
+            <div className="mt-1 truncate text-[11px] text-muted-foreground">
+              {activeConnection.driverType} · {runtimeStatusLabel(activeStatus, t)}
             </div>
-            <div className="max-h-[360px] overflow-auto pt-1">
-              {filteredConnections.length === 0 ? (
-                <div className="grid h-24 place-items-center rounded-md border border-dashed text-center text-xs text-muted-foreground">
-                  {connections.length === 0 ? t('connection.empty') : t('connection.noMatches')}
-                </div>
-              ) : (
-                <div className="grid gap-2">
-                  {!query.trim() && recentConnections.length > 0 && (
-                    <ConnectionSwitcherSection title={t('connection.recent')}>
-                      {recentConnections.map((connection) => (
-                        <ConnectionSwitcherRow
-                          key={`recent-${connection.id}`}
-                          connection={connection}
-                          status={statuses[connection.id]?.status ?? 'disconnected'}
-                          selected={connection.id === activeConnectionId}
-                          loading={loading}
-                          onSelect={() => handleSelect(connection)}
-                          onConnect={() => {
-                            void handleConnect(connection)
-                          }}
-                          t={t}
-                        />
-                      ))}
-                    </ConnectionSwitcherSection>
-                  )}
-                  {groupedVisibleConnections.map((group) => (
-                    <ConnectionSwitcherSection key={group.name} title={group.name}>
-                      {group.connections.map((connection) => (
-                        <ConnectionSwitcherRow
-                          key={connection.id}
-                          connection={connection}
-                          status={statuses[connection.id]?.status ?? 'disconnected'}
-                          selected={connection.id === activeConnectionId}
-                          loading={loading}
-                          onSelect={() => handleSelect(connection)}
-                          onConnect={() => {
-                            void handleConnect(connection)
-                          }}
-                          t={t}
-                        />
-                      ))}
-                    </ConnectionSwitcherSection>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="border-t pt-2">
+            <div className="mt-2 flex items-center gap-1">
               <Button
                 type="button"
-                size="sm"
-                variant="outline"
-                className="w-full justify-start"
-                onClick={openDataSourceManagement}
+                size="icon-xs"
+                variant="secondary"
+                title={activeStatus === 'connected' ? t('connection.disconnect') : t('connection.connect')}
+                disabled={loading}
+                onClick={() => {
+                  if (activeStatus === 'connected') {
+                    void handleDisconnect(activeConnection)
+                  } else {
+                    void handleConnect(activeConnection)
+                  }
+                }}
               >
-                <Settings className="size-3.5" />
-                {t('connection.manageDataSources')}
+                {loading ? <Loader2 className="animate-spin" /> : activeStatus === 'connected' ? <Unplug /> : <Link />}
               </Button>
+              <ConnectionDialog
+                connection={activeConnection}
+                trigger={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="outline"
+                    title={t('connection.edit')}
+                  >
+                    <Pencil />
+                  </Button>
+                }
+              />
             </div>
-          </PopoverContent>
-        </Popover>
+          </div>
+        )}
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            className="h-8 pl-8 text-xs"
+            value={query}
+            placeholder={t('connection.searchDataSources')}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
       </div>
+
       {error && (
-        <div className="border-t px-3 py-1.5 text-xs text-destructive" title={error}>
+        <div className="shrink-0 border-b px-3 py-2 text-xs text-destructive" title={error}>
           <div className="truncate">{error}</div>
         </div>
       )}
+
+      <div className="min-h-0 flex-1 overflow-auto p-2">
+        {filteredConnections.length === 0 ? (
+          <div className="grid h-28 place-items-center rounded-md border border-dashed text-center text-xs text-muted-foreground">
+            {connections.length === 0 ? t('connection.empty') : t('connection.noMatches')}
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {!query.trim() && recentConnections.length > 0 && (
+              <ConnectionSwitcherSection title={t('connection.recent')}>
+                {recentConnections.map((connection) => (
+                  <ConnectionSwitcherRow
+                    key={`recent-${connection.id}`}
+                    connection={connection}
+                    status={statuses[connection.id]?.status ?? 'disconnected'}
+                    selected={connection.id === activeConnectionId}
+                    loading={loading}
+                    onSelect={() => handleSelect(connection)}
+                    onConnect={() => {
+                      void handleConnect(connection)
+                    }}
+                    onDisconnect={() => {
+                      void handleDisconnect(connection)
+                    }}
+                    t={t}
+                  />
+                ))}
+              </ConnectionSwitcherSection>
+            )}
+            {groupedVisibleConnections.map((group) => (
+              <ConnectionSwitcherSection key={group.name} title={group.name}>
+                {group.connections.map((connection) => (
+                  <ConnectionSwitcherRow
+                    key={connection.id}
+                    connection={connection}
+                    status={statuses[connection.id]?.status ?? 'disconnected'}
+                    selected={connection.id === activeConnectionId}
+                    loading={loading}
+                    onSelect={() => handleSelect(connection)}
+                    onConnect={() => {
+                      void handleConnect(connection)
+                    }}
+                    onDisconnect={() => {
+                      void handleDisconnect(connection)
+                    }}
+                    t={t}
+                  />
+                ))}
+              </ConnectionSwitcherSection>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t p-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="w-full justify-start"
+          onClick={openDataSourceManagement}
+        >
+          <Settings className="size-3.5" />
+          {t('connection.manageDataSources')}
+        </Button>
+      </div>
     </div>
   )
 }
@@ -318,6 +489,7 @@ function ConnectionSwitcherRow({
   loading,
   onSelect,
   onConnect,
+  onDisconnect,
   t,
 }: {
   connection: ConnectionConfig
@@ -326,14 +498,16 @@ function ConnectionSwitcherRow({
   loading: boolean
   onSelect: () => void
   onConnect: () => void
+  onDisconnect: () => void
   t: ReturnType<typeof useTranslation>['t']
 }) {
   const connected = status === 'connected'
+  const failed = status === 'failed'
 
   return (
     <div
       className={[
-        'group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors',
+        'group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-2 text-xs transition-colors',
         selected
           ? 'border-primary/35 bg-primary/10'
           : 'border-transparent hover:border-border hover:bg-muted/70',
@@ -342,23 +516,45 @@ function ConnectionSwitcherRow({
       <button type="button" className="min-w-0 text-left" onClick={onSelect}>
         <div className="flex min-w-0 items-center gap-1.5">
           <span className={runtimeStatusDotClass(status)} />
-          <span className="truncate font-medium">{connection.name}</span>
+          <span className="min-w-0 flex-1 truncate font-medium">{connection.name}</span>
           <EnvironmentBadge connection={connection} />
         </div>
-        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+        <div className="mt-1 truncate text-[11px] text-muted-foreground">
           {connection.driverType} · {connection.group?.trim() || t('connection.ungrouped')}
+        </div>
+        <div
+          className={[
+            'mt-0.5 truncate font-mono text-[10px]',
+            failed ? 'text-destructive' : 'text-muted-foreground',
+          ].join(' ')}
+          title={connectionTargetSummary(connection)}
+        >
+          {connectionTargetSummary(connection)}
         </div>
       </button>
       <Button
         type="button"
         size="icon-xs"
         variant="ghost"
-        title={connected ? t('connection.connected') : t('connection.connect')}
-        disabled={loading || connected}
-        onClick={onConnect}
+        title={connected ? t('connection.disconnect') : t('connection.connect')}
+        disabled={loading}
+        onClick={connected ? onDisconnect : onConnect}
       >
-        {loading ? <Loader2 className="animate-spin" /> : <Link />}
+        {loading ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
       </Button>
+      <ConnectionDialog
+        connection={connection}
+        trigger={
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            title={t('connection.edit')}
+          >
+            <Pencil />
+          </Button>
+        }
+      />
     </div>
   )
 }
@@ -393,7 +589,7 @@ function RailButton({
   )
 }
 
-function SqlWorkspacePanel() {
+export function SqlWorkspacePanel() {
   const { t } = useTranslation()
   const { tabs, activeTabId, setActiveTab, addTab } = useEditorStore()
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
@@ -648,7 +844,7 @@ function SqlWorkspacePanel() {
   )
 }
 
-function SessionManagementPanel() {
+export function SessionManagementPanel() {
   const { t } = useTranslation()
   const connections = useConnectionStore((state) => state.connections)
   const statuses = useConnectionStore((state) => state.statuses)
@@ -803,894 +999,6 @@ function SessionManagementPanel() {
   )
 }
 
-function SettingsPanel() {
-  const { t, i18n } = useTranslation()
-  const saveConnection = useConnectionStore((state) => state.saveConnection)
-  const theme = useUiStore((state) => state.theme)
-  const setTheme = useUiStore((state) => state.setTheme)
-  const queryMaxRows = useUiStore((state) => state.queryMaxRows)
-  const setQueryMaxRows = useUiStore((state) => state.setQueryMaxRows)
-  const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
-  const setDataPreviewDefaultRows = useUiStore((state) => state.setDataPreviewDefaultRows)
-  const editorFontSize = useUiStore((state) => state.editorFontSize)
-  const setEditorFontSize = useUiStore((state) => state.setEditorFontSize)
-  const showSystemObjects = useUiStore((state) => state.showSystemObjects)
-  const setShowSystemObjects = useUiStore((state) => state.setShowSystemObjects)
-  const notify = useUiStore((state) => state.notify)
-  const notifyError = useUiStore((state) => state.notifyError)
-  const history = useQueryHistoryStore((state) => state.entries)
-  const historyLoading = useQueryHistoryStore((state) => state.loading)
-  const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
-  const clearHistory = useQueryHistoryStore((state) => state.clear)
-  const [confirmClearHistory, setConfirmClearHistory] = useState(false)
-  const [includeDiagnosticsSqlText, setIncludeDiagnosticsSqlText] = useState(false)
-  const [diagnosticsExporting, setDiagnosticsExporting] = useState(false)
-  const [health, setHealth] = useState<HealthCheckResponse | null>(null)
-  const [healthUnavailable, setHealthUnavailable] = useState(false)
-
-  useEffect(() => {
-    loadHistory()
-  }, [loadHistory])
-
-  useEffect(() => {
-    let cancelled = false
-    healthCheck()
-      .then((value) => {
-        if (!cancelled) {
-          setHealth(value)
-          setHealthUnavailable(false)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setHealthUnavailable(true)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  async function handleClearHistory() {
-    if (history.length === 0 || historyLoading) {
-      return
-    }
-
-    if (!confirmClearHistory) {
-      setConfirmClearHistory(true)
-      window.setTimeout(() => setConfirmClearHistory(false), 3000)
-      return
-    }
-
-    const cleared = await clearHistory()
-    setConfirmClearHistory(false)
-    if (cleared) {
-      notify({ kind: 'success', title: t('sql.historyCleared') })
-    }
-  }
-
-  async function handleExportDiagnostics() {
-    if (diagnosticsExporting) {
-      return
-    }
-
-    setDiagnosticsExporting(true)
-    try {
-      const baseDir = await downloadDir()
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-      const outputPath = await join(baseDir, `vaporlensdb-diagnostics-${stamp}.json`)
-      const exported = await exportDiagnosticsPackage({
-        outputPath,
-        includeSqlText: includeDiagnosticsSqlText,
-      })
-      notify({
-        kind: 'success',
-        title: t('settings.diagnostics.exportComplete'),
-        message: exported.path,
-      })
-    } catch (error) {
-      notifyError(normalizeAppError(error), t('settings.diagnostics.exportFailed'))
-    } finally {
-      setDiagnosticsExporting(false)
-    }
-  }
-
-  return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      <PanelHeader title={t('settings.title')} subtitle={t('settings.subtitle')} icon={Settings} />
-      <section className="border-b p-3">
-        <h3 className="mb-2 text-xs font-semibold text-foreground">{t('settings.theme.label')}</h3>
-        <div className="grid grid-cols-3 gap-1 rounded-md border bg-muted/30 p-1">
-          <ThemeButton active={theme === 'system'} label={t('settings.theme.system')} icon={Settings} onClick={() => setTheme('system')} />
-          <ThemeButton active={theme === 'dark'} label={t('settings.theme.dark')} icon={Moon} onClick={() => setTheme('dark')} />
-          <ThemeButton active={theme === 'light'} label={t('settings.theme.light')} icon={Sun} onClick={() => setTheme('light')} />
-        </div>
-      </section>
-      <section className="border-b p-3 text-xs">
-        <label className="grid gap-1">
-          <span className="font-semibold text-foreground">{t('settings.language.label')}</span>
-          <select
-            className="ide-select"
-            value={i18n.language.startsWith('en') ? 'en' : 'zh'}
-            onChange={(event) => {
-              window.localStorage.setItem('vaporlensdb.language', event.target.value)
-              void i18n.changeLanguage(event.target.value)
-            }}
-          >
-            <option value="zh">{t('settings.language.zh')}</option>
-            <option value="en">{t('settings.language.en')}</option>
-          </select>
-        </label>
-      </section>
-      <section className="space-y-3 border-b p-3 text-xs">
-        <NumberSetting
-          label={t('settings.queryMaxRows')}
-          value={queryMaxRows}
-          min={100}
-          max={1_000_000}
-          step={100}
-          onChange={setQueryMaxRows}
-        />
-        <NumberSetting
-          label={t('settings.dataPreviewRows')}
-          value={dataPreviewDefaultRows}
-          min={1}
-          max={10_000}
-          step={50}
-          onChange={setDataPreviewDefaultRows}
-        />
-        <NumberSetting
-          label={t('settings.editorFontSize')}
-          value={editorFontSize}
-          min={10}
-          max={24}
-          step={1}
-          onChange={setEditorFontSize}
-        />
-        <label className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-2 py-2">
-          <span className="min-w-0">
-            <span className="block font-medium text-foreground">{t('settings.showSystemObjects')}</span>
-            <span className="mt-0.5 block text-[11px] text-muted-foreground">
-              {t('settings.showSystemObjectsHint')}
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            className="size-4 accent-primary"
-            checked={showSystemObjects}
-            onChange={(event) => setShowSystemObjects(event.target.checked)}
-          />
-        </label>
-      </section>
-      <section className="space-y-2 border-b p-3 text-xs">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-semibold text-foreground">{t('sql.history')}</h3>
-            <p className="mt-1 text-muted-foreground">
-              {t('settings.historyCount', { count: history.length })}
-            </p>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant={confirmClearHistory ? 'destructive' : 'outline'}
-            disabled={history.length === 0 || historyLoading}
-            onClick={() => {
-              void handleClearHistory()
-            }}
-          >
-            <Trash2 className="size-3.5" />
-            {confirmClearHistory ? t('common.confirmClear') : t('common.clear')}
-          </Button>
-        </div>
-      </section>
-      <DbeaverImportSettings
-        onImportConnection={saveConnection}
-        onNotify={notify}
-        onNotifyError={notifyError}
-      />
-      <section className="space-y-3 border-b p-3 text-xs">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-semibold text-foreground">{t('settings.diagnostics.title')}</h3>
-            <p className="mt-1 text-muted-foreground">{t('settings.diagnostics.description')}</p>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={diagnosticsExporting}
-            onClick={() => {
-              void handleExportDiagnostics()
-            }}
-          >
-            {diagnosticsExporting ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Download className="size-3.5" />
-            )}
-            {t('settings.diagnostics.export')}
-          </Button>
-        </div>
-        <label className="flex items-start gap-2 rounded-md border bg-background/60 px-2 py-2">
-          <input
-            type="checkbox"
-            className="mt-0.5 size-4 accent-primary"
-            checked={includeDiagnosticsSqlText}
-            onChange={(event) => setIncludeDiagnosticsSqlText(event.target.checked)}
-          />
-          <span className="min-w-0">
-            <span className="block font-medium text-foreground">
-              {t('settings.diagnostics.includeSqlText')}
-            </span>
-            <span className="mt-0.5 block text-[11px] text-muted-foreground">
-              {t('settings.diagnostics.includeSqlTextHint')}
-            </span>
-          </span>
-        </label>
-      </section>
-      <DriverDefinitionsSettings />
-      <section className="space-y-2 p-3 text-xs">
-        <SettingFact
-          label={t('settings.backendVersion')}
-          value={health ? `${health.app} ${health.version}` : healthUnavailable ? t('settings.unavailable') : t('common.loading')}
-        />
-        <SettingFact
-          label={t('settings.configStore')}
-          value={health?.configPath ?? (healthUnavailable ? t('settings.unavailable') : t('common.loading'))}
-        />
-        <SettingFact
-          label={t('settings.configSchema')}
-          value={
-            health
-              ? t('settings.configSchemaValue', { version: health.configSchemaVersion })
-              : healthUnavailable
-                ? t('settings.unavailable')
-                : t('common.loading')
-          }
-        />
-        <SettingFact
-          label={t('settings.passwordStorage')}
-          value={health?.passwordStorage ?? (healthUnavailable ? t('settings.unavailable') : t('common.loading'))}
-        />
-        <SettingFact
-          label={t('settings.keyBackend')}
-          value={health?.keyBackend ?? (healthUnavailable ? t('settings.unavailable') : t('common.loading'))}
-        />
-      </section>
-    </div>
-  )
-}
-
-function DriverDefinitionsSettings() {
-  const { t } = useTranslation()
-  const drivers = useDriverStore((state) => state.drivers)
-  const loading = useDriverStore((state) => state.loading)
-  const loadDrivers = useDriverStore((state) => state.loadDrivers)
-  const saveDriver = useDriverStore((state) => state.saveDriver)
-  const deleteDriver = useDriverStore((state) => state.deleteDriver)
-  const importJdbcArtifacts = useDriverStore((state) => state.importJdbcArtifacts)
-  const removeJdbcArtifact = useDriverStore((state) => state.removeJdbcArtifact)
-  const validateDriver = useDriverStore((state) => state.validateDriver)
-  const [editing, setEditing] = useState<DriverDefinition | null>(null)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [artifactPathInput, setArtifactPathInput] = useState('')
-  const [validationMessage, setValidationMessage] = useState<{ valid: boolean; message: string } | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-
-  useEffect(() => {
-    void loadDrivers()
-  }, [loadDrivers])
-
-  async function handleSave() {
-    if (!editing || !editing.name.trim()) {
-      return
-    }
-    const saved = await saveDriver(normalizeDriverDefinition(editing))
-    if (saved) {
-      setEditing(null)
-    }
-  }
-
-  async function handleImportJdbcArtifacts(files: FileList | null) {
-    if (!editing || editing.builtIn || editing.driverType !== 'jdbc' || !files?.length) {
-      return
-    }
-    const paths = Array.from(files)
-      .map((file) => filePath(file))
-      .filter(Boolean)
-    const saved = await importJdbcArtifacts(editing.id, paths)
-    if (saved) {
-      setEditing(saved)
-      setValidationMessage(null)
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
-  }
-
-  async function handleRemoveJdbcArtifact(path: string) {
-    if (!editing || editing.builtIn || editing.driverType !== 'jdbc') {
-      return
-    }
-    const saved = await removeJdbcArtifact(editing.id, path)
-    if (saved) {
-      setEditing(saved)
-      setValidationMessage(null)
-    }
-  }
-
-  async function handleImportJdbcArtifactPaths() {
-    if (!editing || editing.builtIn || editing.driverType !== 'jdbc' || !editing.id) {
-      return
-    }
-    const paths = artifactPathInput
-      .split(/\r?\n/)
-      .map((path) => path.trim())
-      .filter(Boolean)
-    if (paths.length === 0) {
-      return
-    }
-    const saved = await importJdbcArtifacts(editing.id, paths)
-    if (saved) {
-      setEditing(saved)
-      setArtifactPathInput('')
-      setValidationMessage(null)
-    }
-  }
-
-  async function handleValidateDriver() {
-    if (!editing || editing.driverType === 'postgres' || editing.driverType === 'mysql') {
-      return
-    }
-    const normalized = normalizeDriverDefinition(editing)
-    const result = await validateDriver(normalized)
-    setValidationMessage(result)
-  }
-
-  async function handleDelete(driver: DriverDefinition) {
-    if (driver.builtIn || loading) {
-      return
-    }
-    if (confirmDeleteId !== driver.id) {
-      setConfirmDeleteId(driver.id)
-      window.setTimeout(() => setConfirmDeleteId(null), 3000)
-      return
-    }
-    const deleted = await deleteDriver(driver.id)
-    if (deleted) {
-      setConfirmDeleteId(null)
-      if (editing?.id === driver.id) {
-        setEditing(null)
-      }
-    }
-  }
-
-  return (
-    <section className="space-y-2 border-b p-3 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="font-semibold text-foreground">{t('drivers.title')}</h3>
-          <p className="mt-1 text-muted-foreground">
-            {t('drivers.summary', { count: drivers.length })}
-          </p>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => setEditing(newCustomDriverDefinition())}
-        >
-          <Plus className="size-3.5" />
-          {t('drivers.add')}
-        </Button>
-      </div>
-
-      <div className="grid max-h-56 gap-1 overflow-auto pr-1">
-        {drivers.map((driver) => (
-          <button
-            key={driver.id}
-            type="button"
-            className={[
-              'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-2 text-left',
-              editing?.id === driver.id ? 'border-primary bg-primary/10' : 'bg-background/60 hover:bg-muted/45',
-            ].join(' ')}
-            onClick={() => setEditing(driver)}
-          >
-            <span className="min-w-0">
-              <span className="block truncate font-medium text-foreground">{driver.name}</span>
-              <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                {driver.driverType} · {driver.backend} · {driver.status}
-              </span>
-            </span>
-            <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-              {driver.builtIn ? 'built-in' : 'custom'}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {editing && (
-        <div className="grid gap-2 rounded-md border bg-muted/20 p-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-1.5 font-medium">
-              <HardDrive className="size-3.5 text-primary" />
-              <span className="truncate">{editing.builtIn ? t('drivers.viewBuiltIn') : t('drivers.editCustom')}</span>
-            </div>
-            <Button type="button" size="icon-sm" variant="ghost" onClick={() => setEditing(null)}>
-              <X className="size-3.5" />
-            </Button>
-          </div>
-
-          <DriverField label={t('drivers.name')}>
-            <input
-              className="ide-input h-7 text-xs"
-              value={editing.name}
-              disabled={editing.builtIn}
-              onChange={(event) => setEditing({ ...editing, name: event.target.value })}
-            />
-          </DriverField>
-          <DriverField label={t('drivers.runtime')}>
-            <select
-              className="ide-input h-7 text-xs"
-              value={editing.driverType}
-              disabled={editing.builtIn}
-              onChange={(event) => {
-                setValidationMessage(null)
-                setEditing({
-                  ...editing,
-                  driverType: event.target.value as DriverDefinition['driverType'],
-                  backend: 'jdbc',
-                })
-              }}
-            >
-              <option value="jdbc">JDBC</option>
-            </select>
-          </DriverField>
-          <DriverField label={t('drivers.driverClass')}>
-            <input
-              className="ide-input h-7 text-xs"
-              value={editing.jdbcDriverClass ?? ''}
-              disabled={editing.builtIn}
-              onChange={(event) => setEditing({ ...editing, jdbcDriverClass: event.target.value })}
-            />
-          </DriverField>
-          <DriverField label={t('drivers.urlTemplate')}>
-            <input
-              className="ide-input h-7 text-xs"
-              value={editing.urlTemplate ?? ''}
-              disabled={editing.builtIn}
-              onChange={(event) => setEditing({ ...editing, urlTemplate: event.target.value })}
-            />
-          </DriverField>
-          <DriverField label={t('drivers.driverFiles')}>
-            <div className="grid gap-2">
-              <input
-                ref={fileInputRef}
-                className="hidden"
-                type="file"
-                accept=".jar,application/java-archive"
-                multiple
-                onChange={(event) => {
-                  void handleImportJdbcArtifacts(event.target.files)
-                }}
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={editing.builtIn || loading || !editing.id}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload className="size-3.5" />
-                  {t('drivers.importJar')}
-                </Button>
-                <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-                  {editing.driverArtifacts.length
-                    ? t('drivers.managedJarCount', { count: editing.driverArtifacts.length })
-                    : t('drivers.noneImported')}
-                </span>
-              </div>
-              {editing.driverArtifacts.length > 0 && (
-                <div className="grid gap-1">
-                  {editing.driverArtifacts.map((path) => (
-                    <div
-                      key={path}
-                      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border bg-background/70 px-2 py-1"
-                    >
-                      <span className="truncate font-mono text-[11px]" title={path}>
-                        {fileName(path)}
-                      </span>
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        disabled={loading}
-                        title={t('drivers.removeJar')}
-                        onClick={() => {
-                          void handleRemoveJdbcArtifact(path)
-                        }}
-                      >
-                        <X className="size-3.5" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {!editing.builtIn && (
-                <div className="grid gap-1">
-                  <textarea
-                    className="ide-input min-h-14 resize-y text-xs"
-                    value={artifactPathInput}
-                    placeholder="/absolute/path/to/vendor-driver.jar"
-                    onChange={(event) => setArtifactPathInput(event.target.value)}
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={loading || !editing.id || !artifactPathInput.trim()}
-                    onClick={() => {
-                      void handleImportJdbcArtifactPaths()
-                    }}
-                  >
-                    <Upload className="size-3.5" />
-                    {t('drivers.importPath')}
-                  </Button>
-                </div>
-              )}
-            </div>
-          </DriverField>
-          <DriverField label={t('drivers.metadataSql')}>
-            <textarea
-              className="ide-input min-h-16 resize-y text-xs"
-              value={editing.metadataDialectSql ?? ''}
-              disabled={editing.builtIn}
-              onChange={(event) => setEditing({ ...editing, metadataDialectSql: event.target.value })}
-            />
-          </DriverField>
-
-          {!editing.builtIn && (
-            <div className="grid gap-1">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={loading}
-                onClick={() => {
-                  void handleValidateDriver()
-                }}
-              >
-                <HardDrive className="size-3.5" />
-                {t('drivers.validate')}
-              </Button>
-              {validationMessage && (
-                <div
-                  className={[
-                    'rounded border px-2 py-1 text-[11px]',
-                    validationMessage.valid
-                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600'
-                      : 'border-destructive/35 bg-destructive/10 text-destructive',
-                  ].join(' ')}
-                >
-                  {validationMessage.message}
-                </div>
-              )}
-            </div>
-          )}
-
-          {!editing.builtIn && (
-            <div className="flex justify-end gap-2 pt-1">
-              <Button
-                type="button"
-                size="sm"
-                variant={confirmDeleteId === editing.id ? 'destructive' : 'outline'}
-                disabled={loading}
-                onClick={() => {
-                  void handleDelete(editing)
-                }}
-              >
-                <Trash2 className="size-3.5" />
-                {confirmDeleteId === editing.id ? t('common.confirm') : t('common.delete')}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                disabled={loading || !editing.name.trim()}
-                onClick={() => {
-                  void handleSave()
-                }}
-              >
-                <Save className="size-3.5" />
-                {t('common.save')}
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function DbeaverImportSettings({
-  onImportConnection,
-  onNotify,
-  onNotifyError,
-}: {
-  onImportConnection: (input: ConnectionInput) => Promise<unknown>
-  onNotify: (notification: { kind: 'success' | 'error' | 'info' | 'warning'; title: string; message?: string }) => void
-  onNotifyError: (error: { code: string; message: string; detail?: string }, title?: string) => void
-}) {
-  const { t } = useTranslation()
-  const [preview, setPreview] = useState<DbeaverImportPreview | null>(null)
-  const [importing, setImporting] = useState(false)
-  const [report, setReport] = useState<{ imported: number; failed: number } | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-
-  async function handlePreview(files: FileList | null) {
-    setReport(null)
-    if (!files?.length) {
-      return
-    }
-
-    try {
-      const nextPreview = await previewDbeaverConfiguration(Array.from(files))
-      setPreview(nextPreview)
-      onNotify({
-        kind: nextPreview.connections.length > 0 ? 'info' : 'warning',
-        title: t('dbeaver.previewComplete'),
-        message: `${nextPreview.connections.length} supported / ${nextPreview.skipped.length} skipped`,
-      })
-    } catch (error) {
-      setPreview(null)
-      onNotifyError(
-        {
-          code: 'DBEAVER_IMPORT_PREVIEW_FAILED',
-          message: error instanceof Error ? error.message : t('dbeaver.previewFailedMessage'),
-        },
-        t('dbeaver.previewFailed'),
-      )
-    } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-    }
-  }
-
-  async function importSupportedConnections() {
-    if (!preview || preview.connections.length === 0) {
-      return
-    }
-
-    setImporting(true)
-    let imported = 0
-    let failed = 0
-    for (const connection of preview.connections) {
-      try {
-        await onImportConnection(dbeaverPreviewToConnectionInput(connection))
-        imported += 1
-      } catch {
-        failed += 1
-      }
-    }
-    setImporting(false)
-    setReport({ imported, failed })
-    onNotify({
-      kind: failed === 0 ? 'success' : 'warning',
-      title: t('dbeaver.importComplete'),
-      message: `${imported} imported / ${failed} failed / ${preview.skipped.length} skipped`,
-    })
-  }
-
-  return (
-    <section className="space-y-2 border-b p-3 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="font-semibold text-foreground">{t('dbeaver.title')}</h3>
-          <p className="mt-1 text-muted-foreground">
-            {t('dbeaver.description')}
-          </p>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={importing}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <Upload className="size-3.5" />
-          {t('dbeaver.choose')}
-        </Button>
-      </div>
-      <input
-        ref={fileInputRef}
-        className="hidden"
-        type="file"
-        multiple
-        accept=".json,.xml"
-        onChange={(event) => {
-          void handlePreview(event.target.files)
-        }}
-      />
-
-      {preview && (
-        <div className="grid gap-2 rounded-md border bg-muted/20 p-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="truncate font-medium">{preview.sourceName}</div>
-              <div className="text-[11px] text-muted-foreground">
-                {preview.connections.length} supported · {preview.skipped.length} skipped ·{' '}
-                {preview.passwordEntries} passwords need manual entry
-              </div>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              disabled={importing || preview.connections.length === 0}
-              onClick={() => {
-                void importSupportedConnections()
-              }}
-            >
-              <Save className="size-3.5" />
-              {importing ? t('dbeaver.importing') : t('dbeaver.import')}
-            </Button>
-          </div>
-
-          <PreviewList title="Connections">
-            {preview.connections.length === 0 ? (
-              <PreviewEmpty label={t('dbeaver.noImportableConnections')} />
-            ) : (
-              preview.connections.slice(0, 8).map((connection) => (
-                <div key={connection.id} className="rounded border bg-background/70 px-2 py-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate font-medium">{connection.name}</span>
-                    <span className="shrink-0 text-[10px] text-muted-foreground">
-                      {connection.driverType}
-                    </span>
-                  </div>
-                  <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                    {connection.host ?? connection.connectionUrl ?? 'URL only'}
-                    {connection.database ? ` / ${connection.database}` : ''} ·{' '}
-                    {connection.passwordStatus === 'manualEntryRequired'
-                      ? 'password manual entry'
-                      : 'no password'}
-                  </div>
-                </div>
-              ))
-            )}
-          </PreviewList>
-
-          <PreviewList title="Driver templates">
-            {preview.driverTemplates.map((template) => (
-              <div key={template.sourceDriver} className="flex items-center justify-between gap-2 rounded border bg-background/70 px-2 py-1.5">
-                <span className="min-w-0 truncate">{template.sourceDriver}</span>
-                <span
-                  className={
-                    template.status === 'supported'
-                      ? 'shrink-0 text-[10px] text-emerald-600'
-                      : 'shrink-0 text-[10px] text-amber-600'
-                  }
-                >
-                  {template.mappedDriverDefinitionId ?? 'unsupported'}
-                </span>
-              </div>
-            ))}
-          </PreviewList>
-
-          {preview.skipped.length > 0 && (
-            <PreviewList title="Import report">
-              {preview.skipped.slice(0, 6).map((skipped) => (
-                <div key={`${skipped.name}:${skipped.sourceDriver}`} className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-amber-700">
-                  <div className="truncate font-medium">{skipped.name}</div>
-                  <div className="truncate text-[11px]">
-                    {skipped.reason} · {skipped.sourceDriver ?? 'unknown'}
-                  </div>
-                </div>
-              ))}
-            </PreviewList>
-          )}
-
-          {report && (
-            <div className="rounded border bg-background/70 px-2 py-1.5 text-[11px] text-muted-foreground">
-              Import report: {report.imported} imported / {report.failed} failed /{' '}
-              {preview.skipped.length} skipped.
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function PreviewList({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="grid gap-1">
-      <div className="text-[11px] font-medium text-muted-foreground">{title}</div>
-      {children}
-    </div>
-  )
-}
-
-function PreviewEmpty({ label }: { label: string }) {
-  return <div className="rounded border border-dashed px-2 py-2 text-center text-[11px] text-muted-foreground">{label}</div>
-}
-
-function DriverField({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="grid gap-1">
-      <span className="text-[11px] text-muted-foreground">{label}</span>
-      {children}
-    </label>
-  )
-}
-
-function newCustomDriverDefinition(): DriverDefinition {
-  return {
-    id: '',
-    driverType: 'jdbc',
-    name: 'Custom JDBC',
-    backend: 'jdbc',
-    status: 'configurable',
-    defaultPort: null,
-    defaultUsername: null,
-    defaultDatabase: null,
-    jdbcDriverClass: '',
-    urlTemplate: 'jdbc:vendor://{host}:{port}/{database}',
-    driverArtifact: '*.jar',
-    driverArtifacts: [],
-    userDriverRequired: true,
-    builtIn: false,
-    notes: '',
-    connectionVariants: [{ id: 'urlOnly', label: 'URL only', requiredFields: ['connectionUrl'] }],
-    metadataDialectSql: '',
-    capabilities: {
-      canConnect: true,
-      canQuery: true,
-      canStream: false,
-      canReadMetadata: false,
-      canCancel: false,
-      canGenerateDdl: false,
-    },
-  }
-}
-
-function normalizeDriverDefinition(driver: DriverDefinition): DriverDefinition {
-  return {
-    ...driver,
-    name: driver.name.trim(),
-    backend: 'jdbc',
-    jdbcDriverClass: nullableText(driver.jdbcDriverClass),
-    urlTemplate: nullableText(driver.urlTemplate),
-    driverArtifact: driver.driverArtifacts.length
-      ? driver.driverArtifacts.map(fileName).join(', ')
-      : nullableText(driver.driverArtifact),
-    driverArtifacts: driver.driverArtifacts,
-    notes: nullableText(driver.notes),
-    metadataDialectSql: nullableText(driver.metadataDialectSql),
-    userDriverRequired: true,
-    builtIn: false,
-    status: 'configurable',
-    connectionVariants: driver.connectionVariants.length
-      ? driver.connectionVariants
-      : [{ id: 'urlOnly', label: 'URL only', requiredFields: ['connectionUrl'] }],
-  }
-}
-
-function nullableText(value: string | null | undefined) {
-  return value?.trim() ? value.trim() : null
-}
-
-function filePath(file: File) {
-  const tauriFile = file as File & { path?: string }
-  return tauriFile.path || file.name
-}
-
-function fileName(path: string) {
-  return path.split(/[\\/]/).pop() || path
-}
-
 function filterConnections(connections: ConnectionConfig[], query: string) {
   const normalizedQuery = query.trim().toLowerCase()
   const sorted = connections
@@ -1709,13 +1017,40 @@ function filterConnections(connections: ConnectionConfig[], query: string) {
       connection.colorTag,
       connection.host,
       connection.database,
+      connection.connectionUrl,
       connection.username,
+      connectionTargetSummary(connection),
     ]
       .filter(Boolean)
       .join(' ')
       .toLowerCase()
       .includes(normalizedQuery),
   )
+}
+
+function nullableText(value: string | null | undefined) {
+  return value?.trim() ? value.trim() : null
+}
+
+function connectionTargetSummary(connection: ConnectionConfig) {
+  const url = nullableText(connection.connectionUrl)
+  if (url) {
+    return compactConnectionUrl(url)
+  }
+
+  const host = nullableText(connection.host)
+  const port = connection.port ? `:${connection.port}` : ''
+  const database = nullableText(connection.database)
+  const target = host ? `${host}${port}` : connection.driverType
+  return database ? `${target}/${database}` : target
+}
+
+function compactConnectionUrl(url: string) {
+  return url
+    .replace(/^jdbc:/, '')
+    .replace(/^oracle:thin:@/, 'oracle:')
+    .replace(/^postgresql:\/\//, 'postgres:')
+    .replace(/^mysql:\/\//, 'mysql:')
 }
 
 function groupConnectionsByEnvironment(connections: ConnectionConfig[], ungroupedLabel: string) {
@@ -1741,10 +1076,10 @@ function groupConnectionsByEnvironment(connections: ConnectionConfig[], ungroupe
 
 function environmentSortKey(label: string, ungroupedLabel: string) {
   const normalized = label.toLowerCase()
-  if (/\b(local|dev|development|本地)\b/.test(normalized)) return '0'
-  if (/\b(test|qa|测试)\b/.test(normalized)) return '1'
-  if (/\b(stage|staging|预发)\b/.test(normalized)) return '2'
-  if (/\b(prod|production|生产)\b/.test(normalized)) return '3'
+  if (/\b(local|dev|development|本地)\b/.test(normalized)) return '0' // i18n-hardcoded-ok: user-entered environment aliases.
+  if (/\b(test|qa|测试)\b/.test(normalized)) return '1' // i18n-hardcoded-ok: user-entered environment aliases.
+  if (/\b(stage|staging|预发)\b/.test(normalized)) return '2' // i18n-hardcoded-ok: user-entered environment aliases.
+  if (/\b(prod|production|生产)\b/.test(normalized)) return '3' // i18n-hardcoded-ok: user-entered environment aliases.
   return label === ungroupedLabel ? 'z' : `4-${normalized}`
 }
 
@@ -1792,7 +1127,7 @@ function isProductionConnection(connection: ConnectionConfig | null) {
   }
   return [connection.colorTag, connection.group, connection.name]
     .filter(Boolean)
-    .some((value) => /\b(prod|production|生产)\b/i.test(String(value)))
+    .some((value) => /\b(prod|production|生产)\b/i.test(String(value))) // i18n-hardcoded-ok: user-entered environment aliases.
 }
 
 function runtimeStatusDotClass(status: string) {
@@ -1838,83 +1173,6 @@ function EmptyPanel({ icon: Icon, title, text }: { icon: LucideIcon; title: stri
         <p className="mt-1 text-xs text-muted-foreground">{text}</p>
       </div>
     </div>
-  )
-}
-
-function ThemeButton({
-  active,
-  label,
-  icon: Icon,
-  onClick,
-}: {
-  active: boolean
-  label: string
-  icon: LucideIcon
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      className={[
-        'flex h-8 items-center justify-center gap-1 rounded text-xs transition-colors',
-        active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-      ].join(' ')}
-      onClick={onClick}
-    >
-      <Icon className="size-3.5" />
-      {label}
-    </button>
-  )
-}
-
-function SettingFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-2 py-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="truncate font-mono text-[11px] text-foreground">{value}</span>
-    </div>
-  )
-}
-
-function NumberSetting({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-}: {
-  label: string
-  value: number
-  min: number
-  max: number
-  step: number
-  onChange: (value: number) => void
-}) {
-  return (
-    <label className="block space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="font-medium">{label}</span>
-        <input
-          className="h-7 w-24 rounded-md border bg-background px-2 text-right font-mono text-[11px] outline-none focus:border-ring"
-          type="number"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(event) => onChange(Number(event.target.value))}
-        />
-      </div>
-      <input
-        className="w-full accent-primary"
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-    </label>
   )
 }
 

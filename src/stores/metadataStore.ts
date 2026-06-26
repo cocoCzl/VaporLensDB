@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import i18n from '@/i18n'
 import {
   getColumns,
   getDatabases,
@@ -259,11 +260,11 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       useTaskStore.getState().upsertTask(task)
       useUiStore.getState().notify({
         kind: 'info',
-        title: '已启动元数据索引',
+        title: i18n.t('notifications.metadataIndexStarted'),
         message: task.title,
       })
     } catch (error) {
-      useUiStore.getState().notifyError(normalizeAppError(error), '启动元数据索引失败')
+      useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.startMetadataIndexFailed'))
       throw error
     } finally {
       set({ indexLoading: false })
@@ -282,7 +283,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       set({ indexResults: results })
       return results
     } catch (error) {
-      useUiStore.getState().notifyError(normalizeAppError(error), '搜索元数据索引失败')
+      useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.searchMetadataIndexFailed'))
       throw error
     }
   },

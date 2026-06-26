@@ -24,7 +24,9 @@ const editorStore = read('src/stores/editorStore.ts')
 includesAll(
   editorStore,
   [
-    "kind?: 'sql' | 'data'",
+    'kind?:',
+    "| 'sql'",
+    "| 'data'",
     'DataTabContext',
     'dataContext?: DataTabContext | null',
     'updateDataTabLimit',
@@ -54,7 +56,7 @@ includesAll(
     'dataContext:',
     'objectKind:',
     'limit: dataPreviewDefaultRows',
-    '`打开前 ${dataPreviewDefaultRows} 行`',
+    "t('explorer.openRows'",
   ],
   'object tree opens data tabs',
 )
@@ -66,9 +68,9 @@ includesAll(
     "activeTab.kind === 'data'",
     'DataTabPanel',
     'read-only',
-    '只读数据预览',
+    "t('workbench.readOnlyDataPreview')",
     'max={10_000}',
-    '数据预览行数过大',
+    "t('workbench.dataPreviewLimitTitle')",
     'updateDataTabContext',
     'buildDataTabSql',
     '<DataGrid',
@@ -77,8 +79,35 @@ includesAll(
   'read-only data tab rendering',
 )
 
-const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ["t('settings.dataPreviewRows')", 'setDataPreviewDefaultRows'], 'settings panel')
+const settings = read('src/components/settings/SettingsWorkspacePanel.tsx')
+includesAll(
+  settings,
+  [
+    "type SettingsDraft",
+    "const [draft, setDraft]",
+    'hasSettingsChanges',
+    'applySettingsDraft',
+    'discardSettingsDraft',
+    'restoreDefaultSettingsDraft',
+    "t('settings.apply')",
+    "t('settings.discard')",
+    "t('settings.restoreDefaults')",
+    "t('settings.language.zh')",
+    "t('settings.language.en')",
+    'SegmentButton',
+    "updateDraft({ language: 'zh' })",
+    "updateDraft({ language: 'en' })",
+    'DEFAULT_QUERY_MAX_ROWS',
+    'DEFAULT_DATA_PREVIEW_ROWS',
+    'DEFAULT_EDITOR_FONT_SIZE',
+    'defaultValue={DEFAULT_DATA_PREVIEW_ROWS}',
+    'presets={[50, 100, 200, 500, 1_000]}',
+    "t('settings.dataPreviewRows')",
+    'setDataPreviewDefaultRows(draft.dataPreviewDefaultRows)',
+  ],
+  'settings panel',
+)
+assert(!settings.includes('<select\\n                      className="ide-select"'), 'language setting should not use the native select control')
 
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')

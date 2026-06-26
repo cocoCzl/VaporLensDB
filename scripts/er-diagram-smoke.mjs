@@ -77,7 +77,7 @@ includesAll(
     'openTableDiagram',
     'openSchemaDiagram',
     "kind: 'diagram'",
-    '打开 ER Diagram',
+    "t('explorer.openErDiagram')",
     'tables: [node.meta.table]',
     'tables: null',
   ],
