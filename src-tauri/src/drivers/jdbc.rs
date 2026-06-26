@@ -97,6 +97,7 @@ impl JdbcDriver {
         let runtime_command = match command {
             "ping" => JdbcBridgeCommand::Ping,
             "query" => JdbcBridgeCommand::Query(sql.unwrap_or_default().to_string()),
+            "metadata" => JdbcBridgeCommand::Metadata(sql.unwrap_or_default().to_string()),
             other => {
                 return Err(AppError::UnsupportedOperation {
                     driver: self.driver_name().to_string(),
@@ -128,6 +129,61 @@ impl JdbcDriver {
             .map_err(|error| clarify_metadata_error(operation, error))
     }
 
+    async fn metadata_bridge_query(
+        &self,
+        operation: &str,
+        schema: Option<&str>,
+        table: Option<&str>,
+    ) -> Result<QueryResult, AppError> {
+        let bridge_operation = match operation {
+            "get_databases" => "databases",
+            "get_schemas" => "schemas",
+            "get_tables" => "tables",
+            "get_views" => "views",
+            "get_columns" => "columns",
+            "get_indexes" => "indexes",
+            "get_foreign_keys" => "foreignKeys",
+            other => other,
+        };
+        let payload = format!(
+            "{}\t{}\t{}",
+            bridge_operation,
+            schema.unwrap_or_default(),
+            table.unwrap_or_default()
+        );
+        let output = self
+            .run_bridge("metadata", Some(&payload))
+            .await
+            .map_err(|error| clarify_metadata_error(operation, error))?;
+        let output: JdbcQueryOutput = serde_json::from_str(&output)?;
+        Ok(QueryResult {
+            columns: output.columns,
+            rows: output.rows,
+            row_count: output.row_count,
+            elapsed_ms: output.elapsed_ms,
+            affected_rows: output.affected_rows,
+            query_id: None,
+            truncated: false,
+            max_rows: None,
+        })
+    }
+
+    async fn metadata_result(
+        &self,
+        operation: &str,
+        selector: impl FnOnce(&JdbcMetadataSql) -> Option<&str>,
+        params: &[(&str, &str)],
+        bridge_schema: Option<&str>,
+        bridge_table: Option<&str>,
+    ) -> Result<QueryResult, AppError> {
+        if self.metadata_sql.is_some() {
+            self.metadata_query(operation, selector, params).await
+        } else {
+            self.metadata_bridge_query(operation, bridge_schema, bridge_table)
+                .await
+        }
+    }
+
     async fn get_table_like_metadata(
         &self,
         operation: &str,
@@ -136,7 +192,13 @@ impl JdbcDriver {
         fallback_type: TableType,
     ) -> Result<Vec<TableInfo>, AppError> {
         let result = self
-            .metadata_query(operation, selector, &[("schema", schema)])
+            .metadata_result(
+                operation,
+                selector,
+                &[("schema", schema)],
+                Some(schema),
+                None,
+            )
             .await?;
         Ok(result
             .rows
@@ -322,6 +384,7 @@ impl JdbcBridgeProcess {
 enum JdbcBridgeCommand {
     Ping,
     Query(String),
+    Metadata(String),
 }
 
 impl JdbcBridgeCommand {
@@ -329,6 +392,9 @@ impl JdbcBridgeCommand {
         match self {
             Self::Ping => format!("PING\t{request_id}\t-\n"),
             Self::Query(sql) => format!("QUERY\t{request_id}\t{}\n", BASE64.encode(sql)),
+            Self::Metadata(payload) => {
+                format!("METADATA\t{request_id}\t{}\n", BASE64.encode(payload))
+            }
         }
     }
 
@@ -336,6 +402,7 @@ impl JdbcBridgeCommand {
         match self {
             Self::Ping => "ping",
             Self::Query(_) => "query",
+            Self::Metadata(_) => "metadata",
         }
     }
 
@@ -343,12 +410,14 @@ impl JdbcBridgeCommand {
         match self {
             Self::Ping => Duration::from_secs(JDBC_CONNECT_TIMEOUT_SECS as u64),
             Self::Query(_) => Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
+            Self::Metadata(_) => Duration::from_secs(JDBC_METADATA_TIMEOUT_SECS as u64),
         }
     }
 }
 
 const JDBC_CONNECT_TIMEOUT_SECS: u32 = 15;
 const JDBC_QUERY_TIMEOUT_SECS: u32 = 60;
+const JDBC_METADATA_TIMEOUT_SECS: u32 = 30;
 
 #[async_trait]
 impl DatabaseDriver for JdbcDriver {
@@ -450,7 +519,7 @@ impl DatabaseDriver for JdbcDriver {
 
     async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, AppError> {
         let result = self
-            .metadata_query("get_databases", |sql| sql.databases.as_deref(), &[])
+            .metadata_result("databases", |sql| sql.databases.as_deref(), &[], None, None)
             .await?;
         Ok(result
             .rows
@@ -462,10 +531,12 @@ impl DatabaseDriver for JdbcDriver {
 
     async fn get_schemas(&self, database: Option<&str>) -> Result<Vec<SchemaInfo>, AppError> {
         let result = self
-            .metadata_query(
-                "get_schemas",
+            .metadata_result(
+                "schemas",
                 |sql| sql.schemas.as_deref(),
                 &[("database", database.unwrap_or(""))],
+                None,
+                None,
             )
             .await?;
         Ok(result
@@ -492,10 +563,12 @@ impl DatabaseDriver for JdbcDriver {
 
     async fn get_columns(&self, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, AppError> {
         let result = self
-            .metadata_query(
-                "get_columns",
+            .metadata_result(
+                "columns",
                 |sql| sql.columns.as_deref(),
                 &[("schema", schema), ("table", table)],
+                Some(schema),
+                Some(table),
             )
             .await?;
         Ok(result
@@ -508,10 +581,12 @@ impl DatabaseDriver for JdbcDriver {
 
     async fn get_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>, AppError> {
         let result = self
-            .metadata_query(
-                "get_indexes",
+            .metadata_result(
+                "indexes",
                 |sql| sql.indexes.as_deref(),
                 &[("schema", schema), ("table", table)],
+                Some(schema),
+                Some(table),
             )
             .await?;
         Ok(result
@@ -527,10 +602,12 @@ impl DatabaseDriver for JdbcDriver {
         table: &str,
     ) -> Result<Vec<ForeignKeyInfo>, AppError> {
         let result = self
-            .metadata_query(
-                "get_foreign_keys",
+            .metadata_result(
+                "foreignKeys",
                 |sql| sql.foreign_keys.as_deref(),
                 &[("schema", schema), ("table", table)],
+                Some(schema),
+                Some(table),
             )
             .await?;
         Ok(result

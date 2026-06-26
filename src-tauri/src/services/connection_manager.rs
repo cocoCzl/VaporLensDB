@@ -253,6 +253,14 @@ async fn create_driver(
     password: Option<&str>,
     definition: Option<&DriverDefinition>,
 ) -> Result<Arc<dyn DatabaseDriver>, AppError> {
+    if matches!(
+        definition.map(|definition| &definition.backend),
+        Some(crate::models::driver_catalog::DriverBackend::Jdbc)
+    ) {
+        let driver = JdbcDriver::connect(config, password, definition).await?;
+        return Ok(Arc::new(driver));
+    }
+
     match config.driver_type {
         DriverType::Postgres => {
             let driver = if let Some(connection_url) = config.connection_url.as_deref() {
@@ -281,10 +289,10 @@ async fn create_driver(
             };
             Ok(Arc::new(driver))
         }
-        DriverType::Oracle => {
-            let driver = JdbcDriver::connect(config, password, definition).await?;
-            Ok(Arc::new(driver))
-        }
+        DriverType::Oracle => Err(AppError::UnsupportedOperation {
+            driver: config.driver_type.to_string(),
+            operation: "native oracle connect".to_string(),
+        }),
         DriverType::Sqlite => {
             let path = required(config.connection_url.as_deref(), "connection_url")?;
             let driver = SqliteDriver::connect(path).await?;

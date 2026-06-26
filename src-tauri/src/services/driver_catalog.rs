@@ -11,6 +11,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
         DriverDefinition {
             id: DriverType::Postgres.to_string(),
             driver_type: DriverType::Postgres,
+            driver_dialect: "postgresql".to_string(),
             name: "PostgreSQL".to_string(),
             backend: DriverBackend::NativeRust,
             status: DriverStatus::Ready,
@@ -23,6 +24,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             driver_artifacts: vec![],
             user_driver_required: false,
             built_in: true,
+            download_url: None,
             notes: Some("内置 tokio-postgres，支持真实取消和流式结果。".to_string()),
             connection_variants: host_port_variants(),
             metadata_dialect_sql: Some("postgres".to_string()),
@@ -31,6 +33,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
         DriverDefinition {
             id: DriverType::Mysql.to_string(),
             driver_type: DriverType::Mysql,
+            driver_dialect: "mysql".to_string(),
             name: "MySQL".to_string(),
             backend: DriverBackend::NativeRust,
             status: DriverStatus::Ready,
@@ -43,6 +46,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             driver_artifacts: vec![],
             user_driver_required: false,
             built_in: true,
+            download_url: None,
             notes: Some("内置 mysql_async，支持查询、流式结果和基础元数据。".to_string()),
             connection_variants: host_port_variants(),
             metadata_dialect_sql: Some("mysql".to_string()),
@@ -58,6 +62,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
         DriverDefinition {
             id: DriverType::Oracle.to_string(),
             driver_type: DriverType::Oracle,
+            driver_dialect: "oracle".to_string(),
             name: "Oracle（需要 JDBC 驱动）".to_string(),
             backend: DriverBackend::Jdbc,
             status: DriverStatus::Configurable,
@@ -70,6 +75,10 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             driver_artifacts: vec![],
             user_driver_required: true,
             built_in: true,
+            download_url: Some(
+                "https://www.oracle.com/database/technologies/appdev/jdbc-downloads.html"
+                    .to_string(),
+            ),
             notes: Some(
                 "Oracle 需要本地 ojdbc；连接、查询、对象浏览、DDL/source 和补全可用。因授权原因不内置 ojdbc，用户需导入 jar。".to_string(),
             ),
@@ -96,9 +105,61 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
                 can_generate_ddl: true,
             },
         },
+        jdbc_template(
+            JdbcTemplateSeed {
+                id: "jdbc-postgresql",
+                driver_type: DriverType::Postgres,
+                dialect: "postgresql",
+                name: "PostgreSQL JDBC",
+                default_port: Some(5432),
+                default_username: Some("postgres"),
+                default_database: Some("postgres"),
+                driver_class: "org.postgresql.Driver",
+                url_template: "jdbc:postgresql://{host}:{port}/{database}",
+                driver_artifact: "postgresql-*.jar",
+                download_url: "https://jdbc.postgresql.org/download/",
+                notes: "PostgreSQL JDBC 是原生 PostgreSQL 连接的可选路径；适合需要特定 JDBC JAR 的场景。",
+                connection_variants: host_port_variants(),
+            },
+        ),
+        jdbc_template(
+            JdbcTemplateSeed {
+                id: "jdbc-mysql",
+                driver_type: DriverType::Mysql,
+                dialect: "mysql",
+                name: "MySQL JDBC",
+                default_port: Some(3306),
+                default_username: Some("root"),
+                default_database: None,
+                driver_class: "com.mysql.cj.jdbc.Driver",
+                url_template: "jdbc:mysql://{host}:{port}/{database}",
+                driver_artifact: "mysql-connector-j-*.jar",
+                download_url: "https://dev.mysql.com/downloads/connector/j/",
+                notes: "MySQL JDBC 是原生 MySQL 连接的可选路径；适合需要厂商 JDBC JAR 的场景。",
+                connection_variants: host_port_variants(),
+            },
+        ),
+        jdbc_template(
+            JdbcTemplateSeed {
+                id: "jdbc-sqlite",
+                driver_type: DriverType::Sqlite,
+                dialect: "sqlite",
+                name: "SQLite JDBC",
+                default_port: None,
+                default_username: None,
+                default_database: None,
+                driver_class: "org.sqlite.JDBC",
+                url_template: "jdbc:sqlite:{database}",
+                driver_artifact: "sqlite-jdbc-*.jar",
+                download_url: "https://github.com/xerial/sqlite-jdbc/releases",
+                notes: "SQLite JDBC 是原生 SQLite 连接的可选路径；适合 JDBC 兼容性测试。",
+                connection_variants: vec![variant("file", "File", &["connectionUrl"])],
+            },
+        ),
         DriverDefinition {
             id: DriverType::Jdbc.to_string(),
             driver_type: DriverType::Jdbc,
+            driver_dialect: "genericJdbc".to_string(),
             name: "自定义 JDBC".to_string(),
             backend: DriverBackend::Jdbc,
             status: DriverStatus::Configurable,
@@ -111,6 +172,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             driver_artifacts: vec![],
             user_driver_required: true,
             built_in: false,
+            download_url: None,
             notes: Some("用于用户自行导入厂商 JDBC 驱动，JDBC bridge 接入后执行。".to_string()),
             connection_variants: vec![variant("urlOnly", "URL only", &["connectionUrl"])],
             metadata_dialect_sql: None,
@@ -119,6 +181,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
         DriverDefinition {
             id: DriverType::Sqlite.to_string(),
             driver_type: DriverType::Sqlite,
+            driver_dialect: "sqlite".to_string(),
             name: "SQLite".to_string(),
             backend: DriverBackend::NativeRust,
             status: DriverStatus::Ready,
@@ -131,6 +194,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             driver_artifacts: vec![],
             user_driver_required: false,
             built_in: true,
+            download_url: None,
             notes: Some("内置 rusqlite，支持本地文件连接、查询和基础对象浏览。".to_string()),
             connection_variants: vec![variant("file", "File", &["connectionUrl"])],
             metadata_dialect_sql: Some("sqlite".to_string()),
@@ -146,6 +210,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
         DriverDefinition {
             id: DriverType::Mssql.to_string(),
             driver_type: DriverType::Mssql,
+            driver_dialect: "mssql".to_string(),
             name: "SQL Server".to_string(),
             backend: DriverBackend::NativeRust,
             status: DriverStatus::Ready,
@@ -158,6 +223,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             driver_artifacts: vec![],
             user_driver_required: false,
             built_in: true,
+            download_url: None,
             notes: Some("内置 tiberius，支持 SQL Server 连接、查询和基础对象浏览。".to_string()),
             connection_variants: vec![variant(
                 "hostPort",
@@ -168,6 +234,54 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             capabilities: ready_capabilities(false),
         },
     ]
+}
+
+struct JdbcTemplateSeed {
+    id: &'static str,
+    driver_type: DriverType,
+    dialect: &'static str,
+    name: &'static str,
+    default_port: Option<u16>,
+    default_username: Option<&'static str>,
+    default_database: Option<&'static str>,
+    driver_class: &'static str,
+    url_template: &'static str,
+    driver_artifact: &'static str,
+    download_url: &'static str,
+    notes: &'static str,
+    connection_variants: Vec<DriverConnectionVariant>,
+}
+
+fn jdbc_template(seed: JdbcTemplateSeed) -> DriverDefinition {
+    DriverDefinition {
+        id: seed.id.to_string(),
+        driver_type: seed.driver_type,
+        driver_dialect: seed.dialect.to_string(),
+        name: seed.name.to_string(),
+        backend: DriverBackend::Jdbc,
+        status: DriverStatus::Configurable,
+        default_port: seed.default_port,
+        default_username: seed.default_username.map(str::to_string),
+        default_database: seed.default_database.map(str::to_string),
+        jdbc_driver_class: Some(seed.driver_class.to_string()),
+        url_template: Some(seed.url_template.to_string()),
+        driver_artifact: Some(seed.driver_artifact.to_string()),
+        driver_artifacts: vec![],
+        user_driver_required: true,
+        built_in: true,
+        download_url: Some(seed.download_url.to_string()),
+        notes: Some(seed.notes.to_string()),
+        connection_variants: seed.connection_variants,
+        metadata_dialect_sql: None,
+        capabilities: DriverDefinitionCapabilities {
+            can_connect: true,
+            can_query: true,
+            can_stream: false,
+            can_read_metadata: true,
+            can_cancel: false,
+            can_generate_ddl: false,
+        },
+    }
 }
 
 fn ready_capabilities(can_cancel: bool) -> DriverDefinitionCapabilities {

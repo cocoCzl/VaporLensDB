@@ -64,18 +64,26 @@ includesAll(
 includesAll(
   connectionForm,
   [
-    'DriverDefinitionSummary',
-    'driverOriginLabel',
-    "t('drivers.customOrigin'",
-    "t('drivers.presetOrigin'",
-    "t('drivers.builtInOrigin'",
-    'driverOriginBadgeClass',
-    "t('connectionForm.builtInReadOnly')",
+    'DriverSupportSummary',
+    "t('connectionForm.nativeDriverReady')",
     "t('connectionForm.localDriverRequired')",
+    'openExternalUrl(downloadUrl)',
     'connectionVariants',
     'applyUrlTemplate',
   ],
-  'connection dialog driver origin and variants',
+  'connection dialog compact driver readiness and variants',
+)
+
+excludesAll(
+  connectionForm,
+  [
+    'DriverDefinitionSummary',
+    "t('drivers.presetOrigin'",
+    "t('connectionForm.builtInReadOnly')",
+    "t('connectionForm.externalDriverRequirement')",
+    "window.open(ORACLE_JDBC_DOWNLOAD_URL",
+  ],
+  'connection dialog should not show driver-template management detail',
 )
 
 includesAll(
@@ -87,7 +95,13 @@ includesAll(
     'createCustomDriver',
     "setEditing(newCustomDriverDefinition())",
     'DriverDefinitionEditor',
-    "grid min-h-[640px] grid-cols-[320px_minmax(0,1fr)]",
+    "xl:grid-cols-[minmax(0,1fr)_minmax(360px,480px)]",
+    "md:grid-cols-2",
+    'driverStateLabel',
+    'driverStateBadgeClass',
+    "2xl:grid-cols-2",
+    "ide-input min-h-36 w-full min-w-0 resize-y overflow-auto font-mono text-xs",
+    "t('drivers.downloadDriver')",
     'isVisibleJdbcDriver',
     'canManageJdbcArtifacts',
     'driverOriginLabel',
@@ -165,7 +179,7 @@ includesAll(
     'validate_external_driver',
     'validate_jdbc_prerequisites',
     'ensure_managed_jdbc_artifacts_supported',
-    'definition.built_in && definition.driver_type == DriverType::Oracle',
+    'matches!(definition.backend, DriverBackend::Jdbc)',
   ],
   'driver command operations',
 )
@@ -174,6 +188,8 @@ includesAll(
   configStore,
   [
     'update_driver_definition_artifacts',
+    'driver_dialect',
+    'download_url',
     "driver_type NOT IN ('mongo', 'redis')",
     "status <> 'planned'",
     'existing.built_in && !existing.driver_artifacts.is_empty()',

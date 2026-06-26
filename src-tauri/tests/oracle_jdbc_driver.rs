@@ -24,6 +24,7 @@ fn test_oracle_config() -> Option<(ConnectionConfig, String)> {
             name: "Oracle JDBC integration test".to_string(),
             driver_definition_id: Some("oracle".to_string()),
             driver_type: DriverType::Oracle,
+            driver_dialect: Some("oracle".to_string()),
             host: None,
             port: None,
             database: None,

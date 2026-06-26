@@ -6,7 +6,8 @@ This file tracks the verification commands that gate release readiness and the c
 
 - v1 usable loop, Object Tree, SQL workspace, data preview, structure, definition/source, ER diagram, import/export, diagnostics, query history, and connection readiness smoke coverage are complete.
 - Default CI verification does not require private database endpoints or local JDBC driver JARs.
-- Live database verification is available for PostgreSQL, MySQL, and Oracle through ignored tests that are run manually.
+- Live database verification is available for PostgreSQL, MySQL, Oracle, SQLite,
+  and JDBC template paths through ignored/manual tests.
 - 使用 `TEST_ORACLE_*` with a local `ojdbc` JAR when running Oracle live integration tests. The Oracle driver JAR is not committed or required by CI.
 
 ## Release Gate
@@ -69,6 +70,7 @@ Run these from `src-tauri` when your local environment is configured:
 cd src-tauri && cargo test --test postgres_driver -- --ignored
 cd src-tauri && cargo test --test mysql_driver -- --ignored
 cd src-tauri && cargo test --test oracle_jdbc_driver -- --ignored
+cd src-tauri && cargo test --test jdbc_template_driver -- --ignored
 ```
 
 Equivalent root-level commands:
@@ -89,7 +91,36 @@ TEST_ORACLE_USER='<oracle-user>' \
 TEST_ORACLE_PASSWORD='<oracle-password>' \
 TEST_ORACLE_JDBC_DRIVER_PATH='/path/to/ojdbc11.jar' \
 cargo test --manifest-path src-tauri/Cargo.toml --test oracle_jdbc_driver -- --ignored
+
+TEST_PG_JDBC_URL='jdbc:postgresql://<postgres-host>:5432/<postgres-database>' \
+TEST_PG_USER='<postgres-user>' \
+TEST_PG_PASSWORD='<postgres-password>' \
+TEST_PG_JDBC_DRIVER_PATH='/path/to/postgresql.jar' \
+cargo test --manifest-path src-tauri/Cargo.toml --test jdbc_template_driver postgres_jdbc_template_queries_and_reads_metadata -- --ignored
+
+TEST_MYSQL_JDBC_URL='jdbc:mysql://<mysql-host>:3306/<mysql-database>' \
+TEST_MYSQL_USER='<mysql-user>' \
+TEST_MYSQL_PASSWORD='<mysql-password>' \
+TEST_MYSQL_JDBC_DRIVER_PATH='/path/to/mysql-connector-j.jar' \
+cargo test --manifest-path src-tauri/Cargo.toml --test jdbc_template_driver mysql_jdbc_template_queries_and_reads_metadata -- --ignored
 ```
+
+For JDBC Driver Template verification, attach local JARs through the app or set
+driver-specific environment variables in your shell. Do not commit these values.
+Validate each template against the same behaviors:
+
+- connection test succeeds when the local JAR, driver class, URL, and
+  credentials are valid;
+- SQL execution returns rows;
+- Object Tree metadata loads schemas, tables, and views;
+- Structure metadata loads columns, primary keys, indexes, and foreign keys
+  where the database exposes them;
+- metadata failures leave SQL execution usable and show a clear object browsing
+  failure state.
+
+SQLite JDBC can be checked with a local SQLite JDBC JAR and a temporary database
+file. PostgreSQL JDBC, MySQL JDBC, and Oracle JDBC should use private endpoints
+from an untracked `.env` or shell session only.
 
 ## Sensitive Information Check
 

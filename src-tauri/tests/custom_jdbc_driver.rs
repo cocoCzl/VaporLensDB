@@ -32,6 +32,7 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
         name: "H2 custom JDBC integration".to_string(),
         driver_definition_id: Some("custom-h2".to_string()),
         driver_type: DriverType::Jdbc,
+        driver_dialect: Some("genericJdbc".to_string()),
         host: None,
         port: None,
         database: None,
@@ -109,6 +110,7 @@ fn h2_definition() -> DriverDefinition {
     DriverDefinition {
         id: "custom-h2".to_string(),
         driver_type: DriverType::Jdbc,
+        driver_dialect: "genericJdbc".to_string(),
         name: "Custom H2".to_string(),
         backend: DriverBackend::Jdbc,
         status: DriverStatus::Configurable,
@@ -121,13 +123,14 @@ fn h2_definition() -> DriverDefinition {
         driver_artifacts: vec![],
         user_driver_required: true,
         built_in: false,
+        download_url: None,
         notes: Some("Custom JDBC integration test driver".to_string()),
         connection_variants: vec![DriverConnectionVariant {
             id: "urlOnly".to_string(),
             label: "URL only".to_string(),
             required_fields: vec!["connectionUrl".to_string()],
         }],
-        metadata_dialect_sql: Some(h2_metadata_sql()),
+        metadata_dialect_sql: None,
         capabilities: DriverDefinitionCapabilities {
             can_connect: true,
             can_query: true,
@@ -139,6 +142,7 @@ fn h2_definition() -> DriverDefinition {
     }
 }
 
+#[allow(dead_code)]
 fn h2_metadata_sql() -> String {
     serde_json::json!({
         "schemas": "SELECT SCHEMA_NAME AS name, CATALOG_NAME AS database_name FROM INFORMATION_SCHEMA.SCHEMATA ORDER BY SCHEMA_NAME",

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { normalizeAppError } from '@/ipc/client'
+import { openExternalUrl } from '@/lib/openExternalUrl'
 import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
 import type { DriverDefinition } from '@/types/driver'
 
@@ -43,6 +44,7 @@ export function ConnectionForm({
     name: connection?.name ?? 'Local PostgreSQL',
     driverDefinitionId: connection?.driverDefinitionId ?? connection?.driverType ?? 'postgres',
     driverType: connection?.driverType ?? 'postgres',
+    driverDialect: connection?.driverDialect ?? connection?.driverType ?? 'postgresql',
     host: connection?.host ?? 'localhost',
     port: connection?.port ?? 5432,
     database: connection?.database ?? 'postgres',
@@ -86,7 +88,7 @@ export function ConnectionForm({
     driverDefinitions.find((driver) => driver.driverType === form.driverType)
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
   const driverStatus = selectedDriver?.status ?? driverProfile.status
-  const readinessIssue = connectionReadinessIssue(form, t)
+  const readinessIssue = connectionReadinessIssue(form, driverProfile, selectedDriver, t)
 
   const activeConnectionVariant = driverProfile.connectionVariants.some(
     (variant) => variant.id === connectionVariant,
@@ -129,6 +131,7 @@ export function ConnectionForm({
       ...current,
       driverDefinitionId: definition?.id ?? driverType,
       driverType,
+      driverDialect: definition?.driverDialect ?? driverType,
       name: current.name || definition?.name || profile.defaultName,
       port: profile.defaultPort,
       database: current.database || profile.defaultDatabase,
@@ -144,7 +147,7 @@ export function ConnectionForm({
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true }, t)
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true, profile: driverProfile, definition: selectedDriver }, t)
     if (validationError) {
       setMessage(validationError)
       return
@@ -154,7 +157,7 @@ export function ConnectionForm({
 
   const saveOnly = async () => {
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: false }, t)
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: false, profile: driverProfile, definition: selectedDriver }, t)
     if (validationError) {
       setMessage(validationError)
       return
@@ -164,7 +167,7 @@ export function ConnectionForm({
 
   const test = async () => {
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true }, t)
+    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true, profile: driverProfile, definition: selectedDriver }, t)
     if (validationError) {
       setMessage(validationError)
       return
@@ -236,7 +239,6 @@ export function ConnectionForm({
                       {driverStatusLabel(driverStatus, t)}
                     </span>
                   </div>
-                  {selectedDriver && <DriverDefinitionSummary driver={selectedDriver} t={t} />}
                   <DriverSupportSummary
                     driver={selectedDriver}
                     profile={driverProfile}
@@ -246,35 +248,6 @@ export function ConnectionForm({
                   />
                   </div>
                 </FormRow>
-
-                {driverProfile.externalDriver && (
-                  <FormRow label="">
-                    <div className="grid gap-2 rounded-md border bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="font-medium text-foreground">{t('connectionForm.oracleJdbcDriver')}</div>
-                          <div className="mt-1">{selectedDriver?.notes ?? driverProfile.description}</div>
-                        </div>
-                        <span className="shrink-0 rounded-md border bg-background px-2 py-1">
-                          {externalDriverStatus(form, t)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3 border-t pt-2">
-                        <span>{t('connectionForm.oracleRequirement')}</span>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="link"
-                          className="h-auto shrink-0 px-0"
-                          onClick={() => window.open(ORACLE_JDBC_DOWNLOAD_URL, '_blank', 'noopener,noreferrer')}
-                        >
-                          <Download className="size-3" />
-                          {t('connectionForm.openDownloadPage')}
-                        </Button>
-                      </div>
-                    </div>
-                  </FormRow>
-                )}
 
                 <FormRow label={t('connectionForm.connectionType')}>
                   <SegmentedControl
@@ -356,12 +329,12 @@ export function ConnectionForm({
                     <Input
                       id="connection-url"
                       value={
-                        activeConnectionVariant === 'urlOnly'
+                        activeConnectionVariant === 'urlOnly' || activeConnectionVariant === 'file'
                           ? (form.connectionUrl ?? '')
                           : driverProfile.defaultUrl(form, activeConnectionVariant)
                       }
                       placeholder={driverProfile.urlPlaceholder}
-                      readOnly={activeConnectionVariant !== 'urlOnly'}
+                      readOnly={activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file'}
                       onChange={(event) => update('connectionUrl', event.target.value)}
                     />
                   </FormRow>
@@ -590,32 +563,6 @@ function SegmentedControl({
   )
 }
 
-function DriverDefinitionSummary({ driver, t }: { driver: DriverDefinition; t: TFunction }) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-      <span className={driverOriginBadgeClass(driver)}>{driverOriginLabel(driver, t)}</span>
-      <span className="rounded-md border bg-background px-2 py-0.5">
-        {driverBackendLabel(driver.backend)}
-      </span>
-      {driver.userDriverRequired && (
-        <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-800">
-          {t('connectionForm.localDriverRequired')}
-        </span>
-      )}
-      {!driver.builtIn && (
-        <span className="rounded-md border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-emerald-800">
-          {t('connectionForm.editable')}
-        </span>
-      )}
-      {driver.builtIn && (
-        <span className="rounded-md border bg-muted/45 px-2 py-0.5">
-          {t('connectionForm.builtInReadOnly')}
-        </span>
-      )}
-    </div>
-  )
-}
-
 function DriverSupportSummary({
   driver,
   profile,
@@ -632,19 +579,25 @@ function DriverSupportSummary({
   const capabilities = driver?.capabilities ?? profileCapabilities(profile)
   const missing = externalDriverMissingItems(input, profile, driver, t)
   const ready = !readinessIssue && missing.length === 0 && profile.status !== 'planned'
+  const requiresLocalJar = profile.externalDriver || Boolean(driver?.userDriverRequired)
+  const downloadUrl = driver?.downloadUrl ?? (input.driverType === 'oracle' ? ORACLE_JDBC_DOWNLOAD_URL : null)
+  const title = requiresLocalJar ? t('connectionForm.localDriverRequired') : driverBackendLabel(driver?.backend ?? profileBackend(profile))
+  const detail = requiresLocalJar
+    ? (missing.length > 0
+        ? t('connectionForm.missing', { items: missing.join(t('common.listSeparator', { defaultValue: ', ' })) })
+        : t('connectionForm.externalDriverReady'))
+    : t('connectionForm.nativeDriverReady')
 
   return (
-    <div className="rounded-md border bg-background/70 p-2 text-xs">
-      <div className="flex items-start justify-between gap-3">
+    <div className="rounded-md border bg-background/70 px-3 py-2 text-xs">
+      <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-medium text-foreground">{t('connectionForm.supportStatus')}</span>
-            <span className="rounded-md border bg-muted/45 px-1.5 py-0.5 text-[11px] text-muted-foreground">
-              {driverBackendLabel(driver?.backend ?? profileBackend(profile))}
-            </span>
+            <span className="font-medium text-foreground">{title}</span>
             <span className={ready ? supportBadgeClass('ready') : supportBadgeClass('blocked')}>
               {ready ? t('connectionForm.connectable') : driverSupportStateLabel(profile.status, missing, t)}
             </span>
+            <span className="text-[11px] text-muted-foreground">{detail}</span>
           </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {driverCapabilityBadges(capabilities, t).map((item) => (
@@ -652,6 +605,20 @@ function DriverSupportSummary({
                 {item.label}
               </span>
             ))}
+            {requiresLocalJar && downloadUrl && (
+              <Button
+                type="button"
+                size="xs"
+                variant="link"
+                className="h-5 px-0 text-[11px]"
+                onClick={() => {
+                  void openExternalUrl(downloadUrl)
+                }}
+              >
+                <Download className="size-3" />
+                {t('connectionForm.openDownloadPage')}
+              </Button>
+            )}
           </div>
         </div>
         {ready ? (
@@ -660,15 +627,6 @@ function DriverSupportSummary({
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
         )}
       </div>
-      {(profile.externalDriver || driver?.userDriverRequired) && (
-        <div className="mt-2 border-t pt-2 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground">{t('connectionForm.externalDriverRequirement')}</span>
-          {missing.length > 0 ? missing.join(t('common.listSeparator', { defaultValue: ', ' })) : t('connectionForm.externalDriverReady')}
-        </div>
-      )}
-      {profile.description && (
-        <div className="mt-1 text-[11px] text-muted-foreground">{profile.description}</div>
-      )}
     </div>
   )
 }
@@ -733,22 +691,6 @@ function profileCapabilities(profile: DriverProfile): DriverDefinition['capabili
 function profileBackend(profile: DriverProfile): DriverDefinition['backend'] {
   if (profile.status === 'planned') return 'planned'
   return profile.externalDriver ? 'jdbc' : 'nativeRust'
-}
-
-function driverOriginLabel(driver: DriverDefinition, t: TFunction) {
-  if (!driver.builtIn) return t('drivers.customOrigin', { defaultValue: 'Custom' })
-  if (driver.status === 'configurable') return t('drivers.presetOrigin', { defaultValue: 'Preset' })
-  return t('drivers.builtInOrigin', { defaultValue: 'Built-in' })
-}
-
-function driverOriginBadgeClass(driver: DriverDefinition) {
-  if (!driver.builtIn) {
-    return 'rounded-md border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-emerald-800'
-  }
-  if (driver.status === 'configurable') {
-    return 'rounded-md border border-sky-300 bg-sky-50 px-2 py-0.5 text-sky-800'
-  }
-  return 'rounded-md border bg-muted/45 px-2 py-0.5 text-foreground'
 }
 
 function driverBackendLabel(backend: DriverDefinition['backend']) {
@@ -820,12 +762,6 @@ function driverStatusLabel(status: DriverDefinition['status'] | DriverProfile['s
   return t('connectionForm.statusUnknown')
 }
 
-function externalDriverStatus(input: ConnectionInput, t: TFunction) {
-  if (!input.driverClass?.trim()) return t('connectionForm.driverClassMissing')
-  if (!input.driverPaths?.length) return t('connectionForm.jarMissing')
-  return t('connectionForm.configured')
-}
-
 function normalizeInput(
   input: ConnectionInput,
   variant: ConnectionVariant,
@@ -835,6 +771,7 @@ function normalizeInput(
   return {
     ...input,
     driverDefinitionId: input.driverDefinitionId ?? input.driverType,
+    driverDialect: definition?.driverDialect ?? input.driverDialect ?? input.driverType,
     host: emptyToNull(input.host),
     database: emptyToNull(input.database),
     connectionUrl:
@@ -876,14 +813,17 @@ function emptyToNull(value: string | null | undefined) {
 function validateRequiredFields(
   input: ConnectionInput,
   variant: ConnectionVariant,
-  validationMode: { requireExternalDriver: boolean },
+  validationMode: { requireExternalDriver: boolean; profile: DriverProfile; definition?: DriverDefinition },
   t: TFunction,
 ) {
   if (!input.name.trim()) {
     return t('connectionForm.validation.nameRequired')
   }
 
-  if (validationMode.requireExternalDriver && requiresExternalDriverConfig(input.driverType)) {
+  if (
+    validationMode.requireExternalDriver &&
+    requiresExternalDriverConfig(validationMode.profile, validationMode.definition)
+  ) {
     if (!input.driverClass?.trim()) {
       return t('connectionForm.validation.oracleDriverClassRequired')
     }
@@ -900,14 +840,14 @@ function validateRequiredFields(
     }
   }
 
-  if (variant === 'urlOnly') {
+  if (variant === 'urlOnly' || variant === 'file') {
     if (!input.connectionUrl?.trim()) {
       return t('connectionForm.validation.urlRequired')
     }
     return null
   }
 
-  if (!input.host?.trim() && variant !== 'file') {
+  if (!input.host?.trim()) {
     return t('connectionForm.validation.hostRequired')
   }
 
@@ -922,8 +862,13 @@ function validateRequiredFields(
   return null
 }
 
-function connectionReadinessIssue(input: ConnectionInput, t: TFunction) {
-  if (!requiresExternalDriverConfig(input.driverType)) {
+function connectionReadinessIssue(
+  input: ConnectionInput,
+  profile: DriverProfile,
+  definition: DriverDefinition | undefined,
+  t: TFunction,
+) {
+  if (!requiresExternalDriverConfig(profile, definition)) {
     return null
   }
   if (!input.driverClass?.trim()) {
@@ -943,8 +888,8 @@ function requiresUsername(driverType: DriverType) {
   return driverType === 'postgres' || driverType === 'mysql' || driverType === 'mssql'
 }
 
-function requiresExternalDriverConfig(driverType: DriverType) {
-  return driverType === 'oracle' || driverType === 'jdbc'
+function requiresExternalDriverConfig(profile: DriverProfile, definition?: DriverDefinition) {
+  return profile.externalDriver || definition?.backend === 'jdbc' || definition?.userDriverRequired
 }
 
 type DriverProfile = {

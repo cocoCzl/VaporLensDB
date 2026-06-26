@@ -9,6 +9,7 @@ use crate::models::connection::DriverType;
 pub struct DriverDefinition {
     pub id: String,
     pub driver_type: DriverType,
+    pub driver_dialect: String,
     pub name: String,
     pub backend: DriverBackend,
     pub status: DriverStatus,
@@ -21,6 +22,7 @@ pub struct DriverDefinition {
     pub driver_artifacts: Vec<String>,
     pub user_driver_required: bool,
     pub built_in: bool,
+    pub download_url: Option<String>,
     pub notes: Option<String>,
     pub connection_variants: Vec<DriverConnectionVariant>,
     pub metadata_dialect_sql: Option<String>,

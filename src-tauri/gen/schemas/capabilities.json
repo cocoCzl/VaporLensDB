@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default VaporLensDB desktop permissions","local":true,"windows":["main"],"permissions":["core:default","core:event:default","core:event:allow-listen"]}}
+{"default":{"identifier":"default","description":"Default VaporLensDB desktop permissions","local":true,"windows":["main"],"permissions":["core:default","core:event:default","core:event:allow-listen","dialog:default","dialog:allow-open","shell:allow-open"]}}

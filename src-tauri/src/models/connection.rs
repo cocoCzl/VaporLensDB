@@ -10,6 +10,7 @@ pub struct ConnectionConfig {
     pub name: String,
     pub driver_definition_id: Option<String>,
     pub driver_type: DriverType,
+    pub driver_dialect: Option<String>,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub database: Option<String>,

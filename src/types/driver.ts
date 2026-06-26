@@ -3,6 +3,7 @@ import type { DriverType } from '@/types/connection'
 export interface DriverDefinition {
   id: string
   driverType: DriverType
+  driverDialect: string
   name: string
   backend: DriverBackend
   status: DriverStatus
@@ -15,6 +16,7 @@ export interface DriverDefinition {
   driverArtifacts: string[]
   userDriverRequired: boolean
   builtIn: boolean
+  downloadUrl?: string | null
   notes?: string | null
   connectionVariants: DriverConnectionVariant[]
   metadataDialectSql?: string | null

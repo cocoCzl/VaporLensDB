@@ -14,9 +14,10 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -24,6 +25,7 @@ import {
   previewDbeaverConfiguration,
   type DbeaverImportPreview,
 } from '@/lib/dbeaverImport'
+import { openExternalUrl } from '@/lib/openExternalUrl'
 import { normalizeAppError } from '@/ipc/client'
 import { exportDiagnosticsPackage } from '@/ipc/diagnostics'
 import { healthCheck, type HealthCheckResponse } from '@/ipc/health'
@@ -449,7 +451,6 @@ function DriverDefinitionsSettings() {
   const [artifactPathInput, setArtifactPathInput] = useState('')
   const [validationMessage, setValidationMessage] = useState<{ valid: boolean; message: string } | null>(null)
   const [query, setQuery] = useState('')
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     void loadDrivers()
@@ -484,20 +485,22 @@ function DriverDefinitionsSettings() {
     }
   }
 
-  async function handleImportJdbcArtifacts(files: FileList | null) {
-    if (!editing || !canManageJdbcArtifacts(editing) || !files?.length) {
+  async function handleImportJdbcArtifacts() {
+    if (!editing || !canManageJdbcArtifacts(editing) || !editing.id) {
       return
     }
-    const paths = Array.from(files)
-      .map((file) => filePath(file))
-      .filter(Boolean)
+    const selected = await openDialog({
+      multiple: true,
+      filters: [{ name: 'JDBC Driver JAR', extensions: ['jar'] }],
+    })
+    const paths = Array.isArray(selected) ? selected : selected ? [selected] : []
+    if (paths.length === 0) {
+      return
+    }
     const saved = await importJdbcArtifacts(editing.id, paths)
     if (saved) {
       setEditing(saved)
       setValidationMessage(null)
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
     }
   }
 
@@ -565,7 +568,7 @@ function DriverDefinitionsSettings() {
 
   return (
     <div className="mx-auto grid max-w-6xl gap-4">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="text-base font-semibold">{t('drivers.title')}</h2>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -578,30 +581,27 @@ function DriverDefinitionsSettings() {
         </Button>
       </div>
 
-      <div className="grid min-h-[640px] grid-cols-[320px_minmax(0,1fr)] overflow-hidden rounded-md border bg-card">
-        <aside className="flex min-h-0 flex-col border-r">
-          <div className="shrink-0 border-b p-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="h-8 pl-8 text-xs"
-                value={query}
-                placeholder={t('drivers.search')}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </div>
+      <div className="grid min-h-[640px] min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,480px)]">
+        <section className="grid min-w-0 content-start gap-3 rounded-md border bg-card p-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="h-9 pl-8 text-xs"
+              value={query}
+              placeholder={t('drivers.search')}
+              onChange={(event) => setQuery(event.target.value)}
+            />
           </div>
-          <div className="min-h-0 flex-1 overflow-auto p-2">
-            <div className="grid gap-1">
+          <div className="grid min-w-0 gap-2 md:grid-cols-2">
               {filteredDrivers.map((driver) => (
                 <button
                   key={driver.id}
                   type="button"
                   className={[
-                    'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-2 text-left text-xs transition-colors',
+                    'grid min-h-32 min-w-0 content-between gap-3 rounded-md border p-3 text-left text-xs transition-colors',
                     editing?.id === driver.id
                       ? 'border-primary bg-primary/10'
-                      : 'border-transparent bg-background/60 hover:border-border hover:bg-muted/55',
+                      : 'border-border/70 bg-background/70 hover:border-primary/45 hover:bg-muted/45',
                   ].join(' ')}
                   onClick={() => {
                     setEditing(driver)
@@ -609,14 +609,34 @@ function DriverDefinitionsSettings() {
                     setValidationMessage(null)
                   }}
                 >
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium text-foreground">{driver.name}</span>
-                    <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                      {driverRuntimeLabel(driver)} · {driver.status}
+                  <span className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-foreground">{driver.name}</span>
+                      <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                        {driver.driverDialect} · {driverRuntimeLabel(driver)}
+                      </span>
+                    </span>
+                    <span className={driverStateBadgeClass(driver)}>
+                      {driverStateLabel(driver, t)}
                     </span>
                   </span>
-                  <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {driverOriginLabel(driver, t)}
+                  <span className="flex flex-wrap gap-1.5">
+                    <span className="rounded border bg-muted/35 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      {driverOriginLabel(driver, t)}
+                    </span>
+                    {driver.capabilities.canQuery && (
+                      <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600">
+                        Query
+                      </span>
+                    )}
+                    {driver.capabilities.canReadMetadata && (
+                      <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600">
+                        Metadata
+                      </span>
+                    )}
+                  </span>
+                  <span className="line-clamp-2 text-[11px] text-muted-foreground">
+                    {driver.notes}
                   </span>
                 </button>
               ))}
@@ -625,11 +645,10 @@ function DriverDefinitionsSettings() {
                   {t('drivers.noMatches')}
                 </div>
               )}
-            </div>
           </div>
-        </aside>
+        </section>
 
-        <div className="min-h-0 overflow-auto p-4">
+        <section className="min-h-0 min-w-0 overflow-auto rounded-md border bg-card p-4">
           {editing ? (
             <DriverDefinitionEditor
               driver={editing}
@@ -637,7 +656,6 @@ function DriverDefinitionsSettings() {
               confirmDelete={confirmDeleteId === editing.id}
               artifactPathInput={artifactPathInput}
               validationMessage={validationMessage}
-              fileInputRef={fileInputRef}
               onChange={setEditing}
               onClose={() => setEditing(null)}
               onArtifactPathInputChange={setArtifactPathInput}
@@ -657,7 +675,7 @@ function DriverDefinitionsSettings() {
               </div>
             </div>
           )}
-        </div>
+        </section>
       </div>
     </div>
   )
@@ -669,7 +687,6 @@ function DriverDefinitionEditor({
   confirmDelete,
   artifactPathInput,
   validationMessage,
-  fileInputRef,
   onChange,
   onClose,
   onArtifactPathInputChange,
@@ -685,11 +702,10 @@ function DriverDefinitionEditor({
   confirmDelete: boolean
   artifactPathInput: string
   validationMessage: { valid: boolean; message: string } | null
-  fileInputRef: MutableRefObject<HTMLInputElement | null>
   onChange: (driver: DriverDefinition) => void
   onClose: () => void
   onArtifactPathInputChange: (value: string) => void
-  onImportJdbcArtifacts: (files: FileList | null) => Promise<void>
+  onImportJdbcArtifacts: () => Promise<void>
   onRemoveJdbcArtifact: (path: string) => Promise<void>
   onImportJdbcArtifactPaths: () => Promise<void>
   onValidate: () => Promise<void>
@@ -701,15 +717,15 @@ function DriverDefinitionEditor({
   const canManageArtifacts = canManageJdbcArtifacts(driver)
 
   return (
-    <div className="grid gap-4">
-      <div className="flex items-start justify-between gap-3 border-b pb-3">
+    <div className="grid min-w-0 gap-4">
+      <div className="flex min-w-0 items-start justify-between gap-3 border-b pb-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <HardDrive className="size-4 text-primary" />
-            <h3 className="truncate text-sm font-semibold">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <HardDrive className="size-4 shrink-0 text-primary" />
+            <h3 className="min-w-0 truncate text-sm font-semibold">
               {readOnly ? t('drivers.viewBuiltIn') : t('drivers.editCustom')}
             </h3>
-            <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            <span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
               {driverOriginLabel(driver, t)}
             </span>
           </div>
@@ -717,28 +733,28 @@ function DriverDefinitionEditor({
             {readOnly ? t('drivers.builtInHint') : t('drivers.customHint')}
           </p>
         </div>
-        <Button type="button" size="icon-sm" variant="ghost" onClick={onClose}>
+        <Button type="button" size="icon-sm" variant="ghost" className="shrink-0" onClick={onClose}>
           <X className="size-3.5" />
         </Button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid min-w-0 gap-4 2xl:grid-cols-2">
         <DriverField label={t('drivers.name')}>
           <input
-            className="ide-input"
+            className="ide-input w-full min-w-0"
             value={driver.name}
             disabled={readOnly}
             onChange={(event) => onChange({ ...driver, name: event.target.value })}
           />
         </DriverField>
         <DriverField label={t('drivers.runtime')}>
-          <div className="flex h-8 items-center rounded-md border bg-muted/35 px-2 text-sm text-muted-foreground">
+          <div className="flex h-8 min-w-0 items-center rounded-md border bg-muted/35 px-2 text-sm text-muted-foreground">
             {driverRuntimeLabel(driver)}
           </div>
         </DriverField>
         <DriverField label={t('drivers.driverClass')}>
           <input
-            className="ide-input"
+            className="ide-input w-full min-w-0"
             value={driver.jdbcDriverClass ?? ''}
             disabled={readOnly}
             onChange={(event) => onChange({ ...driver, jdbcDriverClass: event.target.value })}
@@ -746,7 +762,7 @@ function DriverDefinitionEditor({
         </DriverField>
         <DriverField label={t('drivers.urlTemplate')}>
           <input
-            className="ide-input"
+            className="ide-input w-full min-w-0"
             value={driver.urlTemplate ?? ''}
             disabled={readOnly}
             onChange={(event) => onChange({ ...driver, urlTemplate: event.target.value })}
@@ -755,23 +771,15 @@ function DriverDefinitionEditor({
       </div>
 
       <SettingsCard title={t('drivers.driverFiles')} icon={Upload}>
-        <input
-          ref={fileInputRef}
-          className="hidden"
-          type="file"
-          accept=".jar,application/java-archive"
-          multiple
-          onChange={(event) => {
-            void onImportJdbcArtifacts(event.target.files)
-          }}
-        />
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             size="sm"
             variant="outline"
             disabled={!canManageArtifacts || loading || !driver.id}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              void onImportJdbcArtifacts()
+            }}
           >
             <Upload className="size-3.5" />
             {t('drivers.importJar')}
@@ -781,6 +789,20 @@ function DriverDefinitionEditor({
               ? t('drivers.managedJarCount', { count: driver.driverArtifacts.length })
               : t('drivers.noneImported')}
           </span>
+          {driver.downloadUrl && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="text-primary"
+              onClick={() => {
+                void openExternalUrl(driver.downloadUrl)
+              }}
+            >
+              <Download className="size-3.5" />
+              {t('drivers.downloadDriver')}
+            </Button>
+          )}
         </div>
 
         {driver.driverArtifacts.length > 0 && (
@@ -788,7 +810,7 @@ function DriverDefinitionEditor({
             {driver.driverArtifacts.map((path) => (
               <div
                 key={path}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border bg-background/70 px-2 py-1"
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border bg-background/70 px-2 py-1"
               >
                 <span className="truncate font-mono text-xs" title={path}>
                   {fileName(path)}
@@ -813,7 +835,7 @@ function DriverDefinitionEditor({
         {canManageArtifacts && (
           <div className="grid gap-2">
             <textarea
-              className="ide-input min-h-20 resize-y text-xs"
+              className="ide-input min-h-20 w-full min-w-0 resize-y text-xs"
               value={artifactPathInput}
               placeholder="/absolute/path/to/vendor-driver.jar"
               onChange={(event) => onArtifactPathInputChange(event.target.value)}
@@ -837,7 +859,7 @@ function DriverDefinitionEditor({
 
       <DriverField label={t('drivers.metadataSql')}>
         <textarea
-          className="ide-input min-h-36 resize-y font-mono text-xs"
+          className="ide-input min-h-36 w-full min-w-0 resize-y overflow-auto font-mono text-xs"
           value={driver.metadataDialectSql ?? ''}
           disabled={readOnly}
           onChange={(event) => onChange({ ...driver, metadataDialectSql: event.target.value })}
@@ -845,8 +867,8 @@ function DriverDefinitionEditor({
       </DriverField>
 
       {!readOnly && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-          <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-col gap-2 border-t pt-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Button
               type="button"
               size="sm"
@@ -873,7 +895,7 @@ function DriverDefinitionEditor({
             )}
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex shrink-0 justify-end gap-2">
             <Button
               type="button"
               size="sm"
@@ -1339,6 +1361,7 @@ function newCustomDriverDefinition(): DriverDefinition {
   return {
     id: '',
     driverType: 'jdbc',
+    driverDialect: 'genericJdbc',
     name: 'Custom JDBC',
     backend: 'jdbc',
     status: 'configurable',
@@ -1351,6 +1374,7 @@ function newCustomDriverDefinition(): DriverDefinition {
     driverArtifacts: [],
     userDriverRequired: true,
     builtIn: false,
+    downloadUrl: null,
     notes: '',
     connectionVariants: [{ id: 'urlOnly', label: 'URL only', requiredFields: ['connectionUrl'] }],
     metadataDialectSql: '',
@@ -1370,7 +1394,7 @@ function isVisibleJdbcDriver(driver: DriverDefinition) {
 }
 
 function canManageJdbcArtifacts(driver: DriverDefinition) {
-  return driver.backend === 'jdbc' && (driver.driverType === 'jdbc' || driver.driverType === 'oracle')
+  return driver.backend === 'jdbc'
 }
 
 function driverOriginLabel(driver: DriverDefinition, t: ReturnType<typeof useTranslation>['t']) {
@@ -1381,17 +1405,39 @@ function driverRuntimeLabel(driver: DriverDefinition) {
   return driver.backend === 'jdbc' ? 'JDBC' : driver.backend
 }
 
+function driverStateLabel(driver: DriverDefinition, t: ReturnType<typeof useTranslation>['t']) {
+  if (driver.userDriverRequired && driver.driverArtifacts.length === 0) {
+    return t('drivers.state.notReady', { defaultValue: 'Not ready' })
+  }
+  if (driver.capabilities.canReadMetadata && driver.driverArtifacts.length > 0) {
+    return t('drivers.state.available', { defaultValue: 'Available' })
+  }
+  return t('drivers.state.partialMetadata', { defaultValue: 'Metadata partial' })
+}
+
+function driverStateBadgeClass(driver: DriverDefinition) {
+  if (driver.userDriverRequired && driver.driverArtifacts.length === 0) {
+    return 'shrink-0 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600'
+  }
+  if (driver.capabilities.canReadMetadata && driver.driverArtifacts.length > 0) {
+    return 'shrink-0 rounded border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600'
+  }
+  return 'shrink-0 rounded border border-sky-500/35 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600'
+}
+
 function normalizeDriverDefinition(driver: DriverDefinition): DriverDefinition {
   return {
     ...driver,
     name: driver.name.trim(),
     backend: 'jdbc',
+    driverDialect: driver.driverDialect || 'genericJdbc',
     jdbcDriverClass: nullableText(driver.jdbcDriverClass),
     urlTemplate: nullableText(driver.urlTemplate),
     driverArtifact: driver.driverArtifacts.length
       ? driver.driverArtifacts.map(fileName).join(', ')
       : nullableText(driver.driverArtifact),
     driverArtifacts: driver.driverArtifacts,
+    downloadUrl: nullableText(driver.downloadUrl),
     notes: nullableText(driver.notes),
     metadataDialectSql: nullableText(driver.metadataDialectSql),
     userDriverRequired: true,
@@ -1405,11 +1451,6 @@ function normalizeDriverDefinition(driver: DriverDefinition): DriverDefinition {
 
 function nullableText(value: string | null | undefined) {
   return value?.trim() ? value.trim() : null
-}
-
-function filePath(file: File) {
-  const tauriFile = file as File & { path?: string }
-  return tauriFile.path || file.name
 }
 
 function fileName(path: string) {

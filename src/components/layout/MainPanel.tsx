@@ -836,6 +836,7 @@ function WorkbenchHome({
   onManageDataSources: () => void
   onFocusExplorer: (hasSelectedConnection?: boolean) => void
 }) {
+  const { t } = useTranslation()
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
   const statuses = useConnectionStore((state) => state.statuses)
   const loading = useConnectionStore((state) => state.loading)
@@ -860,21 +861,21 @@ function WorkbenchHome({
     <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">Workbench</h1>
+          <h1 className="truncate text-sm font-semibold">{t('workbench.title')}</h1>
           <p className="truncate text-xs text-muted-foreground">
             {activeConnection
               ? `${activeConnection.name} · ${activeConnection.driverType}`
-              : 'No Data Source connected'}
+              : t('workbench.noDataSourceConnected')}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button type="button" size="sm" variant="secondary" onClick={onNewSql}>
             <Plus className="size-3.5" />
-            New SQL
+            {t('workbench.newSql')}
           </Button>
           <Button type="button" size="sm" variant="outline" onClick={onManageDataSources}>
             <DatabaseIcon className="size-3.5" />
-            Data Sources
+            {t('connection.dataSources')}
           </Button>
         </div>
       </div>
@@ -888,12 +889,12 @@ function WorkbenchHome({
             >
               <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
                 <FileCode2 className="size-4 text-primary" />
-                New SQL tab
+                {t('workbench.newSqlTab')}
               </div>
               <div className="text-xs text-muted-foreground">
                 {activeConnection
-                  ? `Bound to ${activeConnection.name}.`
-                  : 'Starts without a Data Source until one is selected.'}
+                  ? t('workbench.boundToDataSource', { name: activeConnection.name })
+                  : t('workbench.newSqlNoDataSourceHint')}
               </div>
             </button>
             <button
@@ -903,17 +904,17 @@ function WorkbenchHome({
             >
               <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
                 <Search className="size-4 text-primary" />
-                Search objects
+                {t('workbench.searchObjects')}
               </div>
               <div className="text-xs text-muted-foreground">
                 {activeConnection
-                  ? 'Focus the Explorer object search for the current Data Source.'
-                  : 'Select a Data Source first, then search its objects.'}
+                  ? t('workbench.focusObjectSearchHint')
+                  : t('workbench.selectDataSourceFirstHint')}
               </div>
             </button>
           </div>
           <aside className="rounded-md border bg-card">
-            <div className="border-b px-3 py-2 text-xs font-semibold">Recent Data Sources</div>
+            <div className="border-b px-3 py-2 text-xs font-semibold">{t('workbench.recentDataSources')}</div>
             <div className="grid gap-1 p-2">
               {recentConnections.length === 0 ? (
                 <button
@@ -921,7 +922,7 @@ function WorkbenchHome({
                   className="rounded border border-dashed p-3 text-left text-xs text-muted-foreground hover:border-border hover:bg-muted/45"
                   onClick={onManageDataSources}
                 >
-                  Manage or connect a Data Source to populate recents.
+                  {t('workbench.manageDataSourceForRecents')}
                 </button>
               ) : (
                 recentConnections.map((connection) => (
@@ -956,7 +957,9 @@ function WorkbenchHome({
                       size="icon-xs"
                       variant="ghost"
                       title={
-                        statuses[connection.id]?.status === 'connected' ? 'Connected' : 'Connect'
+                        statuses[connection.id]?.status === 'connected'
+                          ? t('connection.status.connected')
+                          : t('connection.connect')
                       }
                       disabled={loading || statuses[connection.id]?.status === 'connected'}
                       onClick={() => {
@@ -985,6 +988,7 @@ function SqlHistoryPanel({
   activeConnectionId: string | null
   onReuse: (entry: QueryHistoryEntry) => void
 }) {
+  const { t } = useTranslation()
   const history = useQueryHistoryStore((state) => state.entries)
   const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
   const clearHistory = useQueryHistoryStore((state) => state.clear)
@@ -1019,7 +1023,7 @@ function SqlHistoryPanel({
     const cleared = await clearHistory()
     setConfirmClear(false)
     if (cleared) {
-      notify({ kind: 'success', title: 'Query history cleared' })
+      notify({ kind: 'success', title: t('sql.historyCleared') })
     }
   }
 
@@ -1028,14 +1032,14 @@ function SqlHistoryPanel({
       <div className="flex h-9 items-center justify-between border-b px-3 text-xs">
         <div className="flex min-w-0 items-center gap-2 font-semibold">
           <Clock3 className="size-3.5 text-muted-foreground" />
-          <span>Query History</span>
+          <span>{t('sql.history')}</span>
         </div>
         <Button
           type="button"
           size="icon-xs"
           variant={confirmClear ? 'destructive' : 'ghost'}
           disabled={history.length === 0 || loading}
-          title={confirmClear ? 'Confirm clear history' : 'Clear history'}
+          title={confirmClear ? t('common.confirmClear') : t('common.clear')}
           onClick={() => void handleClear()}
         >
           <Trash2 className="size-3.5" />
@@ -1047,16 +1051,16 @@ function SqlHistoryPanel({
           value={statusFilter}
           onChange={(event) => setStatusFilter(event.target.value as 'all' | QueryHistoryStatus)}
         >
-          <option value="all">All status</option>
-          <option value="success">Success</option>
-          <option value="failed">Failed</option>
+          <option value="all">{t('workbench.allStatus')}</option>
+          <option value="success">{t('workbench.queryStatus.success')}</option>
+          <option value="failed">{t('workbench.queryStatus.failed')}</option>
         </select>
         <select
           className="ide-select h-7 text-xs"
           value={connectionFilter}
           onChange={(event) => setConnectionFilter(event.target.value)}
         >
-          <option value="all">All Data Sources</option>
+          <option value="all">{t('sql.historyFilterAllConnections')}</option>
           {connectionOptions.map((option) => (
             <option key={option.id} value={option.id}>
               {option.name}
@@ -1067,7 +1071,7 @@ function SqlHistoryPanel({
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {filtered.length === 0 ? (
           <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">
-            {history.length === 0 ? 'Executed SQL appears here.' : 'No history matches the filters.'}
+            {history.length === 0 ? t('workbench.historyEmpty') : t('workbench.historyNoMatches')}
           </div>
         ) : (
           <div className="space-y-1">
@@ -1091,7 +1095,7 @@ function SqlHistoryPanel({
                 {previewId === entry.id && (
                   <div className="grid gap-2 border-t p-2">
                     <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-muted/35 p-2 font-mono text-[11px]">
-                      {entry.sql.trim() || 'Blank query'}
+                      {entry.sql.trim() || t('sql.blankQuery')}
                     </pre>
                     {entry.errorMessage && (
                       <div className="max-h-20 overflow-auto whitespace-pre-wrap rounded border border-destructive/20 bg-destructive/10 p-2 text-[11px] text-destructive">
@@ -1100,7 +1104,7 @@ function SqlHistoryPanel({
                       </div>
                     )}
                     <Button type="button" size="xs" variant="secondary" onClick={() => onReuse(entry)}>
-                      Reuse SQL
+                      {t('workbench.reuseSql')}
                     </Button>
                   </div>
                 )}
@@ -1128,6 +1132,7 @@ function ObjectSummaryTabPanel({
   onOpenInspector: () => void
   onOpenDiagram: () => void
 }) {
+  const { t } = useTranslation()
   const context = tab.objectSummaryContext
   const qualified = [context.database, context.schema, context.object].filter(Boolean).join('.')
 
@@ -1144,24 +1149,24 @@ function ObjectSummaryTabPanel({
       </div>
       <div className="grid max-w-3xl gap-4 p-5">
         <section className="grid gap-2">
-          <h2 className="text-sm font-semibold">Summary</h2>
+          <h2 className="text-sm font-semibold">{t('workbench.summary')}</h2>
           <div className="grid gap-2 rounded-md border bg-card p-3 text-sm">
-            <SummaryFact label="Data Source" value={tab.connectionId ?? '-'} />
-            <SummaryFact label="Schema" value={context.schema} />
-            <SummaryFact label="Object" value={context.object} />
-            <SummaryFact label="Driver" value={context.driverType} />
+            <SummaryFact label={t('connection.dataSource')} value={tab.connectionId ?? '-'} />
+            <SummaryFact label={t('workbench.schema')} value={context.schema} />
+            <SummaryFact label={t('workbench.object')} value={context.object} />
+            <SummaryFact label={t('connectionForm.driver').replace(':', '')} value={context.driverType} />
           </div>
         </section>
         <section className="grid gap-2">
-          <h2 className="text-sm font-semibold">Actions</h2>
+          <h2 className="text-sm font-semibold">{t('workbench.actions')}</h2>
           <div className="flex flex-wrap gap-2">
             <Button type="button" size="sm" variant="secondary" onClick={onOpenDataPreview}>
               <DatabaseIcon className="size-3.5" />
-              Preview data
+              {t('workbench.previewData')}
             </Button>
             <Button type="button" size="sm" variant="outline" onClick={onOpenStructure}>
               <FileCode2 className="size-3.5" />
-              Structure
+              {t('workbench.structure')}
             </Button>
             <Button type="button" size="sm" variant="outline" onClick={onOpenDefinition}>
               <FileCode2 className="size-3.5" />
@@ -1169,11 +1174,11 @@ function ObjectSummaryTabPanel({
             </Button>
             <Button type="button" size="sm" variant="outline" onClick={onOpenInspector}>
               <FileCode2 className="size-3.5" />
-              Inspector
+              {t('workbench.inspector')}
             </Button>
             <Button type="button" size="sm" variant="outline" onClick={onOpenDiagram}>
               <FileCode2 className="size-3.5" />
-              ER Diagram
+              {t('workbench.erDiagram')}
             </Button>
           </div>
         </section>

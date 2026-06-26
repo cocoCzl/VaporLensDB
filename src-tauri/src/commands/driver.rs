@@ -9,7 +9,7 @@ use tauri::State;
 use crate::{
     models::{
         connection::{ConnectionConfig, DriverType},
-        driver_catalog::DriverDefinition,
+        driver_catalog::{DriverBackend, DriverDefinition},
         error::AppError,
     },
     services::external_driver::validate_jdbc_prerequisites,
@@ -194,22 +194,10 @@ pub struct ValidateExternalDriverInput {
 }
 
 fn ensure_managed_jdbc_artifacts_supported(definition: &DriverDefinition) -> Result<(), String> {
-    if definition.driver_type == DriverType::Jdbc {
+    if matches!(definition.backend, DriverBackend::Jdbc) {
         return Ok(());
     }
-    if definition.built_in && definition.driver_type == DriverType::Oracle {
-        return Ok(());
-    }
-    if definition.built_in {
-        return Err("managed JDBC artifacts are supported only for Oracle and custom JDBC driver definitions".to_string());
-    }
-    if definition.driver_type != DriverType::Jdbc {
-        return Err(
-            "managed JDBC artifacts are supported only for custom JDBC driver definitions"
-                .to_string(),
-        );
-    }
-    Ok(())
+    Err("managed JDBC artifacts are supported only for JDBC driver definitions".to_string())
 }
 
 fn validate_jar_path(path: &Path) -> Result<(), String> {
@@ -294,6 +282,7 @@ pub async fn validate_external_driver(
         name: "external driver validation".to_string(),
         driver_definition_id: None,
         driver_type: input.driver_type,
+        driver_dialect: None,
         host: None,
         port: None,
         database: None,

@@ -26,6 +26,7 @@
   },
   "connection": {
     "explorerTitle": "数据库资源管理器",
+    "dataSource": "数据源",
     "dataSources": "数据源",
     "connections": "连接",
     "new": "新建连接",
@@ -181,6 +182,7 @@
     "builtInReadOnly": "内置定义只读",
     "supportStatus": "驱动支持状态",
     "connectable": "可连接",
+    "nativeDriverReady": "内置驱动已就绪",
     "externalDriverRequirement": "外部驱动要求：",
     "externalDriverReady": "驱动类和本地 JAR 已填写",
     "statusReady": "可用",
@@ -297,7 +299,33 @@
     "startNoop": "启动 no-op 后台任务"
   },
   "workbench": {
-    "title": "Workbench",
+    "title": "工作台",
+    "noDataSourceConnected": "未连接数据源",
+    "newSql": "新建 SQL",
+    "newSqlTab": "新建 SQL 标签页",
+    "boundToDataSource": "绑定到 {{name}}。",
+    "newSqlNoDataSourceHint": "未选择数据源时也可以先创建 SQL 标签页。",
+    "searchObjects": "搜索对象",
+    "focusObjectSearchHint": "聚焦当前数据源的对象搜索。",
+    "selectDataSourceFirstHint": "请先选择数据源，再搜索其对象。",
+    "recentDataSources": "最近数据源",
+    "manageDataSourceForRecents": "管理或连接数据源后会显示最近使用项。",
+    "allStatus": "全部状态",
+    "queryStatus": {
+      "success": "成功",
+      "failed": "失败"
+    },
+    "historyEmpty": "执行过的 SQL 会显示在这里。",
+    "historyNoMatches": "没有符合筛选条件的历史记录。",
+    "reuseSql": "复用 SQL",
+    "summary": "摘要",
+    "schema": "Schema",
+    "object": "对象",
+    "actions": "操作",
+    "previewData": "预览数据",
+    "structure": "结构",
+    "inspector": "检查器",
+    "erDiagram": "ER 图",
     "dataSourcesSubtitle": "管理已保存连接、驱动、导入、SSH 和高级选项。",
     "loadCompletionMetadataFailed": "加载补全元数据失败",
     "loadCompletionObjectsFailed": "加载补全对象失败",
@@ -510,8 +538,13 @@
     "removeJar": "移除 JAR",
     "importPath": "导入路径",
     "metadataSql": "元数据 SQL",
-    "validate": "校验驱动"
-    ,
+    "validate": "校验驱动",
+    "downloadDriver": "下载驱动",
+    "state": {
+      "notReady": "未就绪",
+      "available": "可用",
+      "partialMetadata": "元数据部分可用"
+    },
     "customOrigin": "Custom",
     "presetOrigin": "Preset",
     "builtInOrigin": "Built-in"

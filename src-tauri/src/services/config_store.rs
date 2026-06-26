@@ -74,6 +74,11 @@ const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
         name: "add ssh tunnel connection fields",
         apply: add_ssh_tunnel_connection_fields,
     },
+    ConfigMigration {
+        version: 9,
+        name: "rebuild driver template model",
+        apply: rebuild_driver_template_model,
+    },
 ];
 
 impl ConfigStore {
@@ -130,12 +135,12 @@ impl ConfigStore {
         self.conn()?.execute(
             "
             INSERT INTO connections (
-                id, name, driver_definition_id, driver_type, host, port, database_name, connection_url, username,
+                id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
                 password_encrypted, driver_class, driver_paths, ssl_mode, group_name, color_tag,
                 ssh_tunnel_json, ssh_password_encrypted, ssh_private_key_passphrase_encrypted,
                 created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
             ",
             params_from_config(&config),
         )?;
@@ -171,22 +176,23 @@ impl ConfigStore {
             SET name = ?2,
                 driver_definition_id = ?3,
                 driver_type = ?4,
-                host = ?5,
-                port = ?6,
-                database_name = ?7,
-                connection_url = ?8,
-                username = ?9,
-                password_encrypted = ?10,
-                driver_class = ?11,
-                driver_paths = ?12,
-                ssl_mode = ?13,
-                group_name = ?14,
-                color_tag = ?15,
-                ssh_tunnel_json = ?16,
-                ssh_password_encrypted = ?17,
-                ssh_private_key_passphrase_encrypted = ?18,
-                created_at = ?19,
-                updated_at = ?20
+                driver_dialect = ?5,
+                host = ?6,
+                port = ?7,
+                database_name = ?8,
+                connection_url = ?9,
+                username = ?10,
+                password_encrypted = ?11,
+                driver_class = ?12,
+                driver_paths = ?13,
+                ssl_mode = ?14,
+                group_name = ?15,
+                color_tag = ?16,
+                ssh_tunnel_json = ?17,
+                ssh_password_encrypted = ?18,
+                ssh_private_key_passphrase_encrypted = ?19,
+                created_at = ?20,
+                updated_at = ?21
             WHERE id = ?1
             ",
             params_from_config(&config),
@@ -213,7 +219,7 @@ impl ConfigStore {
         let conn = self.conn()?;
         let mut statement = conn.prepare(
             "
-            SELECT id, name, driver_definition_id, driver_type, host, port, database_name, connection_url, username,
+            SELECT id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
                    password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
                    color_tag, ssh_tunnel_json, ssh_password_encrypted,
                    ssh_private_key_passphrase_encrypted, created_at, updated_at
@@ -231,7 +237,7 @@ impl ConfigStore {
         self.conn()?
             .query_row(
                 "
-            SELECT id, name, driver_definition_id, driver_type, host, port, database_name, connection_url, username,
+            SELECT id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
                    password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
                    color_tag, ssh_tunnel_json, ssh_password_encrypted,
                    ssh_private_key_passphrase_encrypted, created_at, updated_at
@@ -336,10 +342,10 @@ impl ConfigStore {
         let conn = self.conn()?;
         let mut statement = conn.prepare(
             "
-            SELECT id, driver_type, name, backend, status, default_port, default_username,
+            SELECT id, driver_type, driver_dialect, name, backend, status, default_port, default_username,
                    default_database, jdbc_driver_class, url_template, driver_artifact,
                    driver_artifacts_json, user_driver_required, built_in,
-                   notes, connection_variants_json, metadata_dialect_sql, capabilities_json
+                   download_url, notes, connection_variants_json, metadata_dialect_sql, capabilities_json
             FROM driver_definitions
             WHERE driver_type <> 'odbc'
               AND driver_type NOT IN ('mongo', 'redis')
@@ -363,10 +369,10 @@ impl ConfigStore {
         self.conn()?
             .query_row(
                 "
-                SELECT id, driver_type, name, backend, status, default_port, default_username,
+                SELECT id, driver_type, driver_dialect, name, backend, status, default_port, default_username,
                        default_database, jdbc_driver_class, url_template, driver_artifact,
                        driver_artifacts_json, user_driver_required, built_in,
-                       notes, connection_variants_json, metadata_dialect_sql, capabilities_json
+                       download_url, notes, connection_variants_json, metadata_dialect_sql, capabilities_json
                 FROM driver_definitions
                 WHERE id = ?1
                   AND driver_type <> 'odbc'
@@ -610,6 +616,7 @@ fn create_driver_definition_store(conn: &Connection) -> Result<(), AppError> {
         CREATE TABLE IF NOT EXISTS driver_definitions (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
+            driver_dialect TEXT,
             backend TEXT NOT NULL,
             status TEXT NOT NULL,
             default_port INTEGER,
@@ -622,6 +629,7 @@ fn create_driver_definition_store(conn: &Connection) -> Result<(), AppError> {
             odbc_driver_name TEXT,
             user_driver_required INTEGER NOT NULL DEFAULT 0,
             built_in INTEGER NOT NULL DEFAULT 0,
+            download_url TEXT,
             notes TEXT,
             connection_variants_json TEXT NOT NULL,
             metadata_dialect_sql TEXT,
@@ -654,14 +662,15 @@ fn upsert_driver_definition(
     conn.execute(
         "
         INSERT INTO driver_definitions (
-            id, driver_type, name, backend, status, default_port, default_username, default_database,
+            id, driver_type, driver_dialect, name, backend, status, default_port, default_username, default_database,
             jdbc_driver_class, url_template, driver_artifact, driver_artifacts_json,
-            user_driver_required, built_in,
+            user_driver_required, built_in, download_url,
             notes, connection_variants_json, metadata_dialect_sql, capabilities_json, updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, datetime('now'))
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, datetime('now'))
         ON CONFLICT(id) DO UPDATE SET
             driver_type = excluded.driver_type,
+            driver_dialect = excluded.driver_dialect,
             name = excluded.name,
             backend = excluded.backend,
             status = excluded.status,
@@ -674,6 +683,7 @@ fn upsert_driver_definition(
             driver_artifacts_json = excluded.driver_artifacts_json,
             user_driver_required = excluded.user_driver_required,
             built_in = excluded.built_in,
+            download_url = excluded.download_url,
             notes = excluded.notes,
             connection_variants_json = excluded.connection_variants_json,
             metadata_dialect_sql = excluded.metadata_dialect_sql,
@@ -684,6 +694,7 @@ fn upsert_driver_definition(
         params![
             &definition.id,
             definition.driver_type.to_string(),
+            &definition.driver_dialect,
             &definition.name,
             definition.backend.to_string(),
             definition.status.to_string(),
@@ -696,6 +707,7 @@ fn upsert_driver_definition(
             driver_artifacts,
             definition.user_driver_required as i64,
             definition.built_in as i64,
+            &definition.download_url,
             &definition.notes,
             connection_variants,
             &definition.metadata_dialect_sql,
@@ -754,6 +766,17 @@ fn add_ssh_tunnel_connection_fields(conn: &Connection) -> Result<(), AppError> {
         "ssh_private_key_passphrase_encrypted",
         "TEXT",
     )?;
+    Ok(())
+}
+
+fn rebuild_driver_template_model(conn: &Connection) -> Result<(), AppError> {
+    ensure_column(conn, "connections", "driver_dialect", "TEXT")?;
+    ensure_column(conn, "driver_definitions", "driver_dialect", "TEXT")?;
+    ensure_column(conn, "driver_definitions", "download_url", "TEXT")?;
+
+    conn.execute("DELETE FROM connections", [])?;
+    conn.execute("DELETE FROM driver_definitions", [])?;
+    conn.execute("DELETE FROM query_history", [])?;
     Ok(())
 }
 
@@ -860,7 +883,7 @@ fn encrypt_ssh_tunnel_secrets(
     Ok(())
 }
 
-fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 20] {
+fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 21] {
     let driver_paths = serde_json::to_string(&config.driver_paths).unwrap_or_default();
     let ssh_tunnel_json = config
         .ssh_tunnel
@@ -882,6 +905,7 @@ fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 2
         Box::new(config.name.clone()),
         Box::new(config.driver_definition_id.clone()),
         Box::new(config.driver_type.to_string()),
+        Box::new(config.driver_dialect.clone()),
         Box::new(config.host.clone()),
         Box::new(config.port.map(i64::from)),
         Box::new(config.database.clone()),
@@ -904,17 +928,17 @@ fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 2
 fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error> {
     let id: String = row.get(0)?;
     let driver_type: String = row.get(3)?;
-    let created_at: String = row.get(18)?;
-    let updated_at: String = row.get(19)?;
-    let port: Option<i64> = row.get(5)?;
-    let driver_paths: Option<String> = row.get(11)?;
-    let ssh_tunnel_json: Option<String> = row.get(15)?;
+    let created_at: String = row.get(19)?;
+    let updated_at: String = row.get(20)?;
+    let port: Option<i64> = row.get(6)?;
+    let driver_paths: Option<String> = row.get(12)?;
+    let ssh_tunnel_json: Option<String> = row.get(16)?;
     let mut ssh_tunnel = ssh_tunnel_json
         .as_deref()
         .and_then(|value| serde_json::from_str::<SshTunnelConfig>(value).ok());
     if let Some(tunnel) = ssh_tunnel.as_mut() {
-        tunnel.password_encrypted = row.get(16)?;
-        tunnel.private_key_passphrase_encrypted = row.get(17)?;
+        tunnel.password_encrypted = row.get(17)?;
+        tunnel.private_key_passphrase_encrypted = row.get(18)?;
     }
 
     Ok(ConnectionConfig {
@@ -922,20 +946,21 @@ fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error>
         name: row.get(1)?,
         driver_definition_id: row.get(2)?,
         driver_type: DriverType::from_str(&driver_type).map_err(parse_error)?,
-        host: row.get(4)?,
+        driver_dialect: row.get(4)?,
+        host: row.get(5)?,
         port: port.map(|value| value as u16),
-        database: row.get(6)?,
-        connection_url: row.get(7)?,
-        username: row.get(8)?,
-        password_encrypted: row.get(9)?,
-        driver_class: row.get(10)?,
+        database: row.get(7)?,
+        connection_url: row.get(8)?,
+        username: row.get(9)?,
+        password_encrypted: row.get(10)?,
+        driver_class: row.get(11)?,
         driver_paths: driver_paths
             .as_deref()
             .and_then(|value| serde_json::from_str(value).ok())
             .unwrap_or_default(),
-        ssl_mode: row.get(12)?,
-        group: row.get(13)?,
-        color_tag: row.get(14)?,
+        ssl_mode: row.get(13)?,
+        group: row.get(14)?,
+        color_tag: row.get(15)?,
         ssh_tunnel,
         created_at: DateTime::parse_from_rfc3339(&created_at)
             .map_err(parse_error)?
@@ -979,37 +1004,39 @@ fn row_to_query_history(row: &Row<'_>) -> Result<QueryHistoryEntry, rusqlite::Er
 fn row_to_driver_definition(row: &Row<'_>) -> Result<DriverDefinition, rusqlite::Error> {
     let id: String = row.get(0)?;
     let driver_type: String = row.get(1)?;
-    let backend: String = row.get(3)?;
-    let status: String = row.get(4)?;
-    let default_port: Option<i64> = row.get(5)?;
-    let driver_artifacts_json: String = row.get(11)?;
-    let user_driver_required: i64 = row.get(12)?;
-    let built_in: i64 = row.get(13)?;
-    let connection_variants_json: String = row.get(15)?;
-    let capabilities_json: String = row.get(17)?;
+    let backend: String = row.get(4)?;
+    let status: String = row.get(5)?;
+    let default_port: Option<i64> = row.get(6)?;
+    let driver_artifacts_json: String = row.get(12)?;
+    let user_driver_required: i64 = row.get(13)?;
+    let built_in: i64 = row.get(14)?;
+    let connection_variants_json: String = row.get(17)?;
+    let capabilities_json: String = row.get(19)?;
 
     Ok(DriverDefinition {
         id,
         driver_type: DriverType::from_str(&driver_type).map_err(parse_error)?,
-        name: row.get(2)?,
+        driver_dialect: row.get(2)?,
+        name: row.get(3)?,
         backend: DriverBackend::from_str(&backend).map_err(parse_error)?,
         status: DriverStatus::from_str(&status).map_err(parse_error)?,
         default_port: default_port.map(|value| value as u16),
-        default_username: row.get(6)?,
-        default_database: row.get(7)?,
-        jdbc_driver_class: row.get(8)?,
-        url_template: row.get(9)?,
-        driver_artifact: row.get(10)?,
+        default_username: row.get(7)?,
+        default_database: row.get(8)?,
+        jdbc_driver_class: row.get(9)?,
+        url_template: row.get(10)?,
+        driver_artifact: row.get(11)?,
         driver_artifacts: serde_json::from_str::<Vec<String>>(&driver_artifacts_json)
             .map_err(parse_error)?,
         user_driver_required: user_driver_required != 0,
         built_in: built_in != 0,
-        notes: row.get(14)?,
+        download_url: row.get(15)?,
+        notes: row.get(16)?,
         connection_variants: serde_json::from_str::<Vec<DriverConnectionVariant>>(
             &connection_variants_json,
         )
         .map_err(parse_error)?,
-        metadata_dialect_sql: row.get(16)?,
+        metadata_dialect_sql: row.get(18)?,
         capabilities: serde_json::from_str::<DriverDefinitionCapabilities>(&capabilities_json)
             .map_err(parse_error)?,
     })
@@ -1060,7 +1087,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
         );
         let drivers = store
             .list_driver_definitions()
@@ -1137,7 +1164,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
         );
         assert!(columns.iter().any(|column| column == "connection_url"));
         assert!(columns.iter().any(|column| column == "driver_class"));
@@ -1152,13 +1179,10 @@ mod tests {
         assert!(table_exists(&conn, "query_history").expect("query history table exists"));
         assert!(table_exists(&conn, "driver_definitions").expect("driver definitions table exists"));
 
-        let upgraded = store
+        assert!(store
             .get_connection(old_connection_id)
-            .expect("get upgraded connection")
-            .expect("connection exists");
-        assert_eq!(upgraded.name, "Legacy PG");
-        assert_eq!(upgraded.group.as_deref(), Some("Legacy"));
-        assert_eq!(upgraded.driver_definition_id.as_deref(), Some("postgres"));
+            .expect("legacy connection lookup after model rebuild")
+            .is_none());
         assert!(store
             .list_driver_definitions()
             .expect("list seeded driver definitions")
@@ -1207,6 +1231,7 @@ mod tests {
             name: "Local PG".to_string(),
             driver_definition_id: Some("postgres".to_string()),
             driver_type: DriverType::Postgres,
+            driver_dialect: Some("postgresql".to_string()),
             host: Some("localhost".to_string()),
             port: Some(5432),
             database: Some("penguin_farm".to_string()),
@@ -1256,6 +1281,7 @@ mod tests {
                     name: "Tunnel PG".to_string(),
                     driver_definition_id: Some("postgres".to_string()),
                     driver_type: DriverType::Postgres,
+                    driver_dialect: Some("postgresql".to_string()),
                     host: Some("db.internal".to_string()),
                     port: Some(5432),
                     database: Some("postgres".to_string()),
@@ -1326,6 +1352,7 @@ mod tests {
                     name: "Local MySQL".to_string(),
                     driver_definition_id: Some("mysql".to_string()),
                     driver_type: DriverType::Mysql,
+                    driver_dialect: Some("mysql".to_string()),
                     host: Some("localhost".to_string()),
                     port: Some(3306),
                     database: Some("app".to_string()),
@@ -1398,6 +1425,7 @@ mod tests {
                     name: "Custom JDBC Source".to_string(),
                     driver_definition_id: Some("custom-reporting-jdbc".to_string()),
                     driver_type: DriverType::Jdbc,
+                    driver_dialect: Some("genericJdbc".to_string()),
                     host: None,
                     port: None,
                     database: None,
@@ -1652,6 +1680,7 @@ mod tests {
             .save_custom_driver_definition(DriverDefinition {
                 id: "custom-reporting-jdbc".to_string(),
                 driver_type: DriverType::Jdbc,
+                driver_dialect: "genericJdbc".to_string(),
                 name: "Reporting JDBC".to_string(),
                 backend: DriverBackend::Jdbc,
                 status: DriverStatus::Configurable,
@@ -1664,6 +1693,7 @@ mod tests {
                 driver_artifacts: vec!["/tmp/example.jar".to_string()],
                 user_driver_required: true,
                 built_in: true,
+                download_url: None,
                 notes: Some("custom test driver".to_string()),
                 connection_variants: vec![DriverConnectionVariant {
                     id: "urlOnly".to_string(),

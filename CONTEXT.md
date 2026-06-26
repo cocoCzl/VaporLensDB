@@ -12,6 +12,44 @@ The first optimization target is time-to-first-task: opening the app, choosing a
 connection, finding an object, running SQL, and reading results should require
 few decisions, clicks, and waits.
 
+## Language
+
+**JDBC Driver Template**:
+A built-in connection template for a database that uses JDBC, including its name,
+driver class, URL shape, and user-facing guidance. It does not mean VaporLensDB
+bundles the vendor JDBC JAR.
+_Avoid_: bundled JDBC driver, built-in JDBC JAR
+
+**Native Driver Path**:
+The preferred built-in connection path for databases VaporLensDB supports
+directly without JDBC. JDBC Driver Templates for those databases are optional
+alternate paths, not replacements for the native path.
+_Avoid_: default JDBC path, JDBC replacement
+
+**JDBC Metadata Support**:
+The ability for a JDBC Driver Template to populate object browsing metadata such
+as schemas, tables, columns, and indexes. It does not require full DDL/source
+generation unless called out separately.
+_Avoid_: full DDL support, source extraction
+
+**JDBC Metadata Introspection**:
+The preferred metadata discovery path for JDBC templates and custom JDBC
+drivers, using standard JDBC metadata first, database-specific dialect behavior
+where needed, and user-provided metadata SQL as an override.
+_Avoid_: SQL-only metadata configuration, manual-only metadata setup
+
+**Built-in Driver Template**:
+A read-only driver template maintained by VaporLensDB. Users may attach local
+JAR files where required, but should create a custom JDBC template for altered
+classes, URL shapes, or metadata SQL.
+_Avoid_: editable built-in template, mutable preset
+
+**Driver Model Rebuild**:
+A deliberate reset of local saved connection and driver configuration when the
+driver model changes in a way that favors long-term clarity over legacy
+compatibility. Users recreate affected connections and reattach local JARs.
+_Avoid_: silent legacy compatibility, best-effort hidden migration
+
 ## Product Shape
 
 - VaporLensDB is optimized for macOS first while preserving room for portable
