@@ -3,9 +3,9 @@
 All notable changes to VaporLensDB are tracked here from the first public-ready
 snapshot onward.
 
-## 0.5.1
+## 0.6.1
 
-- Prepared the 0.5.1 release.
+- Prepared the 0.6.1 release.
 
 ## 0.4.2
 
