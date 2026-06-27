@@ -29,6 +29,7 @@ import { openExternalUrl } from '@/lib/openExternalUrl'
 import { normalizeAppError } from '@/ipc/client'
 import { exportDiagnosticsPackage } from '@/ipc/diagnostics'
 import { healthCheck, type HealthCheckResponse } from '@/ipc/health'
+import { setApplicationMenuLanguage } from '@/ipc/settings'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useDriverStore } from '@/stores/driverStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
@@ -175,6 +176,9 @@ export function SettingsWorkspacePanel() {
     setEditorFontSize(draft.editorFontSize)
     window.localStorage.setItem('vaporlensdb.language', draft.language)
     void i18n.changeLanguage(draft.language)
+    setApplicationMenuLanguage(draft.language).catch(() => {
+      // Native menu sync is best-effort and should not block settings changes.
+    })
   }
 
   return (

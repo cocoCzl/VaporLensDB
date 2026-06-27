@@ -72,6 +72,7 @@ const ipcSources = [
   'src/ipc/metadata.ts',
   'src/ipc/query.ts',
   'src/ipc/queryHistory.ts',
+  'src/ipc/settings.ts',
 ]
 
 for (const path of ipcSources) {

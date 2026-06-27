@@ -1,3 +1,4 @@
+pub mod app_menu;
 pub mod commands;
 pub mod drivers;
 pub mod models;
@@ -30,6 +31,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            app_menu::set_application_menu(app.handle(), app_menu::AppMenuLanguage::Zh)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            app_menu::handle_menu_event(app, &event);
+        })
         .manage(AppState {
             config_store,
             connection_manager: Mutex::new(ConnectionManager::new()),
@@ -92,6 +100,7 @@ pub fn run() {
             commands::query_history::add_query_history,
             commands::query_history::list_query_history,
             commands::query_history::clear_query_history,
+            commands::settings::set_application_menu_language,
             commands::task::list_tasks,
             commands::task::cancel_task,
             commands::task::start_noop_task

@@ -149,6 +149,7 @@ The latest recorded live verification passed against PostgreSQL, MySQL, and Orac
 - `CONTRIBUTING.md`: setup, verification, and contribution expectations.
 - `SECURITY.md`: security reporting and sensitive-data handling.
 - `docs/TESTING.md`: release gates, smoke tests, live integration tests, and sensitive-data checks.
+- `docs/JDBC_METADATA_SQL.md`: JDBC driver metadata SQL format and Oracle/PostgreSQL/MySQL examples.
 - `docs/PRD-object-tree-and-ide-workflow.md`: Object Tree and IDE workflow product requirements.
 - `docs/VaporLensDB-Design.md`: product and architecture design.
 - `docs/VaporLensDB-Technical-Selection.md`: technical selection rationale.

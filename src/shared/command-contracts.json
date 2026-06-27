@@ -21,6 +21,13 @@
     "status": "active"
   },
   {
+    "name": "set_application_menu_language",
+    "namespace": "settings",
+    "args": "{ input: SetApplicationMenuLanguageInput }",
+    "response": "void",
+    "status": "active"
+  },
+  {
     "name": "create_connection",
     "namespace": "connection",
     "args": "{ input: ConnectionInput }",

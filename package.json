@@ -1,7 +1,7 @@
 {
   "name": "vapor-lens-db",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -39,6 +39,7 @@
     "test:session-management": "node scripts/session-management-smoke.mjs",
     "test:dbeaver-import": "node scripts/dbeaver-import-smoke.mjs",
     "test:i18n": "node scripts/i18n-smoke.mjs",
+    "test:native-menu": "node scripts/native-menu-smoke.mjs",
     "test:diagnostics-export": "node scripts/diagnostics-export-smoke.mjs",
     "test:settings-diagnostics": "node scripts/settings-diagnostics-smoke.mjs",
     "test:connection-dialog-clarity": "node scripts/connection-dialog-clarity-smoke.mjs",

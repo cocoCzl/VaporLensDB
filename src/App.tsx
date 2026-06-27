@@ -7,8 +7,10 @@ import { healthCheck } from './ipc/health'
 import { NotificationBridge } from './components/common/NotificationBridge'
 import { useUiStore } from './stores/uiStore'
 import { onTaskUpdated } from './ipc/task'
+import { normalizedApplicationMenuLanguage, setApplicationMenuLanguage } from './ipc/settings'
 import { useTaskStore } from './stores/taskStore'
 import splashBackground from './assets/brand/splash-background.png'
+import i18n from './i18n'
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
@@ -19,6 +21,10 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
+
+    setApplicationMenuLanguage(normalizedApplicationMenuLanguage(i18n.language)).catch(() => {
+      // The app can still run in browser preview or if the native menu is unavailable.
+    })
 
     healthCheck()
       .then((health) => {

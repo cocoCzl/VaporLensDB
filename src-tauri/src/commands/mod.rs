@@ -7,4 +7,5 @@ pub mod health;
 pub mod metadata;
 pub mod query;
 pub mod query_history;
+pub mod settings;
 pub mod task;
