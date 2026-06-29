@@ -15,7 +15,7 @@ export interface DataTabSqlInput {
 }
 
 export function buildDataTabSql(input: DataTabSqlInput) {
-  const limit = Math.max(1, Math.round(input.limit))
+  const limit = dataTabFetchLimit(input.limit)
   const offset = Math.max(0, Math.round(input.offset ?? 0))
   const lines = [`SELECT *`, `FROM ${qualifiedName(input.driverType, input.schema, input.table)}`]
   const wherePredicate = input.wherePredicate?.trim()
@@ -41,6 +41,10 @@ export function buildDataTabSql(input: DataTabSqlInput) {
 
   lines.push(`LIMIT ${limit} OFFSET ${offset};`)
   return lines.join('\n')
+}
+
+export function dataTabFetchLimit(limit: number) {
+  return Math.max(1, Math.round(limit)) + 1
 }
 
 export function qualifiedName(driverType: DriverType, schema: string, table: string) {

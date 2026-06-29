@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Eye, EyeOff, ListFilter, RefreshCw, Search, Server } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
 import { useQuery } from '@/hooks/useQuery'
-import { buildDataTabSql, qualifiedName, quoteIdentifier } from '@/lib/dataTabSql'
+import { buildDataTabSql, dataTabFetchLimit, qualifiedName, quoteIdentifier } from '@/lib/dataTabSql'
 import { isSystemDatabase, isSystemSchema } from '@/lib/systemObjects'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
@@ -616,7 +616,7 @@ export function DatabaseTree() {
         primaryKeyColumns: [],
       },
     })
-    runQuery(tabId, entry.connectionId, sql, { maxRows: dataPreviewDefaultRows })
+    runQuery(tabId, entry.connectionId, sql, { maxRows: dataTabFetchLimit(dataPreviewDefaultRows) })
   }
 
   async function openTableData(nodeId: string) {
@@ -665,7 +665,7 @@ export function DatabaseTree() {
         primaryKeyColumns,
       },
     })
-    runQuery(tabId, activeConnectionId, sql, { maxRows: dataPreviewDefaultRows })
+    runQuery(tabId, activeConnectionId, sql, { maxRows: dataTabFetchLimit(dataPreviewDefaultRows) })
   }
 
   function openTableDdl(nodeId: string) {

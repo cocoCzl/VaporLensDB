@@ -120,6 +120,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
                 download_url: "https://jdbc.postgresql.org/download/",
                 notes: "PostgreSQL JDBC 是原生 PostgreSQL 连接的可选路径；适合需要特定 JDBC JAR 的场景。",
                 connection_variants: host_port_variants(),
+                metadata_dialect_sql: Some(postgres_jdbc_metadata_sql),
             },
         ),
         jdbc_template(
@@ -137,6 +138,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
                 download_url: "https://dev.mysql.com/downloads/connector/j/",
                 notes: "MySQL JDBC 是原生 MySQL 连接的可选路径；适合需要厂商 JDBC JAR 的场景。",
                 connection_variants: host_port_variants(),
+                metadata_dialect_sql: Some(mysql_jdbc_metadata_sql),
             },
         ),
         jdbc_template(
@@ -154,6 +156,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
                 download_url: "https://github.com/xerial/sqlite-jdbc/releases",
                 notes: "SQLite JDBC 是原生 SQLite 连接的可选路径；适合 JDBC 兼容性测试。",
                 connection_variants: vec![variant("file", "File", &["connectionUrl"])],
+                metadata_dialect_sql: None,
             },
         ),
         DriverDefinition {
@@ -250,6 +253,7 @@ struct JdbcTemplateSeed {
     download_url: &'static str,
     notes: &'static str,
     connection_variants: Vec<DriverConnectionVariant>,
+    metadata_dialect_sql: Option<fn() -> String>,
 }
 
 fn jdbc_template(seed: JdbcTemplateSeed) -> DriverDefinition {
@@ -272,7 +276,7 @@ fn jdbc_template(seed: JdbcTemplateSeed) -> DriverDefinition {
         download_url: Some(seed.download_url.to_string()),
         notes: Some(seed.notes.to_string()),
         connection_variants: seed.connection_variants,
-        metadata_dialect_sql: None,
+        metadata_dialect_sql: seed.metadata_dialect_sql.map(|build| build()),
         capabilities: DriverDefinitionCapabilities {
             can_connect: true,
             can_query: true,
@@ -304,6 +308,36 @@ fn jdbc_basic_capabilities() -> DriverDefinitionCapabilities {
         can_cancel: false,
         can_generate_ddl: false,
     }
+}
+
+fn postgres_jdbc_metadata_sql() -> String {
+    serde_json::json!({
+        "databases": "SELECT datname AS name FROM pg_database WHERE datistemplate = false ORDER BY datname",
+        "schemas": "SELECT schema_name AS name, current_database() AS database_name FROM information_schema.schemata WHERE schema_name NOT LIKE 'pg_%' AND schema_name <> 'information_schema' ORDER BY schema_name",
+        "tables": "SELECT table_schema AS schema_name, table_name AS name, table_type, CAST(NULL AS bigint) AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'BASE TABLE' ORDER BY table_name",
+        "views": "SELECT table_schema AS schema_name, table_name AS name, 'view' AS table_type, CAST(NULL AS bigint) AS row_count FROM information_schema.views WHERE table_schema = '{schema}' ORDER BY table_name",
+        "columns": "SELECT c.table_schema AS schema_name, c.table_name AS table_name, c.column_name AS name, c.ordinal_position, c.data_type, CASE WHEN c.is_nullable = 'YES' THEN 1 ELSE 0 END AS nullable, c.column_default AS default_value, c.character_maximum_length, c.numeric_precision, c.numeric_scale, CASE WHEN kcu.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key FROM information_schema.columns c LEFT JOIN information_schema.table_constraints tc ON tc.table_schema = c.table_schema AND tc.table_name = c.table_name AND tc.constraint_type = 'PRIMARY KEY' LEFT JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema AND kcu.table_name = tc.table_name AND kcu.column_name = c.column_name WHERE c.table_schema = '{schema}' AND c.table_name = '{table}' ORDER BY c.ordinal_position",
+        "indexes": "SELECT i.schemaname AS schema_name, i.tablename AS table_name, i.indexname AS name, string_agg(a.attname::text, ', ' ORDER BY key_order.ordinality) AS column_names, pgidx.indisunique AS is_unique, i.indexdef AS definition FROM pg_indexes i JOIN pg_class tbl ON tbl.relname = i.tablename JOIN pg_namespace ns ON ns.oid = tbl.relnamespace AND ns.nspname = i.schemaname JOIN pg_class idx ON idx.relname = i.indexname AND idx.relnamespace = ns.oid JOIN pg_index pgidx ON pgidx.indexrelid = idx.oid LEFT JOIN LATERAL unnest(pgidx.indkey) WITH ORDINALITY AS key_order(attnum, ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid = tbl.oid AND a.attnum = key_order.attnum WHERE i.schemaname = '{schema}' AND i.tablename = '{table}' GROUP BY i.schemaname, i.tablename, i.indexname, i.indexdef, pgidx.indisunique ORDER BY i.indexname",
+        "foreignKeys": "SELECT tc.table_schema AS schema_name, tc.table_name AS table_name, tc.constraint_name AS name, string_agg(kcu.column_name::text, ', ' ORDER BY kcu.ordinal_position) AS column_names, ccu.table_schema AS referenced_schema, ccu.table_name AS referenced_table, string_agg(ccu.column_name::text, ', ' ORDER BY kcu.ordinal_position) AS referenced_columns FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema AND tc.table_name = kcu.table_name JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = '{schema}' AND tc.table_name = '{table}' GROUP BY tc.table_schema, tc.table_name, tc.constraint_name, ccu.table_schema, ccu.table_name ORDER BY tc.constraint_name",
+        "functions": "SELECT routine_schema AS schema_name, routine_name AS name FROM information_schema.routines WHERE routine_schema = '{schema}' ORDER BY routine_name",
+        "schemaObjects": "SELECT n.nspname AS schema_name, c.relname AS name, CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materializedView' WHEN 'i' THEN 'index' WHEN 'S' THEN 'sequence' ELSE c.relkind::text END AS kind, c.relkind::text AS object_type, NULL AS status FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{schema}' AND c.relkind = CASE '{kind}' WHEN 'table' THEN 'r' WHEN 'view' THEN 'v' WHEN 'materializedView' THEN 'm' WHEN 'index' THEN 'i' WHEN 'sequence' THEN 'S' ELSE c.relkind END ORDER BY c.relname"
+    })
+    .to_string()
+}
+
+fn mysql_jdbc_metadata_sql() -> String {
+    serde_json::json!({
+        "databases": "SELECT schema_name AS name FROM information_schema.schemata ORDER BY schema_name",
+        "schemas": "SELECT schema_name AS name, schema_name AS database_name FROM information_schema.schemata ORDER BY schema_name",
+        "tables": "SELECT table_schema AS schema_name, table_name AS name, table_type, table_rows AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'BASE TABLE' ORDER BY table_name",
+        "views": "SELECT table_schema AS schema_name, table_name AS name, table_type, table_rows AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'VIEW' ORDER BY table_name",
+        "columns": "SELECT table_schema AS schema_name, table_name AS table_name, column_name AS name, ordinal_position, column_type AS data_type, CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END AS nullable, column_default AS default_value, character_maximum_length, numeric_precision, numeric_scale, CASE WHEN column_key = 'PRI' THEN 1 ELSE 0 END AS is_primary_key FROM information_schema.columns WHERE table_schema = '{schema}' AND table_name = '{table}' ORDER BY ordinal_position",
+        "indexes": "SELECT table_schema AS schema_name, table_name AS table_name, index_name AS name, GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ', ') AS column_names, CASE WHEN MIN(non_unique) = 0 THEN 1 ELSE 0 END AS is_unique, NULL AS definition FROM information_schema.statistics WHERE table_schema = '{schema}' AND table_name = '{table}' GROUP BY table_schema, table_name, index_name ORDER BY index_name",
+        "foreignKeys": "SELECT table_schema AS schema_name, table_name AS table_name, constraint_name AS name, GROUP_CONCAT(column_name ORDER BY ordinal_position SEPARATOR ', ') AS column_names, referenced_table_schema AS referenced_schema, referenced_table_name AS referenced_table, GROUP_CONCAT(referenced_column_name ORDER BY ordinal_position SEPARATOR ', ') AS referenced_columns FROM information_schema.key_column_usage WHERE table_schema = '{schema}' AND table_name = '{table}' AND referenced_table_name IS NOT NULL GROUP BY table_schema, table_name, constraint_name, referenced_table_schema, referenced_table_name ORDER BY constraint_name",
+        "functions": "SELECT routine_schema AS schema_name, routine_name AS name FROM information_schema.routines WHERE routine_schema = '{schema}' ORDER BY routine_name",
+        "schemaObjects": "SELECT table_schema AS schema_name, table_name AS name, CASE table_type WHEN 'BASE TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' ELSE LOWER(table_type) END AS kind, table_type AS object_type, NULL AS status FROM information_schema.tables WHERE table_schema = '{schema}' AND CASE '{kind}' WHEN 'table' THEN table_type = 'BASE TABLE' WHEN 'view' THEN table_type = 'VIEW' ELSE false END UNION ALL SELECT routine_schema AS schema_name, routine_name AS name, LOWER(routine_type) AS kind, routine_type AS object_type, NULL AS status FROM information_schema.routines WHERE routine_schema = '{schema}' AND LOWER(routine_type) = LOWER('{kind}') ORDER BY name"
+    })
+    .to_string()
 }
 
 fn oracle_metadata_sql() -> String {
@@ -347,8 +381,12 @@ fn variant(id: &str, label: &str, required_fields: &[&str]) -> DriverConnectionV
 
 #[cfg(test)]
 mod tests {
-    use super::{driver_definitions, oracle_metadata_sql};
+    use super::{
+        driver_definitions, mysql_jdbc_metadata_sql, oracle_metadata_sql,
+        postgres_jdbc_metadata_sql,
+    };
     use crate::models::connection::DriverType;
+    use serde_json::Value;
 
     #[test]
     fn oracle_metadata_sql_uses_non_reserved_output_aliases() {
@@ -374,6 +412,44 @@ mod tests {
         assert!(definition.capabilities.can_read_metadata);
         assert!(definition.capabilities.can_generate_ddl);
         assert!(definition.metadata_dialect_sql.is_some());
+    }
+
+    #[test]
+    fn jdbc_postgres_and_mysql_templates_include_metadata_sql() {
+        let definitions = driver_definitions();
+
+        for id in ["jdbc-postgresql", "jdbc-mysql"] {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.id == id)
+                .unwrap_or_else(|| panic!("{id} driver definition"));
+
+            assert!(definition.built_in);
+            assert_eq!(definition.backend.to_string(), "jdbc");
+            assert!(definition.capabilities.can_read_metadata);
+            assert_metadata_sql_shape(
+                definition
+                    .metadata_dialect_sql
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{id} metadata SQL")),
+            );
+        }
+    }
+
+    #[test]
+    fn postgres_and_mysql_jdbc_metadata_sql_uses_expected_catalogs() {
+        let postgres = postgres_jdbc_metadata_sql();
+        assert_metadata_sql_shape(&postgres);
+        assert!(postgres.contains("pg_database"));
+        assert!(postgres.contains("pg_class"));
+        assert!(postgres.contains("pg_namespace"));
+        assert!(postgres.contains("information_schema"));
+
+        let mysql = mysql_jdbc_metadata_sql();
+        assert_metadata_sql_shape(&mysql);
+        assert!(mysql.contains("information_schema.schemata"));
+        assert!(mysql.contains("information_schema.tables"));
+        assert!(mysql.contains("information_schema.key_column_usage"));
     }
 
     #[test]
@@ -422,6 +498,33 @@ mod tests {
             assert!(
                 !normalized.contains(dba_only),
                 "oracle metadata SQL must not depend on {dba_only}"
+            );
+        }
+    }
+
+    fn assert_metadata_sql_shape(sql: &str) {
+        let parsed: Value = serde_json::from_str(sql).expect("metadata SQL should be JSON");
+        let object = parsed
+            .as_object()
+            .expect("metadata SQL should be a JSON object");
+
+        for key in [
+            "databases",
+            "schemas",
+            "tables",
+            "views",
+            "columns",
+            "indexes",
+            "foreignKeys",
+            "functions",
+            "schemaObjects",
+        ] {
+            let value = object
+                .get(key)
+                .unwrap_or_else(|| panic!("metadata SQL should contain {key}"));
+            assert!(
+                value.as_str().is_some_and(|sql| !sql.trim().is_empty()),
+                "metadata SQL key {key} should be a non-empty string"
             );
         }
     }

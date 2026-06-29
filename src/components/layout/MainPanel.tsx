@@ -19,7 +19,7 @@ import {
   type ImportPreview,
 } from '@/ipc/export'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
-import { buildDataTabSql } from '@/lib/dataTabSql'
+import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
 import { isSystemSchema } from '@/lib/systemObjects'
 import { normalizeAppError } from '@/ipc/client'
 import { analyzeSqlRisk, type SqlRiskAnalysis, type SqlRiskReason } from '@/ipc/query'
@@ -32,7 +32,7 @@ import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
 import { useSqlDraftStore } from '@/stores/sqlDraftStore'
 import { useTaskStore } from '@/stores/taskStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { ConnectionConfig, DriverType } from '@/types/connection'
+import type { ConnectionConfig, ConnectionRuntimeStatus, DriverType } from '@/types/connection'
 import type { AppError } from '@/types/error'
 import type { ColumnInfo, DbObjectInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
 import type { QueryResult } from '@/types/query'
@@ -425,7 +425,7 @@ export function MainPanel() {
                   primaryKeyColumns: [],
                 },
               })
-              runQuery(tabId, activeTab.connectionId, sql, { maxRows: dataPreviewDefaultRows })
+              runQuery(tabId, activeTab.connectionId, sql, { maxRows: dataTabFetchLimit(dataPreviewDefaultRows) })
             }}
             onOpenStructure={() => {
               addTab({
@@ -504,7 +504,7 @@ export function MainPanel() {
             onRefresh={() => {
               if (activeTab.connectionId) {
                 runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {
-                  maxRows: activeDataContext.limit,
+                  maxRows: dataTabFetchLimit(activeDataContext.limit),
                 })
               }
             }}
@@ -523,7 +523,7 @@ export function MainPanel() {
               const nextContext = { ...activeTab.dataContext, limit, offset: 0 }
               const nextSql = buildDataTabSql(dataContextToSqlInput(nextContext))
               updateDataTabContext(activeTab.id, nextContext, nextSql)
-              runQuery(activeTab.id, activeTab.connectionId, nextSql, { maxRows: nextContext.limit })
+              runQuery(activeTab.id, activeTab.connectionId, nextSql, { maxRows: dataTabFetchLimit(nextContext.limit) })
             }}
             onContextChange={(patch) => {
               if (!activeTab.connectionId || !activeTab.dataContext) {
@@ -532,7 +532,7 @@ export function MainPanel() {
               const nextContext = { ...activeTab.dataContext, ...patch }
               const nextSql = buildDataTabSql(dataContextToSqlInput(nextContext))
               updateDataTabContext(activeTab.id, nextContext, nextSql)
-              runQuery(activeTab.id, activeTab.connectionId, nextSql, { maxRows: nextContext.limit })
+              runQuery(activeTab.id, activeTab.connectionId, nextSql, { maxRows: dataTabFetchLimit(nextContext.limit) })
             }}
             onOpenSqlTab={() => {
               addTab({
@@ -545,7 +545,13 @@ export function MainPanel() {
             }}
             onExport={() =>
               activeResult &&
-              exportCurrentResult(activeResult, activeTab.title, notify, notifyError, upsertTask)
+              exportCurrentResult(
+                dataTabDisplayResult(activeResult, activeDataContext.limit),
+                activeTab.title,
+                notify,
+                notifyError,
+                upsertTask,
+              )
             }
           />
         </div>
@@ -890,7 +896,7 @@ function WorkbenchHome({
   const recentConnections = recentDataSourceIds
     .map((id) => connections.find((connection) => connection.id === id))
     .filter((connection): connection is ConnectionConfig => Boolean(connection))
-    .slice(0, 4)
+    .slice(0, 6)
 
   async function connectRecent(connection: ConnectionConfig) {
     setActiveConnection(connection.id)
@@ -946,11 +952,11 @@ function WorkbenchHome({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-6">
-        <div className="grid max-w-4xl gap-4 md:grid-cols-[minmax(0,1fr)_280px]">
-          <div className="grid gap-3">
+        <div className="grid w-full gap-4 xl:grid-cols-[minmax(560px,1fr)_minmax(460px,640px)]">
+          <div className="grid content-start gap-3">
             <button
               type="button"
-              className="rounded-md border bg-card p-4 text-left hover:bg-muted/45"
+              className="rounded-md border bg-card p-4 text-left transition-colors hover:bg-muted/45"
               onClick={onNewSql}
             >
               <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
@@ -963,14 +969,14 @@ function WorkbenchHome({
                   : t('workbench.newSqlNoDataSourceHint')}
               </div>
             </button>
-            <section className="rounded-md border bg-card">
+            <section className="overflow-hidden rounded-md border bg-card">
               <div className="flex items-center justify-between border-b px-4 py-3">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <Clock3 className="size-4 text-primary" />
                   {t('sql.recentScripts')}
                 </div>
               </div>
-              <div className="grid gap-1 p-2">
+              <div className="grid max-h-64 gap-1 overflow-auto p-2">
                 {drafts.length === 0 ? (
                   <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">
                     {t('sql.noRecentScripts')}
@@ -980,7 +986,7 @@ function WorkbenchHome({
                     <button
                       key={draft.id}
                       type="button"
-                      className="rounded border border-transparent px-2 py-2 text-left text-xs hover:border-border hover:bg-muted"
+                      className="rounded border border-transparent px-2 py-2 text-left text-xs transition-colors hover:border-border hover:bg-muted"
                       onClick={() => restoreDraft(draft)}
                     >
                       <span className="block truncate font-medium">
@@ -999,7 +1005,7 @@ function WorkbenchHome({
             </section>
             <button
               type="button"
-              className="rounded-md border bg-card p-4 text-left hover:bg-muted/45"
+              className="rounded-md border bg-card p-4 text-left transition-colors hover:bg-muted/45"
               onClick={() => onFocusExplorer()}
             >
               <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
@@ -1013,63 +1019,95 @@ function WorkbenchHome({
               </div>
             </button>
           </div>
-          <aside className="rounded-md border bg-card">
-            <div className="border-b px-3 py-2 text-xs font-semibold">{t('workbench.recentDataSources')}</div>
-            <div className="grid gap-1 p-2">
+          <aside className="min-w-0 overflow-hidden rounded-md border bg-card">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+                <DatabaseIcon className="size-4 shrink-0 text-primary" />
+                <span className="truncate">{t('workbench.recentDataSources')}</span>
+              </div>
+              {recentConnections.length > 0 && (
+                <span className="shrink-0 rounded border bg-muted/35 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {recentConnections.length}
+                </span>
+              )}
+            </div>
+            <div className="grid max-h-[29rem] gap-2 overflow-auto p-3">
               {recentConnections.length === 0 ? (
                 <button
                   type="button"
-                  className="rounded border border-dashed p-3 text-left text-xs text-muted-foreground hover:border-border hover:bg-muted/45"
+                  className="rounded border border-dashed p-3 text-left text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted/45"
                   onClick={onManageDataSources}
                 >
                   {t('workbench.manageDataSourceForRecents')}
                 </button>
               ) : (
-                recentConnections.map((connection) => (
-                  <div
-                    key={connection.id}
-                    className={[
-                      'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border px-2 py-2 text-xs',
-                      connection.id === activeConnectionId
-                        ? 'border-primary/35 bg-primary/10'
-                        : 'border-transparent hover:border-border hover:bg-muted',
-                    ].join(' ')}
-                  >
-                    <button
-                      type="button"
-                      className="min-w-0 text-left"
-                      onClick={() => {
-                        setActiveConnection(connection.id)
-                        onFocusExplorer(true)
-                      }}
+                recentConnections.map((connection) => {
+                  const status = statuses[connection.id]?.status
+                  const target = workbenchConnectionTarget(connection)
+                  return (
+                    <div
+                      key={connection.id}
+                      className={[
+                        'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-3 text-xs transition-colors',
+                        connection.id === activeConnectionId
+                          ? 'border-primary/35 bg-primary/10'
+                          : 'border-border/60 bg-background/60 hover:border-primary/35 hover:bg-muted/45',
+                      ].join(' ')}
                     >
-                      <span className="block truncate font-medium">{connection.name}</span>
-                      <span className="block truncate text-muted-foreground">
-                        {connection.driverType}
-                        {connection.colorTag ? ` · ${connection.colorTag}` : ''}
-                      </span>
-                      <span className="block truncate font-mono text-[10px] text-muted-foreground">
-                        {workbenchConnectionTarget(connection)}
-                      </span>
-                    </button>
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost"
-                      title={
-                        statuses[connection.id]?.status === 'connected'
-                          ? t('connection.status.connected')
-                          : t('connection.connect')
-                      }
-                      disabled={loading || statuses[connection.id]?.status === 'connected'}
-                      onClick={() => {
-                        void connectRecent(connection)
-                      }}
-                    >
-                      {loading ? <Loader2 className="animate-spin" /> : <Link />}
-                    </Button>
-                  </div>
-                ))
+                      <button
+                        type="button"
+                        className="grid min-w-0 gap-1 text-left"
+                        onClick={() => {
+                          setActiveConnection(connection.id)
+                          onFocusExplorer(true)
+                        }}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="min-w-0 truncate text-sm font-medium">{connection.name}</span>
+                          <span className="shrink-0 rounded border bg-muted/35 px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                            {connection.driverType}
+                          </span>
+                          {status && (
+                            <span
+                              className={[
+                                'shrink-0 rounded border px-1.5 py-0.5 text-[10px]',
+                                status === 'connected'
+                                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+                                  : status === 'failed'
+                                    ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                                    : 'bg-muted/35 text-muted-foreground',
+                              ].join(' ')}
+                            >
+                              {t(connectionRuntimeStatusLabelKey(status))}
+                            </span>
+                          )}
+                        </span>
+                        <span className="block truncate text-[11px] text-muted-foreground">
+                          {connection.colorTag || t('connection.dataSource')}
+                        </span>
+                        <span className="block truncate font-mono text-[11px] text-muted-foreground" title={target}>
+                          {target}
+                        </span>
+                      </button>
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        title={
+                          statuses[connection.id]?.status === 'connected'
+                            ? t('connection.connected')
+                            : t('connection.connect')
+                        }
+                        disabled={loading || statuses[connection.id]?.status === 'connected'}
+                        onClick={() => {
+                          void connectRecent(connection)
+                        }}
+                      >
+                        {loading ? <Loader2 className="animate-spin" /> : <Link />}
+                      </Button>
+                    </div>
+                  )
+                })
               )}
             </div>
           </aside>
@@ -1327,6 +1365,8 @@ function DataTabPanel({
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
   const [importBusy, setImportBusy] = useState(false)
   const page = Math.floor(tab.dataContext.offset / tab.dataContext.limit) + 1
+  const displayResult = result ? dataTabDisplayResult(result, tab.dataContext.limit) : undefined
+  const hasNextPage = result ? result.rows.length > tab.dataContext.limit : false
   const hasPrimaryKeyOrder =
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length > 0
   const hasNoStableOrder =
@@ -1510,7 +1550,7 @@ function DataTabPanel({
       </div>
       <div className="flex h-8 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
         <span>{t('workbench.readOnlyDataPreview')}</span>
-        {result && <span>{resultSummary(result)}</span>}
+        {displayResult && <span>{resultSummary(displayResult)}</span>}
         <span>Page {page}</span>
         {hasPrimaryKeyOrder && <span>{t('workbench.primaryKeyAscending')}</span>}
         {hasNoStableOrder && <span className="text-amber-600">{t('workbench.noPrimaryKeyUnstable')}</span>}
@@ -1538,7 +1578,7 @@ function DataTabPanel({
             onChange={(event) => changeSort(event.target.value || null)}
           >
             <option value="">{t('workbench.sort')}</option>
-            {result?.columns.map((column) => (
+            {displayResult?.columns.map((column) => (
               <option key={column.name} value={column.name}>
                 {column.name}
               </option>
@@ -1576,7 +1616,7 @@ function DataTabPanel({
             type="button"
             size="xs"
             variant="ghost"
-            disabled={running}
+            disabled={running || !hasNextPage}
             onClick={() =>
               onContextChange({
                 offset: tab.dataContext.offset + tab.dataContext.limit,
@@ -1642,7 +1682,7 @@ function DataTabPanel({
         {error ? (
           <ErrorDetails message={error} />
         ) : (
-          <DataGrid result={result} />
+          <DataGrid result={displayResult} />
         )}
         </div>
       </div>
@@ -2302,6 +2342,21 @@ function resultSummary(result: QueryResult) {
   })
 }
 
+function dataTabDisplayResult(result: QueryResult, limit: number): QueryResult {
+  if (result.columns.length === 0) {
+    return result
+  }
+
+  const displayRows = result.rows.slice(0, Math.max(1, Math.round(limit)))
+  return {
+    ...result,
+    rows: displayRows,
+    rowCount: displayRows.length,
+    truncated: false,
+    maxRows: null,
+  }
+}
+
 function largeResultNotice(result: QueryResult) {
   return i18n.t('workbench.largeResultNotice', { count: result.maxRows ?? result.rowCount })
 }
@@ -2357,6 +2412,19 @@ function workbenchConnectionTarget(connection: ConnectionConfig) {
   const database = connection.database?.trim()
   const target = host ? `${host}${port}` : connection.driverType
   return database ? `${target}/${database}` : target
+}
+
+function connectionRuntimeStatusLabelKey(status: ConnectionRuntimeStatus) {
+  switch (status) {
+    case 'connected':
+      return 'connection.connected'
+    case 'connecting':
+      return 'connection.connecting'
+    case 'failed':
+      return 'connection.failed'
+    case 'disconnected':
+      return 'connection.disconnected'
+  }
 }
 
 function compactResultSummary(result: QueryResult) {

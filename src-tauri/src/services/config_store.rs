@@ -1753,6 +1753,14 @@ mod tests {
             .iter()
             .find(|driver| driver.id == "postgres")
             .expect("postgres driver exists");
+        let postgres_jdbc = drivers
+            .iter()
+            .find(|driver| driver.id == "jdbc-postgresql")
+            .expect("postgres JDBC driver exists");
+        let mysql_jdbc = drivers
+            .iter()
+            .find(|driver| driver.id == "jdbc-mysql")
+            .expect("mysql JDBC driver exists");
         let oracle = drivers
             .iter()
             .find(|driver| driver.id == "oracle")
@@ -1770,6 +1778,8 @@ mod tests {
             .connection_variants
             .iter()
             .any(|variant| variant.id == "oracleService"));
+        assert_seeded_metadata_sql(postgres_jdbc);
+        assert_seeded_metadata_sql(mysql_jdbc);
     }
 
     #[test]
@@ -2062,5 +2072,37 @@ mod tests {
             drafts.last().map(|draft| draft.sql.as_str()),
             Some("SELECT 5")
         );
+    }
+
+    fn assert_seeded_metadata_sql(driver: &DriverDefinition) {
+        let metadata_sql = driver
+            .metadata_dialect_sql
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} should seed metadata SQL", driver.id));
+        let parsed: serde_json::Value =
+            serde_json::from_str(metadata_sql).expect("metadata SQL should parse as JSON");
+        let object = parsed
+            .as_object()
+            .expect("metadata SQL should be a JSON object");
+
+        for key in [
+            "databases",
+            "schemas",
+            "tables",
+            "views",
+            "columns",
+            "indexes",
+            "foreignKeys",
+            "schemaObjects",
+        ] {
+            assert!(
+                object
+                    .get(key)
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|sql| !sql.trim().is_empty()),
+                "{} should seed non-empty {key} metadata SQL",
+                driver.id
+            );
+        }
     }
 }

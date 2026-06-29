@@ -16,7 +16,7 @@ The value must be a strict JSON object. Each property is one SQL statement:
 ```json
 {
   "databases": "SELECT ... AS name",
-  "schemas": "SELECT ... AS name, ... AS database",
+  "schemas": "SELECT ... AS name, ... AS database_name",
   "tables": "SELECT ... AS schema_name, ... AS name, ... AS table_type",
   "views": "SELECT ... AS schema_name, ... AS name, ... AS table_type",
   "columns": "SELECT ... AS schema_name, ... AS table_name, ... AS name",
@@ -99,7 +99,7 @@ parameters because the metadata SQL is executed as a normal query string.
 ```json
 {
   "databases": "SELECT datname AS name FROM pg_database WHERE datistemplate = false ORDER BY datname",
-  "schemas": "SELECT schema_name AS name, current_database() AS database FROM information_schema.schemata WHERE schema_name NOT LIKE 'pg_%' AND schema_name <> 'information_schema' ORDER BY schema_name",
+  "schemas": "SELECT schema_name AS name, current_database() AS database_name FROM information_schema.schemata WHERE schema_name NOT LIKE 'pg_%' AND schema_name <> 'information_schema' ORDER BY schema_name",
   "tables": "SELECT table_schema AS schema_name, table_name AS name, table_type, CAST(NULL AS bigint) AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'BASE TABLE' ORDER BY table_name",
   "views": "SELECT table_schema AS schema_name, table_name AS name, 'view' AS table_type, CAST(NULL AS bigint) AS row_count FROM information_schema.views WHERE table_schema = '{schema}' ORDER BY table_name",
   "columns": "SELECT c.table_schema AS schema_name, c.table_name AS table_name, c.column_name AS name, c.ordinal_position, c.data_type, CASE WHEN c.is_nullable = 'YES' THEN 1 ELSE 0 END AS nullable, c.column_default AS default_value, c.character_maximum_length, c.numeric_precision, c.numeric_scale, CASE WHEN kcu.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key FROM information_schema.columns c LEFT JOIN information_schema.table_constraints tc ON tc.table_schema = c.table_schema AND tc.table_name = c.table_name AND tc.constraint_type = 'PRIMARY KEY' LEFT JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema AND kcu.table_name = tc.table_name AND kcu.column_name = c.column_name WHERE c.table_schema = '{schema}' AND c.table_name = '{table}' ORDER BY c.ordinal_position",
@@ -122,7 +122,7 @@ MySQL uses databases as schemas in the Object Tree. In these templates,
 ```json
 {
   "databases": "SELECT schema_name AS name FROM information_schema.schemata ORDER BY schema_name",
-  "schemas": "SELECT schema_name AS name, schema_name AS database FROM information_schema.schemata ORDER BY schema_name",
+  "schemas": "SELECT schema_name AS name, schema_name AS database_name FROM information_schema.schemata ORDER BY schema_name",
   "tables": "SELECT table_schema AS schema_name, table_name AS name, table_type, table_rows AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'BASE TABLE' ORDER BY table_name",
   "views": "SELECT table_schema AS schema_name, table_name AS name, table_type, table_rows AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'VIEW' ORDER BY table_name",
   "columns": "SELECT table_schema AS schema_name, table_name AS table_name, column_name AS name, ordinal_position, column_type AS data_type, CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END AS nullable, column_default AS default_value, character_maximum_length, numeric_precision, numeric_scale, CASE WHEN column_key = 'PRI' THEN 1 ELSE 0 END AS is_primary_key FROM information_schema.columns WHERE table_schema = '{schema}' AND table_name = '{table}' ORDER BY ordinal_position",

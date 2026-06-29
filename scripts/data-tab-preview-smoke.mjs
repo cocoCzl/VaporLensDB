@@ -73,8 +73,10 @@ includesAll(
     "t('workbench.dataPreviewLimitTitle')",
     'updateDataTabContext',
     'buildDataTabSql',
+    'dataTabFetchLimit',
+    'dataTabDisplayResult',
     '<DataGrid',
-    'result={result}',
+    'result={displayResult}',
   ],
   'read-only data tab rendering',
 )
