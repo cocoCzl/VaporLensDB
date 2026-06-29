@@ -23,8 +23,6 @@ includesAll(
   form,
   [
     'DriverSupportSummary',
-    "t('connectionForm.supportStatus')",
-    "t('connectionForm.externalDriverRequirement')",
     'driverCapabilityBadges',
     "t('connectionForm.capability.metadata')",
     "t('connectionForm.capability.stream')",
@@ -41,13 +39,19 @@ includesAll(
 includesAll(
   form,
   [
-    'DriverDefinitionSummary',
-    'driverOriginLabel',
+    'driverStatusLabel',
+    'driverBackendLabel',
     'driverBackendLabel',
     "t('connectionForm.localDriverRequired')",
+    "t('connectionForm.nativeDriverReady')",
   ],
   'connection dialog driver definition badges',
 )
+
+const en = read('src/locales/en.json')
+const zh = read('src/locales/zh.json')
+includesAll(en, ['"supportStatus"', '"externalDriverRequirement"'], 'English connection support locale')
+includesAll(zh, ['"supportStatus"', '"externalDriverRequirement"'], 'Chinese connection support locale')
 
 const packageJson = read('package.json')
 includesAll(

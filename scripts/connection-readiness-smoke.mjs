@@ -33,7 +33,6 @@ includesAll(
     "PRIMARY_DRIVER_IDS: DriverType[] = ['postgres', 'mysql', 'oracle'",
     'compareDriverChoices',
     "t('connectionForm.description.oracle')",
-    "t('connectionForm.oracleRequirement')",
     'onSaveOnly',
     'onSaveAndConnect',
     "t('connectionForm.saveOnly')",
@@ -81,8 +80,8 @@ includesAll(
 
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
-includesAll(zh, ['配置 PostgreSQL、MySQL、Oracle', 'Oracle 需要本地 ojdbc', '"saveAndConnect": "保存并连接"'], 'Chinese connection dialog copy')
-includesAll(en, ['PostgreSQL, MySQL, Oracle', 'Oracle requires a local ojdbc', '"saveAndConnect": "Save and connect"'], 'English connection dialog copy')
+includesAll(zh, ['配置 PostgreSQL、MySQL、Oracle', '需要本地 ojdbc', '"oracleRequirement"', '"saveAndConnect": "保存并连接"'], 'Chinese connection dialog copy')
+includesAll(en, ['PostgreSQL, MySQL, Oracle', 'requires a local ojdbc', '"oracleRequirement"', '"saveAndConnect": "Save and connect"'], 'English connection dialog copy')
 
 const store = read('src/stores/connectionStore.ts')
 includesAll(
