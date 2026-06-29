@@ -265,7 +265,10 @@
     "searchMetadataIndexFailed": "Failed to search metadata index",
     "loadQueryHistoryFailed": "Failed to load query history",
     "saveQueryHistoryFailed": "Failed to save query history",
-    "clearQueryHistoryFailed": "Failed to clear query history"
+    "clearQueryHistoryFailed": "Failed to clear query history",
+    "loadSqlDraftsFailed": "Failed to load recent SQL",
+    "saveSqlDraftFailed": "Failed to save SQL draft",
+    "deleteSqlDraftFailed": "Failed to delete SQL draft"
   },
   "inspector": {
     "editStructure": "Edit structure",
@@ -500,6 +503,10 @@
     "historySqlPreview": "SQL",
     "historyErrorPreview": "Error detail",
     "blankQuery": "Blank query",
+    "recentScripts": "Recent SQL",
+    "lastEditedScript": "Last edited SQL script",
+    "noRecentScripts": "No recent SQL drafts yet.",
+    "restoredDraftTitle": "Restored SQL",
     "rows": "{{count}} rows",
     "affectedRows": "{{count}} rows affected"
   },

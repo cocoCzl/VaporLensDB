@@ -26,6 +26,7 @@ export interface EditorTab {
   runningQueryId?: string | null
   running?: boolean
   error?: string | null
+  draftId?: string | null
 }
 
 export interface DataTabContext {
@@ -90,6 +91,7 @@ interface EditorState {
   updateDataTabLimit: (id: string, limit: number, sql: string) => void
   updateDataTabContext: (id: string, dataContext: DataTabContext, sql: string) => void
   updateTabConnection: (id: string, connectionId: string | null) => void
+  setTabDraft: (id: string, draftId: string | null) => void
   setTabRunning: (id: string, running: boolean, queryId?: string | null) => void
   setTabQueryState: (id: string, queryId: string | null, error?: string | null) => void
   closeTab: (id: string) => void
@@ -142,6 +144,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   updateTabConnection: (id, connectionId) =>
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, connectionId } : t)),
+    })),
+  setTabDraft: (id, draftId) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, draftId } : t)),
     })),
   setTabRunning: (id, running, queryId) =>
     set((s) => ({

@@ -16,6 +16,7 @@ use crate::{
         },
         error::AppError,
         query_history::{QueryHistoryEntry, QueryHistoryStatus},
+        sql_draft::SqlDraft,
     },
     services::driver_catalog,
     utils::crypto,
@@ -78,6 +79,11 @@ const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
         version: 9,
         name: "rebuild driver template model",
         apply: rebuild_driver_template_model,
+    },
+    ConfigMigration {
+        version: 10,
+        name: "create sql draft store",
+        apply: create_sql_draft_store,
     },
 ];
 
@@ -338,6 +344,110 @@ impl ConfigStore {
         Ok(())
     }
 
+    pub fn upsert_sql_draft(&self, draft: SqlDraft) -> Result<SqlDraft, AppError> {
+        if draft.sql.trim().is_empty() {
+            if self.get_sql_draft(draft.id)?.is_some() {
+                self.delete_sql_draft(draft.id)?;
+            }
+            return Ok(draft);
+        }
+
+        self.conn()?.execute(
+            "
+            INSERT INTO sql_drafts (
+                id, connection_id, connection_name_snapshot, database_name, schema_name, title,
+                sql, created_at, updated_at, last_opened_at, closed_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ON CONFLICT(id) DO UPDATE SET
+                connection_id = excluded.connection_id,
+                connection_name_snapshot = excluded.connection_name_snapshot,
+                database_name = excluded.database_name,
+                schema_name = excluded.schema_name,
+                title = excluded.title,
+                sql = excluded.sql,
+                updated_at = excluded.updated_at,
+                last_opened_at = excluded.last_opened_at,
+                closed_at = excluded.closed_at
+            ",
+            params![
+                draft.id.to_string(),
+                draft.connection_id.map(|id| id.to_string()),
+                &draft.connection_name_snapshot,
+                &draft.database,
+                &draft.schema,
+                &draft.title,
+                &draft.sql,
+                draft.created_at.to_rfc3339(),
+                draft.updated_at.to_rfc3339(),
+                draft.last_opened_at.map(|value| value.to_rfc3339()),
+                draft.closed_at.map(|value| value.to_rfc3339()),
+            ],
+        )?;
+        self.prune_sql_drafts(50)?;
+        Ok(draft)
+    }
+
+    pub fn get_sql_draft(&self, id: Uuid) -> Result<Option<SqlDraft>, AppError> {
+        self.conn()?
+            .query_row(
+                "
+                SELECT id, connection_id, connection_name_snapshot, database_name, schema_name,
+                       title, sql, created_at, updated_at, last_opened_at, closed_at
+                FROM sql_drafts
+                WHERE id = ?1
+                ",
+                params![id.to_string()],
+                row_to_sql_draft,
+            )
+            .optional()
+            .map_err(AppError::from)
+    }
+
+    pub fn list_sql_drafts(&self, limit: u32) -> Result<Vec<SqlDraft>, AppError> {
+        let limit = limit.clamp(1, 50);
+        let conn = self.conn()?;
+        let mut statement = conn.prepare(
+            "
+            SELECT id, connection_id, connection_name_snapshot, database_name, schema_name,
+                   title, sql, created_at, updated_at, last_opened_at, closed_at
+            FROM sql_drafts
+            WHERE trim(sql) <> ''
+            ORDER BY updated_at DESC
+            LIMIT ?1
+            ",
+        )?;
+
+        let rows = statement.query_map(params![limit], row_to_sql_draft)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+    }
+
+    pub fn mark_sql_draft_closed(&self, id: Uuid) -> Result<(), AppError> {
+        self.conn()?.execute(
+            "
+            UPDATE sql_drafts
+            SET closed_at = ?2,
+                updated_at = ?2
+            WHERE id = ?1
+            ",
+            params![id.to_string(), Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_sql_draft(&self, id: Uuid) -> Result<(), AppError> {
+        self.conn()?.execute(
+            "DELETE FROM sql_drafts WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_sql_drafts(&self) -> Result<(), AppError> {
+        self.conn()?.execute("DELETE FROM sql_drafts", [])?;
+        Ok(())
+    }
+
     pub fn list_driver_definitions(&self) -> Result<Vec<DriverDefinition>, AppError> {
         let conn = self.conn()?;
         let mut statement = conn.prepare(
@@ -497,6 +607,23 @@ impl ConfigStore {
         Ok(())
     }
 
+    fn prune_sql_drafts(&self, max_entries: u32) -> Result<(), AppError> {
+        self.conn()?.execute(
+            "
+            DELETE FROM sql_drafts
+            WHERE id NOT IN (
+                SELECT id
+                FROM sql_drafts
+                WHERE trim(sql) <> ''
+                ORDER BY updated_at DESC
+                LIMIT ?1
+            )
+            ",
+            params![max_entries],
+        )?;
+        Ok(())
+    }
+
     #[cfg(test)]
     fn migration_versions(&self) -> Result<Vec<i64>, AppError> {
         let conn = self.conn()?;
@@ -605,6 +732,30 @@ fn create_query_history_store(conn: &Connection) -> Result<(), AppError> {
             error_code TEXT,
             error_message TEXT
         );
+        ",
+    )
+    .map_err(AppError::from)
+}
+
+fn create_sql_draft_store(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS sql_drafts (
+            id TEXT PRIMARY KEY,
+            connection_id TEXT,
+            connection_name_snapshot TEXT,
+            database_name TEXT,
+            schema_name TEXT,
+            title TEXT NOT NULL,
+            sql TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_opened_at TEXT,
+            closed_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sql_drafts_updated_at
+        ON sql_drafts(updated_at DESC);
         ",
     )
     .map_err(AppError::from)
@@ -1001,6 +1152,47 @@ fn row_to_query_history(row: &Row<'_>) -> Result<QueryHistoryEntry, rusqlite::Er
     })
 }
 
+fn row_to_sql_draft(row: &Row<'_>) -> Result<SqlDraft, rusqlite::Error> {
+    let id: String = row.get(0)?;
+    let connection_id: Option<String> = row.get(1)?;
+    let created_at: String = row.get(7)?;
+    let updated_at: String = row.get(8)?;
+    let last_opened_at: Option<String> = row.get(9)?;
+    let closed_at: Option<String> = row.get(10)?;
+
+    Ok(SqlDraft {
+        id: Uuid::parse_str(&id).map_err(parse_error)?,
+        connection_id: connection_id
+            .as_deref()
+            .map(Uuid::parse_str)
+            .transpose()
+            .map_err(parse_error)?,
+        connection_name_snapshot: row.get(2)?,
+        database: row.get(3)?,
+        schema: row.get(4)?,
+        title: row.get(5)?,
+        sql: row.get(6)?,
+        created_at: DateTime::parse_from_rfc3339(&created_at)
+            .map_err(parse_error)?
+            .with_timezone(&Utc),
+        updated_at: DateTime::parse_from_rfc3339(&updated_at)
+            .map_err(parse_error)?
+            .with_timezone(&Utc),
+        last_opened_at: last_opened_at
+            .as_deref()
+            .map(DateTime::parse_from_rfc3339)
+            .transpose()
+            .map_err(parse_error)?
+            .map(|value| value.with_timezone(&Utc)),
+        closed_at: closed_at
+            .as_deref()
+            .map(DateTime::parse_from_rfc3339)
+            .transpose()
+            .map_err(parse_error)?
+            .map(|value| value.with_timezone(&Utc)),
+    })
+}
+
 fn row_to_driver_definition(row: &Row<'_>) -> Result<DriverDefinition, rusqlite::Error> {
     let id: String = row.get(0)?;
     let driver_type: String = row.get(1)?;
@@ -1071,6 +1263,7 @@ mod tests {
             DriverStatus,
         },
         query_history::{QueryHistoryEntry, QueryHistoryStatus},
+        sql_draft::SqlDraft,
     };
     use chrono::Utc;
     use rusqlite::{params, Connection};
@@ -1087,7 +1280,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         );
         let drivers = store
             .list_driver_definitions()
@@ -1164,7 +1357,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         );
         assert!(columns.iter().any(|column| column == "connection_url"));
         assert!(columns.iter().any(|column| column == "driver_class"));
@@ -1177,6 +1370,7 @@ mod tests {
             .iter()
             .any(|column| column == "ssh_password_encrypted"));
         assert!(table_exists(&conn, "query_history").expect("query history table exists"));
+        assert!(table_exists(&conn, "sql_drafts").expect("sql drafts table exists"));
         assert!(table_exists(&conn, "driver_definitions").expect("driver definitions table exists"));
 
         assert!(store
@@ -1496,6 +1690,56 @@ mod tests {
     }
 
     #[test]
+    fn stores_closes_and_clears_sql_drafts() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir =
+            std::env::temp_dir().join(format!("vaporlensdb-sql-draft-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let draft_id = Uuid::new_v4();
+        let now = Utc::now();
+
+        store
+            .upsert_sql_draft(SqlDraft {
+                id: draft_id,
+                connection_id: None,
+                connection_name_snapshot: Some("Deleted Oracle".to_string()),
+                database: Some("orcl".to_string()),
+                schema: Some("DEVELOP".to_string()),
+                title: "Oracle scratch".to_string(),
+                sql: "SELECT * FROM AA".to_string(),
+                created_at: now,
+                updated_at: now,
+                last_opened_at: Some(now),
+                closed_at: None,
+            })
+            .expect("save sql draft");
+
+        let drafts = store.list_sql_drafts(50).expect("list sql drafts");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].id, draft_id);
+        assert_eq!(
+            drafts[0].connection_name_snapshot.as_deref(),
+            Some("Deleted Oracle")
+        );
+        assert_eq!(drafts[0].schema.as_deref(), Some("DEVELOP"));
+
+        store
+            .mark_sql_draft_closed(draft_id)
+            .expect("mark sql draft closed");
+        let closed = store
+            .get_sql_draft(draft_id)
+            .expect("get closed draft")
+            .expect("draft exists");
+        assert!(closed.closed_at.is_some());
+
+        store.clear_sql_drafts().expect("clear sql drafts");
+        assert!(store
+            .list_sql_drafts(50)
+            .expect("list cleared sql drafts")
+            .is_empty());
+    }
+
+    #[test]
     fn seeds_driver_definitions_with_variants_and_capabilities() {
         std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
         let dir =
@@ -1781,6 +2025,41 @@ mod tests {
         assert_eq!(history[0].sql, "SELECT 5004");
         assert_eq!(
             history.last().map(|entry| entry.sql.as_str()),
+            Some("SELECT 5")
+        );
+    }
+
+    #[test]
+    fn prunes_sql_drafts_to_recent_fifty_entries() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir =
+            std::env::temp_dir().join(format!("vaporlensdb-draft-prune-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let now = Utc::now();
+
+        for index in 0..55 {
+            store
+                .upsert_sql_draft(SqlDraft {
+                    id: Uuid::new_v4(),
+                    connection_id: None,
+                    connection_name_snapshot: Some("Scratch".to_string()),
+                    database: None,
+                    schema: None,
+                    title: format!("SQL {index}"),
+                    sql: format!("SELECT {index}"),
+                    created_at: now + chrono::Duration::milliseconds(index),
+                    updated_at: now + chrono::Duration::milliseconds(index),
+                    last_opened_at: None,
+                    closed_at: None,
+                })
+                .expect("save sql draft");
+        }
+
+        let drafts = store.list_sql_drafts(50).expect("list pruned drafts");
+        assert_eq!(drafts.len(), 50);
+        assert_eq!(drafts[0].sql, "SELECT 54");
+        assert_eq!(
+            drafts.last().map(|draft| draft.sql.as_str()),
             Some("SELECT 5")
         );
     }

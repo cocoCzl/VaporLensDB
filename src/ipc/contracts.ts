@@ -10,6 +10,7 @@ export type CommandNamespace =
   | 'metadata'
   | 'query'
   | 'settings'
+  | 'sqlDraft'
   | 'task'
 
 export type CommandStatus = 'active' | 'planned'
@@ -70,6 +71,11 @@ export const COMMANDS = {
   addQueryHistory: 'add_query_history',
   listQueryHistory: 'list_query_history',
   clearQueryHistory: 'clear_query_history',
+  upsertSqlDraft: 'upsert_sql_draft',
+  listSqlDrafts: 'list_sql_drafts',
+  markSqlDraftClosed: 'mark_sql_draft_closed',
+  deleteSqlDraft: 'delete_sql_draft',
+  clearSqlDrafts: 'clear_sql_drafts',
   listTasks: 'list_tasks',
   cancelTask: 'cancel_task',
   startNoopTask: 'start_noop_task',

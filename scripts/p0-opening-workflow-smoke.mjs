@@ -52,6 +52,9 @@ includesAll(
     'updateTabConnection(activeTab.id, id)',
     '<SqlHistoryPanel',
     'useQueryHistoryStore',
+    'useSqlDraftStore',
+    'saveTabDraft',
+    "t('sql.recentScripts')",
     'setStatusFilter',
     'setConnectionFilter',
     "t('workbench.reuseSql')",
@@ -74,12 +77,27 @@ includesAll(
   [
     'connection?.name ??',
     'renameTab',
+    'restoreDraft',
+    'closeEditorTab',
+    "t('sql.lastEditedScript')",
+    'recentOpen',
+    'aria-haspopup="menu"',
+    'role="menu"',
+    'bg-card p-1 text-card-foreground',
     'onDoubleClick',
     'setEditingTabId',
     'connectionId: activeConnectionId',
     'nextSqlIndex',
   ],
   'SQL tab context and naming',
+)
+assert(
+  !tabBar.includes('DropdownMenu'),
+  'recent SQL menu should avoid Base UI DropdownMenu in Tauri toolbar',
+)
+assert(
+  !tabBar.includes('bg-popover'),
+  'recent SQL menu should use an opaque locally defined surface color',
 )
 
 const packageJson = read('package.json')

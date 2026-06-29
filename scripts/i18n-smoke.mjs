@@ -24,6 +24,8 @@ const requiredKeys = [
   'nav.dataSources',
   'connection.new',
   'sql.workspace',
+  'sql.recentScripts',
+  'sql.lastEditedScript',
   'editor.run',
   'result.empty',
   'status.backendOk',

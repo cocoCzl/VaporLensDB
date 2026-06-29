@@ -21,7 +21,7 @@ const activeContracts = contracts.filter((contract) => contract.status === 'acti
 const activeNames = activeContracts.map((contract) => contract.name)
 
 const namespaces = new Set(contracts.map((contract) => contract.namespace))
-for (const namespace of ['connection', 'query', 'metadata', 'driver', 'settings', 'history', 'task']) {
+for (const namespace of ['connection', 'query', 'metadata', 'driver', 'settings', 'history', 'sqlDraft', 'task']) {
   assert(namespaces.has(namespace), `contract namespace missing: ${namespace}`)
 }
 
@@ -73,6 +73,7 @@ const ipcSources = [
   'src/ipc/query.ts',
   'src/ipc/queryHistory.ts',
   'src/ipc/settings.ts',
+  'src/ipc/sqlDraft.ts',
 ]
 
 for (const path of ipcSources) {

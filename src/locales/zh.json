@@ -265,7 +265,10 @@
     "searchMetadataIndexFailed": "搜索元数据索引失败",
     "loadQueryHistoryFailed": "加载查询历史失败",
     "saveQueryHistoryFailed": "保存查询历史失败",
-    "clearQueryHistoryFailed": "清空查询历史失败"
+    "clearQueryHistoryFailed": "清空查询历史失败",
+    "loadSqlDraftsFailed": "加载最近 SQL 失败",
+    "saveSqlDraftFailed": "保存 SQL 草稿失败",
+    "deleteSqlDraftFailed": "删除 SQL 草稿失败"
   },
   "inspector": {
     "editStructure": "编辑结构",
@@ -500,6 +503,10 @@
     "historySqlPreview": "SQL",
     "historyErrorPreview": "错误详情",
     "blankQuery": "空白查询",
+    "recentScripts": "最近 SQL",
+    "lastEditedScript": "上次编辑的 SQL 脚本",
+    "noRecentScripts": "还没有最近 SQL 草稿。",
+    "restoredDraftTitle": "恢复的 SQL",
     "rows": "{{count}} 行",
     "affectedRows": "影响 {{count}} 行"
   },

@@ -315,6 +315,41 @@
     "status": "active"
   },
   {
+    "name": "upsert_sql_draft",
+    "namespace": "sqlDraft",
+    "args": "{ input: UpsertSqlDraftInput }",
+    "response": "SqlDraft",
+    "status": "active"
+  },
+  {
+    "name": "list_sql_drafts",
+    "namespace": "sqlDraft",
+    "args": "{ limit?: number }",
+    "response": "SqlDraft[]",
+    "status": "active"
+  },
+  {
+    "name": "mark_sql_draft_closed",
+    "namespace": "sqlDraft",
+    "args": "{ id: string }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "delete_sql_draft",
+    "namespace": "sqlDraft",
+    "args": "{ id: string }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "clear_sql_drafts",
+    "namespace": "sqlDraft",
+    "args": "void",
+    "response": "void",
+    "status": "active"
+  },
+  {
     "name": "list_tasks",
     "namespace": "task",
     "args": "void",

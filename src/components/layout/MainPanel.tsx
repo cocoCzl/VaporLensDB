@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
@@ -29,6 +29,7 @@ import { useMetadataStore } from '@/stores/metadataStore'
 import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
+import { useSqlDraftStore } from '@/stores/sqlDraftStore'
 import { useTaskStore } from '@/stores/taskStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { ConnectionConfig, DriverType } from '@/types/connection'
@@ -36,6 +37,7 @@ import type { AppError } from '@/types/error'
 import type { ColumnInfo, DbObjectInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
 import type { QueryResult } from '@/types/query'
 import type { QueryHistoryEntry, QueryHistoryStatus } from '@/types/queryHistory'
+import type { SqlDraft } from '@/types/sqlDraft'
 import type { TaskInfo } from '@/types/task'
 import type { EditorTab } from '@/stores/editorStore'
 import type { AppNotification } from '@/stores/uiStore'
@@ -71,6 +73,7 @@ export function MainPanel() {
     updateTabSql,
     updateDataTabContext,
     updateTabConnection,
+    setTabDraft,
     setTabQueryState,
   } = useEditorStore()
   const results = useQueryResultStore((state) => state.results)
@@ -88,6 +91,8 @@ export function MainPanel() {
   const notifyError = useUiStore((state) => state.notifyError)
   const notify = useUiStore((state) => state.notify)
   const upsertTask = useTaskStore((state) => state.upsertTask)
+  const loadSqlDrafts = useSqlDraftStore((state) => state.loadDrafts)
+  const saveTabDraft = useSqlDraftStore((state) => state.saveTabDraft)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
   const showSystemObjects = useUiStore((state) => state.showSystemObjects)
@@ -96,6 +101,7 @@ export function MainPanel() {
   const [editorLoaded, setEditorLoaded] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
+  const draftSaveTimer = useRef<number | null>(null)
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const connectionId = activeTab?.connectionId ?? null
@@ -144,6 +150,40 @@ export function MainPanel() {
     queryCapabilities.canComplete,
     selectedSchema,
   )
+
+  useEffect(() => {
+    void loadSqlDrafts()
+  }, [loadSqlDrafts])
+
+  useEffect(() => {
+    if (draftSaveTimer.current) {
+      window.clearTimeout(draftSaveTimer.current)
+    }
+
+    draftSaveTimer.current = window.setTimeout(() => {
+      for (const tab of tabs) {
+        if (tab.kind && tab.kind !== 'sql') continue
+        if (!tab.sql.trim()) continue
+        const connection = connections.find((item) => item.id === tab.connectionId) ?? null
+        const schemaPath = tab.connectionId ? catalogSchemaPaths[tab.connectionId] : null
+        void saveTabDraft(tab, {
+          connection,
+          database: schemaPath?.database ?? connection?.database ?? null,
+          schema: schemaPath?.schema ?? null,
+        }).then((draft) => {
+          if (draft && tab.draftId !== draft.id) {
+            setTabDraft(tab.id, draft.id)
+          }
+        })
+      }
+    }, 700)
+
+    return () => {
+      if (draftSaveTimer.current) {
+        window.clearTimeout(draftSaveTimer.current)
+      }
+    }
+  }, [catalogSchemaPaths, connections, saveTabDraft, setTabDraft, tabs])
 
   function sqlToRun() {
     return (selectedSql || activeTab?.sql || '').trim()
@@ -843,6 +883,10 @@ function WorkbenchHome({
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
   const connectConnection = useConnectionStore((state) => state.connectConnection)
   const recentDataSourceIds = useConnectionStore((state) => state.recentDataSourceIds)
+  const drafts = useSqlDraftStore((state) => state.drafts)
+  const tabs = useEditorStore((state) => state.tabs)
+  const addTab = useEditorStore((state) => state.addTab)
+  const setActiveTab = useEditorStore((state) => state.setActiveTab)
   const recentConnections = recentDataSourceIds
     .map((id) => connections.find((connection) => connection.id === id))
     .filter((connection): connection is ConnectionConfig => Boolean(connection))
@@ -854,6 +898,28 @@ function WorkbenchHome({
       await connectConnection(connection.id)
     } catch {
       // The connection store surfaces the failure toast and row status.
+    }
+  }
+
+  function restoreDraft(draft: SqlDraft) {
+    const existing = tabs.find((tab) => tab.draftId === draft.id)
+    if (existing) {
+      setActiveTab(existing.id)
+      if (existing.connectionId) setActiveConnection(existing.connectionId)
+      return
+    }
+
+    const connectionExists = connections.some((connection) => connection.id === draft.connectionId)
+    addTab({
+      id: crypto.randomUUID(),
+      kind: 'sql',
+      title: draft.title || t('sql.restoredDraftTitle'),
+      sql: draft.sql,
+      connectionId: connectionExists ? draft.connectionId ?? null : null,
+      draftId: draft.id,
+    })
+    if (connectionExists && draft.connectionId) {
+      setActiveConnection(draft.connectionId)
     }
   }
 
@@ -897,6 +963,40 @@ function WorkbenchHome({
                   : t('workbench.newSqlNoDataSourceHint')}
               </div>
             </button>
+            <section className="rounded-md border bg-card">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Clock3 className="size-4 text-primary" />
+                  {t('sql.recentScripts')}
+                </div>
+              </div>
+              <div className="grid gap-1 p-2">
+                {drafts.length === 0 ? (
+                  <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">
+                    {t('sql.noRecentScripts')}
+                  </div>
+                ) : (
+                  drafts.slice(0, 5).map((draft) => (
+                    <button
+                      key={draft.id}
+                      type="button"
+                      className="rounded border border-transparent px-2 py-2 text-left text-xs hover:border-border hover:bg-muted"
+                      onClick={() => restoreDraft(draft)}
+                    >
+                      <span className="block truncate font-medium">
+                        {draft.title || t('sql.restoredDraftTitle')}
+                      </span>
+                      <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                        {sqlPreview(draft.sql)}
+                      </span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {draft.connectionNameSnapshot ?? t('connection.disconnected')} · {formatHistoryTime(draft.updatedAt)}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </section>
             <button
               type="button"
               className="rounded-md border bg-card p-4 text-left hover:bg-muted/45"
