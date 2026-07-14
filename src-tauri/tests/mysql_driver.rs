@@ -4,7 +4,10 @@
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use vapor_lens_db_lib::drivers::{mysql::MysqlDriver, trait_def::DatabaseDriver};
+use vapor_lens_db_lib::{
+    drivers::{mysql::MysqlDriver, trait_def::DatabaseDriver},
+    models::metadata::DbObjectKind,
+};
 
 #[derive(Debug)]
 struct MysqlTestConfig {
@@ -110,6 +113,7 @@ async fn reads_mysql_schema_objects_and_ddl() {
     let child = "child_items";
     let view = "child_item_view";
     let function = "child_count";
+    let trigger = "child_items_before_insert";
 
     admin
         .execute_query(&format!("CREATE DATABASE `{schema}`"), None)
@@ -158,6 +162,13 @@ async fn reads_mysql_schema_objects_and_ddl() {
         )
         .await
         .expect("create mysql function");
+    driver
+        .execute_query(
+            "CREATE TRIGGER child_items_before_insert BEFORE INSERT ON child_items FOR EACH ROW SET NEW.note = COALESCE(NEW.note, '')",
+            None,
+        )
+        .await
+        .expect("create mysql trigger");
 
     let schemas = driver.get_schemas(None).await.expect("get mysql schemas");
     assert!(schemas.iter().any(|item| item.name == schema));
@@ -202,6 +213,19 @@ async fn reads_mysql_schema_objects_and_ddl() {
         .await
         .expect("get mysql functions");
     assert!(functions.iter().any(|item| item == function));
+
+    let triggers = driver
+        .get_schema_objects(&schema, DbObjectKind::Trigger)
+        .await
+        .expect("get mysql triggers");
+    assert!(triggers.iter().any(|item| item.name == trigger));
+
+    let trigger_ddl = driver
+        .get_object_ddl(&schema, trigger, DbObjectKind::Trigger)
+        .await
+        .expect("get mysql trigger ddl");
+    assert!(trigger_ddl.contains("CREATE"));
+    assert!(trigger_ddl.contains(trigger));
 
     let table_ddl = driver
         .get_table_ddl(&schema, child)

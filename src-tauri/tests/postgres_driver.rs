@@ -7,7 +7,10 @@ use std::{sync::Arc, time::Duration};
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use vapor_lens_db_lib::drivers::{postgres::PostgresDriver, trait_def::DatabaseDriver};
+use vapor_lens_db_lib::{
+    drivers::{postgres::PostgresDriver, trait_def::DatabaseDriver},
+    models::metadata::DbObjectKind,
+};
 
 fn test_pg_url() -> Option<String> {
     std::env::var("TEST_PG_URL").ok().or_else(|| {
@@ -163,6 +166,8 @@ async fn reads_postgres_schema_objects_and_ddl() {
     let child = "child_items";
     let view = "child_item_view";
     let function = "child_count";
+    let trigger_function = "child_items_default_note";
+    let trigger = "child_items_before_insert";
 
     driver
         .execute_query(&format!("CREATE SCHEMA \"{schema}\""), None)
@@ -226,6 +231,37 @@ async fn reads_postgres_schema_objects_and_ddl() {
         )
         .await
         .expect("create postgres function");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE FUNCTION "{schema}".child_items_default_note() RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    NEW.note := COALESCE(NEW.note, '');
+                    RETURN NEW;
+                END;
+                $$
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres trigger function");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE TRIGGER child_items_before_insert
+                BEFORE INSERT ON "{schema}".child_items
+                FOR EACH ROW EXECUTE FUNCTION "{schema}".child_items_default_note()
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres trigger");
 
     let schemas = driver
         .get_schemas(None)
@@ -273,6 +309,20 @@ async fn reads_postgres_schema_objects_and_ddl() {
         .await
         .expect("get postgres functions");
     assert!(functions.iter().any(|item| item == function));
+    assert!(functions.iter().any(|item| item == trigger_function));
+
+    let triggers = driver
+        .get_schema_objects(&schema, DbObjectKind::Trigger)
+        .await
+        .expect("get postgres triggers");
+    assert!(triggers.iter().any(|item| item.name == trigger));
+
+    let trigger_ddl = driver
+        .get_object_ddl(&schema, trigger, DbObjectKind::Trigger)
+        .await
+        .expect("get postgres trigger ddl");
+    assert!(trigger_ddl.contains("CREATE TRIGGER"));
+    assert!(trigger_ddl.contains(trigger));
 
     let table_ddl = driver
         .get_table_ddl(&schema, child)

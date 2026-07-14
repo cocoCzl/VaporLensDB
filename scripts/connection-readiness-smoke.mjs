@@ -27,6 +27,7 @@ function excludesAll(source, values, label) {
 }
 
 const form = read('src/components/connection/ConnectionForm.tsx')
+const input = read('src/components/ui/input.tsx')
 includesAll(
   form,
   [
@@ -39,14 +40,46 @@ includesAll(
     "t('connectionForm.saveAndConnect')",
     'connectionReadinessIssue',
     "t('connectionForm.validation.missingJarReadiness')",
-    'requireExternalDriver: false',
-    'requireExternalDriver: true',
+    'const validate = (requireExternalDriver: boolean) =>',
+    'const validationError = validate(false)',
+    'const validationError = validate(true)',
     "t('connectionForm.doNotSave')",
     "t('connectionForm.sessionOnly')",
     "t('connectionForm.secureStorage')",
     "t('connectionForm.testConnection')",
+    'NEW_GROUP_VALUE',
+    'existingGroupNames(connections)',
+    'canonicalGroupName(selectedGroup, groupNames)',
+    "t('connectionForm.ungrouped')",
+    "t('connectionForm.newGroup')",
+    "t('connectionForm.validation.groupRequired')",
+    'autoComplete="off"',
+    'disableTextAssistance',
   ],
   'connection form readiness and actions',
+)
+const connectionInputs = form.match(/<Input[\s\S]*?\/>/g) ?? []
+const connectionInputsWithoutDisabledAssistance = connectionInputs.filter(
+  (tag) => !tag.includes('disableTextAssistance'),
+)
+assert(
+  connectionInputs.length > 0,
+  'connection form should render Input controls',
+)
+assert(
+  connectionInputsWithoutDisabledAssistance.length === 0,
+  'connection form inputs should disable text assistance',
+)
+includesAll(
+  input,
+  [
+    'disableTextAssistance?: boolean',
+    'autoComplete: "off"',
+    'autoCorrect: "off"',
+    'autoCapitalize: "none"',
+    'spellCheck: false',
+  ],
+  'shared input text assistance controls',
 )
 excludesAll(form, ['实验性'], 'connection form primary copy')
 
@@ -60,6 +93,8 @@ includesAll(
     'onSaveAndConnect={async (input) =>',
     'await connectConnection(saved.id)',
     'onTest={testConnectionInput}',
+    'aria-label={t(\'common.cancel\')}',
+    '<X />',
   ],
   'connection dialog save and connect flow',
 )
@@ -74,6 +109,8 @@ includesAll(
     "readinessIssue ? t('connection.notReady')",
     'disabled={busy || Boolean(readinessIssue)}',
     'Missing local JDBC JAR',
+    'managerMode ? \'grid gap-3 sm:grid-cols-2 2xl:grid-cols-3\'',
+    '!managerMode &&',
   ],
   'connection list readiness',
 )

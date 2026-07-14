@@ -53,12 +53,24 @@ includesAll(
     'activePath?.schema',
     'selectCurrentDatabase(',
     'activePath?.database',
+    "activeConnection?.driverType === 'postgres'\n          ? activeConnection.database",
     'selectDefaultSchema(activeConnection, schemas, activePath?.schema)',
+    'defaultSchemaName = schema.name',
     'function selectNode(nodeId: string)',
     'metadata.setCatalogSchemaPath({',
     'onSelect={selectNode}',
   ],
   'object tree catalog/schema path linkage',
+)
+
+includesAll(
+  mainPanel,
+  [
+    "activeDriverType === 'postgres'",
+    "? activeConnection?.database ?? null",
+    "? [{ name: activeConnection.database }]",
+  ],
+  'PostgreSQL toolbar is scoped to the active connection database',
 )
 
 const sourceBundle = [

@@ -160,6 +160,9 @@
     "driverClass": "Driver class:",
     "driverFiles": "Driver files:",
     "group": "Group:",
+    "ungrouped": "Ungrouped",
+    "newGroup": "New group…",
+    "newGroupPlaceholder": "Enter a new group name",
     "advanced": "Advanced connection settings",
     "sslMode": "SSL mode:",
     "sshTunnel": "SSH Tunnel:",
@@ -207,6 +210,7 @@
     },
     "validation": {
       "nameRequired": "Connection name is required",
+      "groupRequired": "Enter a new group name",
       "oracleDriverClassRequired": "Oracle JDBC driver class is required. Default should be oracle.jdbc.OracleDriver",
       "oracleJarRequired": "Oracle requires at least one local ojdbc JAR path",
       "urlRequired": "URL is required",
@@ -399,13 +403,15 @@
     "receivingShort": "Receiving",
     "completionConnectHint": "Connect to load completion metadata",
     "completionUnsupportedHint": "The current driver does not support metadata completion",
-    "completionSchemaHint": "Select a Schema to enable object completion"
+    "completionSchemaHint": "Select a Schema to enable object completion",
+    "explainSummary": "Explain · {{elapsedMs}} ms"
   },
   "editor": {
     "run": "Run",
     "format": "Format",
     "cancel": "Cancel",
     "running": "Running",
+    "explain": "Explain",
     "explainUnsupported": "The current driver does not support Explain",
     "databaseSelectHint": "PostgreSQL queries still run against the database configured on the connection. Reconnect to change databases."
   },
@@ -422,7 +428,8 @@
     "pendingChange": "Pending change",
     "selectCellHint": "Select a cell to inspect the full value",
     "cell": "Cell",
-    "row": "Row"
+    "row": "Row",
+    "noRows": "0 rows"
   },
   "settings": {
     "title": "Settings",

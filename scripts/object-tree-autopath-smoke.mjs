@@ -30,12 +30,18 @@ includesAll(
     'objectCategoryFolders',
     'metadata.loadSchemas(activeConnectionId, database.name, force)',
     'metadata.setCatalogSchemaPath',
+    'const schemasByDatabase = new Map(',
+    'for (const schema of schemas)',
+    'defaultSchemaName = schema.name',
     "connection?.driverType === 'postgres' ? 'public'",
     "connection?.driverType === 'oracle' ? username?.toUpperCase()",
     "activeConnection?.driverType === 'mysql'",
   ],
   'catalog/schema auto-expand path',
 )
+if (databaseTree.includes('showAllSchemasActionNode')) {
+  failures.push('object tree should render every available schema initially')
+}
 includesAll(
   databaseTree,
   [

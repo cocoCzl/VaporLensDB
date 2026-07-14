@@ -44,7 +44,8 @@ export interface QueryStreamError {
 }
 
 export interface ExplainResult {
-  format: 'text' | 'json'
+  format: 'text' | 'json' | 'table'
   plan: unknown
+  result?: QueryResult | null
   elapsedMs: number
 }

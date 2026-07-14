@@ -81,6 +81,8 @@ pub struct ColumnMeta {
 pub struct ExplainResult {
     pub format: ExplainFormat,
     pub plan: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<QueryResult>,
     pub elapsed_ms: u64,
 }
 
@@ -89,6 +91,7 @@ pub struct ExplainResult {
 pub enum ExplainFormat {
     Text,
     Json,
+    Table,
 }
 
 #[cfg(test)]

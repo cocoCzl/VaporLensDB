@@ -160,6 +160,9 @@
     "driverClass": "驱动类:",
     "driverFiles": "驱动文件:",
     "group": "分组:",
+    "ungrouped": "未分组",
+    "newGroup": "新建分组…",
+    "newGroupPlaceholder": "输入新分组名称",
     "advanced": "高级连接设置",
     "sslMode": "SSL 模式:",
     "sshTunnel": "SSH Tunnel:",
@@ -207,6 +210,7 @@
     },
     "validation": {
       "nameRequired": "连接名称必填",
+      "groupRequired": "请输入新分组名称",
       "oracleDriverClassRequired": "Oracle JDBC 驱动类必填，默认应为 oracle.jdbc.OracleDriver",
       "oracleJarRequired": "Oracle 需要至少填写一个本地 ojdbc JAR 路径",
       "urlRequired": "URL 必填",
@@ -399,13 +403,15 @@
     "receivingShort": "接收中",
     "completionConnectHint": "连接后加载补全元数据",
     "completionUnsupportedHint": "当前驱动暂不支持元数据补全",
-    "completionSchemaHint": "选择 Schema 后启用对象补全"
+    "completionSchemaHint": "选择 Schema 后启用对象补全",
+    "explainSummary": "执行计划 · {{elapsedMs}} ms"
   },
   "editor": {
     "run": "执行",
     "format": "格式化",
     "cancel": "取消",
     "running": "执行中",
+    "explain": "执行计划",
     "explainUnsupported": "当前驱动暂不支持 Explain",
     "databaseSelectHint": "PostgreSQL 查询仍运行在连接配置的数据库中；切换数据库需要重新连接。"
   },
@@ -422,7 +428,8 @@
     "pendingChange": "待提交变更",
     "selectCellHint": "选择一个单元格可查看完整值",
     "cell": "单元格",
-    "row": "行"
+    "row": "行",
+    "noRows": "0 行"
   },
   "settings": {
     "title": "设置",

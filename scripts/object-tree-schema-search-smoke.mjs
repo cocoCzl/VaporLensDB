@@ -30,11 +30,11 @@ const databaseTree = read('src/components/explorer/DatabaseTree.tsx')
 includesAll(
   databaseTree,
   [
-    'showAllSchemasActionNode',
-    "t('explorer.folders.showAllSchemas')",
-    "action?: 'showAllSchemas'",
-    "node.meta?.action === 'showAllSchemas'",
-    'showAllSchemas(node)',
+    'const schemasByDatabase = new Map(',
+    'await Promise.all(',
+    'for (const schema of schemas)',
+    'schemaFolderChildIds.push(schemaNodeId)',
+    'defaultSchemaNodeId = schemaNodeId',
     'childrenLoaded && !force',
     'expanded: false',
     "t('explorer.searchAll')",
@@ -44,12 +44,12 @@ includesAll(
     'await searchIndex(query, activeConnectionId)',
     'loadedNodes.filter',
   ],
-  'safe schema expansion and loaded-tree search',
+  'complete initial schema expansion and loaded-tree search',
 )
 excludesAll(
   databaseTree,
-  ['window.setTimeout'],
-  'object tree search input must not auto-query global index',
+  ['window.setTimeout', 'showAllSchemasActionNode', "action?: 'showAllSchemas'"],
+  'object tree must not defer complete schema visibility or expose an extra schema action',
 )
 
 const packageJson = read('package.json')

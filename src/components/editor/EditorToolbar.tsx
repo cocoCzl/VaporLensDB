@@ -1,6 +1,6 @@
-import { Activity, Database, Play, Square, Wand2 } from 'lucide-react'
+import { ChartNoAxesCombined, Database, Play, Square, Wand2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import type { ConnectionConfig } from '@/types/connection'
 import type { DatabaseInfo, SchemaInfo } from '@/types/metadata'
 
@@ -48,7 +48,7 @@ export function EditorToolbar({
   onFormat,
 }: EditorToolbarProps) {
   const { t } = useTranslation()
-  const explainTitle = canExplain ? 'Explain' : (explainUnsupportedReason ?? t('editor.explainUnsupported'))
+  const explainTitle = canExplain ? t('editor.explain') : (explainUnsupportedReason ?? t('editor.explainUnsupported'))
 
   return (
     <div className="flex h-11 items-center gap-2 border-b ide-toolbar px-3">
@@ -97,36 +97,29 @@ export function EditorToolbar({
       </div>
 
       {running && canCancel ? (
-        <Button type="button" size="sm" variant="destructive" onClick={onCancel}>
+        <IconTooltipButton label={t('editor.cancel')} variant="destructive" onClick={onCancel}>
           <Square />
-          {t('editor.cancel')}
-        </Button>
+        </IconTooltipButton>
       ) : running ? (
-        <Button type="button" size="sm" disabled>
+        <IconTooltipButton label={t('editor.running')} disabled>
           <Play />
-          {t('editor.running')}
-        </Button>
+        </IconTooltipButton>
       ) : (
-        <Button type="button" size="sm" disabled={disabled} onClick={onRun}>
+        <IconTooltipButton label={t('editor.run')} disabled={disabled} onClick={onRun}>
           <Play />
-          {t('editor.run')}
-        </Button>
+        </IconTooltipButton>
       )}
-      <Button
-        type="button"
-        size="sm"
+      <IconTooltipButton
+        label={explainTitle}
         variant="outline"
         disabled={disabled || running || !canExplain}
-        title={explainTitle}
-        aria-disabled={!canExplain}
         onClick={onExplain}
       >
-        <Activity />
-        Explain
-      </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={onFormat}>
+        <ChartNoAxesCombined />
+      </IconTooltipButton>
+      <IconTooltipButton label={t('editor.format')} variant="ghost" disabled={disabled} onClick={onFormat}>
         <Wand2 />
-      </Button>
+      </IconTooltipButton>
     </div>
   )
 }

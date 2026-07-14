@@ -8,11 +8,12 @@ use tokio::{
     sync::{mpsc, Mutex},
     time::{timeout, Duration},
 };
+use uuid::Uuid;
 
 use crate::{
     drivers::trait_def::DatabaseDriver,
     models::{
-        connection::ConnectionConfig,
+        connection::{ConnectionConfig, DriverType},
         driver_catalog::DriverDefinition,
         error::AppError,
         metadata::{
@@ -28,6 +29,7 @@ use crate::{
 };
 
 pub struct JdbcDriver {
+    driver_type: DriverType,
     metadata_sql: Option<JdbcMetadataSql>,
     sidecar: Arc<JdbcBridgeSidecar>,
 }
@@ -86,6 +88,7 @@ impl JdbcDriver {
         let sidecar =
             JdbcBridgeSidecar::spawn(&config, password.unwrap_or(""), &bridge_jar).await?;
         let driver = Self {
+            driver_type: config.driver_type,
             metadata_sql,
             sidecar: Arc::new(sidecar),
         };
@@ -435,7 +438,7 @@ impl DatabaseDriver for JdbcDriver {
             has_database: true,
             has_schema: true,
             supports_transactions: true,
-            supports_explain: false,
+            supports_explain: self.driver_type == DriverType::Oracle,
             supports_cancel: false,
             supports_ddl,
             supports_streaming: false,
@@ -505,6 +508,18 @@ impl DatabaseDriver for JdbcDriver {
                 .await
                 .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
             row_offset += chunk_rows.len() as u64;
+        }
+
+        if row_offset == 0 && !result.columns.is_empty() {
+            chunks
+                .send(Ok(QueryResultChunk {
+                    query_id: query_id.to_string(),
+                    columns: result.columns.clone(),
+                    rows: Vec::new(),
+                    row_offset,
+                }))
+                .await
+                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
         }
 
         Ok(QueryStreamSummary {
@@ -738,10 +753,35 @@ impl DatabaseDriver for JdbcDriver {
     }
 
     async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError> {
+        if self.driver_type != DriverType::Oracle {
+            return Err(unsupported("explain_query"));
+        }
+
+        let request_id = Uuid::new_v4().simple().to_string();
+        let statement_id = format!("VL{}", &request_id[..28]);
+        let statement_sql = normalize_jdbc_sql(sql);
+        let explain_sql =
+            format!("EXPLAIN PLAN SET STATEMENT_ID = '{statement_id}' FOR {statement_sql}");
+        self.execute_query(&explain_sql, None)
+            .await
+            .map_err(clarify_oracle_explain_error)?;
+
+        let display_sql = format!(
+            "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY('PLAN_TABLE', '{statement_id}', 'TYPICAL'))"
+        );
+        let result = self
+            .execute_query(&display_sql, None)
+            .await
+            .map_err(clarify_oracle_explain_error)?;
+
+        let cleanup_sql = format!("DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = '{statement_id}'");
+        let _ = self.execute_query(&cleanup_sql, None).await;
+
         Ok(ExplainResult {
-            format: ExplainFormat::Json,
-            plan: serde_json::to_value(self.execute_query(sql, None).await?)?,
-            elapsed_ms: 0,
+            format: ExplainFormat::Table,
+            plan: serde_json::Value::Null,
+            elapsed_ms: result.elapsed_ms,
+            result: Some(result),
         })
     }
 
@@ -996,6 +1036,26 @@ fn clarify_metadata_error(operation: &str, error: AppError) -> AppError {
     }
 }
 
+fn clarify_oracle_explain_error(error: AppError) -> AppError {
+    match error {
+        AppError::QueryFailed { sql, message } => {
+            let lower = message.to_ascii_lowercase();
+            let hint = if lower.contains("ora-01031") || lower.contains("insufficient privileges") {
+                "Oracle execution plans require permission to write PLAN_TABLE and execute DBMS_XPLAN.DISPLAY"
+            } else if lower.contains("ora-00942") {
+                "Oracle execution plans require an accessible PLAN_TABLE and DBMS_XPLAN.DISPLAY"
+            } else {
+                "Oracle execution plan failed"
+            };
+            AppError::QueryFailed {
+                sql,
+                message: format!("{hint}. {message}"),
+            }
+        }
+        error => error,
+    }
+}
+
 fn classify_jdbc_error(command: &str, sql: Option<&str>, error: AppError) -> AppError {
     match error {
         AppError::Timeout { .. } => error,
@@ -1174,9 +1234,10 @@ fn unsupported(operation: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::{
-        clarify_metadata_error, db_object_kind_from_value, db_object_kind_value, map_column_row,
-        map_index_row, map_schema_object_row, normalize_jdbc_error_message, normalize_jdbc_sql,
-        parse_metadata_sql, parse_sidecar_response,
+        clarify_metadata_error, clarify_oracle_explain_error, db_object_kind_from_value,
+        db_object_kind_value, map_column_row, map_index_row, map_schema_object_row,
+        normalize_jdbc_error_message, normalize_jdbc_sql, parse_metadata_sql,
+        parse_sidecar_response,
     };
     use crate::models::{
         error::AppError,
@@ -1339,6 +1400,20 @@ mod tests {
         assert!(message.contains("get_object_ddl"));
         assert!(message.contains("insufficient privileges for Oracle metadata"));
         assert!(message.contains("DBMS_METADATA"));
+    }
+
+    #[test]
+    fn clarifies_oracle_explain_permission_errors() {
+        let error = clarify_oracle_explain_error(AppError::QueryFailed {
+            sql: "EXPLAIN PLAN FOR SELECT 1 FROM dual".to_string(),
+            message: "ORA-01031: insufficient privileges".to_string(),
+        });
+
+        let AppError::QueryFailed { message, .. } = error else {
+            panic!("expected query failed");
+        };
+        assert!(message.contains("PLAN_TABLE"));
+        assert!(message.contains("DBMS_XPLAN.DISPLAY"));
     }
 
     #[test]

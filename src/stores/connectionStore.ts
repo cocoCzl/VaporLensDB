@@ -141,6 +141,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }))
     try {
       const status = await connect(id)
+      useMetadataStore.getState().clearConnection(id)
       set((state) => ({
         statuses: { ...state.statuses, [id]: status },
         activeConnectionId: id,

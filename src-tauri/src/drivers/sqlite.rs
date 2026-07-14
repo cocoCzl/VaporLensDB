@@ -139,6 +139,18 @@ impl DatabaseDriver for SqliteDriver {
             row_offset += chunk_rows.len() as u64;
         }
 
+        if row_offset == 0 && !result.columns.is_empty() {
+            chunks
+                .send(Ok(QueryResultChunk {
+                    query_id: query_id.to_string(),
+                    columns: result.columns.clone(),
+                    rows: Vec::new(),
+                    row_offset,
+                }))
+                .await
+                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
+        }
+
         Ok(QueryStreamSummary {
             query_id: query_id.to_string(),
             row_count: row_offset,
@@ -418,10 +430,12 @@ impl DatabaseDriver for SqliteDriver {
     async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError> {
         let plan_sql = format!("EXPLAIN QUERY PLAN {}", sql.trim().trim_end_matches(';'));
         let result = self.execute_query(&plan_sql, None).await?;
+        let elapsed_ms = result.elapsed_ms;
         Ok(ExplainResult {
-            format: ExplainFormat::Json,
-            plan: serde_json::to_value(result)?,
-            elapsed_ms: 0,
+            format: ExplainFormat::Table,
+            plan: serde_json::Value::Null,
+            result: Some(result),
+            elapsed_ms,
         })
     }
 

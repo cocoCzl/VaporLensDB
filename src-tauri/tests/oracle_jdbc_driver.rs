@@ -9,6 +9,7 @@ use vapor_lens_db_lib::{
     models::{
         connection::{ConnectionConfig, DriverType},
         metadata::{DbObjectInfo, DbObjectKind, TableInfo},
+        query_result::ExplainFormat,
     },
     services::driver_catalog::driver_definitions,
 };
@@ -68,6 +69,35 @@ async fn connects_and_queries_oracle_with_jdbc_bridge() {
         .expect("execute oracle query");
     assert_eq!(result.row_count, 1);
     assert_eq!(result.rows[0][0], serde_json::json!(1));
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH"]
+async fn explains_oracle_query_with_tabular_plan() {
+    let (config, password) = test_oracle_config()
+        .expect("TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH must be set");
+    let definition = driver_definitions()
+        .into_iter()
+        .find(|definition| definition.id == "oracle")
+        .expect("oracle driver definition");
+    let driver = JdbcDriver::connect(&config, Some(&password), Some(&definition))
+        .await
+        .expect("connect oracle jdbc");
+
+    let explain = driver
+        .explain_query("SELECT 1 AS value FROM dual")
+        .await
+        .expect("explain oracle query");
+
+    assert!(matches!(explain.format, ExplainFormat::Table));
+    let result = explain
+        .result
+        .expect("Oracle explain should return a result table");
+    assert!(result.rows.len() > 0);
+    assert!(result
+        .columns
+        .iter()
+        .any(|column| column.name.eq_ignore_ascii_case("PLAN_TABLE_OUTPUT")));
 }
 
 #[tokio::test]

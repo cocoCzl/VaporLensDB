@@ -2,8 +2,10 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Link, Loader2, LockKeyhole, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Link, Loader2, LockKeyhole, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
+import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DataGrid } from '@/components/grid/DataGrid'
 import { ERDiagram } from '@/components/diagram/ERDiagram'
@@ -97,7 +99,7 @@ export function MainPanel() {
   const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
   const showSystemObjects = useUiStore((state) => state.showSystemObjects)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
-  const [selectedSql, setSelectedSql] = useState('')
+  const [selectedSql, setSelectedSql] = useState({ tabId: null as string | null, sql: '' })
   const [editorLoaded, setEditorLoaded] = useState(false)
   const [editorShouldFocus, setEditorShouldFocus] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -114,7 +116,9 @@ export function MainPanel() {
     : emptyQueryCapabilities()
   const selectedDatabase =
     connectionId != null
-      ? catalogSchemaPath?.database ?? activeConnection?.database ?? null
+      ? activeDriverType === 'postgres'
+        ? activeConnection?.database ?? null
+        : catalogSchemaPath?.database ?? activeConnection?.database ?? null
       : null
   const selectedSchema = connectionId != null ? catalogSchemaPath?.schema ?? null : null
   const connectionIsConnected = Boolean(
@@ -125,7 +129,7 @@ export function MainPanel() {
       connectionId &&
       connectionIsConnected &&
       queryCapabilities.canQuery &&
-      (selectedSql || activeTab.sql).trim(),
+      sqlForToolbarExecution(activeTab, selectedSql).trim(),
   )
   const activeQueryId = activeTab?.lastQueryId ?? null
   const activeResults = activeQueryId ? results[activeQueryId] : undefined
@@ -135,7 +139,12 @@ export function MainPanel() {
     ? Math.min(rawResultIndex, activeResults.length - 1)
     : 0
   const activeResult = activeResults?.[selectedResultIndex]
-  const toolbarDatabases = connectionId ? metadataDatabases[connectionId] ?? [] : []
+  const toolbarDatabases =
+    connectionId && activeDriverType === 'postgres' && activeConnection?.database
+      ? [{ name: activeConnection.database }]
+      : connectionId
+        ? metadataDatabases[connectionId] ?? []
+        : []
   const toolbarSchemas =
     connectionId && selectedDatabase
       ? filterCompletionSchemas(
@@ -187,7 +196,7 @@ export function MainPanel() {
   }, [catalogSchemaPaths, connections, saveTabDraft, setTabDraft, tabs])
 
   function sqlToRun() {
-    return (selectedSql || activeTab?.sql || '').trim()
+    return activeTab ? sqlForToolbarExecution(activeTab, selectedSql).trim() : ''
   }
 
   useEffect(() => {
@@ -276,11 +285,14 @@ export function MainPanel() {
     t,
   ])
 
-  async function execute() {
+  async function execute(sqlOverride?: string) {
     if (!activeTab || !connectionId || !connectionIsConnected || !queryCapabilities.canQuery) {
       return
     }
-    const sql = sqlToRun()
+    const sql = (sqlOverride ?? sqlToRun()).trim()
+    if (!sql) {
+      return
+    }
 
     try {
       const risk = await analyzeSqlRisk(sql)
@@ -702,7 +714,7 @@ export function MainPanel() {
               showSystemObjects={showSystemObjects}
               onChange={(sql) => updateTabSql(activeTab.id, sql)}
               onRun={execute}
-              onSelectionChange={setSelectedSql}
+              onSelectionChange={(sql) => setSelectedSql({ tabId: activeTab.id, sql })}
               autoFocus={editorShouldFocus}
             />
           </Suspense>
@@ -740,7 +752,10 @@ export function MainPanel() {
               onChange={(event) => updateTabSql(activeTab.id, event.target.value)}
               onSelect={(event) => {
                 const target = event.currentTarget
-                setSelectedSql(target.value.slice(target.selectionStart, target.selectionEnd))
+                setSelectedSql({
+                  tabId: activeTab.id,
+                  sql: target.value.slice(target.selectionStart, target.selectionEnd),
+                })
               }}
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -757,7 +772,7 @@ export function MainPanel() {
         <div className="flex h-9 items-center justify-between border-b px-3 text-xs">
           <div className="flex items-center gap-3">
             <span className="font-medium">{t('workbench.results')}</span>
-            {activeResult && (
+            {activeResult && !activeExplain && (
               <span
                 className={activeResult.truncated ? 'text-amber-600' : 'text-muted-foreground'}
                 title={
@@ -769,36 +784,36 @@ export function MainPanel() {
                 {activeResult.truncated ? largeResultNotice(activeResult) : resultSummary(activeResult)}
               </span>
             )}
-            {activeResults && activeResults.length > 1 && (
+            {activeResults && !activeExplain && activeResults.length > 1 && (
               <span className="text-muted-foreground">{t('workbench.resultSets', { count: activeResults.length })}</span>
             )}
             {activeExplain && (
-              <span className="text-muted-foreground">Explain · {activeExplain.elapsedMs} ms</span>
+              <span className="text-muted-foreground">
+                {t('workbench.explainSummary', { elapsedMs: activeExplain.elapsedMs })}
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="xs"
+            <IconTooltipButton
+              size="icon-xs"
+              label={t('sql.history')}
               variant={historyOpen ? 'secondary' : 'ghost'}
               onClick={() => setHistoryOpen((open) => !open)}
             >
               <History className="size-3.5" />
-              History
-            </Button>
-            <Button
-              type="button"
-              size="xs"
+            </IconTooltipButton>
+            <IconTooltipButton
+              size="icon-xs"
+              label={t('workbench.exportCsv')}
               variant="ghost"
-              disabled={!activeResult || activeResult.columns.length === 0}
+              disabled={Boolean(activeExplain) || !activeResult || activeResult.columns.length === 0}
               onClick={() =>
                 activeResult &&
                 exportCurrentResult(activeResult, activeTab.title, notify, notifyError, upsertTask)
               }
             >
               <Download className="size-3.5" />
-              {t('workbench.exportCsv')}
-            </Button>
+            </IconTooltipButton>
           {activeTab.error && (
             <div className="flex min-w-0 items-center gap-1 text-destructive">
               <AlertCircle className="size-3.5 shrink-0" />
@@ -814,9 +829,13 @@ export function MainPanel() {
               {activeTab.error ? (
                 <ErrorDetails message={activeTab.error} sql={activeTab.sql} />
               ) : activeExplain ? (
-                <pre className="h-full overflow-auto p-3 text-xs">
-                  {JSON.stringify(activeExplain.plan, null, 2)}
-                </pre>
+                activeExplain.result ? (
+                  <DataGrid result={activeExplain.result} />
+                ) : (
+                  <pre className="h-full overflow-auto p-3 text-xs">
+                    {JSON.stringify(activeExplain.plan, null, 2)}
+                  </pre>
+                )
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
                   {activeQueryId && activeResults && activeResults.length > 1 && (
@@ -862,6 +881,8 @@ export function MainPanel() {
 
 function DataSourcesManagementPanel() {
   const { t } = useTranslation()
+  const loading = useConnectionStore((state) => state.loading)
+  const loadConnections = useConnectionStore((state) => state.loadConnections)
   return (
     <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
@@ -870,6 +891,26 @@ function DataSourcesManagementPanel() {
           <p className="truncate text-xs text-muted-foreground">
             {t('workbench.dataSourcesSubtitle')}
           </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <ConnectionDialog
+            trigger={
+              <Button type="button" size="sm" variant="secondary">
+                <Plus className="size-3.5" />
+                {t('connection.new')}
+              </Button>
+            }
+          />
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            title={t('connection.refresh')}
+            disabled={loading}
+            onClick={() => loadConnections()}
+          >
+            <RefreshCw className="size-4" />
+          </Button>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -1515,33 +1556,33 @@ function DataTabPanel({
               }}
             />
           </label>
-          <Button type="button" size="sm" variant="outline" disabled={running} onClick={onRefresh}>
-            <RefreshCw />
-            {running ? t('workbench.refreshing') : t('common.refresh')}
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={onOpenSqlTab}>
-            {t('workbench.openInSqlTab')}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
+          <IconTooltipButton
+            label={running ? t('workbench.refreshing') : t('common.refresh')}
+            variant="outline"
+            disabled={running}
+            onClick={onRefresh}
+          >
+            <RefreshCw className={running ? 'animate-spin' : undefined} />
+          </IconTooltipButton>
+          <IconTooltipButton label={t('workbench.openInSqlTab')} variant="ghost" onClick={onOpenSqlTab}>
+            <FileCode2 />
+          </IconTooltipButton>
+          <IconTooltipButton
+            label={t('workbench.exportCsv')}
             variant="ghost"
             disabled={!result || result.columns.length === 0}
             onClick={onExport}
           >
             <Download className="size-3.5" />
-            {t('workbench.exportCsv')}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
+          </IconTooltipButton>
+          <IconTooltipButton
+            label={t('workbench.exportTable')}
             variant="ghost"
             disabled={!tab.connectionId}
             onClick={() => void exportSelectedTable()}
           >
             <Download className="size-3.5" />
-            {t('workbench.exportTable')}
-          </Button>
+          </IconTooltipButton>
         </div>
       </div>
       <div className="flex h-8 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
@@ -1595,9 +1636,9 @@ function DataTabPanel({
           >
             {tab.dataContext.sortDirection === 'desc' ? <ArrowDownAZ /> : <ArrowUpAZ />}
           </Button>
-          <Button
-            type="button"
-            size="xs"
+          <IconTooltipButton
+            size="icon-xs"
+            label={t('workbench.previousPage')}
             variant="ghost"
             disabled={running || tab.dataContext.offset === 0}
             onClick={() =>
@@ -1606,11 +1647,11 @@ function DataTabPanel({
               })
             }
           >
-            {t('workbench.previousPage')}
-          </Button>
-          <Button
-            type="button"
-            size="xs"
+            <ChevronLeft />
+          </IconTooltipButton>
+          <IconTooltipButton
+            size="icon-xs"
+            label={t('workbench.nextPage')}
             variant="ghost"
             disabled={running || !hasNextPage}
             onClick={() =>
@@ -1619,8 +1660,8 @@ function DataTabPanel({
               })
             }
           >
-            {t('workbench.nextPage')}
-          </Button>
+            <ChevronRight />
+          </IconTooltipButton>
         </div>
         <div className="flex min-h-10 items-center gap-2 border-b bg-muted/10 px-3 py-1.5 text-xs">
           <Upload className="size-3.5 shrink-0 text-muted-foreground" />
@@ -1719,14 +1760,18 @@ function StructureTabPanel({
     setLoading(true)
     setError(null)
     try {
-      const [nextColumns, nextIndexes, nextForeignKeys, nextTriggers, nextDdl] =
-        await Promise.all([
+      const [coreStructure, nextTriggers] = await Promise.all([
+        Promise.all([
           metadata.loadColumns(tab.connectionId, context.schema, context.object, force),
           metadata.loadIndexes(tab.connectionId, context.schema, context.object, force),
           metadata.loadForeignKeys(tab.connectionId, context.schema, context.object, force),
-          metadata.loadSchemaObjects(tab.connectionId, context.schema, 'trigger', force),
           getTableDdl(tab.connectionId, context.schema, context.object),
-        ])
+        ]),
+        metadata
+          .loadSchemaObjects(tab.connectionId, context.schema, 'trigger', force)
+          .catch(() => []),
+      ])
+      const [nextColumns, nextIndexes, nextForeignKeys, nextDdl] = coreStructure
       setColumns(nextColumns)
       setIndexes(nextIndexes)
       setForeignKeys(nextForeignKeys)
@@ -2261,7 +2306,7 @@ function driverQueryCapabilities(driverType: DriverType): QueryCapabilities {
     case 'oracle':
       return {
         canQuery: true,
-        canExplain: false,
+        canExplain: true,
         canCancel: false,
         canReadMetadata: true,
         canComplete: true,
@@ -2305,6 +2350,13 @@ function emptyQueryCapabilities(): QueryCapabilities {
     canReadMetadata: false,
     canComplete: false,
   }
+}
+
+function sqlForToolbarExecution(
+  tab: EditorTab,
+  selectedSql: { tabId: string | null; sql: string },
+) {
+  return selectedSql.tabId === tab.id && selectedSql.sql.trim() ? selectedSql.sql : tab.sql
 }
 
 function formatSqlRiskReason(reason: SqlRiskReason) {

@@ -5,7 +5,7 @@ use futures_util::{pin_mut, TryStreamExt};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_postgres::{
     types::{Json, ToSql, Type},
-    CancelToken, Client, Config, NoTls, Row,
+    CancelToken, Client, Config, NoTls, Row, Statement,
 };
 
 use crate::{
@@ -13,8 +13,8 @@ use crate::{
     models::{
         error::AppError,
         metadata::{
-            ColumnInfo, DatabaseInfo, DriverCapabilities, ForeignKeyInfo, IndexInfo, SchemaInfo,
-            TableInfo, TableType,
+            ColumnInfo, DatabaseInfo, DbObjectInfo, DbObjectKind, DriverCapabilities,
+            ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo, TableType,
         },
         query_result::{
             ColumnMeta, ExplainFormat, ExplainResult, QueryResult, QueryResultChunk,
@@ -195,17 +195,22 @@ impl DatabaseDriver for PostgresDriver {
             });
         }
 
+        let statement = self
+            .client
+            .prepare(sql)
+            .await
+            .map_err(|error| self.map_query_error(sql, error))?;
         let params = std::iter::empty::<&(dyn ToSql + Sync)>();
         let stream = self
             .client
-            .query_raw(sql, params)
+            .query_raw(&statement, params)
             .await
             .map_err(|error| self.map_query_error(sql, error))?;
         pin_mut!(stream);
         let mut row_count = 0_u64;
         let mut row_offset = 0_u64;
         let mut truncated = false;
-        let mut columns: Vec<ColumnMeta> = Vec::new();
+        let mut columns = columns_from_statement(&statement);
         let mut rows: Vec<Vec<serde_json::Value>> = Vec::with_capacity(chunk_size);
 
         while let Some(row) = stream
@@ -231,7 +236,7 @@ impl DatabaseDriver for PostgresDriver {
             }
         }
 
-        if !rows.is_empty() {
+        if !rows.is_empty() || !columns.is_empty() {
             send_query_chunk(&chunks, query_id, &columns, &mut rows, row_offset).await?;
         }
 
@@ -481,6 +486,95 @@ impl DatabaseDriver for PostgresDriver {
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
 
+    async fn get_schema_objects(
+        &self,
+        schema: &str,
+        kind: DbObjectKind,
+    ) -> Result<Vec<DbObjectInfo>, AppError> {
+        if !matches!(kind, DbObjectKind::Trigger) {
+            return Ok(Vec::new());
+        }
+
+        let sql = "
+            SELECT
+                n.nspname AS schema_name,
+                t.tgname AS trigger_name,
+                CASE t.tgenabled
+                    WHEN 'O' THEN 'ENABLED'
+                    WHEN 'D' THEN 'DISABLED'
+                    WHEN 'R' THEN 'REPLICA'
+                    WHEN 'A' THEN 'ALWAYS'
+                    ELSE NULL
+                END AS status
+            FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = $1
+              AND NOT t.tgisinternal
+            ORDER BY t.tgname
+        ";
+
+        let rows = self
+            .client
+            .query(sql, &[&schema])
+            .await
+            .map_err(|error| self.map_query_error(sql, error))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| DbObjectInfo {
+                schema: Some(row.get(0)),
+                name: row.get(1),
+                kind: DbObjectKind::Trigger,
+                object_type: Some("TRIGGER".to_string()),
+                status: row.get(2),
+            })
+            .collect())
+    }
+
+    async fn get_object_ddl(
+        &self,
+        schema: &str,
+        name: &str,
+        kind: DbObjectKind,
+    ) -> Result<String, AppError> {
+        if matches!(
+            kind,
+            DbObjectKind::Table | DbObjectKind::View | DbObjectKind::MaterializedView
+        ) {
+            return self.get_table_ddl(schema, name).await;
+        }
+
+        if !matches!(kind, DbObjectKind::Trigger) {
+            return Err(AppError::UnsupportedOperation {
+                driver: self.driver_name().to_string(),
+                operation: "get_object_ddl".to_string(),
+            });
+        }
+
+        let sql = "
+            SELECT pg_get_triggerdef(t.oid, true)
+            FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = $1
+              AND t.tgname = $2
+              AND NOT t.tgisinternal
+            ORDER BY c.relname
+            LIMIT 1
+        ";
+        let row = self
+            .client
+            .query_opt(sql, &[&schema, &name])
+            .await
+            .map_err(|error| self.map_query_error(sql, error))?;
+
+        row.map(|row| row.get(0)).ok_or_else(|| AppError::NotFound {
+            resource: "trigger".to_string(),
+            id: format!("{schema}.{name}"),
+        })
+    }
+
     async fn get_table_ddl(&self, schema: &str, table: &str) -> Result<String, AppError> {
         let columns = self.get_columns(schema, table).await?;
         if columns.is_empty() {
@@ -585,6 +679,7 @@ impl DatabaseDriver for PostgresDriver {
         Ok(ExplainResult {
             format: ExplainFormat::Json,
             plan,
+            result: None,
             elapsed_ms: start.elapsed().as_millis() as u64,
         })
     }
@@ -684,6 +779,18 @@ fn rows_to_query_result(rows: Vec<Row>, elapsed_ms: u64) -> QueryResult {
 
 fn columns_from_row(row: &Row) -> Vec<ColumnMeta> {
     row.columns()
+        .iter()
+        .map(|column| ColumnMeta {
+            name: column.name().to_string(),
+            data_type: column.type_().name().to_string(),
+            nullable: true,
+        })
+        .collect()
+}
+
+fn columns_from_statement(statement: &Statement) -> Vec<ColumnMeta> {
+    statement
+        .columns()
         .iter()
         .map(|column| ColumnMeta {
             name: column.name().to_string(),

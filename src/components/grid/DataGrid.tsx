@@ -129,14 +129,17 @@ export function DataGrid({
             ))}
           </div>
 
-          <div
-            className="relative"
-            style={{
-              height: virtualizer.getTotalSize(),
-              minWidth: minGridWidth,
-            }}
-          >
-            {virtualRows.map((virtualRow) => {
+          {result.rows.length === 0 ? (
+            <div className="grid h-24 place-items-center text-muted-foreground">{t('result.noRows')}</div>
+          ) : (
+            <div
+              className="relative"
+              style={{
+                height: virtualizer.getTotalSize(),
+                minWidth: minGridWidth,
+              }}
+            >
+              {virtualRows.map((virtualRow) => {
               const row = result.rows[virtualRow.index] ?? []
 
               return (
@@ -211,8 +214,9 @@ export function DataGrid({
                   })}
                 </div>
               )
-            })}
-          </div>
+              })}
+            </div>
+          )}
         </div>
       </div>
       <CellInspector

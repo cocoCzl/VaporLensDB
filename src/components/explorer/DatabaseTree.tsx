@@ -46,8 +46,6 @@ interface NodeRecord extends DatabaseTreeNodeData {
       | 'triggers'
       | 'synonyms'
       | 'events'
-      | 'showAllSchemas'
-    action?: 'showAllSchemas'
   }
 }
 
@@ -233,9 +231,19 @@ export function DatabaseTree() {
       const selectedDatabase = selectCurrentDatabase(
         activeConnection,
         filteredDatabases,
-        activePath?.database,
+        activeConnection?.driverType === 'postgres'
+          ? activeConnection.database
+          : activePath?.database,
       )
-      const visibleDatabases = selectedDatabase ? [selectedDatabase] : []
+      // PostgreSQL metadata is scoped to the database used to open this connection.
+      // Other database names may be enumerable, but their schemas cannot be browsed safely
+      // without opening a separate connection.
+      const visibleDatabases =
+        activeConnection?.driverType === 'postgres'
+          ? selectedDatabase
+            ? [selectedDatabase]
+            : []
+          : filteredDatabases
       const databaseFolderId = `${ROOT_ID}/databases`
       const nextNodes: NodeMap = {
         [databaseFolderId]: {
@@ -246,6 +254,7 @@ export function DatabaseTree() {
           depth: 0,
           expandable: true,
           expanded: true,
+          childrenLoaded: true,
           meta: { folder: 'databases' },
         },
       }
@@ -253,9 +262,26 @@ export function DatabaseTree() {
 
       const databaseChildIds: Record<string, string[]> = {}
       const schemaChildIds: Record<string, string[]> = {}
+      const schemasByDatabase = new Map(
+        await Promise.all(
+          visibleDatabases.map(async (database) => [
+            database.name,
+            activeConnection?.driverType === 'mysql'
+              ? []
+              : filterSchemas(
+                  activeConnection?.driverType ?? 'postgres',
+                  await metadata.loadSchemas(activeConnectionId, database.name, force),
+                  showSystemObjects,
+                ),
+          ] as const),
+        ),
+      )
+      let defaultSchemaNodeId: string | null = null
+      let defaultSchemaName: string | null = null
       for (const database of visibleDatabases) {
         const id = databaseId(database.name)
         const schemasFolderId = `${id}/schemas`
+        const isDefaultDatabase = database.name === selectedDatabase?.name
         nextNodes[id] = {
           id,
           parentId: databaseFolderId,
@@ -263,7 +289,8 @@ export function DatabaseTree() {
           kind: 'database',
           depth: 1,
           expandable: true,
-          expanded: true,
+          expanded: isDefaultDatabase,
+          childrenLoaded: true,
           muted: activeConnection
             ? isSystemDatabase(activeConnection.driverType, database.name)
             : false,
@@ -286,20 +313,10 @@ export function DatabaseTree() {
             nextNodes[category.id] = category
           }
           databaseChildIds[id] = categories.map((category) => category.id)
-          metadata.setCatalogSchemaPath({
-            connectionId: activeConnectionId,
-            database: database.name,
-            schema: database.name,
-            schemaListAvailable: false,
-          })
           continue
         }
 
-        const schemas = filterSchemas(
-          activeConnection?.driverType ?? 'postgres',
-          await metadata.loadSchemas(activeConnectionId, database.name, force),
-          showSystemObjects,
-        )
+        const schemas = schemasByDatabase.get(database.name) ?? []
         const defaultSchema = selectDefaultSchema(activeConnection, schemas, activePath?.schema)
         nextNodes[schemasFolderId] = {
           id: schemasFolderId,
@@ -308,38 +325,39 @@ export function DatabaseTree() {
           kind: 'folder',
           depth: 2,
           expandable: true,
-          expanded: true,
+          expanded: isDefaultDatabase,
           childrenLoaded: true,
           meta: { database: database.name, folder: 'schemas' },
         }
         databaseChildIds[id] = [schemasFolderId]
 
         const schemaFolderChildIds: string[] = []
-        if (defaultSchema) {
-          const schemaNodeId = schemaId(schemasFolderId, defaultSchema.name)
+        for (const schema of schemas) {
+          const schemaNodeId = schemaId(schemasFolderId, schema.name)
+          const isDefaultSchema = schema.name === defaultSchema?.name
           nextNodes[schemaNodeId] = {
             id: schemaNodeId,
             parentId: schemasFolderId,
-            label: defaultSchema.name,
+            label: schema.name,
             kind: 'schema',
             depth: 3,
             expandable: true,
-            expanded: true,
+            expanded: isDefaultSchema,
             childrenLoaded: true,
             muted: activeConnection
-              ? isSystemSchema(activeConnection.driverType, defaultSchema.name)
+              ? isSystemSchema(activeConnection.driverType, schema.name)
               : false,
             detail:
-              activeConnection && isSystemSchema(activeConnection.driverType, defaultSchema.name)
+              activeConnection && isSystemSchema(activeConnection.driverType, schema.name)
                 ? 'system'
                 : undefined,
-            tooltip: rawPath([database.name, defaultSchema.name]),
-            meta: { database: database.name, schema: defaultSchema.name },
+            tooltip: rawPath([database.name, schema.name]),
+            meta: { database: database.name, schema: schema.name },
           }
           const categories = schemaCategoryNodes(
             nextNodes[schemaNodeId],
             activeConnection?.driverType ?? 'postgres',
-            defaultSchema.name,
+            schema.name,
             t,
           )
           for (const category of categories) {
@@ -347,18 +365,21 @@ export function DatabaseTree() {
           }
           schemaFolderChildIds.push(schemaNodeId)
           schemaChildIds[schemaNodeId] = categories.map((category) => category.id)
+          if (isDefaultDatabase && isDefaultSchema) {
+            defaultSchemaNodeId = schemaNodeId
+            defaultSchemaName = schema.name
+          }
         }
-
-        const showAllSchemasNode = showAllSchemasActionNode(nextNodes[schemasFolderId], t)
-        nextNodes[showAllSchemasNode.id] = showAllSchemasNode
-        schemaFolderChildIds.push(showAllSchemasNode.id)
         schemaChildIds[schemasFolderId] = schemaFolderChildIds
+      }
 
+      if (selectedDatabase) {
+        const isMysql = activeConnection?.driverType === 'mysql'
         metadata.setCatalogSchemaPath({
           connectionId: activeConnectionId,
-          database: database.name,
-          schema: defaultSchema?.name ?? null,
-          schemaListAvailable: true,
+          database: selectedDatabase.name,
+          schema: isMysql ? selectedDatabase.name : defaultSchemaName,
+          schemaListAvailable: !isMysql,
         })
       }
 
@@ -369,6 +390,7 @@ export function DatabaseTree() {
         ...databaseChildIds,
         ...schemaChildIds,
       })
+      setSelectedNodeId(defaultSchemaNodeId ?? (selectedDatabase ? databaseId(selectedDatabase.name) : null))
     } catch (error) {
       notifyError(normalizeAppError(error), t('notifications.loadDatabasesFailed'))
     } finally {
@@ -394,11 +416,6 @@ export function DatabaseTree() {
   async function toggleNode(id: string, force = false) {
     const node = nodes[id]
     if (!node?.expandable || !activeConnectionId) {
-      return
-    }
-
-    if (node.meta?.action === 'showAllSchemas') {
-      await showAllSchemas(node)
       return
     }
 
@@ -496,71 +513,6 @@ export function DatabaseTree() {
     }
     setIndexSearchActive(true)
     await searchIndex(query, activeConnectionId)
-  }
-
-  async function showAllSchemas(node: NodeRecord) {
-    if (!activeConnectionId || !activeConnection || !node.parentId) {
-      return
-    }
-    const schemasFolderId = node.parentId
-    const schemasFolder = nodes[schemasFolderId]
-    if (!schemasFolder) {
-      return
-    }
-
-    setNodes((state) => ({
-      ...state,
-      [schemasFolderId]: { ...schemasFolder, expanded: true, loading: true },
-    }))
-
-    try {
-      const schemas = filterSchemas(
-        activeConnection.driverType,
-        await metadata.loadSchemas(activeConnectionId, schemasFolder.meta?.database, false),
-        showSystemObjects,
-      )
-      const schemaNodes = schemas.map((schema) => {
-        const id = schemaId(schemasFolderId, schema.name)
-        return {
-          ...nodes[id],
-          id,
-          parentId: schemasFolderId,
-          label: schema.name,
-          kind: 'schema' as const,
-          depth: schemasFolder.depth + 1,
-          expandable: true,
-          expanded: nodes[id]?.expanded ?? false,
-          childrenLoaded: nodes[id]?.childrenLoaded ?? false,
-          muted: isSystemSchema(activeConnection.driverType, schema.name),
-          detail: isSystemSchema(activeConnection.driverType, schema.name) ? 'system' : undefined,
-          tooltip: rawPath([schemasFolder.meta?.database, schema.name]),
-          meta: { database: schemasFolder.meta?.database, schema: schema.name },
-        }
-      })
-      setNodes((state) =>
-        replaceChildren(
-          state,
-          childIds[schemasFolderId] ?? [],
-          Object.fromEntries(schemaNodes.map((schemaNode) => [schemaNode.id, schemaNode])),
-        ),
-      )
-      setChildIds((state) => ({
-        ...state,
-        [schemasFolderId]: schemaNodes.map((schemaNode) => schemaNode.id),
-      }))
-    } catch (error) {
-      notifyError(normalizeAppError(error), t('notifications.loadSchemaFailed'))
-    } finally {
-      setNodes((state) => ({
-        ...state,
-        [schemasFolderId]: {
-          ...state[schemasFolderId],
-          expanded: true,
-          loading: false,
-          childrenLoaded: true,
-        },
-      }))
-    }
   }
 
   function openIndexResult(result: (typeof indexResults)[number]) {
@@ -1378,20 +1330,6 @@ function MetadataSearchResults({
   )
 }
 
-function showAllSchemasActionNode(parent: NodeRecord, t: TFunction): NodeRecord {
-  return {
-    id: `${parent.id}/__show_all_schemas`,
-    parentId: parent.id,
-    label: t('explorer.folders.showAllSchemas'),
-    kind: 'folder',
-    depth: parent.depth + 1,
-    expandable: true,
-    detail: 'explicit',
-    tooltip: rawPath([parent.meta?.database, 'Schemas']),
-    meta: { ...parent.meta, folder: 'showAllSchemas', action: 'showAllSchemas' },
-  }
-}
-
 function metadataKindLabel(kind: import('@/types/metadata').MetadataIndexKind, t: TFunction) {
   if (kind === 'connection') return t('explorer.metadataKind.connection')
   if (kind === 'database') return t('explorer.metadataKind.database')
@@ -1685,7 +1623,10 @@ function selectCurrentDatabase(
   databases: Array<{ name: string }>,
   preferredDatabase?: string | null,
 ) {
-  if (databases.length === 0) return null
+  if (databases.length === 0) {
+    const configured = connection?.database?.trim()
+    return connection?.driverType === 'mysql' && configured ? { name: configured } : null
+  }
   const preferred = preferredDatabase?.trim()
   if (preferred) {
     return (

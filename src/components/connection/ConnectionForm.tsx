@@ -1,4 +1,4 @@
-import { FormEvent, useState, type ReactNode } from 'react'
+import { FormEvent, useMemo, useState, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, Database, Download, PlugZap } from 'lucide-react'
@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { normalizeAppError } from '@/ipc/client'
 import { openExternalUrl } from '@/lib/openExternalUrl'
+import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
 import type { DriverDefinition } from '@/types/driver'
 
@@ -18,6 +19,7 @@ type ConnectionVariantOption = {
 }
 
 const ORACLE_JDBC_DOWNLOAD_URL = 'https://www.oracle.com/database/technologies/appdev/jdbc-downloads.html'
+const NEW_GROUP_VALUE = '__new_group__'
 
 interface ConnectionFormProps {
   connection?: ConnectionConfig | null
@@ -39,6 +41,7 @@ export function ConnectionForm({
   onCancel,
 }: ConnectionFormProps) {
   const { t } = useTranslation()
+  const connections = useConnectionStore((state) => state.connections)
   const [form, setForm] = useState<ConnectionInput>({
     id: connection?.id,
     name: connection?.name ?? 'Local PostgreSQL',
@@ -73,6 +76,8 @@ export function ConnectionForm({
         },
   })
   const [message, setMessage] = useState<string | null>(null)
+  const [groupSelection, setGroupSelection] = useState(connection?.group?.trim() ?? '')
+  const [newGroupName, setNewGroupName] = useState('')
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
     defaultConnectionVariant(connection?.driverType ?? 'postgres'),
   )
@@ -89,6 +94,7 @@ export function ConnectionForm({
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
   const driverStatus = selectedDriver?.status ?? driverProfile.status
   const readinessIssue = connectionReadinessIssue(form, driverProfile, selectedDriver, t)
+  const groupNames = useMemo(() => existingGroupNames(connections), [connections])
 
   const activeConnectionVariant = driverProfile.connectionVariants.some(
     (variant) => variant.id === connectionVariant,
@@ -142,12 +148,37 @@ export function ConnectionForm({
     }))
   }
 
-  const normalizedForm = () => normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver)
+  const selectedGroup = groupSelection === NEW_GROUP_VALUE ? newGroupName : groupSelection
+  const normalizedForm = () => normalizeInput({
+    ...form,
+    group: canonicalGroupName(selectedGroup, groupNames),
+  }, activeConnectionVariant, driverProfile, selectedDriver)
+
+  const validate = (requireExternalDriver: boolean) => {
+    if (groupSelection === NEW_GROUP_VALUE && !newGroupName.trim()) {
+      return t('connectionForm.validation.groupRequired')
+    }
+    return validateRequiredFields(form, activeConnectionVariant, {
+      requireExternalDriver,
+      profile: driverProfile,
+      definition: selectedDriver,
+    }, t)
+  }
+
+  const selectGroup = (value: string) => {
+    setGroupSelection(value)
+    if (value === NEW_GROUP_VALUE) {
+      update('group', '')
+      return
+    }
+    setNewGroupName('')
+    update('group', value)
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true, profile: driverProfile, definition: selectedDriver }, t)
+    const validationError = validate(true)
     if (validationError) {
       setMessage(validationError)
       return
@@ -157,7 +188,7 @@ export function ConnectionForm({
 
   const saveOnly = async () => {
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: false, profile: driverProfile, definition: selectedDriver }, t)
+    const validationError = validate(false)
     if (validationError) {
       setMessage(validationError)
       return
@@ -167,7 +198,7 @@ export function ConnectionForm({
 
   const test = async () => {
     setMessage(null)
-    const validationError = validateRequiredFields(form, activeConnectionVariant, { requireExternalDriver: true, profile: driverProfile, definition: selectedDriver }, t)
+    const validationError = validate(true)
     if (validationError) {
       setMessage(validationError)
       return
@@ -183,7 +214,11 @@ export function ConnectionForm({
   }
 
   return (
-    <form className="grid min-h-[560px] grid-cols-[240px_1fr] overflow-hidden rounded-md border" onSubmit={submit}>
+    <form
+      className="grid min-h-[560px] grid-cols-[240px_1fr] overflow-hidden rounded-md border"
+      autoComplete="off"
+      onSubmit={submit}
+    >
       <aside className="border-r bg-muted/35">
         <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
           {t('connectionForm.projectDataSources')}
@@ -202,6 +237,7 @@ export function ConnectionForm({
           <Input
             id="connection-name"
             value={form.name}
+            disableTextAssistance
             onChange={(event) => update('name', event.target.value)}
             required
           />
@@ -263,6 +299,7 @@ export function ConnectionForm({
                       <Input
                         id="connection-host"
                         value={form.host ?? ''}
+                        disableTextAssistance
                         onChange={(event) => update('host', event.target.value)}
                         required
                       />
@@ -273,6 +310,7 @@ export function ConnectionForm({
                         id="connection-port"
                         type="number"
                         value={form.port ?? 5432}
+                        disableTextAssistance
                         onChange={(event) => update('port', Number(event.target.value))}
                         required
                       />
@@ -290,6 +328,7 @@ export function ConnectionForm({
                   <Input
                     id="connection-username"
                     value={form.username ?? ''}
+                    disableTextAssistance
                     onChange={(event) => update('username', event.target.value)}
                     required
                   />
@@ -302,6 +341,7 @@ export function ConnectionForm({
                       type="password"
                       value={form.password ?? ''}
                       placeholder={connection ? t('common.hidden') : ''}
+                      disableTextAssistance
                       onChange={(event) => update('password', event.target.value)}
                     />
                     <Label className="self-center text-right text-sm">{t('connectionForm.savePassword')}</Label>
@@ -318,6 +358,7 @@ export function ConnectionForm({
                     <Input
                       id="connection-database"
                       value={form.database ?? ''}
+                      disableTextAssistance
                       onChange={(event) => update('database', event.target.value)}
                       required
                     />
@@ -334,6 +375,7 @@ export function ConnectionForm({
                           : driverProfile.defaultUrl(form, activeConnectionVariant)
                       }
                       placeholder={driverProfile.urlPlaceholder}
+                      disableTextAssistance
                       readOnly={activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file'}
                       onChange={(event) => update('connectionUrl', event.target.value)}
                     />
@@ -347,6 +389,7 @@ export function ConnectionForm({
                         id="driver-class"
                         value={form.driverClass ?? ''}
                         placeholder={driverProfile.driverClass}
+                        disableTextAssistance
                         onChange={(event) => update('driverClass', event.target.value)}
                       />
                     </FormRow>
@@ -355,6 +398,7 @@ export function ConnectionForm({
                         id="driver-paths"
                         value={form.driverPaths?.join('\n') ?? ''}
                         placeholder="/path/to/ojdbc11.jar"
+                        disableTextAssistance
                         onChange={(event) =>
                           update(
                             'driverPaths',
@@ -370,11 +414,30 @@ export function ConnectionForm({
                 )}
 
                 <FormRow label={t('connectionForm.group')}>
-                  <Input
-                    id="connection-group"
-                    value={form.group ?? ''}
-                    onChange={(event) => update('group', event.target.value)}
-                  />
+                  <div className="grid gap-2">
+                    <select
+                      id="connection-group"
+                      className="ide-input"
+                      value={groupSelection}
+                      onChange={(event) => selectGroup(event.target.value)}
+                    >
+                      <option value="">{t('connectionForm.ungrouped')}</option>
+                      {groupNames.map((group) => (
+                        <option key={group} value={group}>{group}</option>
+                      ))}
+                      <option value={NEW_GROUP_VALUE}>{t('connectionForm.newGroup')}</option>
+                    </select>
+                    {groupSelection === NEW_GROUP_VALUE && (
+                      <Input
+                        id="connection-new-group"
+                        value={newGroupName}
+                        placeholder={t('connectionForm.newGroupPlaceholder')}
+                        disableTextAssistance
+                        autoFocus
+                        onChange={(event) => setNewGroupName(event.target.value)}
+                      />
+                    )}
+                  </div>
                 </FormRow>
 
                 <details className="rounded-md border bg-muted/20 p-3">
@@ -412,6 +475,7 @@ export function ConnectionForm({
                           <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
                             <Input
                               value={form.sshTunnel.host}
+                              disableTextAssistance
                               onChange={(event) => updateSshTunnel('host', event.target.value)}
                               required
                             />
@@ -419,6 +483,7 @@ export function ConnectionForm({
                             <Input
                               type="number"
                               value={form.sshTunnel.port}
+                              disableTextAssistance
                               onChange={(event) => updateSshTunnel('port', Number(event.target.value))}
                               required
                             />
@@ -427,6 +492,7 @@ export function ConnectionForm({
                         <FormRow label={t('connectionForm.sshUser')}>
                           <Input
                             value={form.sshTunnel.username}
+                            disableTextAssistance
                             onChange={(event) => updateSshTunnel('username', event.target.value)}
                             required
                           />
@@ -447,6 +513,7 @@ export function ConnectionForm({
                               type="password"
                               value={form.sshTunnel.password ?? ''}
                               placeholder={connection?.sshTunnel ? t('common.hidden') : ''}
+                              disableTextAssistance
                               onChange={(event) => updateSshTunnel('password', event.target.value)}
                             />
                           </FormRow>
@@ -456,6 +523,7 @@ export function ConnectionForm({
                               <Input
                                 value={form.sshTunnel.privateKeyPath ?? ''}
                                 placeholder="/Users/me/.ssh/id_ed25519"
+                                disableTextAssistance
                                 onChange={(event) => updateSshTunnel('privateKeyPath', event.target.value)}
                                 required
                               />
@@ -465,6 +533,7 @@ export function ConnectionForm({
                                 type="password"
                                 value={form.sshTunnel.privateKeyPassphrase ?? ''}
                                 placeholder={connection?.sshTunnel ? t('common.hidden') : ''}
+                                disableTextAssistance
                                 onChange={(event) => updateSshTunnel('privateKeyPassphrase', event.target.value)}
                               />
                             </FormRow>
@@ -475,6 +544,7 @@ export function ConnectionForm({
                             <Input
                               value={form.sshTunnel.remoteHost ?? ''}
                               placeholder={form.host ?? t('connectionForm.databaseHost')}
+                              disableTextAssistance
                               onChange={(event) => updateSshTunnel('remoteHost', event.target.value)}
                             />
                             <Label className="self-center text-right text-sm">{t('connectionForm.port')}</Label>
@@ -482,6 +552,7 @@ export function ConnectionForm({
                               type="number"
                               value={form.sshTunnel.remotePort ?? ''}
                               placeholder={String(form.port ?? '')}
+                              disableTextAssistance
                               onChange={(event) =>
                                 updateSshTunnel(
                                   'remotePort',
@@ -808,6 +879,23 @@ function normalizeSshTunnel(input: ConnectionInput) {
 
 function emptyToNull(value: string | null | undefined) {
   return value && value.trim() ? value.trim() : null
+}
+
+function existingGroupNames(connections: ConnectionConfig[]) {
+  const groups = new Map<string, string>()
+  for (const connection of connections) {
+    const group = connection.group?.trim()
+    if (group && !groups.has(group.toLocaleLowerCase('en-US'))) {
+      groups.set(group.toLocaleLowerCase('en-US'), group)
+    }
+  }
+  return [...groups.values()].sort((left, right) => left.localeCompare(right))
+}
+
+function canonicalGroupName(value: string, groupNames: string[]) {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  return groupNames.find((group) => group.toLocaleLowerCase('en-US') === trimmed.toLocaleLowerCase('en-US')) ?? trimmed
 }
 
 function validateRequiredFields(

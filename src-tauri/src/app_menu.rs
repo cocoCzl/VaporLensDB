@@ -1,17 +1,13 @@
 use tauri::{
-    menu::{AboutMetadata, MenuBuilder, MenuEvent, MenuItem, SubmenuBuilder, HELP_SUBMENU_ID},
+    menu::{
+        AboutMetadata, MenuBuilder, MenuEvent, MenuItem, PredefinedMenuItem, SubmenuBuilder,
+        HELP_SUBMENU_ID,
+    },
     AppHandle, Manager, Runtime,
 };
 
 const EDIT_SUBMENU_ID: &str = "vaporlensdb-edit-menu";
 const APP_WINDOW_SUBMENU_ID: &str = "vaporlensdb-window-menu";
-
-const EDIT_UNDO_ID: &str = "vaporlensdb-edit-undo";
-const EDIT_REDO_ID: &str = "vaporlensdb-edit-redo";
-const EDIT_CUT_ID: &str = "vaporlensdb-edit-cut";
-const EDIT_COPY_ID: &str = "vaporlensdb-edit-copy";
-const EDIT_PASTE_ID: &str = "vaporlensdb-edit-paste";
-const EDIT_SELECT_ALL_ID: &str = "vaporlensdb-edit-select-all";
 
 const WINDOW_MINIMIZE_ID: &str = "vaporlensdb-window-minimize";
 const WINDOW_ZOOM_ID: &str = "vaporlensdb-window-zoom";
@@ -51,12 +47,12 @@ pub fn set_application_menu<R: Runtime>(
     let file_menu = SubmenuBuilder::new(app, labels.file)
         .close_window_with_text(labels.close_window)
         .build()?;
-    let undo_item = menu_item(app, EDIT_UNDO_ID, labels.undo, "CmdOrCtrl+Z")?;
-    let redo_item = menu_item(app, EDIT_REDO_ID, labels.redo, "CmdOrCtrl+Shift+Z")?;
-    let cut_item = menu_item(app, EDIT_CUT_ID, labels.cut, "CmdOrCtrl+X")?;
-    let copy_item = menu_item(app, EDIT_COPY_ID, labels.copy, "CmdOrCtrl+C")?;
-    let paste_item = menu_item(app, EDIT_PASTE_ID, labels.paste, "CmdOrCtrl+V")?;
-    let select_all_item = menu_item(app, EDIT_SELECT_ALL_ID, labels.select_all, "CmdOrCtrl+A")?;
+    let undo_item = PredefinedMenuItem::undo(app, Some(labels.undo))?;
+    let redo_item = PredefinedMenuItem::redo(app, Some(labels.redo))?;
+    let cut_item = PredefinedMenuItem::cut(app, Some(labels.cut))?;
+    let copy_item = PredefinedMenuItem::copy(app, Some(labels.copy))?;
+    let paste_item = PredefinedMenuItem::paste(app, Some(labels.paste))?;
+    let select_all_item = PredefinedMenuItem::select_all(app, Some(labels.select_all))?;
     let minimize_item = menu_item(app, WINDOW_MINIMIZE_ID, labels.minimize, "CmdOrCtrl+M")?;
     let zoom_item = menu_item(app, WINDOW_ZOOM_ID, labels.zoom, "CmdOrCtrl+Shift+M")?;
     let bring_all_to_front_item = MenuItem::with_id(
@@ -104,12 +100,6 @@ pub fn set_application_menu<R: Runtime>(
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
     let id = event.id().0.as_str();
     match id {
-        EDIT_UNDO_ID => eval_main_webview(app, "document.execCommand('undo');"),
-        EDIT_REDO_ID => eval_main_webview(app, "document.execCommand('redo');"),
-        EDIT_CUT_ID => eval_main_webview(app, "document.execCommand('cut');"),
-        EDIT_COPY_ID => eval_main_webview(app, "document.execCommand('copy');"),
-        EDIT_PASTE_ID => eval_main_webview(app, "document.execCommand('paste');"),
-        EDIT_SELECT_ALL_ID => eval_main_webview(app, "document.execCommand('selectAll');"),
         WINDOW_MINIMIZE_ID => {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.minimize();
@@ -140,12 +130,6 @@ fn menu_item<R: Runtime>(
     accelerator: &'static str,
 ) -> tauri::Result<MenuItem<R>> {
     MenuItem::with_id(app, id, text, true, Some(accelerator))
-}
-
-fn eval_main_webview<R: Runtime>(app: &AppHandle<R>, script: &str) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.eval(script);
-    }
 }
 
 fn about_metadata<R: Runtime>(app: &AppHandle<R>) -> AboutMetadata<'static> {

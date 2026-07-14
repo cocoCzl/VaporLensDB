@@ -169,6 +169,18 @@ impl DatabaseDriver for MssqlDriver {
             row_offset += chunk_rows.len() as u64;
         }
 
+        if row_offset == 0 && !result.columns.is_empty() {
+            chunks
+                .send(Ok(QueryResultChunk {
+                    query_id: query_id.to_string(),
+                    columns: result.columns.clone(),
+                    rows: Vec::new(),
+                    row_offset,
+                }))
+                .await
+                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
+        }
+
         Ok(QueryStreamSummary {
             query_id: query_id.to_string(),
             row_count: row_offset,
@@ -496,8 +508,9 @@ impl DatabaseDriver for MssqlDriver {
         );
         let result = self.execute_query(&plan_sql, None).await?;
         Ok(ExplainResult {
-            format: ExplainFormat::Text,
-            plan: serde_json::to_value(result.rows)?,
+            format: ExplainFormat::Table,
+            plan: serde_json::Value::Null,
+            result: Some(result),
             elapsed_ms: start.elapsed().as_millis() as u64,
         })
     }

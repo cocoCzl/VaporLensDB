@@ -9,8 +9,8 @@ use crate::{
     models::{
         error::AppError,
         metadata::{
-            ColumnInfo, DatabaseInfo, DriverCapabilities, ForeignKeyInfo, IndexInfo, SchemaInfo,
-            TableInfo, TableType,
+            ColumnInfo, DatabaseInfo, DbObjectInfo, DbObjectKind, DriverCapabilities,
+            ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo, TableType,
         },
         query_result::{
             ColumnMeta, ExplainFormat, ExplainResult, QueryResult, QueryResultChunk,
@@ -165,7 +165,7 @@ impl DatabaseDriver for MysqlDriver {
             .await
             .map_err(|error| map_mysql_query_error(sql, error))?;
 
-        if !rows.is_empty() {
+        if !rows.is_empty() || !columns.is_empty() {
             send_query_chunk(&chunks, query_id, &columns, &mut rows, row_offset).await?;
         }
 
@@ -403,12 +403,82 @@ impl DatabaseDriver for MysqlDriver {
         })
     }
 
+    async fn get_schema_objects(
+        &self,
+        schema: &str,
+        kind: DbObjectKind,
+    ) -> Result<Vec<DbObjectInfo>, AppError> {
+        if !matches!(kind, DbObjectKind::Trigger) {
+            return Ok(Vec::new());
+        }
+
+        let sql = r#"
+            SELECT trigger_name
+            FROM information_schema.triggers
+            WHERE trigger_schema = ?
+            ORDER BY trigger_name
+        "#;
+        let mut conn = self.conn.lock().await;
+        let rows: Vec<String> = conn
+            .exec(sql, (schema,))
+            .await
+            .map_err(|error| map_mysql_query_error(sql, error))?;
+        Ok(rows
+            .into_iter()
+            .map(|name| DbObjectInfo {
+                schema: Some(schema.to_string()),
+                name,
+                kind: DbObjectKind::Trigger,
+                object_type: Some("TRIGGER".to_string()),
+                status: None,
+            })
+            .collect())
+    }
+
+    async fn get_object_ddl(
+        &self,
+        schema: &str,
+        name: &str,
+        kind: DbObjectKind,
+    ) -> Result<String, AppError> {
+        if matches!(
+            kind,
+            DbObjectKind::Table | DbObjectKind::View | DbObjectKind::MaterializedView
+        ) {
+            return self.get_table_ddl(schema, name).await;
+        }
+
+        if !matches!(kind, DbObjectKind::Trigger) {
+            return Err(AppError::UnsupportedOperation {
+                driver: self.driver_name().to_string(),
+                operation: "get_object_ddl".to_string(),
+            });
+        }
+
+        let sql = format!(
+            "SHOW CREATE TRIGGER `{}`.`{}`",
+            escape_identifier(schema),
+            escape_identifier(name)
+        );
+        let mut conn = self.conn.lock().await;
+        let row: Option<Row> = conn
+            .query_first(&sql)
+            .await
+            .map_err(|error| map_mysql_query_error(&sql, error))?;
+        row.and_then(|row| row.get::<String, _>(2))
+            .ok_or_else(|| AppError::NotFound {
+                resource: "trigger".to_string(),
+                id: format!("{schema}.{name}"),
+            })
+    }
+
     async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError> {
         let start = Instant::now();
         let result = self.execute_query(&format!("EXPLAIN {sql}"), None).await?;
         Ok(ExplainResult {
-            format: ExplainFormat::Json,
-            plan: serde_json::to_value(result.rows)?,
+            format: ExplainFormat::Table,
+            plan: serde_json::Value::Null,
+            result: Some(result),
             elapsed_ms: start.elapsed().as_millis() as u64,
         })
     }

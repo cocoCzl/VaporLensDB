@@ -110,14 +110,47 @@ async fn connects_queries_and_streams_sqlite() {
     assert!(summary.truncated);
     assert_eq!(row_count, 2);
 
+    let (empty_chunk_tx, mut empty_chunk_rx) = mpsc::channel(8);
+    let empty_summary = driver
+        .execute_query_stream(
+            "SELECT id, name FROM customers WHERE 1 = 0",
+            "sqlite-empty-stream-test",
+            2,
+            None,
+            empty_chunk_tx,
+        )
+        .await
+        .expect("stream empty sqlite query");
+    let empty_chunk = empty_chunk_rx
+        .recv()
+        .await
+        .expect("empty result must still send a metadata chunk")
+        .expect("sqlite empty metadata chunk");
+
+    assert_eq!(empty_summary.row_count, 0);
+    assert!(empty_chunk.rows.is_empty());
+    assert_eq!(
+        empty_chunk
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["id", "name"]
+    );
+
     let explain = driver
         .explain_query("SELECT * FROM customers WHERE account_id = 1")
         .await
         .expect("explain sqlite query");
     assert!(matches!(
         explain.format,
-        vapor_lens_db_lib::models::query_result::ExplainFormat::Json
+        vapor_lens_db_lib::models::query_result::ExplainFormat::Table
     ));
+    let explain_result = explain
+        .result
+        .expect("SQLite explain must preserve result columns");
+    assert!(!explain_result.columns.is_empty());
+    assert!(!explain_result.rows.is_empty());
 }
 
 #[tokio::test]

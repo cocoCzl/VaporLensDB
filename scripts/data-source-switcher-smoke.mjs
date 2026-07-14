@@ -119,6 +119,8 @@ includesAll(
     "activeTab.kind === 'dataSources'",
     'function DataSourcesManagementPanel()',
     '<ConnectionList mode="manager" />',
+    "t('connection.new')",
+    "t('connection.refresh')",
   ],
   'Data Sources management workspace tab',
 )

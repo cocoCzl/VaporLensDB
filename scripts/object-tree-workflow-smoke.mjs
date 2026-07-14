@@ -94,7 +94,7 @@ includesAll(
 includesAll(
   connectionForm,
   [
-    'requireExternalDriver: true',
+    'const validationError = validate(true)',
     "t('connectionForm.description.oracle')",
     "t('connectionForm.validation.missingJarReadiness')",
     "t('connectionForm.saveAndConnect')",
