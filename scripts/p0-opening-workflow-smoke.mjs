@@ -60,7 +60,6 @@ includesAll(
     "t('workbench.reuseSql')",
     "t('sql.history')",
     'Data Sources',
-    "t('workbench.searchObjects')",
     "t('workbench.newSqlTab')",
     '<SettingsWorkspacePanel />',
   ],

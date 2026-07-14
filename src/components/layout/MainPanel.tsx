@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Link, Loader2, LockKeyhole, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Link, Loader2, LockKeyhole, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DataGrid } from '@/components/grid/DataGrid'
@@ -99,6 +99,7 @@ export function MainPanel() {
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
   const [selectedSql, setSelectedSql] = useState('')
   const [editorLoaded, setEditorLoaded] = useState(false)
+  const [editorShouldFocus, setEditorShouldFocus] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
   const draftSaveTimer = useRef<number | null>(null)
@@ -702,6 +703,7 @@ export function MainPanel() {
               onChange={(sql) => updateTabSql(activeTab.id, sql)}
               onRun={execute}
               onSelectionChange={setSelectedSql}
+              autoFocus={editorShouldFocus}
             />
           </Suspense>
         ) : (
@@ -716,7 +718,10 @@ export function MainPanel() {
                 variant="secondary"
                 className="h-7"
                 onFocus={loadSqlEditor}
-                onClick={() => setEditorLoaded(true)}
+                onClick={() => {
+                  setEditorShouldFocus(true)
+                  setEditorLoaded(true)
+                }}
                 onPointerEnter={loadSqlEditor}
               >
                 {t('workbench.loadAdvancedEditor')}
@@ -727,6 +732,11 @@ export function MainPanel() {
               style={{ fontSize: editorFontSize, lineHeight: `${Math.max(18, editorFontSize + 7)}px` }}
               value={activeTab.sql}
               spellCheck={false}
+              onFocus={() => {
+                loadSqlEditor()
+                setEditorShouldFocus(true)
+                setEditorLoaded(true)
+              }}
               onChange={(event) => updateTabSql(activeTab.id, event.target.value)}
               onSelect={(event) => {
                 const target = event.currentTarget
@@ -885,7 +895,7 @@ function WorkbenchHome({
   const { t } = useTranslation()
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
   const statuses = useConnectionStore((state) => state.statuses)
-  const loading = useConnectionStore((state) => state.loading)
+  const busyConnectionIds = useConnectionStore((state) => state.busyConnectionIds)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
   const connectConnection = useConnectionStore((state) => state.connectConnection)
   const recentDataSourceIds = useConnectionStore((state) => state.recentDataSourceIds)
@@ -1003,21 +1013,6 @@ function WorkbenchHome({
                 )}
               </div>
             </section>
-            <button
-              type="button"
-              className="rounded-md border bg-card p-4 text-left transition-colors hover:bg-muted/45"
-              onClick={() => onFocusExplorer()}
-            >
-              <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
-                <Search className="size-4 text-primary" />
-                {t('workbench.searchObjects')}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {activeConnection
-                  ? t('workbench.focusObjectSearchHint')
-                  : t('workbench.selectDataSourceFirstHint')}
-              </div>
-            </button>
           </div>
           <aside className="min-w-0 overflow-hidden rounded-md border bg-card">
             <div className="flex items-center justify-between border-b px-4 py-3">
@@ -1043,6 +1038,7 @@ function WorkbenchHome({
               ) : (
                 recentConnections.map((connection) => {
                   const status = statuses[connection.id]?.status
+                  const busy = Boolean(busyConnectionIds[connection.id])
                   const target = workbenchConnectionTarget(connection)
                   return (
                     <div
@@ -1098,12 +1094,12 @@ function WorkbenchHome({
                             ? t('connection.connected')
                             : t('connection.connect')
                         }
-                        disabled={loading || statuses[connection.id]?.status === 'connected'}
+                        disabled={busy || statuses[connection.id]?.status === 'connected'}
                         onClick={() => {
                           void connectRecent(connection)
                         }}
                       >
-                        {loading ? <Loader2 className="animate-spin" /> : <Link />}
+                        {busy ? <Loader2 className="animate-spin" /> : <Link />}
                       </Button>
                     </div>
                   )

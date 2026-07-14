@@ -23,6 +23,7 @@ interface ConnectionState {
   statuses: Record<string, ConnectionStatus>
   activeConnectionId: string | null
   recentDataSourceIds: string[]
+  busyConnectionIds: Record<string, true>
   loading: boolean
   error: string | null
   loadConnections: () => Promise<void>
@@ -62,6 +63,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   statuses: {},
   activeConnectionId: null,
   recentDataSourceIds: readStoredRecentDataSourceIds(),
+  busyConnectionIds: {},
   loading: false,
   error: null,
   loadConnections: async () => {
@@ -90,7 +92,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   removeConnection: async (id) => {
-    set({ loading: true, error: null })
+    set((state) => ({
+      busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
+      error: null,
+    }))
     try {
       await deleteConnection(id)
       set((state) => ({
@@ -100,13 +105,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         ),
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
         recentDataSourceIds: forgetRecentDataSource(state.recentDataSourceIds, id),
-        loading: false,
       }))
       useMetadataStore.getState().clearConnection(id)
     } catch (error) {
-      set({ error: errorMessage(error), loading: false })
+      set({ error: errorMessage(error) })
       notifyError(error, i18n.t('notifications.deleteConnectionFailed'))
       throw error
+    } finally {
+      set((state) => ({ busyConnectionIds: clearConnectionBusy(state.busyConnectionIds, id) }))
     }
   },
   testConnectionInput: async (input) => {
@@ -129,14 +135,16 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   connectConnection: async (id) => {
-    set({ loading: true, error: null })
+    set((state) => ({
+      busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
+      error: null,
+    }))
     try {
       const status = await connect(id)
       set((state) => ({
         statuses: { ...state.statuses, [id]: status },
         activeConnectionId: id,
         recentDataSourceIds: rememberRecentDataSource(state.recentDataSourceIds, id),
-        loading: false,
       }))
     } catch (error) {
       const message = errorMessage(error)
@@ -151,27 +159,32 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           },
         },
         activeConnectionId: id,
-        loading: false,
       }))
       useMetadataStore.getState().clearConnection(id)
       notifyError(error, i18n.t('notifications.connectFailed'))
       throw error
+    } finally {
+      set((state) => ({ busyConnectionIds: clearConnectionBusy(state.busyConnectionIds, id) }))
     }
   },
   disconnectConnection: async (id) => {
-    set({ loading: true, error: null })
+    set((state) => ({
+      busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
+      error: null,
+    }))
     try {
       const status = await disconnect(id)
       set((state) => ({
         statuses: { ...state.statuses, [id]: status },
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
-        loading: false,
       }))
       useMetadataStore.getState().clearConnection(id)
     } catch (error) {
-      set({ error: errorMessage(error), loading: false })
+      set({ error: errorMessage(error) })
       notifyError(error, i18n.t('notifications.disconnectFailed'))
       throw error
+    } finally {
+      set((state) => ({ busyConnectionIds: clearConnectionBusy(state.busyConnectionIds, id) }))
     }
   },
   setConnections: (connections) => set({ connections }),
@@ -183,6 +196,16 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         : state.recentDataSourceIds,
     })),
 }))
+
+function markConnectionBusy(current: Record<string, true>, id: string): Record<string, true> {
+  return { ...current, [id]: true }
+}
+
+function clearConnectionBusy(current: Record<string, true>, id: string): Record<string, true> {
+  return Object.fromEntries(
+    Object.entries(current).filter(([connectionId]) => connectionId !== id),
+  )
+}
 
 function readStoredRecentDataSourceIds() {
   if (typeof window === 'undefined') {

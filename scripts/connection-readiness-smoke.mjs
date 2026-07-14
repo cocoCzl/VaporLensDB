@@ -72,7 +72,7 @@ includesAll(
     'connectionReadinessIssue(connection)',
     "? 'bg-amber-500'",
     "readinessIssue ? t('connection.notReady')",
-    'disabled={loading || Boolean(readinessIssue)}',
+    'disabled={busy || Boolean(readinessIssue)}',
     'Missing local JDBC JAR',
   ],
   'connection list readiness',
@@ -87,6 +87,9 @@ const store = read('src/stores/connectionStore.ts')
 includesAll(
   store,
   [
+    'busyConnectionIds: Record<string, true>',
+    'busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id)',
+    'busyConnectionIds: clearConnectionBusy(state.busyConnectionIds, id)',
     'saveConnection: (input: ConnectionInput) => Promise<ConnectionConfig>',
     'const saved = input.id ? await updateConnection(input) : await createConnection(input)',
     'return saved',

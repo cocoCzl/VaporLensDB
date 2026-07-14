@@ -108,7 +108,7 @@ function DataSourceHeader() {
     connections,
     statuses,
     activeConnectionId,
-    loading,
+    busyConnectionIds,
     loadConnections,
     connectConnection,
     disconnectConnection,
@@ -126,6 +126,7 @@ function DataSourceHeader() {
     ? statuses[activeConnection.id]?.status ?? 'disconnected'
     : 'disconnected'
   const connected = activeStatus === 'connected'
+  const activeBusy = activeConnection ? Boolean(busyConnectionIds[activeConnection.id]) : false
 
   async function toggleActiveConnection(event: MouseEvent) {
     event.stopPropagation()
@@ -188,10 +189,10 @@ function DataSourceHeader() {
                   size="icon-xs"
                   variant="ghost"
                   title={connected ? t('connection.disconnect') : t('connection.connect')}
-                  disabled={loading}
+                  disabled={activeBusy}
                   onClick={toggleActiveConnection}
                 >
-                  {loading ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
+                  {activeBusy ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
                 </Button>
                 <ConnectionDialog
                   connection={activeConnection}
@@ -220,7 +221,7 @@ function DataSourcesSelectorPanel() {
   const {
     connections,
     statuses,
-    loading,
+    busyConnectionIds,
     error,
     activeConnectionId,
     recentDataSourceIds,
@@ -249,6 +250,7 @@ function DataSourcesSelectorPanel() {
   const activeStatus = activeConnection
     ? statuses[activeConnection.id]?.status ?? 'disconnected'
     : 'disconnected'
+  const activeBusy = activeConnection ? Boolean(busyConnectionIds[activeConnection.id]) : false
   const filteredConnections = filterConnections(connections, query)
   const recentConnections = recentDataSourceIds
     .map((id) => connections.find((connection) => connection.id === id))
@@ -351,7 +353,7 @@ function DataSourcesSelectorPanel() {
                 size="icon-xs"
                 variant="secondary"
                 title={activeStatus === 'connected' ? t('connection.disconnect') : t('connection.connect')}
-                disabled={loading}
+                disabled={activeBusy}
                 onClick={() => {
                   if (activeStatus === 'connected') {
                     void handleDisconnect(activeConnection)
@@ -360,7 +362,7 @@ function DataSourcesSelectorPanel() {
                   }
                 }}
               >
-                {loading ? <Loader2 className="animate-spin" /> : activeStatus === 'connected' ? <Unplug /> : <Link />}
+                {activeBusy ? <Loader2 className="animate-spin" /> : activeStatus === 'connected' ? <Unplug /> : <Link />}
               </Button>
               <ConnectionDialog
                 connection={activeConnection}
@@ -411,7 +413,7 @@ function DataSourcesSelectorPanel() {
                     connection={connection}
                     status={statuses[connection.id]?.status ?? 'disconnected'}
                     selected={connection.id === activeConnectionId}
-                    loading={loading}
+                    busy={Boolean(busyConnectionIds[connection.id])}
                     onSelect={() => handleSelect(connection)}
                     onConnect={() => {
                       void handleConnect(connection)
@@ -432,7 +434,7 @@ function DataSourcesSelectorPanel() {
                     connection={connection}
                     status={statuses[connection.id]?.status ?? 'disconnected'}
                     selected={connection.id === activeConnectionId}
-                    loading={loading}
+                    busy={Boolean(busyConnectionIds[connection.id])}
                     onSelect={() => handleSelect(connection)}
                     onConnect={() => {
                       void handleConnect(connection)
@@ -486,7 +488,7 @@ function ConnectionSwitcherRow({
   connection,
   status,
   selected,
-  loading,
+  busy,
   onSelect,
   onConnect,
   onDisconnect,
@@ -495,7 +497,7 @@ function ConnectionSwitcherRow({
   connection: ConnectionConfig
   status: string
   selected: boolean
-  loading: boolean
+  busy: boolean
   onSelect: () => void
   onConnect: () => void
   onDisconnect: () => void
@@ -537,10 +539,10 @@ function ConnectionSwitcherRow({
         size="icon-xs"
         variant="ghost"
         title={connected ? t('connection.disconnect') : t('connection.connect')}
-        disabled={loading}
+        disabled={busy}
         onClick={connected ? onDisconnect : onConnect}
       >
-        {loading ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
+        {busy ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
       </Button>
       <ConnectionDialog
         connection={connection}

@@ -11,6 +11,7 @@ export function ConnectionList({ mode = 'sidebar' }: { mode?: 'sidebar' | 'manag
   const {
     connections,
     statuses,
+    busyConnectionIds,
     loading,
     error,
     loadConnections,
@@ -111,7 +112,7 @@ export function ConnectionList({ mode = 'sidebar' }: { mode?: 'sidebar' | 'manag
                         connection={connection}
                         status={statuses[connection.id]?.status ?? 'disconnected'}
                         selected={connection.id === activeConnectionId}
-                        loading={loading}
+                        busy={Boolean(busyConnectionIds[connection.id])}
                         onSelect={() => selectConnection(connection.id)}
                         onConnect={() => {
                           if (!connectionReadinessIssue(connection)) {
@@ -137,7 +138,7 @@ function ConnectionCard({
   connection,
   status,
   selected,
-  loading,
+  busy,
   onSelect,
   onConnect,
   onDisconnect,
@@ -147,7 +148,7 @@ function ConnectionCard({
   connection: ConnectionConfig
   status: string
   selected: boolean
-  loading: boolean
+  busy: boolean
   onSelect: () => void
   onConnect: () => void
   onDisconnect: () => void
@@ -218,7 +219,7 @@ function ConnectionCard({
           size="icon-xs"
           variant="ghost"
           title={connected ? t('connection.disconnect') : t('connection.connect')}
-          disabled={loading || Boolean(readinessIssue)}
+          disabled={busy || Boolean(readinessIssue)}
           onClick={(event) => {
             event.stopPropagation()
             if (connected) {
@@ -228,7 +229,7 @@ function ConnectionCard({
             }
           }}
         >
-          {connected ? <Link2Off /> : <Link />}
+          {busy ? <RefreshCw className="animate-spin" /> : connected ? <Link2Off /> : <Link />}
         </Button>
         <ConnectionDialog
           connection={connection}
@@ -248,7 +249,7 @@ function ConnectionCard({
           size="icon-xs"
           variant="ghost"
           title={t('connection.delete')}
-          disabled={loading}
+          disabled={busy}
           onClick={(event) => {
             event.stopPropagation()
             onDelete()

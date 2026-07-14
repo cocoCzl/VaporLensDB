@@ -6,23 +6,31 @@ import type { TableInfo } from '@/types/metadata'
 
 const SQL_KEYWORDS = [
   'SELECT',
+  'DISTINCT',
   'FROM',
   'WHERE',
   'JOIN',
   'LEFT JOIN',
   'RIGHT JOIN',
   'INNER JOIN',
+  'FULL JOIN',
+  'CROSS JOIN',
+  'ON',
   'GROUP BY',
   'ORDER BY',
   'HAVING',
   'LIMIT',
   'OFFSET',
   'INSERT INTO',
+  'VALUES',
   'UPDATE',
+  'SET',
   'DELETE FROM',
   'CREATE TABLE',
   'ALTER TABLE',
   'DROP TABLE',
+  'CREATE VIEW',
+  'DROP VIEW',
   'WITH',
   'EXPLAIN',
   'RETURNING',
@@ -32,6 +40,12 @@ const SQL_KEYWORDS = [
   'NULL',
   'IS NULL',
   'IS NOT NULL',
+  'AS',
+  'CASE',
+  'WHEN',
+  'THEN',
+  'ELSE',
+  'END',
 ]
 
 type MonacoApi = typeof Monaco
@@ -59,7 +73,7 @@ export function registerSqlCompletionProvider(
       const range = completionRange(monaco, model, position)
       const context = completionContext(model, position)
       const suggestions: CompletionItem[] = [
-        ...keywordSuggestions(monaco, range),
+        ...keywordSuggestions(monaco, range, driverType),
         ...(await metadataSuggestions(
           monaco,
           range,
@@ -76,13 +90,26 @@ export function registerSqlCompletionProvider(
   } satisfies CompletionProvider)
 }
 
-function keywordSuggestions(monaco: MonacoApi, range: Monaco.IRange): CompletionItem[] {
-  return SQL_KEYWORDS.map((keyword) => ({
-    label: keyword,
-    kind: monaco.languages.CompletionItemKind.Keyword,
-    insertText: keyword,
-    range,
-  }))
+function keywordSuggestions(
+  monaco: MonacoApi,
+  range: Monaco.IRange,
+  driverType: DriverType,
+): CompletionItem[] {
+  return SQL_KEYWORDS.map((keyword) => {
+    const formattedKeyword = formatKeywordForDriver(keyword, driverType)
+    return {
+      label: formattedKeyword,
+      kind: monaco.languages.CompletionItemKind.Keyword,
+      insertText: formattedKeyword,
+      range,
+    }
+  })
+}
+
+function formatKeywordForDriver(keyword: string, driverType: DriverType) {
+  return driverType === 'postgres' || driverType === 'mysql'
+    ? keyword.toLocaleLowerCase('en-US')
+    : keyword
 }
 
 async function metadataSuggestions(

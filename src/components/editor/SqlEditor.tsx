@@ -20,6 +20,7 @@ interface SqlEditorProps {
   onRun: () => void
   onSelectionChange?: (value: string) => void
   readOnly?: boolean
+  autoFocus?: boolean
 }
 
 export function SqlEditor({
@@ -32,6 +33,7 @@ export function SqlEditor({
   onRun,
   onSelectionChange,
   readOnly = false,
+  autoFocus = false,
 }: SqlEditorProps) {
   const connectionIdRef = useRef(connectionId)
   const schemaRef = useRef(schema)
@@ -63,6 +65,9 @@ export function SqlEditor({
   }, [showSystemObjects])
 
   const handleMount: OnMount = (instance, monaco) => {
+    if (autoFocus) {
+      instance.focus()
+    }
     if (!readOnly) {
       instance.addCommand(MONACO_CTRL_CMD | MONACO_ENTER, onRun)
     }
@@ -96,6 +101,8 @@ export function SqlEditor({
         automaticLayout: true,
         wordWrap: 'on',
         tabSize: 2,
+        quickSuggestions: { other: true, comments: false, strings: false },
+        suggestOnTriggerCharacters: true,
         readOnly,
         domReadOnly: readOnly,
       }}
