@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Activity, Loader2, Play, Square } from 'lucide-react'
-import { ThemeToggle } from '@/components/common/ThemeToggle'
+import { Activity, AlertCircle, Database, Loader2, Play, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -13,6 +12,7 @@ import {
 import { useQuery } from '@/hooks/useQuery'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
+import { useMetadataStore } from '@/stores/metadataStore'
 import { useTaskStore } from '@/stores/taskStore'
 import type { DriverType } from '@/types/connection'
 import type { TaskInfo } from '@/types/task'
@@ -23,21 +23,78 @@ interface StatusBarProps {
 
 export function StatusBar({ backendStatus }: StatusBarProps) {
   const { t } = useTranslation()
+  const healthy = backendStatus.startsWith('ok')
 
   return (
-    <footer className="flex h-6 items-center justify-between border-t bg-muted/70 px-2 text-xs text-muted-foreground">
-      <span title={t('status.backendHealthTitle')}>{formatBackendStatus(backendStatus, t)}</span>
-      <div className="flex items-center gap-1">
+    <footer className="flex h-6 items-center justify-between gap-2 border-t ide-toolbar px-2 text-[11px] text-muted-foreground">
+      <CurrentDataSourceStatus />
+      <div className="flex min-w-0 items-center gap-1">
+        {!healthy && (
+          <span
+            className="inline-flex max-w-44 items-center gap-1 truncate rounded px-1.5 text-destructive hover:bg-destructive/10"
+            title={`${t('status.backendHealthTitle')} · ${formatBackendStatus(backendStatus, t)}`}
+          >
+            <AlertCircle className="size-3 shrink-0" />
+            <span className="truncate">{formatBackendStatus(backendStatus, t)}</span>
+          </span>
+        )}
         <TaskSessionStatus />
-        <span className="mx-1 h-3 w-px bg-border" />
-        <span>{t('settings.theme.label')}</span>
-        <ThemeToggle />
       </div>
     </footer>
   )
 }
 
+function CurrentDataSourceStatus() {
+  const { t } = useTranslation()
+  const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
+  const connections = useConnectionStore((state) => state.connections)
+  const statuses = useConnectionStore((state) => state.statuses)
+  const catalogSchemaPath = useMetadataStore((state) =>
+    activeConnectionId ? state.catalogSchemaPaths[activeConnectionId] : null,
+  )
+  const connection = connections.find((candidate) => candidate.id === activeConnectionId) ?? null
+  const connectionStatus = connection
+    ? statuses[connection.id]?.status ?? 'disconnected'
+    : 'disconnected'
+
+  if (!connection) {
+    return (
+      <span className="inline-flex min-w-0 items-center gap-1.5 truncate" title={t('connection.disconnected')}>
+        <Database className="size-3 shrink-0 text-muted-foreground/70" />
+        <span className="truncate">{t('connection.disconnected')}</span>
+      </span>
+    )
+  }
+
+  const context = [catalogSchemaPath?.database, catalogSchemaPath?.schema]
+    .filter((value): value is string => Boolean(value))
+    .join(' / ')
+
+  return (
+    <span
+      className="inline-flex min-w-0 items-center gap-1.5 truncate"
+      title={`${connection.name} · ${connection.driverType}${context ? ` · ${context}` : ''}`}
+    >
+      <span
+        className={[
+          'size-1.5 shrink-0 rounded-full',
+          connectionStatus === 'connected'
+            ? 'bg-emerald-500'
+            : connectionStatus === 'failed'
+              ? 'bg-destructive'
+              : connectionStatus === 'connecting'
+                ? 'bg-amber-500'
+                : 'bg-muted-foreground/45',
+        ].join(' ')}
+      />
+      <span className="max-w-32 truncate font-medium text-foreground/85">{connection.name}</span>
+      {context && <span className="hidden max-w-72 truncate text-muted-foreground min-[900px]:inline">{context}</span>}
+    </span>
+  )
+}
+
 function TaskSessionStatus() {
+  const { t } = useTranslation()
   const tasks = useTaskStore((state) => state.tasks)
   const cancelTask = useTaskStore((state) => state.cancel)
   const startNoop = useTaskStore((state) => state.startNoop)
@@ -65,7 +122,7 @@ function TaskSessionStatus() {
     <Sheet>
       <SheetTrigger
         className="flex h-5 max-w-80 items-center gap-1 rounded px-1.5 text-xs hover:bg-accent hover:text-accent-foreground"
-        title="Tasks and sessions"
+        title={t('status.tasksAndSessions')}
       >
         {activeTasks.length > 0 || runningQueryCount > 0 ? (
           <Loader2 className="size-3 animate-spin" />
@@ -73,20 +130,28 @@ function TaskSessionStatus() {
           <Activity className="size-3" />
         )}
         <span className="truncate">
-          Sessions {runtimeSessions.length} · Queries {runningQueryCount} · Tasks {activeTasks.length}
+          {t('status.activitySummary', {
+            sessions: runtimeSessions.length,
+            queries: runningQueryCount,
+            tasks: activeTasks.length,
+          })}
         </span>
       </SheetTrigger>
       <SheetContent side="bottom" className="max-h-[48vh] gap-0 p-0" showCloseButton>
         <SheetHeader className="border-b px-4 py-3">
-          <SheetTitle>Tasks and Sessions</SheetTitle>
+          <SheetTitle>{t('status.tasksAndSessions')}</SheetTitle>
           <SheetDescription>
-            {runtimeSessions.length} sessions · {runningQueryCount} running queries · {activeTasks.length} active tasks
+            {t('status.activityDetail', {
+              sessions: runtimeSessions.length,
+              queries: runningQueryCount,
+              tasks: activeTasks.length,
+            })}
           </SheetDescription>
         </SheetHeader>
         <div className="grid min-h-0 flex-1 gap-4 overflow-auto p-4 md:grid-cols-2">
           <section className="min-w-0">
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase text-muted-foreground">Background Tasks</h3>
+              <h3 className="text-xs font-semibold uppercase text-muted-foreground">{t('status.backgroundTasks')}</h3>
               <Button
                 type="button"
                 size="xs"
@@ -94,11 +159,11 @@ function TaskSessionStatus() {
                 onClick={() => startNoop({ title: 'No-op task', steps: 5, stepDelayMs: 180 })}
               >
                 <Play className="size-3.5" />
-                Test task
+                {t('status.testTask')}
               </Button>
             </div>
             {tasks.length === 0 ? (
-              <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">No tasks recorded.</div>
+              <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">{t('status.noTasks')}</div>
             ) : (
               <div className="space-y-2">
                 {tasks.slice(0, 12).map((task) => (
@@ -108,10 +173,10 @@ function TaskSessionStatus() {
             )}
           </section>
           <section className="min-w-0">
-            <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Session Activity</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">{t('status.sessionActivity')}</h3>
             {runtimeSessions.length === 0 ? (
               <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">
-                No active sessions.
+                {t('status.noActiveSessions')}
               </div>
             ) : (
               <div className="space-y-2">
@@ -129,7 +194,7 @@ function TaskSessionStatus() {
                       <div className="grid gap-1 p-2">
                         {runningTabs.length === 0 ? (
                           <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">
-                            No running queries.
+                            {t('sessions.noRunningQueries')}
                           </div>
                         ) : (
                           runningTabs.map((tab) => (
@@ -154,7 +219,7 @@ function TaskSessionStatus() {
                                 type="button"
                                 size="icon-xs"
                                 variant="ghost"
-                                title={canCancel ? 'Cancel query' : 'Cancel unsupported'}
+                                title={canCancel ? t('editor.cancel') : t('sessions.cancelUnsupported')}
                                 disabled={!canCancel || !tab.runningQueryId}
                                 onClick={() => {
                                   if (tab.runningQueryId) {

@@ -39,11 +39,13 @@ includesAll(
     "searchInputRef.current?.focus()",
     'filterConnections(connections, query)',
     'recentDataSourceIds',
+    'favoriteDataSourceIds',
     '<ConnectionSwitcherSection title={t(\'connection.recent\')}>',
+    '<ConnectionSwitcherSection title={t(\'connection.favorites\')}>',
     'recentConnections.map((connection) =>',
     '!recentConnections.some((recentConnection) => recentConnection.id === connection.id)',
-    'groupConnectionsByEnvironment(',
-    'environmentSortKey(',
+    'groupConnections(',
+    'groupSortKey(',
     "t('connection.ungrouped')",
     'connectionTargetSummary(connection)',
     'setActiveConnection(connection.id)',
@@ -62,7 +64,6 @@ includesAll(
     "tabs.find((tab) => tab.kind === 'dataSources')",
     "kind: 'dataSources'",
     "t('connection.manageDataSources')",
-    'isProductionConnection(activeConnection)',
     'runtimeStatusLabel(activeStatus, t)',
     "t('connection.searchDataSources')",
     "t('connection.noMatches')",
@@ -83,16 +84,22 @@ excludesAll(
   'Explorer default surface',
 )
 
+excludesAll(
+  sidebar,
+  ['EnvironmentBadge', 'isProductionConnection', 'environmentSortKey', 'colorTag'],
+  'neutral Data Source semantics',
+)
+
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
 includesAll(
   zh,
-  ['"connected": "已连接"', '"connecting": "连接中"', '"failed": "连接失败"', '"searchDataSources": "搜索数据源"', '"noMatches": "没有匹配的数据源"', '"recent": "最近"', '"allDataSources": "全部数据源"', '"manageDataSources": "管理数据源"'],
+  ['"connected": "已连接"', '"connecting": "连接中"', '"failed": "连接失败"', '"searchDataSources": "搜索数据源"', '"noMatches": "没有匹配的数据源"', '"recent": "最近"', '"favorites": "收藏"', '"favorite": "加入收藏"', '"unfavorite": "取消收藏"', '"allDataSources": "全部数据源"', '"manageDataSources": "管理数据源"'],
   'Chinese Data Source switcher locale',
 )
 includesAll(
   en,
-  ['"connected": "Connected"', '"connecting": "Connecting"', '"failed": "Connection failed"', '"searchDataSources": "Search Data Sources"', '"noMatches": "No matching Data Sources"', '"recent": "Recent"', '"allDataSources": "All Data Sources"', '"manageDataSources": "Manage Data Sources"'],
+  ['"connected": "Connected"', '"connecting": "Connecting"', '"failed": "Connection failed"', '"searchDataSources": "Search Data Sources"', '"noMatches": "No matching Data Sources"', '"recent": "Recent"', '"favorites": "Favorites"', '"favorite": "Add to favorites"', '"unfavorite": "Remove from favorites"', '"allDataSources": "All Data Sources"', '"manageDataSources": "Manage Data Sources"'],
   'English Data Source switcher locale',
 )
 
@@ -103,14 +110,18 @@ includesAll(
     'RECENT_DATA_SOURCES_STORAGE_KEY',
     'MAX_RECENT_DATA_SOURCES',
     'recentDataSourceIds',
+    'favoriteDataSourceIds',
     'readStoredRecentDataSourceIds()',
+    'readStoredFavoriteDataSourceIds()',
     'rememberRecentDataSource(state.recentDataSourceIds, id)',
     'currentIds.filter((currentId) => currentId !== id)',
     'forgetRecentDataSource(state.recentDataSourceIds, id)',
+    'toggleFavoriteDataSource: (id)',
+    'toggleFavoriteDataSource(state.favoriteDataSourceIds, id)',
+    'forgetFavoriteDataSource(state.favoriteDataSourceIds, id)',
   ],
   'recent Data Source persistence',
 )
-assert(!sidebar.toLowerCase().includes('favorite'), 'P0 switcher should not introduce favorites')
 
 const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(

@@ -1,156 +1,85 @@
 # VaporLensDB
 
-VaporLensDB is a Tauri 2 + Rust + React database IDE. It focuses on a fast Object Tree, SQL editing, read-only inspection workflows, and practical database operations without becoming a heavy all-purpose administration console.
+[简体中文](README.zh-CN.md)
 
-Current version: `0.6.1`.
+VaporLensDB is a lightweight cross-platform database IDE built with Tauri 2,
+Rust, and React. It helps developers and data engineers connect to databases,
+browse objects, run SQL, and inspect results without becoming a heavy
+administration console.
 
-## Current Status
+Current version: **0.7.1**
 
-The v1 usable loop, Object Tree and IDE workflow, and product optimization pass are complete. `docs/TESTING.md` tracks the current verification commands.
+## Download
 
-Supported connection paths:
+Download the installer for your platform from
+[GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest).
 
-- PostgreSQL: native Rust driver for connection management, SQL execution, metadata browsing, DDL, completion, query cancel, and live integration tests.
-- MySQL: native Rust driver for connection management, SQL execution, metadata browsing, DDL, completion, and live integration tests.
-- Oracle: JDBC support with user-provided `ojdbc` JAR for connection, SQL execution, Object Tree metadata, DDL/source, and completion.
-- SQLite: native file-based connections, SQL execution, metadata browsing, and local integration tests.
-- SQL Server: native `tiberius` path for connection, SQL execution, metadata browsing, DDL, and Explain where supported.
-- Custom JDBC: user-defined JDBC runtime support through the driver manager.
+| Platform | Recommended download | Notes |
+| --- | --- | --- |
+| macOS | `.dmg` | Apple Silicon and Intel builds are released separately when available. |
+| Windows | `.msi` | Use the NSIS `.exe` installer when MSI installation is restricted. |
 
-Completed workflows include:
+See the [installation and first-use guide](docs/INSTALL.md) for platform
+installation steps, SHA-256 verification, and Oracle/JDBC setup.
 
-- Data Sources, SQL workspace, Sessions, and Settings shell.
-- Lazy Object Tree with catalog/schema linkage, system-object filtering, search, keyboard navigation, right-click actions, and table/view quick actions.
-- Read-only Data tabs with pagination, filtering, sorting, generated SQL, and CSV export.
-- Structure, DDL, Source, Object Inspector, and ER Diagram workspaces.
-- Background task manager for long-running export/import work with progress and cancellation.
-- Read-only table data browsing with CSV table import/export tasks.
-- SSH tunnel support for password and private-key authentication.
-- DBeaver configuration import preview/import.
-- Query history with status/connection filtering, long SQL preview, and error detail preview.
-- Diagnostics package export with SQL redaction by default.
-- Complete English/Chinese locale key coverage for the main UI flows.
+## What it supports
 
-Out of current scope:
+- PostgreSQL, MySQL, SQLite, and SQL Server through native Rust drivers.
+- Oracle through a local, user-provided `ojdbc` JAR.
+- Custom JDBC drivers through user-provided JARs, driver classes, and JDBC URLs.
+- A searchable Object Tree, SQL editor, compact read-only result grid, query
+  history, import/export tasks, SSH tunnels, diagnostics export, and
+  English/Chinese UI switching.
 
-- ODBC support has been removed from the product scope.
-- Workspace/project isolation is deferred.
-- Full configurable dangerous-SQL policy UI is intentionally not planned; the app keeps the lightweight confirmation model.
+The result grid is intentionally read-only. ODBC and a full configurable
+dangerous-SQL policy are outside the current scope.
 
-## Development
+## Quick start
 
-Install dependencies:
+1. Download and install VaporLensDB for macOS or Windows from
+   [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest).
+2. Open **New Connection**, choose a database type, enter the connection
+   details, then select **Test** and **Save & Connect**.
+3. Browse schemas and tables in the Object Tree, or create a SQL tab and run a
+   query. Change the interface language or theme in **Settings**.
+
+Oracle and custom JDBC connections require a local JDBC driver JAR. The app
+guides you to add it when creating the connection.
+
+## Build from source
+
+Source builds require Node.js 22, pnpm 10, Rust stable, and JDK 21.
 
 ```bash
 pnpm install
-```
-
-Run the frontend only:
-
-```bash
-pnpm dev
-```
-
-Run the Tauri desktop app:
-
-```bash
 pnpm tauri dev
 ```
 
-Build the frontend:
-
-```bash
-pnpm build
-```
-
-Run lint:
-
-```bash
-pnpm lint
-```
-
-Run Rust tests:
-
-```bash
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-Validate and package the desktop app:
+Run the release checks before packaging:
 
 ```bash
 ./build.sh check
-./build.sh mac
 ```
 
-`./build.sh check` is the release gate. It builds the JDBC bridge and runs frontend lint, frontend build, Rust clippy with warnings denied, and Rust tests. GitHub Actions runs the same default verification on pushes and pull requests to `main` or `master`.
-
-macOS artifacts are written to:
-
-```text
-src-tauri/target/release/bundle/macos/VaporLensDB.app
-src-tauri/target/release/bundle/dmg/*.dmg
-```
-
-## Smoke Tests
-
-The project uses focused Node smoke scripts for frontend and contract regressions. Common commands:
+Build on the target operating system:
 
 ```bash
-pnpm test:v1-ui-scope
-pnpm test:object-tree-workflow
-pnpm test:driver-manager
-pnpm test:result-export
-pnpm test:table-import-export
-pnpm test:data-grid-read-only
-pnpm test:er-diagram
-pnpm test:object-inspector-workspace
-pnpm test:session-management
-pnpm test:dbeaver-import
-pnpm test:i18n
-pnpm test:diagnostics-export
-pnpm test:query-history-workflow
-pnpm test:object-tree-action-discoverability
-pnpm test:p0-opening-workflow
-pnpm test:p1-read-only-result-workflow
-pnpm test:p2-object-understanding-workflow
-pnpm test:command-contracts
+./build.sh mac       # macOS: .app and .dmg
+./build.sh windows   # Windows: .msi and NSIS .exe
 ```
 
-`docs/TESTING.md` contains the authoritative full verification command list.
+Detailed prerequisites, artifact locations, checksums, and manual GitHub
+Release publishing are in the [packaging guide](docs/PACKAGING.md).
 
-## Live Integration Tests
+## Documentation
 
-Ignored integration tests require real database endpoints and are not part of default CI. Keep credentials in an untracked `.env` or your shell session; `.env.example` contains placeholder names only.
+- [Installation and first use](docs/INSTALL.md)
+- [Packaging and publishing](docs/PACKAGING.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Testing](docs/TESTING.md)
+- [JDBC metadata SQL](docs/JDBC_METADATA_SQL.md)
+- [Product and architecture design](docs/VaporLensDB-Design.md)
+- [Technical selection](docs/VaporLensDB-Technical-Selection.md)
 
-```bash
-TEST_PG_JDBC_URL='jdbc:postgresql://<postgres-host>:5432/<postgres-database>' \
-TEST_PG_USER='<postgres-user>' \
-TEST_PG_PASSWORD='<postgres-password>' \
-cargo test --manifest-path src-tauri/Cargo.toml --test postgres_driver -- --ignored
-
-TEST_MYSQL_JDBC_URL='jdbc:mysql://<mysql-host>:3306/<mysql-database>' \
-TEST_MYSQL_USER='<mysql-user>' \
-TEST_MYSQL_PASSWORD='<mysql-password>' \
-cargo test --manifest-path src-tauri/Cargo.toml --test mysql_driver -- --ignored
-
-TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//<oracle-host>:1521/<oracle-service>' \
-TEST_ORACLE_USER='<oracle-user>' \
-TEST_ORACLE_PASSWORD='<oracle-password>' \
-TEST_ORACLE_JDBC_DRIVER_PATH='/path/to/ojdbc11.jar' \
-cargo test --manifest-path src-tauri/Cargo.toml --test oracle_jdbc_driver -- --ignored
-```
-
-The latest recorded live verification passed against PostgreSQL, MySQL, and Oracle; see `docs/TESTING.md` for exact status.
-
-## Important Documents
-
-- `CONTEXT.md`: terminology and project context.
-- `CHANGELOG.md`: public version history from the first public-ready snapshot.
-- `CONTRIBUTING.md`: setup, verification, and contribution expectations.
-- `SECURITY.md`: security reporting and sensitive-data handling.
-- `docs/TESTING.md`: release gates, smoke tests, live integration tests, and sensitive-data checks.
-- `docs/JDBC_METADATA_SQL.md`: JDBC driver metadata SQL format and Oracle/PostgreSQL/MySQL examples.
-- `docs/PRD-object-tree-and-ide-workflow.md`: Object Tree and IDE workflow product requirements.
-- `docs/VaporLensDB-Design.md`: product and architecture design.
-- `docs/VaporLensDB-Technical-Selection.md`: technical selection rationale.
-- `docs/adr/`: architecture decision records.
+Product requirement documents are retained for project history in `docs/`.

@@ -16,6 +16,7 @@ import { useUiStore } from '@/stores/uiStore'
 import type { ConnectionConfig, ConnectionInput, ConnectionStatus } from '@/types/connection'
 
 const RECENT_DATA_SOURCES_STORAGE_KEY = 'vaporlensdb.recentDataSources'
+const FAVORITE_DATA_SOURCES_STORAGE_KEY = 'vaporlensdb.favoriteDataSources'
 const MAX_RECENT_DATA_SOURCES = 6
 
 interface ConnectionState {
@@ -23,6 +24,7 @@ interface ConnectionState {
   statuses: Record<string, ConnectionStatus>
   activeConnectionId: string | null
   recentDataSourceIds: string[]
+  favoriteDataSourceIds: string[]
   busyConnectionIds: Record<string, true>
   loading: boolean
   error: string | null
@@ -34,6 +36,7 @@ interface ConnectionState {
   disconnectConnection: (id: string) => Promise<void>
   setConnections: (connections: ConnectionConfig[]) => void
   setActiveConnection: (id: string | null) => void
+  toggleFavoriteDataSource: (id: string) => void
 }
 
 function errorMessage(error: unknown) {
@@ -63,6 +66,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   statuses: {},
   activeConnectionId: null,
   recentDataSourceIds: readStoredRecentDataSourceIds(),
+  favoriteDataSourceIds: readStoredFavoriteDataSourceIds(),
   busyConnectionIds: {},
   loading: false,
   error: null,
@@ -73,7 +77,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         listConnections(),
         listConnectionStatuses(),
       ])
-      set({ connections, statuses: indexStatuses(statuses), loading: false })
+      set((state) => ({
+        connections,
+        statuses: indexStatuses(statuses),
+        favoriteDataSourceIds: retainKnownDataSourceIds(state.favoriteDataSourceIds, connections),
+        loading: false,
+      }))
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
       notifyError(error, i18n.t('notifications.loadConnectionsFailed'))
@@ -105,6 +114,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         ),
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
         recentDataSourceIds: forgetRecentDataSource(state.recentDataSourceIds, id),
+        favoriteDataSourceIds: forgetFavoriteDataSource(state.favoriteDataSourceIds, id),
       }))
       useMetadataStore.getState().clearConnection(id)
     } catch (error) {
@@ -196,6 +206,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         ? rememberRecentDataSource(state.recentDataSourceIds, id)
         : state.recentDataSourceIds,
     })),
+  toggleFavoriteDataSource: (id) =>
+    set((state) => ({
+      favoriteDataSourceIds: toggleFavoriteDataSource(state.favoriteDataSourceIds, id),
+    })),
 }))
 
 function markConnectionBusy(current: Record<string, true>, id: string): Record<string, true> {
@@ -223,6 +237,21 @@ function readStoredRecentDataSourceIds() {
   }
 }
 
+function readStoredFavoriteDataSourceIds() {
+  if (typeof window === 'undefined') {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(FAVORITE_DATA_SOURCES_STORAGE_KEY) ?? '[]')
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
 function rememberRecentDataSource(currentIds: string[], id: string) {
   const next = [id, ...currentIds.filter((currentId) => currentId !== id)].slice(
     0,
@@ -238,6 +267,33 @@ function forgetRecentDataSource(currentIds: string[], id: string) {
   const next = currentIds.filter((currentId) => currentId !== id)
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(RECENT_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
+  }
+  return next
+}
+
+function toggleFavoriteDataSource(currentIds: string[], id: string) {
+  const next = currentIds.includes(id)
+    ? currentIds.filter((currentId) => currentId !== id)
+    : [id, ...currentIds]
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(FAVORITE_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
+  }
+  return next
+}
+
+function forgetFavoriteDataSource(currentIds: string[], id: string) {
+  const next = currentIds.filter((currentId) => currentId !== id)
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(FAVORITE_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
+  }
+  return next
+}
+
+function retainKnownDataSourceIds(ids: string[], connections: ConnectionConfig[]) {
+  const knownIds = new Set(connections.map((connection) => connection.id))
+  const next = ids.filter((id) => knownIds.has(id))
+  if (next.length !== ids.length && typeof window !== 'undefined') {
+    window.localStorage.setItem(FAVORITE_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
   }
   return next
 }

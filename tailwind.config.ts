@@ -60,11 +60,33 @@ const config: Config = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        popover: {
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+      },
+      fontFamily: {
+        sans: [
+          'Geist Variable',
+          'PingFang SC',
+          'Microsoft YaHei UI',
+          'ui-sans-serif',
+          'system-ui',
+          'sans-serif',
+        ],
+        mono: [
+          'JetBrains Mono',
+          'SFMono-Regular',
+          'Cascadia Code',
+          'Roboto Mono',
+          'Consolas',
+          'monospace',
+        ],
       },
     },
   },

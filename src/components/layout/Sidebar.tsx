@@ -11,13 +11,14 @@ import {
   Plus,
   Search,
   Settings,
+  Star,
   Square,
   TerminalSquare,
   Trash2,
   Unplug,
   X,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { Button } from '@/components/ui/button'
@@ -40,12 +41,25 @@ export function Sidebar() {
   const { t } = useTranslation()
   const sidebarView = useUiStore((state) => state.sidebarView)
   const setSidebarView = useUiStore((state) => state.setSidebarView)
+  const sidebarWidth = useUiStore((state) => state.sidebarWidth)
+  const setSidebarWidth = useUiStore((state) => state.setSidebarWidth)
+  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed)
+  const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed)
+  const [compactViewport, setCompactViewport] = useState(false)
   const tabs = useEditorStore((state) => state.tabs)
   const activeTabId = useEditorStore((state) => state.activeTabId)
   const addTab = useEditorStore((state) => state.addTab)
   const setActiveTab = useEditorStore((state) => state.setActiveTab)
   const settingsTab = tabs.find((tab) => tab.kind === 'settings')
   const settingsActive = settingsTab?.id === activeTabId
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 960px)')
+    const update = () => setCompactViewport(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
 
   function openSettings() {
     if (settingsTab) {
@@ -62,16 +76,56 @@ export function Sidebar() {
     setSidebarView('explorer')
   }
 
+  function toggleExplorer() {
+    if (sidebarCollapsed) {
+      setSidebarCollapsed(false)
+      setSidebarView('explorer')
+      return
+    }
+
+    if (sidebarView === 'explorer') {
+      setSidebarCollapsed(true)
+      return
+    }
+
+    setSidebarView('explorer')
+  }
+
+  function startResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (sidebarCollapsed) return
+    event.preventDefault()
+
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    const previousCursor = document.body.style.cursor
+    document.body.style.cursor = 'col-resize'
+
+    const onMove = (moveEvent: PointerEvent) => {
+      setSidebarWidth(startWidth + moveEvent.clientX - startX)
+    }
+    const stopResize = () => {
+      document.body.style.cursor = previousCursor
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', stopResize)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', stopResize, { once: true })
+  }
+
   return (
-    <aside className="flex w-[348px] shrink-0 border-r bg-card">
-      <nav className="flex w-12 flex-col items-center gap-1 border-r bg-muted/45 py-2">
+    <aside
+      className="ide-chrome relative flex shrink-0 border-r"
+      style={{ width: sidebarCollapsed ? 40 : compactViewport ? Math.min(sidebarWidth, 232) : sidebarWidth }}
+    >
+      <nav className="flex w-10 shrink-0 flex-col items-center gap-1 border-r bg-muted/25 py-1.5">
         {RAIL_ITEMS.map((item) => (
           <RailButton
             key={item.view}
-            active={sidebarView === item.view}
+            active={sidebarView === item.view && !sidebarCollapsed}
             icon={item.icon}
             label={t(item.labelKey)}
-            onClick={() => setSidebarView(item.view)}
+            onClick={toggleExplorer}
           />
         ))}
         <div className="flex-1" />
@@ -82,7 +136,30 @@ export function Sidebar() {
           onClick={openSettings}
         />
       </nav>
-      <SidebarPanel />
+      {!sidebarCollapsed && <SidebarPanel />}
+      {!sidebarCollapsed && (
+        <div
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label={t('connection.explorerTitle')}
+          aria-valuemin={232}
+          aria-valuemax={460}
+          aria-valuenow={sidebarWidth}
+          className="absolute inset-y-0 -right-px z-20 w-1 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-primary/35 focus-visible:bg-primary/50 focus-visible:outline-none"
+          onPointerDown={startResize}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') {
+              event.preventDefault()
+              setSidebarWidth(sidebarWidth - 16)
+            }
+            if (event.key === 'ArrowRight') {
+              event.preventDefault()
+              setSidebarWidth(sidebarWidth + 16)
+            }
+          }}
+        />
+      )}
     </aside>
   )
 }
@@ -147,70 +224,41 @@ function DataSourceHeader() {
   }
 
   return (
-    <div className="shrink-0 border-b bg-card">
-      <div className="px-2.5 py-2">
-        <div
-          className={[
-            'group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md border p-1.5 transition-colors',
-            isProductionConnection(activeConnection)
-              ? 'border-red-500/35 bg-red-500/5 hover:bg-red-500/10'
-              : 'border-border bg-background/65 hover:bg-muted/70',
-          ].join(' ')}
+    <div className="ide-chrome shrink-0 border-b">
+      <div className="flex min-w-0 items-center gap-1 px-2.5 py-1.5">
+        <button
+          type="button"
+          className="group flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-background/70"
+          onClick={() => setSidebarView('dataSources')}
         >
-          <button
-            type="button"
-            className="flex min-w-0 items-center gap-2 rounded px-1 py-1 text-left"
-            onClick={() => setSidebarView('dataSources')}
-          >
-            <Database className="size-4 shrink-0 text-primary" />
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <span className="truncate text-sm font-semibold">
-                  {activeConnection?.name ?? t('connection.select')}
-                </span>
-                {activeConnection && <EnvironmentBadge connection={activeConnection} />}
-              </div>
-              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className={runtimeStatusDotClass(activeStatus)} />
-                <span className="truncate">
-                  {activeConnection
-                    ? `${activeConnection.driverType} · ${runtimeStatusLabel(activeStatus, t)}`
-                    : t('connection.disconnected')}
-                </span>
-              </div>
-            </div>
-            <ChevronDown className="size-4 shrink-0 -rotate-90 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-          </button>
-          <div className="flex shrink-0 items-center gap-0.5">
-            {activeConnection && (
-              <>
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  title={connected ? t('connection.disconnect') : t('connection.connect')}
-                  disabled={activeBusy}
-                  onClick={toggleActiveConnection}
-                >
-                  {activeBusy ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
-                </Button>
-                <ConnectionDialog
-                  connection={activeConnection}
-                  trigger={
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost"
-                      title={t('connection.edit')}
-                    >
-                      <Pencil />
-                    </Button>
-                  }
-                />
-              </>
-            )}
+          <Database className="size-3.5 shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <span className="block truncate text-xs font-semibold">
+              {activeConnection?.name ?? t('connection.select')}
+            </span>
+            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className={runtimeStatusDotClass(activeStatus)} />
+              <span className="truncate">
+                {activeConnection
+                  ? `${activeConnection.driverType} · ${runtimeStatusLabel(activeStatus, t)}`
+                  : t('connection.disconnected')}
+              </span>
+            </span>
           </div>
-        </div>
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+        </button>
+        {activeConnection && (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            title={connected ? t('connection.disconnect') : t('connection.connect')}
+            disabled={activeBusy}
+            onClick={toggleActiveConnection}
+          >
+            {activeBusy ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
+          </Button>
+        )}
       </div>
     </div>
   )
@@ -225,10 +273,12 @@ function DataSourcesSelectorPanel() {
     error,
     activeConnectionId,
     recentDataSourceIds,
+    favoriteDataSourceIds,
     loadConnections,
     connectConnection,
     disconnectConnection,
     setActiveConnection,
+    toggleFavoriteDataSource,
   } = useConnectionStore()
   const setSidebarView = useUiStore((state) => state.setSidebarView)
   const tabs = useEditorStore((state) => state.tabs)
@@ -255,14 +305,18 @@ function DataSourcesSelectorPanel() {
   const recentConnections = recentDataSourceIds
     .map((id) => connections.find((connection) => connection.id === id))
     .filter((connection): connection is ConnectionConfig => Boolean(connection))
+  const favoriteConnections = favoriteDataSourceIds
+    .map((id) => connections.find((connection) => connection.id === id))
+    .filter((connection): connection is ConnectionConfig => Boolean(connection))
   const visibleConnections =
-    query.trim() || recentConnections.length === 0
+    query.trim() || (recentConnections.length === 0 && favoriteConnections.length === 0)
       ? filteredConnections
       : filteredConnections.filter(
           (connection) =>
-            !recentConnections.some((recentConnection) => recentConnection.id === connection.id),
+            !recentConnections.some((recentConnection) => recentConnection.id === connection.id) &&
+            !favoriteConnections.some((favoriteConnection) => favoriteConnection.id === connection.id),
         )
-  const groupedVisibleConnections = groupConnectionsByEnvironment(
+  const groupedVisibleConnections = groupConnections(
     visibleConnections,
     t('connection.ungrouped'),
   )
@@ -332,9 +386,7 @@ function DataSourcesSelectorPanel() {
           <div
             className={[
               'mb-3 rounded-md border px-2.5 py-2',
-              isProductionConnection(activeConnection)
-                ? 'border-red-500/35 bg-red-500/5'
-                : 'bg-background/70',
+              'bg-background/70',
             ].join(' ')}
           >
             <div className="flex min-w-0 items-center gap-2">
@@ -342,7 +394,6 @@ function DataSourcesSelectorPanel() {
               <span className="min-w-0 flex-1 truncate text-xs font-semibold">
                 {activeConnection.name}
               </span>
-              <EnvironmentBadge connection={activeConnection} />
             </div>
             <div className="mt-1 truncate text-[11px] text-muted-foreground">
               {activeConnection.driverType} · {runtimeStatusLabel(activeStatus, t)}
@@ -421,6 +472,31 @@ function DataSourcesSelectorPanel() {
                     onDisconnect={() => {
                       void handleDisconnect(connection)
                     }}
+                    favorite={favoriteDataSourceIds.includes(connection.id)}
+                    onToggleFavorite={() => toggleFavoriteDataSource(connection.id)}
+                    t={t}
+                  />
+                ))}
+              </ConnectionSwitcherSection>
+            )}
+            {!query.trim() && favoriteConnections.length > 0 && (
+              <ConnectionSwitcherSection title={t('connection.favorites')}>
+                {favoriteConnections.map((connection) => (
+                  <ConnectionSwitcherRow
+                    key={`favorite-${connection.id}`}
+                    connection={connection}
+                    status={statuses[connection.id]?.status ?? 'disconnected'}
+                    selected={connection.id === activeConnectionId}
+                    busy={Boolean(busyConnectionIds[connection.id])}
+                    onSelect={() => handleSelect(connection)}
+                    onConnect={() => {
+                      void handleConnect(connection)
+                    }}
+                    onDisconnect={() => {
+                      void handleDisconnect(connection)
+                    }}
+                    favorite
+                    onToggleFavorite={() => toggleFavoriteDataSource(connection.id)}
                     t={t}
                   />
                 ))}
@@ -442,6 +518,8 @@ function DataSourcesSelectorPanel() {
                     onDisconnect={() => {
                       void handleDisconnect(connection)
                     }}
+                    favorite={favoriteDataSourceIds.includes(connection.id)}
+                    onToggleFavorite={() => toggleFavoriteDataSource(connection.id)}
                     t={t}
                   />
                 ))}
@@ -492,6 +570,8 @@ function ConnectionSwitcherRow({
   onSelect,
   onConnect,
   onDisconnect,
+  favorite,
+  onToggleFavorite,
   t,
 }: {
   connection: ConnectionConfig
@@ -501,6 +581,8 @@ function ConnectionSwitcherRow({
   onSelect: () => void
   onConnect: () => void
   onDisconnect: () => void
+  favorite: boolean
+  onToggleFavorite: () => void
   t: ReturnType<typeof useTranslation>['t']
 }) {
   const connected = status === 'connected'
@@ -519,7 +601,6 @@ function ConnectionSwitcherRow({
         <div className="flex min-w-0 items-center gap-1.5">
           <span className={runtimeStatusDotClass(status)} />
           <span className="min-w-0 flex-1 truncate font-medium">{connection.name}</span>
-          <EnvironmentBadge connection={connection} />
         </div>
         <div className="mt-1 truncate text-[11px] text-muted-foreground">
           {connection.driverType} · {connection.group?.trim() || t('connection.ungrouped')}
@@ -543,6 +624,16 @@ function ConnectionSwitcherRow({
         onClick={connected ? onDisconnect : onConnect}
       >
         {busy ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
+      </Button>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        title={favorite ? t('connection.unfavorite') : t('connection.favorite')}
+        aria-pressed={favorite}
+        onClick={onToggleFavorite}
+      >
+        <Star className={favorite ? 'fill-current text-amber-500' : ''} />
       </Button>
       <ConnectionDialog
         connection={connection}
@@ -576,9 +667,9 @@ function RailButton({
     <button
       type="button"
       className={[
-        'grid size-9 place-items-center rounded-md text-muted-foreground transition-colors',
+        'grid size-8 place-items-center rounded-md text-muted-foreground transition-colors',
         active
-          ? 'bg-primary/15 text-primary ring-1 ring-primary/35'
+          ? 'bg-primary/10 text-primary shadow-[inset_2px_0_0_hsl(var(--primary))]'
           : 'hover:bg-accent hover:text-accent-foreground',
       ].join(' ')}
       title={label}
@@ -1016,7 +1107,6 @@ function filterConnections(connections: ConnectionConfig[], query: string) {
       connection.name,
       connection.driverType,
       connection.group,
-      connection.colorTag,
       connection.host,
       connection.database,
       connection.connectionUrl,
@@ -1055,19 +1145,15 @@ function compactConnectionUrl(url: string) {
     .replace(/^mysql:\/\//, 'mysql:')
 }
 
-function groupConnectionsByEnvironment(connections: ConnectionConfig[], ungroupedLabel: string) {
+function groupConnections(connections: ConnectionConfig[], ungroupedLabel: string) {
   const groups = new Map<string, ConnectionConfig[]>()
   for (const connection of connections) {
-    const group = environmentLabel(connection) ?? ungroupedLabel
+    const group = connection.group?.trim() || ungroupedLabel
     groups.set(group, [...(groups.get(group) ?? []), connection])
   }
 
   return Array.from(groups.entries())
-    .sort(([left], [right]) =>
-      environmentSortKey(left, ungroupedLabel).localeCompare(
-        environmentSortKey(right, ungroupedLabel),
-      ),
-    )
+    .sort(([left], [right]) => groupSortKey(left, ungroupedLabel).localeCompare(groupSortKey(right, ungroupedLabel)))
     .map(([name, groupConnections]) => ({
       name,
       connections: groupConnections
@@ -1076,60 +1162,8 @@ function groupConnectionsByEnvironment(connections: ConnectionConfig[], ungroupe
     }))
 }
 
-function environmentSortKey(label: string, ungroupedLabel: string) {
-  const normalized = label.toLowerCase()
-  if (/\b(local|dev|development|本地)\b/.test(normalized)) return '0' // i18n-hardcoded-ok: user-entered environment aliases.
-  if (/\b(test|qa|测试)\b/.test(normalized)) return '1' // i18n-hardcoded-ok: user-entered environment aliases.
-  if (/\b(stage|staging|预发)\b/.test(normalized)) return '2' // i18n-hardcoded-ok: user-entered environment aliases.
-  if (/\b(prod|production|生产)\b/.test(normalized)) return '3' // i18n-hardcoded-ok: user-entered environment aliases.
-  return label === ungroupedLabel ? 'z' : `4-${normalized}`
-}
-
-function EnvironmentBadge({ connection }: { connection: ConnectionConfig }) {
-  const label = environmentLabel(connection)
-  if (!label) {
-    return null
-  }
-
-  return (
-    <span
-      className={[
-        'shrink-0 rounded border px-1 py-0 text-[10px] font-medium leading-4',
-        environmentBadgeClass(connection),
-      ].join(' ')}
-    >
-      {label}
-    </span>
-  )
-}
-
-function environmentLabel(connection: ConnectionConfig) {
-  return connection.colorTag?.trim() || connection.group?.trim() || null
-}
-
-function environmentBadgeClass(connection: ConnectionConfig) {
-  if (isProductionConnection(connection)) {
-    return 'border-red-500/45 bg-red-500/10 text-red-400'
-  }
-  if (connection.colorTag === 'stage') {
-    return 'border-amber-500/45 bg-amber-500/10 text-amber-500'
-  }
-  if (connection.colorTag === 'test') {
-    return 'border-sky-500/45 bg-sky-500/10 text-sky-500'
-  }
-  if (connection.colorTag === 'dev') {
-    return 'border-emerald-500/45 bg-emerald-500/10 text-emerald-500'
-  }
-  return 'border-border bg-muted/40 text-muted-foreground'
-}
-
-function isProductionConnection(connection: ConnectionConfig | null) {
-  if (!connection) {
-    return false
-  }
-  return [connection.colorTag, connection.group, connection.name]
-    .filter(Boolean)
-    .some((value) => /\b(prod|production|生产)\b/i.test(String(value))) // i18n-hardcoded-ok: user-entered environment aliases.
+function groupSortKey(group: string, ungroupedLabel: string) {
+  return group === ungroupedLabel ? '\uffff' : group.toLocaleLowerCase()
 }
 
 function runtimeStatusDotClass(status: string) {

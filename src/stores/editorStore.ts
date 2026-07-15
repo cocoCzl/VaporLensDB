@@ -25,8 +25,11 @@ export interface EditorTab {
   lastQueryId?: string | null
   runningQueryId?: string | null
   running?: boolean
+  cancelling?: boolean
   error?: string | null
   draftId?: string | null
+  dirty?: boolean
+  pinned?: boolean
 }
 
 export interface DataTabContext {
@@ -92,7 +95,9 @@ interface EditorState {
   updateDataTabContext: (id: string, dataContext: DataTabContext, sql: string) => void
   updateTabConnection: (id: string, connectionId: string | null) => void
   setTabDraft: (id: string, draftId: string | null) => void
+  toggleTabPinned: (id: string) => void
   setTabRunning: (id: string, running: boolean, queryId?: string | null) => void
+  setTabCancelling: (id: string, cancelling: boolean) => void
   setTabQueryState: (id: string, queryId: string | null, error?: string | null) => void
   closeTab: (id: string) => void
 }
@@ -125,10 +130,18 @@ export const useEditorStore = create<EditorState>((set) => ({
   },
   renameTab: (id, title) =>
     set((s) => ({
-      tabs: s.tabs.map((t) => (t.id === id ? { ...t, title: title.trim() || t.title } : t)),
+      tabs: s.tabs.map((t) =>
+        t.id === id
+          ? { ...t, title: title.trim() || t.title, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty }
+          : t,
+      ),
     })),
   updateTabSql: (id, sql) =>
-    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql } : t)) })),
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === id ? { ...t, sql, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty } : t,
+      ),
+    })),
   updateDataTabLimit: (id, limit, sql) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
@@ -143,11 +156,19 @@ export const useEditorStore = create<EditorState>((set) => ({
     })),
   updateTabConnection: (id, connectionId) =>
     set((s) => ({
-      tabs: s.tabs.map((t) => (t.id === id ? { ...t, connectionId } : t)),
+      tabs: s.tabs.map((t) =>
+        t.id === id
+          ? { ...t, connectionId, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty }
+          : t,
+      ),
     })),
   setTabDraft: (id, draftId) =>
     set((s) => ({
-      tabs: s.tabs.map((t) => (t.id === id ? { ...t, draftId } : t)),
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, draftId, dirty: false } : t)),
+    })),
+  toggleTabPinned: (id) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, pinned: !t.pinned } : t)),
     })),
   setTabRunning: (id, running, queryId) =>
     set((s) => ({
@@ -156,17 +177,23 @@ export const useEditorStore = create<EditorState>((set) => ({
           ? {
               ...t,
               running,
+              cancelling: false,
+              error: running ? null : t.error,
               lastQueryId: queryId ?? t.lastQueryId,
               runningQueryId: running ? queryId ?? null : null,
             }
           : t,
       ),
     })),
+  setTabCancelling: (id, cancelling) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, cancelling } : t)),
+    })),
   setTabQueryState: (id, queryId, error = null) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === id
-          ? { ...t, lastQueryId: queryId, runningQueryId: null, error, running: false }
+          ? { ...t, lastQueryId: queryId, runningQueryId: null, error, running: false, cancelling: false }
           : t,
       ),
     })),

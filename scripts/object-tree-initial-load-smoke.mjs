@@ -14,12 +14,13 @@ assert(
   'MySQL must expose its configured database while metadata enumeration is empty',
 )
 assert(
-  databaseTree.includes("label: t('explorer.folders.databases')") && databaseTree.includes('childrenLoaded: true'),
-  'prebuilt database folder children must not be reloaded through the empty generic loader',
+  databaseTree.includes('parentId: ROOT_ID') && databaseTree.includes('depth: 0'),
+  'initial databases must be direct root nodes rather than a generic wrapper folder',
 )
 assert(
-  databaseTree.includes("kind: 'database'") && databaseTree.includes('childrenLoaded: true'),
-  'prebuilt database children must survive collapse and expansion',
+  databaseTree.includes("kind: 'database'") && databaseTree.includes('childrenLoaded: true') &&
+    databaseTree.includes('parentId: id') && databaseTree.includes('depth: 1'),
+  'prebuilt database and schema children must survive collapse and expansion without wrapper folders',
 )
 
 const connectionStore = readFileSync(resolve(root, 'src/stores/connectionStore.ts'), 'utf8')

@@ -54,12 +54,24 @@ const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
   [
-    '<ErrorDetails message={activeTab.error} sql={activeTab.sql} />',
+    '<ErrorDetails message={activeTab.error} sql={activeTab.sql} onRetry={() => void execute()} />',
+    "activeTab.cancelling ? t('workbench.cancelRequested') : t('workbench.queryRunning')",
+    "{t('workbench.retryQuery')}",
     'navigator.clipboard?.writeText(copyText)',
     '<Copy className="size-3.5" />',
     '<DataGrid result={activeResult} />',
   ],
   'result-area error display',
+)
+
+const useQuery = read('src/hooks/useQuery.ts')
+includesAll(
+  useQuery,
+  [
+    'setTabCancelling(tabId, true)',
+    "i18n.t('notifications.cancelQueryRequested')",
+  ],
+  'contextual cancellation feedback',
 )
 
 const packageJson = read('package.json')

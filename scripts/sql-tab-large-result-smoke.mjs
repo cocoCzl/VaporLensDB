@@ -45,13 +45,13 @@ const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
   [
-    'const sql = sqlToRun()',
+    'const sql = (sqlOverride ?? sqlToRun()).trim()',
     'runQuery(activeTab.id, connectionId, sql)',
     'largeResultNotice(activeResult)',
     "i18n.t('workbench.largeResultNotice'",
     'runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {',
-    'maxRows: activeDataContext.limit',
-    'maxRows: nextContext.limit',
+    'maxRows: dataTabFetchLimit(activeDataContext.limit)',
+    'maxRows: dataTabFetchLimit(nextContext.limit)',
     'exportQueryResultCsv({ result, path, includeHeader: true })',
   ],
   'SQL tab large-result UI and CSV behavior',
@@ -61,8 +61,8 @@ const databaseTree = read('src/components/explorer/DatabaseTree.tsx')
 includesAll(
   databaseTree,
   [
-    'runQuery(tabId, entry.connectionId, sql, { maxRows: dataPreviewDefaultRows })',
-    'runQuery(tabId, activeConnectionId, sql, { maxRows: dataPreviewDefaultRows })',
+    'runQuery(tabId, entry.connectionId, sql, { maxRows: dataTabFetchLimit(dataPreviewDefaultRows) })',
+    'runQuery(tabId, activeConnectionId, sql, { maxRows: dataTabFetchLimit(dataPreviewDefaultRows) })',
   ],
   'Data tab initial load keeps preview limit independent from SQL tab cap',
 )

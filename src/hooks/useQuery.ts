@@ -16,6 +16,7 @@ import { useUiStore } from '@/stores/uiStore'
 
 export function useQuery() {
   const setTabRunning = useEditorStore((state) => state.setTabRunning)
+  const setTabCancelling = useEditorStore((state) => state.setTabCancelling)
   const setTabQueryState = useEditorStore((state) => state.setTabQueryState)
   const setResults = useQueryResultStore((state) => state.setResults)
   const setExplain = useQueryResultStore((state) => state.setExplain)
@@ -108,11 +109,15 @@ export function useQuery() {
 
   async function cancelRunningQuery(tabId: string, connectionId: string, queryId: string) {
     try {
+      setTabCancelling(tabId, true)
       await cancelQuery(connectionId, queryId)
+      notify({ kind: 'info', title: i18n.t('notifications.cancelQueryRequested') })
+      return true
     } catch (error) {
       const appError = normalizeAppError(error)
       setTabQueryState(tabId, queryId, appError.message)
       notifyError(appError, i18n.t('notifications.cancelQueryFailed'))
+      return false
     }
   }
 

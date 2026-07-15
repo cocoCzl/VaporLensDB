@@ -2,6 +2,14 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Database, Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { ConnectionForm } from '@/components/connection/ConnectionForm'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useDriverStore } from '@/stores/driverStore'
@@ -29,44 +37,37 @@ export function ConnectionDialog({
     }
   }, [loadDrivers, open])
 
-  return (
-    <>
-      {trigger ? (
-        <span
-          onClick={(event) => {
-            event.stopPropagation()
-            setOpen(true)
-          }}
-        >
-          {trigger}
-        </span>
-      ) : (
-        <Button
-          type="button"
-          size={connection ? 'xs' : 'default'}
-          variant={connection ? 'ghost' : 'default'}
-          onClick={() => setOpen(true)}
-        >
-          {!connection && <Plus />}
-          {triggerLabel ?? (connection ? t('connection.edit') : t('connection.new'))}
-        </Button>
-      )}
+  const dialogTrigger = trigger ?? (
+    <Button
+      type="button"
+      size={connection ? 'xs' : 'default'}
+      variant={connection ? 'ghost' : 'default'}
+    >
+      {!connection && <Plus />}
+      {triggerLabel ?? (connection ? t('connection.edit') : t('connection.new'))}
+    </Button>
+  )
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-          <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border bg-card shadow-2xl">
-            <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b px-4">
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <span onClick={(event) => event.stopPropagation()}>{dialogTrigger}</span>
+        }
+      />
+      <DialogContent className="flex max-h-[calc(100vh-4rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl" showCloseButton={false}>
+        <DialogHeader className="flex h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-4">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/15 text-primary">
                   <Database className="size-4" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="text-base font-semibold">
+                  <DialogTitle>
                     {connection ? t('connection.editTitle') : t('connection.newTitle')}
-                  </h2>
-                  <p className="truncate text-xs text-muted-foreground">
+                  </DialogTitle>
+                  <DialogDescription className="truncate text-xs">
                     {t('connection.dialogSubtitle')}
-                  </p>
+                  </DialogDescription>
                 </div>
               </div>
               <Button
@@ -79,8 +80,8 @@ export function ConnectionDialog({
               >
                 <X />
               </Button>
-            </div>
-            <div className="min-h-0 overflow-auto p-4">
+        </DialogHeader>
+        <div className="min-h-0 overflow-auto p-4">
               <p className="mb-4 text-xs text-muted-foreground">
                 {t('connection.driverHelp')}
               </p>
@@ -100,10 +101,8 @@ export function ConnectionDialog({
                   setOpen(false)
                 }}
               />
-            </div>
-          </div>
         </div>
-      )}
-    </>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -54,6 +54,9 @@ test is:
 pnpm test:object-tree-workflow
 ```
 
+For platform packaging, artifact locations, checksums, and manual GitHub Release
+publishing, see `docs/PACKAGING.md`.
+
 ## Live Database Tests
 
 PostgreSQL, MySQL, and Oracle live integration tests are ignored by default.

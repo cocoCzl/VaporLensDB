@@ -230,7 +230,7 @@ export function ConnectionForm({
       </aside>
 
       <div className="flex min-w-0 flex-col">
-        <div className="grid grid-cols-[72px_minmax(0,1fr)_64px_180px] items-center gap-2 border-b p-4">
+        <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-2 border-b p-4">
           <Label htmlFor="connection-name" className="text-right text-sm">
             {t('connectionForm.name')}
           </Label>
@@ -240,14 +240,6 @@ export function ConnectionForm({
             disableTextAssistance
             onChange={(event) => update('name', event.target.value)}
             required
-          />
-          <Label htmlFor="connection-color" className="text-right text-sm">
-            {t('connectionForm.environment')}
-          </Label>
-          <ColorTagInput
-            value={form.colorTag ?? ''}
-            onChange={(value) => update('colorTag', value)}
-            t={t}
           />
         </div>
 
@@ -770,62 +762,6 @@ function driverBackendLabel(backend: DriverDefinition['backend']) {
   return 'Planned'
 }
 
-function ColorTagInput({
-  value,
-  onChange,
-  t,
-}: {
-  value: string
-  onChange: (value: string) => void
-  t: TFunction
-}) {
-  const colors = ['', 'dev', 'test', 'stage', 'prod']
-  return (
-    <div className="flex h-8 items-center gap-1 rounded-md border bg-card px-2">
-      {colors.map((color) => (
-        <button
-          key={color || 'none'}
-          type="button"
-          className={[
-            'size-4 rounded-full border',
-            colorSwatchClass(color),
-            value === color ? 'ring-2 ring-ring ring-offset-1 ring-offset-background' : '',
-          ].join(' ')}
-          title={environmentLabel(color, t)}
-          onClick={() => onChange(color)}
-        />
-      ))}
-      <span className="ml-1 min-w-12 text-xs text-muted-foreground">{environmentLabel(value, t)}</span>
-    </div>
-  )
-}
-
-function colorSwatchClass(color: string) {
-  if (color === 'prod') return 'bg-red-500'
-  if (color === 'stage') return 'bg-amber-500'
-  if (color === 'test') return 'bg-sky-500'
-  if (color === 'dev') return 'bg-emerald-500'
-  return 'bg-transparent'
-}
-
-function environmentLabel(color: string, t: TFunction) {
-  if (color === 'prod') return 'prod'
-  if (color === 'stage') return 'stage'
-  if (color === 'test') return 'test'
-  if (color === 'dev') return 'dev'
-  return t('common.none')
-}
-
-function normalizeEnvironmentTag(value: string | null | undefined) {
-  const normalized = emptyToNull(value)
-  return normalized === 'dev' ||
-    normalized === 'test' ||
-    normalized === 'stage' ||
-    normalized === 'prod'
-    ? normalized
-    : null
-}
-
 function driverStatusLabel(status: DriverDefinition['status'] | DriverProfile['status'] | undefined, t: TFunction) {
   if (status === 'ready') return t('connectionForm.statusReady')
   if (status === 'configurable') return t('connectionForm.statusConfigurable')
@@ -854,7 +790,9 @@ function normalizeInput(
     driverClass: emptyToNull(input.driverClass),
     driverPaths: input.driverPaths?.length ? input.driverPaths : (definition?.driverArtifacts ?? []),
     group: emptyToNull(input.group),
-    colorTag: normalizeEnvironmentTag(input.colorTag),
+    // Legacy color tags are retained for saved-connection compatibility but no
+    // longer carry environment or safety semantics in the user interface.
+    colorTag: input.colorTag ?? null,
     sshTunnel: normalizeSshTunnel(input),
   }
 }

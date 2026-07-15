@@ -5,6 +5,7 @@ import { StatusBar } from './components/layout/StatusBar'
 import { TabBar } from './components/layout/TabBar'
 import { healthCheck } from './ipc/health'
 import { NotificationBridge } from './components/common/NotificationBridge'
+import { WorkspaceCommandPalette } from './components/common/WorkspaceCommandPalette'
 import { useUiStore } from './stores/uiStore'
 import { onTaskUpdated } from './ipc/task'
 import { normalizedApplicationMenuLanguage, setApplicationMenuLanguage } from './ipc/settings'
@@ -102,6 +103,7 @@ export default function App() {
       </div>
       <StatusBar backendStatus={backendStatus} />
       <NotificationBridge />
+      <WorkspaceCommandPalette />
       {showSplash && <SplashScreen />}
     </div>
   )

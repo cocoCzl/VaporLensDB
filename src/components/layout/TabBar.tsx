@@ -1,7 +1,7 @@
-import { Check, ChevronDown, Clock3, Pencil, Plus, X } from 'lucide-react'
+import { Check, Clock3, List, Pin, Plus, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useSqlDraftStore } from '@/stores/sqlDraftStore'
@@ -10,7 +10,7 @@ import type { SqlDraft } from '@/types/sqlDraft'
 
 export function TabBar() {
   const { t } = useTranslation()
-  const { tabs, activeTabId, setActiveTab, addTab, closeTab, renameTab, setTabDraft } = useEditorStore()
+  const { tabs, activeTabId, setActiveTab, addTab, closeTab, renameTab, setTabDraft, toggleTabPinned } = useEditorStore()
   const connections = useConnectionStore((state) => state.connections)
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
@@ -20,7 +20,11 @@ export function TabBar() {
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [recentOpen, setRecentOpen] = useState(false)
+  const [tabListOpen, setTabListOpen] = useState(false)
+  const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const recentMenuRef = useRef<HTMLDivElement | null>(null)
+  const tabListMenuRef = useRef<HTMLDivElement | null>(null)
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>())
 
   function createTab() {
     const connection = connections.find((item) => item.id === activeConnectionId)
@@ -80,6 +84,11 @@ export function TabBar() {
   const lastDraft = drafts[0] ?? null
 
   useEffect(() => {
+    if (!activeTabId) return
+    tabRefs.current.get(activeTabId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeTabId])
+
+  useEffect(() => {
     if (!recentOpen) return
 
     function closeOnOutside(event: MouseEvent) {
@@ -102,8 +111,37 @@ export function TabBar() {
     }
   }, [recentOpen])
 
+  useEffect(() => {
+    if (!tabListOpen && !tabContextMenu) return
+
+    function closeMenus(event: MouseEvent) {
+      if (tabListMenuRef.current?.contains(event.target as Node)) return
+      setTabListOpen(false)
+      setTabContextMenu(null)
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setTabListOpen(false)
+        setTabContextMenu(null)
+      }
+    }
+
+    document.addEventListener('mousedown', closeMenus)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeMenus)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [tabContextMenu, tabListOpen])
+
+  function closeTabs(candidates: EditorTab[]) {
+    candidates.forEach((tab) => closeEditorTab(tab))
+    setTabContextMenu(null)
+  }
+
   return (
-    <div className="flex h-9 items-center border-b ide-toolbar">
+    <div className="ide-tab-strip flex h-8 items-center border-b">
       <div className="flex min-w-0 flex-1 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId
@@ -113,12 +151,19 @@ export function TabBar() {
           return (
             <button
               key={tab.id}
+              ref={(element) => {
+                if (element) {
+                  tabRefs.current.set(tab.id, element)
+                } else {
+                  tabRefs.current.delete(tab.id)
+                }
+              }}
               type="button"
               className={[
-                'group flex h-9 max-w-64 items-center gap-2 border-r px-3 text-xs',
+                'group flex h-8 max-w-56 items-center gap-1.5 border-r border-border/55 px-2.5 text-xs transition-colors',
                 active
                   ? 'bg-background text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary))]'
-                  : 'text-muted-foreground hover:bg-muted',
+                  : 'text-muted-foreground hover:bg-background/65 hover:text-foreground',
               ].join(' ')}
               onClick={() => {
                 setActiveTab(tab.id)
@@ -129,6 +174,16 @@ export function TabBar() {
               onDoubleClick={() => {
                 setEditingTabId(tab.id)
                 setEditingTitle(tab.title)
+              }}
+              onAuxClick={(event) => {
+                if (event.button === 1 && !tab.pinned) {
+                  event.preventDefault()
+                  closeEditorTab(tab)
+                }
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                setTabContextMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
               }}
             >
               {editing ? (
@@ -155,22 +210,30 @@ export function TabBar() {
                 </span>
               ) : (
                 <>
-                  <span className="min-w-0 truncate">{tab.title}</span>
                   {!managementTab && (
                     <span
-                      className="max-w-24 shrink truncate rounded border bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                      title={connection?.name ?? 'No Data Source'}
-                    >
-                      {connection?.name ?? 'No DS'}
-                    </span>
+                      className={[
+                        'size-1.5 shrink-0 rounded-full',
+                        connection ? 'bg-primary/75' : 'bg-muted-foreground/40',
+                      ].join(' ')}
+                      title={connection?.name ?? t('connection.disconnected')}
+                    />
                   )}
-                  <Pencil className="size-3 opacity-0 transition-opacity group-hover:opacity-60" />
+                  <span className="min-w-0 truncate">{tab.title}</span>
+                  {tab.dirty && (
+                    <span
+                      className="size-1.5 shrink-0 rounded-full bg-primary"
+                      title={t('sql.unsavedChanges')}
+                      aria-label={t('sql.unsavedChanges')}
+                    />
+                  )}
+                  {tab.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" />}
                 </>
               )}
               <span
                 role="button"
                 tabIndex={0}
-                className="grid size-5 place-items-center rounded hover:bg-accent"
+                className="grid size-5 shrink-0 place-items-center rounded opacity-0 hover:bg-accent group-hover:opacity-100 group-focus-within:opacity-100"
                 onClick={(event) => {
                   event.stopPropagation()
                   closeEditorTab(tab)
@@ -188,21 +251,60 @@ export function TabBar() {
           )
         })}
       </div>
-      <Button type="button" size="sm" variant="ghost" className="h-8 px-2" onClick={createTab}>
+      <div ref={tabListMenuRef} className="relative shrink-0">
+        <IconTooltipButton
+          label={t('sql.allTabs')}
+          variant="ghost"
+          aria-expanded={tabListOpen}
+          onClick={() => setTabListOpen((open) => !open)}
+        >
+          <List className="size-3.5" />
+        </IconTooltipButton>
+        {tabListOpen && (
+          <div
+            role="menu"
+            className="ide-overlay absolute right-0 top-8 z-[100] max-h-[70vh] w-72 overflow-auto rounded-lg p-1"
+          >
+            <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {t('sql.allTabs')}
+            </div>
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="menuitem"
+                className={[
+                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs',
+                  tab.id === activeTabId ? 'bg-accent text-accent-foreground' : 'hover:bg-muted',
+                ].join(' ')}
+                onClick={() => {
+                  setActiveTab(tab.id)
+                  if (tab.connectionId) setActiveConnection(tab.connectionId)
+                  setTabListOpen(false)
+                }}
+              >
+                <span className={['size-1.5 rounded-full', tab.connectionId ? 'bg-primary/75' : 'bg-muted-foreground/40'].join(' ')} />
+                <span className="min-w-0 flex-1 truncate">{tab.title}</span>
+                {tab.dirty && <span className="size-1.5 rounded-full bg-primary" title={t('sql.unsavedChanges')} />}
+                {tab.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" />}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <IconTooltipButton label={t('sql.new')} variant="ghost" onClick={createTab}>
         <Plus />
-      </Button>
+      </IconTooltipButton>
       <div ref={recentMenuRef} className="relative shrink-0">
-        <button
-          type="button"
-          className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-transparent px-2 text-sm font-medium transition-all outline-none select-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-expanded:bg-muted aria-expanded:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
-          title={t('sql.recentScripts')}
+        <IconTooltipButton
+          label={t('sql.recentScripts')}
+          variant="ghost"
           aria-haspopup="menu"
           aria-expanded={recentOpen}
           onClick={() => setRecentOpen((open) => !open)}
         >
           <Clock3 />
-          <ChevronDown className="size-3" />
-        </button>
+        </IconTooltipButton>
         {recentOpen && (
           <div
             role="menu"
@@ -248,6 +350,62 @@ export function TabBar() {
           </div>
         )}
       </div>
+      {tabContextMenu && (() => {
+        const tab = tabs.find((candidate) => candidate.id === tabContextMenu.tabId)
+        if (!tab) return null
+        const tabIndex = tabs.findIndex((candidate) => candidate.id === tab.id)
+        const closableOthers = tabs.filter((candidate) => candidate.id !== tab.id && !candidate.pinned)
+        const closableRight = tabs.slice(tabIndex + 1).filter((candidate) => !candidate.pinned)
+        return (
+          <div
+            role="menu"
+            className="ide-overlay fixed z-[200] w-48 rounded-lg p-1 text-xs"
+            style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+              onClick={() => {
+                toggleTabPinned(tab.id)
+                setTabContextMenu(null)
+              }}
+            >
+              <Pin className="size-3.5" />
+              {tab.pinned ? t('sql.unpinTab') : t('sql.pinTab')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted disabled:opacity-40"
+              onClick={() => closeTabs([tab])}
+            >
+              <X className="size-3.5" />
+              {t('sql.closeTab')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={closableOthers.length === 0}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted disabled:opacity-40"
+              onClick={() => closeTabs(closableOthers)}
+            >
+              <X className="size-3.5" />
+              {t('sql.closeOtherTabs')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={closableRight.length === 0}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted disabled:opacity-40"
+              onClick={() => closeTabs(closableRight)}
+            >
+              <X className="size-3.5" />
+              {t('sql.closeTabsToRight')}
+            </button>
+          </div>
+        )
+      })()}
     </div>
   )
 }

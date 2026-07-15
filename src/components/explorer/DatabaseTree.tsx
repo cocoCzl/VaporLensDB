@@ -244,21 +244,10 @@ export function DatabaseTree() {
             ? [selectedDatabase]
             : []
           : filteredDatabases
-      const databaseFolderId = `${ROOT_ID}/databases`
-      const nextNodes: NodeMap = {
-        [databaseFolderId]: {
-          id: databaseFolderId,
-          parentId: ROOT_ID,
-          label: t('explorer.folders.databases'),
-          kind: 'folder',
-          depth: 0,
-          expandable: true,
-          expanded: true,
-          childrenLoaded: true,
-          meta: { folder: 'databases' },
-        },
-      }
-      const nextChildIds = [databaseFolderId]
+      // Databases and schemas are already real nodes. Adding generic "Databases"
+      // and "Schemas" folders above them creates two low-value levels before a
+      // user reaches a useful business schema, especially for Oracle containers.
+      const nextNodes: NodeMap = {}
 
       const databaseChildIds: Record<string, string[]> = {}
       const schemaChildIds: Record<string, string[]> = {}
@@ -280,14 +269,13 @@ export function DatabaseTree() {
       let defaultSchemaName: string | null = null
       for (const database of visibleDatabases) {
         const id = databaseId(database.name)
-        const schemasFolderId = `${id}/schemas`
         const isDefaultDatabase = database.name === selectedDatabase?.name
         nextNodes[id] = {
           id,
-          parentId: databaseFolderId,
+          parentId: ROOT_ID,
           label: database.name,
           kind: 'database',
-          depth: 1,
+          depth: 0,
           expandable: true,
           expanded: isDefaultDatabase,
           childrenLoaded: true,
@@ -318,29 +306,17 @@ export function DatabaseTree() {
 
         const schemas = schemasByDatabase.get(database.name) ?? []
         const defaultSchema = selectDefaultSchema(activeConnection, schemas, activePath?.schema)
-        nextNodes[schemasFolderId] = {
-          id: schemasFolderId,
-          parentId: id,
-          label: t('explorer.folders.schemas'),
-          kind: 'folder',
-          depth: 2,
-          expandable: true,
-          expanded: isDefaultDatabase,
-          childrenLoaded: true,
-          meta: { database: database.name, folder: 'schemas' },
-        }
-        databaseChildIds[id] = [schemasFolderId]
 
-        const schemaFolderChildIds: string[] = []
+        const schemaChildIdsForDatabase: string[] = []
         for (const schema of schemas) {
-          const schemaNodeId = schemaId(schemasFolderId, schema.name)
+          const schemaNodeId = schemaId(id, schema.name)
           const isDefaultSchema = schema.name === defaultSchema?.name
           nextNodes[schemaNodeId] = {
             id: schemaNodeId,
-            parentId: schemasFolderId,
+            parentId: id,
             label: schema.name,
             kind: 'schema',
-            depth: 3,
+            depth: 1,
             expandable: true,
             expanded: isDefaultSchema,
             childrenLoaded: true,
@@ -363,14 +339,14 @@ export function DatabaseTree() {
           for (const category of categories) {
             nextNodes[category.id] = category
           }
-          schemaFolderChildIds.push(schemaNodeId)
+          schemaChildIdsForDatabase.push(schemaNodeId)
           schemaChildIds[schemaNodeId] = categories.map((category) => category.id)
           if (isDefaultDatabase && isDefaultSchema) {
             defaultSchemaNodeId = schemaNodeId
             defaultSchemaName = schema.name
           }
         }
-        schemaChildIds[schemasFolderId] = schemaFolderChildIds
+        databaseChildIds[id] = schemaChildIdsForDatabase
       }
 
       if (selectedDatabase) {
@@ -385,8 +361,7 @@ export function DatabaseTree() {
 
       setNodes(nextNodes)
       setChildIds({
-        [ROOT_ID]: nextChildIds,
-        [databaseFolderId]: visibleDatabases.map((database) => databaseId(database.name)),
+        [ROOT_ID]: visibleDatabases.map((database) => databaseId(database.name)),
         ...databaseChildIds,
         ...schemaChildIds,
       })
@@ -1064,28 +1039,14 @@ export function DatabaseTree() {
       return []
     }
 
-    return [
-      {
-        id: 'open-data',
-        label: t('explorer.openRows', { count: dataPreviewDefaultRows }),
-        icon: 'data',
-        onSelect: () => {
-          void openTableData(node.id)
-        },
+    return [{
+      id: 'open-data',
+      label: t('explorer.openRows', { count: dataPreviewDefaultRows }),
+      icon: 'data',
+      onSelect: () => {
+        void openTableData(node.id)
       },
-      {
-        id: 'open-structure',
-        label: t('explorer.openStructure'),
-        icon: 'structure',
-        onSelect: () => openTableStructure(node.id),
-      },
-      {
-        id: 'view-ddl',
-        label: t('explorer.viewDdl'),
-        icon: 'ddl',
-        onSelect: () => openTableDdl(node.id),
-      },
-    ]
+    }]
   }
 
   return (
@@ -1228,7 +1189,13 @@ export function DatabaseTree() {
                   selected={selectedNodeId === node.id}
                   onToggle={toggleNode}
                   onSelect={selectNode}
-                  onRefresh={refreshNode}
+                  onRetry={node.id.endsWith('/__error')
+                    ? () => {
+                        if (node.parentId) {
+                          refreshNode(node.parentId)
+                        }
+                      }
+                    : undefined}
                   onDoubleClick={openNode}
                   onNodeKeyDown={handleNodeKeyDown}
                   onNodeContextMenu={(targetNode, position) => {
@@ -1353,7 +1320,23 @@ async function loadChildren(
     if (driverType === 'mysql') {
       return schemaCategoryNodes(node, driverType, required(node.meta?.database), t)
     }
-    return [folderNode(node, 'schemas', t('explorer.folders.schemas'), node.meta?.schema ?? '')]
+    const schemas = filterSchemas(
+      driverType,
+      await metadata.loadSchemas(connectionId, node.meta?.database, force),
+      showSystemObjects,
+    )
+    return schemas.map((schema) => ({
+      id: schemaId(node.id, schema.name),
+      parentId: node.id,
+      label: schema.name,
+      kind: 'schema',
+      depth: node.depth + 1,
+      expandable: true,
+      muted: isSystemSchema(driverType, schema.name),
+      detail: isSystemSchema(driverType, schema.name) ? 'system' : undefined,
+      tooltip: rawPath([node.meta?.database, schema.name]),
+      meta: { database: node.meta?.database, schema: schema.name },
+    }))
   }
 
   if (node.kind === 'folder' && node.meta?.folder === 'schemas') {

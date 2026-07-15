@@ -96,8 +96,11 @@ export function MainPanel() {
   const loadSqlDrafts = useSqlDraftStore((state) => state.loadDrafts)
   const saveTabDraft = useSqlDraftStore((state) => state.saveTabDraft)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
+  const queryMaxRows = useUiStore((state) => state.queryMaxRows)
+  const setQueryMaxRows = useUiStore((state) => state.setQueryMaxRows)
   const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
   const showSystemObjects = useUiStore((state) => state.showSystemObjects)
+  const queryHistoryRequest = useUiStore((state) => state.queryHistoryRequest)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
   const [selectedSql, setSelectedSql] = useState({ tabId: null as string | null, sql: '' })
   const [editorLoaded, setEditorLoaded] = useState(false)
@@ -105,6 +108,7 @@ export function MainPanel() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
   const draftSaveTimer = useRef<number | null>(null)
+  const handledHistoryRequest = useRef(0)
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const connectionId = activeTab?.connectionId ?? null
@@ -160,6 +164,16 @@ export function MainPanel() {
     queryCapabilities.canComplete,
     selectedSchema,
   )
+
+  useEffect(() => {
+    if (
+      queryHistoryRequest > handledHistoryRequest.current &&
+      (activeTab?.kind === 'sql' || !activeTab?.kind)
+    ) {
+      handledHistoryRequest.current = queryHistoryRequest
+      window.setTimeout(() => setHistoryOpen(true), 0)
+    }
+  }, [activeTab?.kind, queryHistoryRequest])
 
   useEffect(() => {
     void loadSqlDrafts()
@@ -296,7 +310,7 @@ export function MainPanel() {
 
     try {
       const risk = await analyzeSqlRisk(sql)
-      if (risk.dangerous && !confirmDangerousSql(risk, activeConnection?.colorTag === 'prod')) {
+      if (risk.dangerous && !confirmDangerousSql(risk)) {
         return
       }
     } catch (error) {
@@ -655,6 +669,7 @@ export function MainPanel() {
         schema={selectedSchema}
         databases={toolbarDatabases}
         schemas={toolbarSchemas}
+        maxRows={queryMaxRows}
         running={activeTab.running}
         canCancel={Boolean(activeTab.runningQueryId && queryCapabilities.canCancel)}
         canExplain={queryCapabilities.canExplain}
@@ -691,13 +706,14 @@ export function MainPanel() {
             schemaListAvailable: true,
           })
         }}
+        onMaxRowsChange={setQueryMaxRows}
         onRun={execute}
         onCancel={cancel}
         onExplain={explain}
         onFormat={formatSql}
         />
 
-        <div className="min-h-0 flex-1">
+        <div className="ide-editor-surface min-h-0 flex-1">
         {editorLoaded ? (
           <Suspense
             fallback={
@@ -772,7 +788,13 @@ export function MainPanel() {
         <div className="flex h-9 items-center justify-between border-b px-3 text-xs">
           <div className="flex items-center gap-3">
             <span className="font-medium">{t('workbench.results')}</span>
-            {activeResult && !activeExplain && (
+            {activeTab.running && (
+              <span className="inline-flex items-center gap-1.5 text-muted-foreground" aria-live="polite">
+                <Loader2 className="size-3 animate-spin" />
+                {activeTab.cancelling ? t('workbench.cancelRequested') : t('workbench.queryRunning')}
+              </span>
+            )}
+            {activeResult && !activeExplain && !activeTab.running && (
               <span
                 className={activeResult.truncated ? 'text-amber-600' : 'text-muted-foreground'}
                 title={
@@ -827,7 +849,7 @@ export function MainPanel() {
           <div className="flex h-full min-h-0">
             <div className="min-w-0 flex-1">
               {activeTab.error ? (
-                <ErrorDetails message={activeTab.error} sql={activeTab.sql} />
+                <ErrorDetails message={activeTab.error} sql={activeTab.sql} onRetry={() => void execute()} />
               ) : activeExplain ? (
                 activeExplain.result ? (
                   <DataGrid result={activeExplain.result} />
@@ -895,22 +917,19 @@ function DataSourcesManagementPanel() {
         <div className="flex shrink-0 items-center gap-2">
           <ConnectionDialog
             trigger={
-              <Button type="button" size="sm" variant="secondary">
+              <IconTooltipButton label={t('connection.new')} variant="secondary">
                 <Plus className="size-3.5" />
-                {t('connection.new')}
-              </Button>
+              </IconTooltipButton>
             }
           />
-          <Button
-            type="button"
-            size="icon-sm"
+          <IconTooltipButton
+            label={t('connection.refresh')}
             variant="ghost"
-            title={t('connection.refresh')}
             disabled={loading}
             onClick={() => loadConnections()}
           >
             <RefreshCw className="size-4" />
-          </Button>
+          </IconTooltipButton>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -940,11 +959,13 @@ function WorkbenchHome({
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
   const connectConnection = useConnectionStore((state) => state.connectConnection)
   const recentDataSourceIds = useConnectionStore((state) => state.recentDataSourceIds)
+  const favoriteDataSourceIds = useConnectionStore((state) => state.favoriteDataSourceIds)
   const drafts = useSqlDraftStore((state) => state.drafts)
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
   const setActiveTab = useEditorStore((state) => state.setActiveTab)
-  const recentConnections = recentDataSourceIds
+  const prioritizedConnections = [...favoriteDataSourceIds, ...recentDataSourceIds]
+    .filter((id, index, all) => all.indexOf(id) === index)
     .map((id) => connections.find((connection) => connection.id === id))
     .filter((connection): connection is ConnectionConfig => Boolean(connection))
     .slice(0, 6)
@@ -980,160 +1001,236 @@ function WorkbenchHome({
     }
   }
 
+  const activeStatus = activeConnection
+    ? statuses[activeConnection.id]?.status ?? 'disconnected'
+    : 'disconnected'
+
+  if (activeConnection && activeStatus === 'connected') {
+    return (
+      <DataSourceStartWorkspace
+        connection={activeConnection}
+        drafts={drafts.filter((draft) => draft.connectionId === activeConnection.id)}
+        onNewSql={onNewSql}
+        onFocusExplorer={onFocusExplorer}
+        onRestoreDraft={restoreDraft}
+      />
+    )
+  }
+
   return (
-    <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
+    <ConnectionFirstLanding
+      connections={prioritizedConnections}
+      activeConnectionId={activeConnectionId}
+      statuses={statuses}
+      busyConnectionIds={busyConnectionIds}
+      drafts={drafts}
+      onConnect={(connection) => {
+        void connectRecent(connection)
+      }}
+      onManageDataSources={onManageDataSources}
+      onRestoreDraft={restoreDraft}
+    />
+  )
+}
+
+function ConnectionFirstLanding({
+  connections,
+  activeConnectionId,
+  statuses,
+  busyConnectionIds,
+  drafts,
+  onConnect,
+  onManageDataSources,
+  onRestoreDraft,
+}: {
+  connections: ConnectionConfig[]
+  activeConnectionId: string | null
+  statuses: Record<string, { status: ConnectionRuntimeStatus }>
+  busyConnectionIds: Record<string, true>
+  drafts: SqlDraft[]
+  onConnect: (connection: ConnectionConfig) => void
+  onManageDataSources: () => void
+  onRestoreDraft: (draft: SqlDraft) => void
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <section className="ide-workspace min-h-0 flex-1 overflow-auto">
+      <div className="mx-auto grid w-full max-w-6xl gap-8 px-6 py-12 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">{t('workbench.title')}</h1>
-          <p className="truncate text-xs text-muted-foreground">
-            {activeConnection
-              ? `${activeConnection.name} · ${activeConnection.driverType}`
-              : t('workbench.noDataSourceConnected')}
+          <div className="mb-7 max-w-xl">
+            <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/15">
+              <DatabaseIcon className="size-5" />
+            </div>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">{t('workbench.connectDataSource')}</h1>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              {t('workbench.connectDataSourceHint')}
+            </p>
+          </div>
+
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              {t('workbench.recentDataSources')}
+            </h2>
+            <Button type="button" size="sm" variant="outline" onClick={onManageDataSources}>
+              {t('connection.dataSources')}
+            </Button>
+          </div>
+
+          {connections.length === 0 ? (
+            <button
+              type="button"
+              className="ide-landing-card w-full border-dashed px-4 py-5 text-left text-sm text-muted-foreground transition-colors hover:border-primary/35 hover:bg-primary/[0.02]"
+              onClick={onManageDataSources}
+            >
+              {t('workbench.manageDataSourceForRecents')}
+            </button>
+          ) : (
+            <div className="grid gap-2">
+              {connections.map((connection) => {
+                const status = statuses[connection.id]?.status ?? 'disconnected'
+                const busy = Boolean(busyConnectionIds[connection.id])
+                const connected = status === 'connected'
+                return (
+                  <button
+                    key={connection.id}
+                    type="button"
+                    className={[
+                      'ide-landing-card group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 text-left transition-[border-color,background-color,box-shadow]',
+                      connection.id === activeConnectionId
+                        ? 'border-primary/35 bg-primary/[0.04]'
+                        : 'hover:border-primary/35 hover:bg-primary/[0.02]',
+                    ].join(' ')}
+                    onClick={() => onConnect(connection)}
+                    disabled={busy}
+                  >
+                    <span className="min-w-0">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-semibold">{connection.name}</span>
+                        <span className="rounded border bg-muted/45 px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                          {connection.driverType}
+                        </span>
+                      </span>
+                      <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
+                        {workbenchConnectionTarget(connection)}
+                      </span>
+                    </span>
+                    <span className={[
+                      'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium',
+                      connected
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                        : status === 'failed'
+                          ? 'bg-destructive/10 text-destructive'
+                          : 'bg-primary text-primary-foreground group-hover:bg-primary/90',
+                    ].join(' ')}>
+                      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Link className="size-3.5" />}
+                      {connected ? t('connection.connected') : t('connection.connect')}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <RecentSqlPanel drafts={drafts} onRestoreDraft={onRestoreDraft} compact />
+      </div>
+    </section>
+  )
+}
+
+function DataSourceStartWorkspace({
+  connection,
+  drafts,
+  onNewSql,
+  onFocusExplorer,
+  onRestoreDraft,
+}: {
+  connection: ConnectionConfig
+  drafts: SqlDraft[]
+  onNewSql: () => void
+  onFocusExplorer: () => void
+  onRestoreDraft: (draft: SqlDraft) => void
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <section className="ide-workspace min-h-0 flex-1 overflow-auto">
+      <div className="mx-auto grid w-full max-w-5xl gap-7 px-6 py-14">
+        <div className="max-w-2xl">
+          <div className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
+            <span className="size-2 rounded-full bg-emerald-500" />
+            <span>{t('connection.connected')}</span>
+          </div>
+          <h1 className="truncate text-2xl font-semibold tracking-[-0.025em]">{connection.name}</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {t('workbench.connectedStartHint')}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button type="button" size="sm" variant="secondary" onClick={onNewSql}>
-            <Plus className="size-3.5" />
-            {t('workbench.newSql')}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Button type="button" size="lg" className="h-auto justify-start px-4 py-4 text-left" onClick={onNewSql}>
+            <Plus className="size-4" />
+            <span className="grid gap-0.5">
+              <span>{t('workbench.newSql')}</span>
+              <span className="text-xs font-normal text-primary-foreground/75">{t('workbench.newSqlHint')}</span>
+            </span>
           </Button>
-          <Button type="button" size="sm" variant="outline" onClick={onManageDataSources}>
-            <DatabaseIcon className="size-3.5" />
-            {t('connection.dataSources')}
+          <Button type="button" size="lg" variant="outline" className="h-auto justify-start px-4 py-4 text-left" onClick={onFocusExplorer}>
+            <DatabaseIcon className="size-4" />
+            <span className="grid gap-0.5">
+              <span>{t('workbench.browseObjects')}</span>
+              <span className="text-xs font-normal text-muted-foreground">{t('workbench.browseObjectsHint')}</span>
+            </span>
           </Button>
         </div>
+
+        {drafts.length > 0 && <RecentSqlPanel drafts={drafts} onRestoreDraft={onRestoreDraft} />}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-6">
-        <div className="grid w-full gap-4 xl:grid-cols-[minmax(560px,1fr)_minmax(460px,640px)]">
-          <div className="grid content-start gap-3">
-            <section className="overflow-hidden rounded-md border bg-card">
-              <div className="flex items-center justify-between border-b px-4 py-3">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <Clock3 className="size-4 text-primary" />
-                  {t('sql.recentScripts')}
-                </div>
-              </div>
-              <div className="grid max-h-64 gap-1 overflow-auto p-2">
-                {drafts.length === 0 ? (
-                  <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">
-                    {t('sql.noRecentScripts')}
-                  </div>
-                ) : (
-                  drafts.slice(0, 5).map((draft) => (
-                    <button
-                      key={draft.id}
-                      type="button"
-                      className="rounded border border-transparent px-2 py-2 text-left text-xs transition-colors hover:border-border hover:bg-muted"
-                      onClick={() => restoreDraft(draft)}
-                    >
-                      <span className="block truncate font-medium">
-                        {draft.title || t('sql.restoredDraftTitle')}
-                      </span>
-                      <span className="block truncate font-mono text-[11px] text-muted-foreground">
-                        {sqlPreview(draft.sql)}
-                      </span>
-                      <span className="block truncate text-[11px] text-muted-foreground">
-                        {draft.connectionNameSnapshot ?? t('connection.disconnected')} · {formatHistoryTime(draft.updatedAt)}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </section>
-          </div>
-          <aside className="min-w-0 overflow-hidden rounded-md border bg-card">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
-                <DatabaseIcon className="size-4 shrink-0 text-primary" />
-                <span className="truncate">{t('workbench.recentDataSources')}</span>
-              </div>
-              {recentConnections.length > 0 && (
-                <span className="shrink-0 rounded border bg-muted/35 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  {recentConnections.length}
-                </span>
-              )}
-            </div>
-            <div className="grid max-h-[29rem] gap-2 overflow-auto p-3">
-              {recentConnections.length === 0 ? (
-                <button
-                  type="button"
-                  className="rounded border border-dashed p-3 text-left text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted/45"
-                  onClick={onManageDataSources}
-                >
-                  {t('workbench.manageDataSourceForRecents')}
-                </button>
-              ) : (
-                recentConnections.map((connection) => {
-                  const status = statuses[connection.id]?.status
-                  const busy = Boolean(busyConnectionIds[connection.id])
-                  const target = workbenchConnectionTarget(connection)
-                  return (
-                    <div
-                      key={connection.id}
-                      className={[
-                        'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-3 text-xs transition-colors',
-                        connection.id === activeConnectionId
-                          ? 'border-primary/35 bg-primary/10'
-                          : 'border-border/60 bg-background/60 hover:border-primary/35 hover:bg-muted/45',
-                      ].join(' ')}
-                    >
-                      <button
-                        type="button"
-                        className="grid min-w-0 gap-1 text-left"
-                        onClick={() => {
-                          setActiveConnection(connection.id)
-                          onFocusExplorer(true)
-                        }}
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="min-w-0 truncate text-sm font-medium">{connection.name}</span>
-                          <span className="shrink-0 rounded border bg-muted/35 px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
-                            {connection.driverType}
-                          </span>
-                          {status && (
-                            <span
-                              className={[
-                                'shrink-0 rounded border px-1.5 py-0.5 text-[10px]',
-                                status === 'connected'
-                                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
-                                  : status === 'failed'
-                                    ? 'border-destructive/30 bg-destructive/10 text-destructive'
-                                    : 'bg-muted/35 text-muted-foreground',
-                              ].join(' ')}
-                            >
-                              {t(connectionRuntimeStatusLabelKey(status))}
-                            </span>
-                          )}
-                        </span>
-                        <span className="block truncate text-[11px] text-muted-foreground">
-                          {connection.colorTag || t('connection.dataSource')}
-                        </span>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground" title={target}>
-                          {target}
-                        </span>
-                      </button>
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        title={
-                          statuses[connection.id]?.status === 'connected'
-                            ? t('connection.connected')
-                            : t('connection.connect')
-                        }
-                        disabled={busy || statuses[connection.id]?.status === 'connected'}
-                        onClick={() => {
-                          void connectRecent(connection)
-                        }}
-                      >
-                        {busy ? <Loader2 className="animate-spin" /> : <Link />}
-                      </Button>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </aside>
-        </div>
+    </section>
+  )
+}
+
+function RecentSqlPanel({
+  drafts,
+  onRestoreDraft,
+  compact = false,
+}: {
+  drafts: SqlDraft[]
+  onRestoreDraft: (draft: SqlDraft) => void
+  compact?: boolean
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <section className={compact ? 'min-w-0 border-t pt-4 xl:border-t-0 xl:border-l xl:pl-6 xl:pt-0' : 'ide-landing-card min-w-0 overflow-hidden'}>
+      <div className={compact ? 'mb-3 flex items-center gap-2' : 'flex items-center gap-2 border-b px-4 py-3'}>
+        <Clock3 className="size-4 text-muted-foreground" />
+        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          {t('sql.recentScripts')}
+        </h2>
+      </div>
+      <div className={compact ? 'grid gap-1' : 'grid max-h-64 gap-1 overflow-auto p-2'}>
+        {drafts.length === 0 ? (
+          <div className="py-2 text-xs leading-5 text-muted-foreground">{t('sql.noRecentScripts')}</div>
+        ) : (
+          drafts.slice(0, compact ? 4 : 5).map((draft) => (
+            <button
+              key={draft.id}
+              type="button"
+              className="rounded-md px-2 py-2 text-left text-xs transition-colors hover:bg-muted"
+              onClick={() => onRestoreDraft(draft)}
+            >
+              <span className="block truncate font-medium">{draft.title || t('sql.restoredDraftTitle')}</span>
+              <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                {sqlPreview(draft.sql)}
+              </span>
+              <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                {draft.connectionNameSnapshot ?? t('connection.disconnected')} · {formatHistoryTime(draft.updatedAt)}
+              </span>
+            </button>
+          ))
+        )}
       </div>
     </section>
   )
@@ -2176,7 +2273,7 @@ function DefinitionError({
   )
 }
 
-function ErrorDetails({ message, sql }: { message: string; sql?: string }) {
+function ErrorDetails({ message, sql, onRetry }: { message: string; sql?: string; onRetry?: () => void }) {
   const { t } = useTranslation()
   const [summary, ...details] = message.split('\n')
   const detail = details.join('\n').trim()
@@ -2190,15 +2287,23 @@ function ErrorDetails({ message, sql }: { message: string; sql?: string }) {
             <AlertCircle className="size-4 shrink-0" />
             <span>{t('workbench.queryFailed')}</span>
           </div>
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            onClick={() => navigator.clipboard?.writeText(copyText)}
-          >
-            <Copy className="size-3.5" />
-            {t('common.copy')}
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {onRetry && (
+              <Button type="button" size="xs" variant="outline" onClick={onRetry}>
+                <RefreshCw className="size-3.5" />
+                {t('workbench.retryQuery')}
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              onClick={() => navigator.clipboard?.writeText(copyText)}
+            >
+              <Copy className="size-3.5" />
+              {t('common.copy')}
+            </Button>
+          </div>
         </div>
         <div className="whitespace-pre-wrap break-words text-destructive">{summary}</div>
         {detail && (
@@ -2258,13 +2363,9 @@ function ResultSetTabs({
   )
 }
 
-function confirmDangerousSql(risk: SqlRiskAnalysis, production: boolean) {
-  const title = production
-    ? i18n.t('workbench.dangerousProdSqlTitle')
-    : i18n.t('workbench.dangerousSqlTitle')
-  const environmentLine = production
-    ? i18n.t('workbench.dangerousProdSqlBody')
-    : i18n.t('workbench.dangerousSqlBody')
+function confirmDangerousSql(risk: SqlRiskAnalysis) {
+  const title = i18n.t('workbench.dangerousSqlTitle')
+  const environmentLine = i18n.t('workbench.dangerousSqlBody')
   const reasons = risk.reasons.map(formatSqlRiskReason).join('\n')
 
   return window.confirm(`${title}\n\n${environmentLine}\n\n${i18n.t('workbench.dangerDetected')}\n${reasons}\n\n${i18n.t('workbench.continueExecute')}`)
@@ -2445,19 +2546,6 @@ function workbenchConnectionTarget(connection: ConnectionConfig) {
   const database = connection.database?.trim()
   const target = host ? `${host}${port}` : connection.driverType
   return database ? `${target}/${database}` : target
-}
-
-function connectionRuntimeStatusLabelKey(status: ConnectionRuntimeStatus) {
-  switch (status) {
-    case 'connected':
-      return 'connection.connected'
-    case 'connecting':
-      return 'connection.connecting'
-    case 'failed':
-      return 'connection.failed'
-    case 'disconnected':
-      return 'connection.disconnected'
-  }
 }
 
 function compactResultSummary(result: QueryResult) {

@@ -32,8 +32,11 @@ includesAll(
     'selectionContains(selection, virtualRow.index, columnIndex)',
     'copyToClipboard(value)',
     'copyToClipboard(rowValue)',
+    'const ROW_HEIGHT = 26',
+    'cellAlignment(column.dataType)',
+    "isNull ? 'font-sans text-[11px] italic text-muted-foreground' : ''",
   ],
-  'read-only data grid selection and copy',
+  'compact read-only data grid selection, copy, and NULL semantics',
 )
 excludesAll(
   dataGrid,
@@ -53,7 +56,7 @@ excludesAll(
 const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
-  ['Data tab · read-only', "t('workbench.readOnlyDataPreview')", '<DataGrid result={result} />', 'aria-label="generated SQL"'],
+  ['Data tab · read-only', "t('workbench.readOnlyDataPreview')", '<DataGrid result={displayResult} />', 'aria-label="generated SQL"'],
   'read-only data tab UI',
 )
 excludesAll(

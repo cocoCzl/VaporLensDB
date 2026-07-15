@@ -23,9 +23,14 @@ assert(mainPanel.includes('function sqlForToolbarExecution('), 'toolbar executio
 assert(mainPanel.includes('selectedSql.sql.trim() ? selectedSql.sql : tab.sql'), 'empty selections must fall back to the full SQL script')
 
 const toolbar = readFileSync(resolve(root, 'src/components/editor/EditorToolbar.tsx'), 'utf8')
-assert(toolbar.includes('IconTooltipButton'), 'SQL toolbar actions must be icon buttons with tooltips')
+assert(toolbar.includes('DropdownMenu'), 'lower-frequency SQL actions must move to an overflow menu')
+assert(toolbar.includes('maxRows'), 'SQL toolbar must keep the row limit visible')
+assert(toolbar.includes('runShortcut'), 'SQL toolbar must expose the platform shortcut notation')
+assert(toolbar.includes('IconTooltipButton'), 'primary SQL actions must use accessible icon tooltips')
+assert(!toolbar.includes('hidden xl:inline'), 'SQL toolbar must not retain text-button chrome at wide widths')
 assert(toolbar.includes('ChartNoAxesCombined'), 'query plan must use a dedicated icon')
 assert(toolbar.includes("t('editor.explain')"), 'query plan label must be localized')
+assert(mainPanel.includes('queryMaxRows'), 'SQL toolbar must receive the persisted row limit')
 
 const iconButton = readFileSync(resolve(root, 'src/components/common/IconTooltipButton.tsx'), 'utf8')
 assert(iconButton.includes('TooltipContent'), 'icon actions must provide hover explanations')

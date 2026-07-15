@@ -25,26 +25,32 @@ interface UserSettings {
   dataPreviewDefaultRows: number
   editorFontSize: number
   showSystemObjects: boolean
+  sidebarWidth: number
+  sidebarCollapsed: boolean
 }
 
 interface UiState {
   theme: Theme
   sidebarView: SidebarView
   sidebarWidth: number
+  sidebarCollapsed: boolean
   bottomPanelHeight: number
   queryMaxRows: number
   dataPreviewDefaultRows: number
   editorFontSize: number
   showSystemObjects: boolean
   notifications: AppNotification[]
+  queryHistoryRequest: number
   setTheme: (theme: Theme) => void
   setSidebarView: (view: SidebarView) => void
   setSidebarWidth: (width: number) => void
+  setSidebarCollapsed: (collapsed: boolean) => void
   setBottomPanelHeight: (height: number) => void
   setQueryMaxRows: (maxRows: number) => void
   setDataPreviewDefaultRows: (rows: number) => void
   setEditorFontSize: (fontSize: number) => void
   setShowSystemObjects: (showSystemObjects: boolean) => void
+  requestQueryHistory: () => void
   notify: (notification: Omit<AppNotification, 'id'>) => void
   notifyError: (error: AppError, title?: string) => void
   dismissNotification: (id: string) => void
@@ -54,23 +60,35 @@ export const useUiStore = create<UiState>((set) => ({
   theme: readStoredTheme(),
   ...readStoredSettings(),
   sidebarView: 'explorer',
-  sidebarWidth: 256,
   bottomPanelHeight: 240,
   notifications: [],
+  queryHistoryRequest: 0,
   setTheme: (theme) => {
     writeStoredTheme(theme)
     set({ theme })
   },
   setSidebarView: (sidebarView) => set({ sidebarView }),
-  setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
+  setSidebarWidth: (sidebarWidth) =>
+    set((state) => {
+      const next = {
+        ...settingsFromState(state),
+        sidebarWidth: clampNumber(sidebarWidth, 232, 460, 288),
+      }
+      writeStoredSettings(next)
+      return { sidebarWidth: next.sidebarWidth }
+    }),
+  setSidebarCollapsed: (sidebarCollapsed) =>
+    set((state) => {
+      const next = { ...settingsFromState(state), sidebarCollapsed }
+      writeStoredSettings(next)
+      return { sidebarCollapsed }
+    }),
   setBottomPanelHeight: (bottomPanelHeight) => set({ bottomPanelHeight }),
   setQueryMaxRows: (queryMaxRows) =>
     set((state) => {
       const next = {
+        ...settingsFromState(state),
         queryMaxRows: clampNumber(queryMaxRows, 100, 1_000_000),
-        dataPreviewDefaultRows: state.dataPreviewDefaultRows,
-        editorFontSize: state.editorFontSize,
-        showSystemObjects: state.showSystemObjects,
       }
       writeStoredSettings(next)
       return { queryMaxRows: next.queryMaxRows }
@@ -78,10 +96,8 @@ export const useUiStore = create<UiState>((set) => ({
   setDataPreviewDefaultRows: (dataPreviewDefaultRows) =>
     set((state) => {
       const next = {
-        queryMaxRows: state.queryMaxRows,
+        ...settingsFromState(state),
         dataPreviewDefaultRows: clampNumber(dataPreviewDefaultRows, 1, 10_000),
-        editorFontSize: state.editorFontSize,
-        showSystemObjects: state.showSystemObjects,
       }
       writeStoredSettings(next)
       return { dataPreviewDefaultRows: next.dataPreviewDefaultRows }
@@ -89,25 +105,20 @@ export const useUiStore = create<UiState>((set) => ({
   setEditorFontSize: (editorFontSize) =>
     set((state) => {
       const next = {
-        queryMaxRows: state.queryMaxRows,
-        dataPreviewDefaultRows: state.dataPreviewDefaultRows,
+        ...settingsFromState(state),
         editorFontSize: clampNumber(editorFontSize, 10, 24),
-        showSystemObjects: state.showSystemObjects,
       }
       writeStoredSettings(next)
       return { editorFontSize: next.editorFontSize }
     }),
   setShowSystemObjects: (showSystemObjects) =>
     set((state) => {
-      const next = {
-        queryMaxRows: state.queryMaxRows,
-        dataPreviewDefaultRows: state.dataPreviewDefaultRows,
-        editorFontSize: state.editorFontSize,
-        showSystemObjects,
-      }
+      const next = { ...settingsFromState(state), showSystemObjects }
       writeStoredSettings(next)
       return { showSystemObjects }
     }),
+  requestQueryHistory: () =>
+    set((state) => ({ queryHistoryRequest: state.queryHistoryRequest + 1 })),
   notify: (notification) =>
     set((state) => ({
       notifications: [
@@ -156,6 +167,8 @@ function readStoredSettings(): UserSettings {
       dataPreviewDefaultRows: DEFAULT_DATA_PREVIEW_ROWS,
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
       showSystemObjects: false,
+      sidebarWidth: 288,
+      sidebarCollapsed: false,
     }
   }
 
@@ -172,6 +185,8 @@ function readStoredSettings(): UserSettings {
       ),
       editorFontSize: clampNumber(parsed.editorFontSize, 10, 24, DEFAULT_EDITOR_FONT_SIZE),
       showSystemObjects: parsed.showSystemObjects === true,
+      sidebarWidth: clampNumber(parsed.sidebarWidth, 232, 460, 288),
+      sidebarCollapsed: parsed.sidebarCollapsed === true,
     }
   } catch {
     return {
@@ -179,7 +194,20 @@ function readStoredSettings(): UserSettings {
       dataPreviewDefaultRows: DEFAULT_DATA_PREVIEW_ROWS,
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
       showSystemObjects: false,
+      sidebarWidth: 288,
+      sidebarCollapsed: false,
     }
+  }
+}
+
+function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed'>): UserSettings {
+  return {
+    queryMaxRows: state.queryMaxRows,
+    dataPreviewDefaultRows: state.dataPreviewDefaultRows,
+    editorFontSize: state.editorFontSize,
+    showSystemObjects: state.showSystemObjects,
+    sidebarWidth: state.sidebarWidth,
+    sidebarCollapsed: state.sidebarCollapsed,
   }
 }
 

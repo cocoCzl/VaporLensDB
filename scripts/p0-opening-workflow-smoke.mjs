@@ -7,7 +7,6 @@ const mockedDataSources = Array.from({ length: 20 }, (_, index) => ({
   id: `mock-${index + 1}`,
   name: `Mock Source ${String(index + 1).padStart(2, '0')}`,
   driverType: index % 3 === 0 ? 'postgres' : index % 3 === 1 ? 'mysql' : 'oracle',
-  colorTag: index % 5 === 0 ? 'prod' : index % 2 === 0 ? 'staging' : 'local',
 }))
 
 function read(path) {
@@ -60,7 +59,9 @@ includesAll(
     "t('workbench.reuseSql')",
     "t('sql.history')",
     'Data Sources',
-    "t('workbench.newSqlTab')",
+    "t('workbench.newSql')",
+    'xl:grid-cols-[minmax(0,1fr)_20rem]',
+    'xl:border-l',
     '<SettingsWorkspacePanel />',
   ],
   'main workspace opening workflow',

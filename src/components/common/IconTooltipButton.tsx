@@ -11,7 +11,7 @@ export function IconTooltipButton({ label, children, size = 'icon-sm', ...props 
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex" />}>
-        <Button type="button" size={size} title={label} aria-label={label} {...props}>
+        <Button type="button" size={size} aria-label={label} {...props}>
           {children}
         </Button>
       </TooltipTrigger>

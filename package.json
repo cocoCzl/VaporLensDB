@@ -1,7 +1,7 @@
 {
   "name": "vapor-lens-db",
   "private": true,
-  "version": "0.6.4",
+  "version": "0.7.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,6 +22,7 @@
     "test:sql-editor-shortcut": "node scripts/sql-editor-shortcut-smoke.mjs",
     "test:explain-result": "node scripts/explain-result-smoke.mjs",
     "test:oracle-explain": "node scripts/oracle-explain-smoke.mjs",
+    "test:oracle-blob": "node scripts/oracle-blob-smoke.mjs",
     "test:structure-tab": "node scripts/structure-tab-smoke.mjs",
     "test:definition-tab": "node scripts/definition-tab-smoke.mjs",
     "test:schema-aware-completion": "node scripts/schema-aware-completion-smoke.mjs",
@@ -52,6 +53,8 @@
     "test:p1-read-only-result-workflow": "node scripts/p1-read-only-result-workflow-smoke.mjs",
     "test:p2-object-understanding-workflow": "node scripts/p2-object-understanding-workflow-smoke.mjs",
     "test:command-contracts": "node scripts/command-contract-smoke.mjs",
+    "test:command-palette": "node scripts/command-palette-smoke.mjs",
+    "test:ide-chrome": "node scripts/ide-chrome-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "build:app": "./build.sh",

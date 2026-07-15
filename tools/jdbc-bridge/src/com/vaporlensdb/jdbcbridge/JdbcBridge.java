@@ -5,6 +5,7 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.sql.Clob;
+import java.sql.Blob;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
@@ -511,7 +512,25 @@ public final class JdbcBridge {
         if (value instanceof Clob clob) {
             return readClob(clob);
         }
+        if (value instanceof Blob blob) {
+            return blobPlaceholder(blob);
+        }
         return resultSet.getString(index);
+    }
+
+    private static String blobPlaceholder(Blob blob) throws Exception {
+        long bytes = blob.length();
+        return "BLOB · " + humanReadableBytes(bytes);
+    }
+
+    private static String humanReadableBytes(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        if (bytes < 1024L * 1024L) {
+            return String.format("%.1f KB", bytes / 1024.0);
+        }
+        return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
     }
 
     private static String readClob(Clob clob) throws Exception {

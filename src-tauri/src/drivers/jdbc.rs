@@ -1059,6 +1059,10 @@ fn clarify_oracle_explain_error(error: AppError) -> AppError {
 fn classify_jdbc_error(command: &str, sql: Option<&str>, error: AppError) -> AppError {
     match error {
         AppError::Timeout { .. } => error,
+        AppError::ConnectionFailed { driver, message } if command == "query" => AppError::QueryFailed {
+            sql: sql.unwrap_or("<unknown>").to_string(),
+            message: format!("{driver}: {}", normalize_jdbc_error_message(&message)),
+        },
         AppError::ConnectionFailed { driver, message } => AppError::ConnectionFailed {
             driver,
             message: normalize_jdbc_error_message(&message),
@@ -1234,7 +1238,7 @@ fn unsupported(operation: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::{
-        clarify_metadata_error, clarify_oracle_explain_error, db_object_kind_from_value,
+        classify_jdbc_error, clarify_metadata_error, clarify_oracle_explain_error, db_object_kind_from_value,
         db_object_kind_value, map_column_row, map_index_row, map_schema_object_row,
         normalize_jdbc_error_message, normalize_jdbc_sql, parse_metadata_sql,
         parse_sidecar_response,
@@ -1414,6 +1418,24 @@ mod tests {
         };
         assert!(message.contains("PLAN_TABLE"));
         assert!(message.contains("DBMS_XPLAN.DISPLAY"));
+    }
+
+    #[test]
+    fn reports_jdbc_query_result_errors_as_query_failures() {
+        let error = classify_jdbc_error(
+            "query",
+            Some("SELECT blob_value FROM demo"),
+            AppError::ConnectionFailed {
+                driver: "jdbc".to_string(),
+                message: "getString/getNString not implemented for BLOB".to_string(),
+            },
+        );
+
+        let AppError::QueryFailed { sql, message } = error else {
+            panic!("expected query failed");
+        };
+        assert_eq!(sql, "SELECT blob_value FROM demo");
+        assert!(message.contains("BLOB"));
     }
 
     #[test]

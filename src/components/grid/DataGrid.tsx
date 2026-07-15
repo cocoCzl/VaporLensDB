@@ -16,7 +16,7 @@ interface DataGridProps {
   result?: QueryResult
 }
 
-const ROW_HEIGHT = 28
+const ROW_HEIGHT = 26
 const ROW_INDEX_WIDTH = 56
 const COLUMN_MIN_WIDTH = 180
 const COLUMN_MAX_WIDTH = 640
@@ -97,11 +97,11 @@ export function DataGrid({
               top: result.truncated ? 29 : 0,
             }}
           >
-            <div className="border-b border-r px-2 py-1.5 text-right font-medium text-muted-foreground">
+            <div className="border-b border-r border-border/60 px-2 py-1 text-right font-medium text-muted-foreground">
               #
             </div>
             {result.columns.map((column, columnIndex) => (
-              <div key={column.name} className="group relative min-w-0 border-b border-r px-2 py-1.5 font-medium">
+              <div key={column.name} className="group relative min-w-0 border-b border-r border-border/60 px-2 py-1 font-medium">
                 <div className="flex min-w-0 items-center justify-between gap-3">
                   <span className="min-w-0 truncate">{column.name}</span>
                   <span className="shrink-0 text-[10px] text-muted-foreground">
@@ -153,18 +153,20 @@ export function DataGrid({
                     minWidth: minGridWidth,
                   }}
                 >
-                  <div className="border-b border-r bg-muted/40 px-2 py-1 text-right text-muted-foreground">
+                  <div className="border-b border-r border-border/50 bg-muted/35 px-2 py-1 text-right text-muted-foreground">
                     {virtualRow.index + 1}
                   </div>
                   {result.columns.map((column, columnIndex) => {
                     const formatted = formatValue(row[columnIndex])
                     const selected = selectionContains(selection, virtualRow.index, columnIndex)
                     const inspectable = shouldOfferViewer(formatted)
+                    const alignment = cellAlignment(column.dataType)
+                    const isNull = row[columnIndex] == null
                     return (
                       <div
                         key={`${virtualRow.index}-${column.name}`}
                         className={[
-                          'group relative min-w-0 border-b border-r font-mono outline-none',
+                          'group relative min-w-0 border-b border-r border-border/50 font-mono outline-none',
                           selected
                             ? 'bg-primary/15 text-primary ring-1 ring-inset ring-primary/40'
                             : 'hover:bg-accent/50',
@@ -173,14 +175,22 @@ export function DataGrid({
                       >
                         <button
                           type="button"
-                          className="flex h-full w-full min-w-0 items-center gap-1 px-2 py-1 text-left"
+                          className={`flex h-full w-full min-w-0 items-center gap-1 px-2 py-1 ${alignment}`}
                           onClick={(event) =>
                             setSelection((current) =>
                               nextCellSelection(current, virtualRow.index, columnIndex, event.shiftKey),
                             )
                           }
                         >
-                          <span className="min-w-0 flex-1 truncate">{formatted}</span>
+                          <span
+                            className={[
+                              'min-w-0 flex-1 truncate',
+                              isNull ? 'font-sans text-[11px] italic text-muted-foreground' : '',
+                            ].join(' ')}
+                            aria-label={isNull ? 'NULL value' : undefined}
+                          >
+                            {formatted}
+                          </span>
                           {inspectable && (
                             <span
                               role="button"
@@ -541,4 +551,15 @@ function formatValue(value: unknown) {
     return JSON.stringify(value)
   }
   return String(value)
+}
+
+function cellAlignment(dataType: string) {
+  const normalized = dataType.toLowerCase()
+  if (/bool|bit/.test(normalized)) {
+    return 'justify-center text-center'
+  }
+  if (/int|serial|numeric|decimal|float|double|real|number|money/.test(normalized)) {
+    return 'justify-end text-right tabular-nums'
+  }
+  return 'text-left'
 }

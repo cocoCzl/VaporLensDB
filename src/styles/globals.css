@@ -4,44 +4,63 @@
 
 @layer base {
   :root {
-    --background: 210 17% 98%;
-    --foreground: 220 22% 12%;
+    --background: 220 18% 98%;
+    --foreground: 222 30% 12%;
     --card: 0 0% 100%;
-    --card-foreground: 220 22% 12%;
-    --border: 214 18% 86%;
-    --input: 214 18% 86%;
-    --primary: 222 82% 56%;
+    --card-foreground: 222 30% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 30% 12%;
+    --border: 220 14% 86%;
+    --input: 220 14% 84%;
+    --primary: 218 78% 53%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 213 18% 93%;
-    --secondary-foreground: 220 18% 18%;
-    --muted: 213 18% 94%;
-    --muted-foreground: 218 10% 41%;
-    --accent: 217 42% 91%;
-    --accent-foreground: 221 35% 24%;
-    --destructive: 0 72% 51%;
+    --secondary: 220 15% 94%;
+    --secondary-foreground: 221 26% 19%;
+    --muted: 220 14% 95%;
+    --muted-foreground: 220 10% 43%;
+    --accent: 218 42% 93%;
+    --accent-foreground: 221 36% 23%;
+    --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 100%;
-    --ring: 222 82% 56%;
-    --radius: 0.5rem;
+    --ring: 218 78% 53%;
+    --success: 158 63% 34%;
+    --warning: 37 90% 43%;
+    --radius: 0.375rem;
+    --radius-md: 0.5rem;
+    --workspace: 220 18% 98%;
+    --workspace-raised: 0 0% 100%;
+    --chrome: 220 15% 97.2%;
+    --toolbar: 220 16% 96.5%;
+    --overlay: 222 36% 12%;
   }
 
   .dark {
-    --background: 210 10% 10%;
-    --foreground: 220 14% 89%;
-    --card: 210 10% 12%;
-    --card-foreground: 220 14% 89%;
-    --border: 217 10% 21%;
-    --input: 217 10% 24%;
-    --primary: 223 88% 63%;
+    --background: 222 15% 9%;
+    --foreground: 216 18% 91%;
+    --card: 222 14% 12%;
+    --card-foreground: 216 18% 91%;
+    --popover: 222 14% 13%;
+    --popover-foreground: 216 18% 91%;
+    --border: 220 12% 22%;
+    --input: 220 12% 24%;
+    --primary: 216 90% 67%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 214 9% 17%;
-    --secondary-foreground: 220 12% 86%;
-    --muted: 213 9% 15%;
-    --muted-foreground: 218 8% 61%;
-    --accent: 222 39% 34%;
-    --accent-foreground: 220 17% 93%;
-    --destructive: 0 69% 56%;
+    --secondary: 220 12% 17%;
+    --secondary-foreground: 216 15% 88%;
+    --muted: 220 12% 15%;
+    --muted-foreground: 216 10% 62%;
+    --accent: 217 47% 26%;
+    --accent-foreground: 216 22% 94%;
+    --destructive: 0 71% 61%;
     --destructive-foreground: 0 0% 100%;
-    --ring: 223 88% 63%;
+    --ring: 216 90% 67%;
+    --success: 158 57% 48%;
+    --warning: 38 92% 57%;
+    --workspace: 222 15% 9%;
+    --workspace-raised: 222 14% 12%;
+    --chrome: 222 13% 11.5%;
+    --toolbar: 222 13% 11.5%;
+    --overlay: 222 38% 4%;
   }
 }
 
@@ -49,12 +68,25 @@
   * {
     @apply border-border;
   }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
   body {
     @apply bg-background text-foreground;
-    font-family: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+    font-family: 'Geist Variable', 'PingFang SC', 'Microsoft YaHei UI', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
-  code, pre, .font-mono {
-    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  code,
+  pre,
+  .font-mono {
+    font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+    font-variant-ligatures: none;
   }
 
   select,
@@ -62,34 +94,91 @@
   textarea {
     color-scheme: light dark;
   }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.2);
+    color: hsl(var(--foreground));
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
+  .ide-workspace {
+    background-color: hsl(var(--workspace));
+  }
+
   .ide-surface {
-    @apply bg-card/95;
+    background-color: hsl(var(--workspace-raised));
   }
 
   .ide-toolbar {
-    @apply border-b bg-muted/55;
+    background-color: hsl(var(--toolbar));
+  }
+
+  .ide-chrome {
+    background-color: hsl(var(--chrome));
+  }
+
+  /* The tab strip starts the work surface; unlike a tool bar it should not
+     create another visible band below the native system title bar. */
+  .ide-tab-strip {
+    background-color: hsl(var(--chrome));
+    border-color: hsl(var(--border) / 0.54);
+    box-shadow: none;
+  }
+
+  .ide-editor-surface {
+    background-color: hsl(var(--card));
+  }
+
+  .ide-overlay {
+    @apply border bg-popover text-popover-foreground shadow-[0_18px_42px_-28px_hsl(var(--overlay)/0.7)];
+  }
+
+  .ide-landing-card {
+    @apply rounded-lg border bg-card text-card-foreground shadow-[0_12px_30px_-26px_hsl(var(--overlay)/0.55)];
   }
 
   .ide-icon-button {
-    @apply size-8 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground;
+    @apply size-8 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50;
   }
 
   .ide-select {
-    @apply h-8 rounded-md border border-input bg-card px-2 text-xs outline-none focus:border-ring;
+    @apply h-8 rounded-md border border-input bg-card px-2 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20;
   }
 
   .ide-input {
-    @apply h-8 rounded-md border border-input bg-card px-2 text-sm outline-none focus:border-ring;
+    @apply h-8 rounded-md border border-input bg-card px-2 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20;
   }
 
-  .dark .ide-surface {
-    background-color: hsl(210 10% 12%);
+  .ide-status-success {
+    color: hsl(var(--success));
   }
 
-  .dark .ide-toolbar {
-    background-color: hsl(210 9% 13%);
+  .ide-status-warning {
+    color: hsl(var(--warning));
+  }
+
+  .ide-status-danger {
+    @apply text-destructive;
+  }
+
+  .ide-divider {
+    @apply border-border/80;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
   }
 }

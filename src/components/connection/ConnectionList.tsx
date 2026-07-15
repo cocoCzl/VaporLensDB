@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Database, Link, Link2Off, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Database, Link, Link2Off, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig } from '@/types/connection'
@@ -20,6 +20,8 @@ export function ConnectionList({ mode = 'sidebar' }: { mode?: 'sidebar' | 'manag
     removeConnection,
     activeConnectionId,
     setActiveConnection,
+    favoriteDataSourceIds,
+    toggleFavoriteDataSource,
   } = useConnectionStore()
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const managerMode = mode === 'manager'
@@ -67,21 +69,19 @@ export function ConnectionList({ mode = 'sidebar' }: { mode?: 'sidebar' | 'manag
         <div className="flex h-10 items-center gap-1 border-b px-2">
           <ConnectionDialog
             trigger={
-              <Button type="button" size="icon-sm" variant="ghost" title={t('connection.new')}>
+              <IconTooltipButton label={t('connection.new')} variant="ghost">
                 <Plus className="size-4" />
-              </Button>
+              </IconTooltipButton>
             }
           />
-          <Button
-            type="button"
-            size="icon-sm"
+          <IconTooltipButton
+            label={t('connection.refresh')}
             variant="ghost"
-            title={t('connection.refresh')}
             disabled={loading}
             onClick={() => loadConnections()}
           >
             <RefreshCw className="size-4" />
-          </Button>
+          </IconTooltipButton>
         </div>
       )}
 
@@ -128,6 +128,8 @@ export function ConnectionList({ mode = 'sidebar' }: { mode?: 'sidebar' | 'manag
                         }}
                         onDisconnect={() => disconnectConnection(connection.id)}
                         onDelete={() => removeConnection(connection.id)}
+                        favorite={favoriteDataSourceIds.includes(connection.id)}
+                        onToggleFavorite={() => toggleFavoriteDataSource(connection.id)}
                         t={t}
                       />
                     ))}
@@ -153,6 +155,8 @@ function ConnectionCard({
   onConnect,
   onDisconnect,
   onDelete,
+  favorite,
+  onToggleFavorite,
   t,
 }: {
   connection: ConnectionConfig
@@ -164,6 +168,8 @@ function ConnectionCard({
   onConnect: () => void
   onDisconnect: () => void
   onDelete: () => void
+  favorite: boolean
+  onToggleFavorite: () => void
   t: ReturnType<typeof useTranslation>['t']
 }) {
   const connected = status === 'connected'
@@ -199,17 +205,6 @@ function ConnectionCard({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-medium leading-5">{connection.name}</span>
-          {connection.colorTag && (
-            <span
-              className={[
-                'shrink-0 rounded border px-1 py-0 text-[10px] leading-4',
-                environmentBadgeClass(connection.colorTag),
-              ].join(' ')}
-              title={t('connection.environmentTitle', { label: environmentLabel(connection.colorTag, t) })}
-            >
-              {environmentLabel(connection.colorTag, t)}
-            </span>
-          )}
           <span
             className={[
               'size-1.5 shrink-0 rounded-full',
@@ -229,11 +224,10 @@ function ConnectionCard({
       <div className={managerMode
         ? 'flex shrink-0 items-center gap-0.5 opacity-100'
         : 'flex shrink-0 items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100'}>
-        <Button
-          type="button"
+        <IconTooltipButton
           size="icon-xs"
+          label={connected ? t('connection.disconnect') : t('connection.connect')}
           variant="ghost"
-          title={connected ? t('connection.disconnect') : t('connection.connect')}
           disabled={busy || Boolean(readinessIssue)}
           onClick={(event) => {
             event.stopPropagation()
@@ -245,25 +239,31 @@ function ConnectionCard({
           }}
         >
           {busy ? <RefreshCw className="animate-spin" /> : connected ? <Link2Off /> : <Link />}
-        </Button>
+        </IconTooltipButton>
         <ConnectionDialog
           connection={connection}
           trigger={
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              title={t('connection.edit')}
-            >
+            <IconTooltipButton size="icon-xs" label={t('connection.edit')} variant="ghost">
               <Pencil />
-            </Button>
+            </IconTooltipButton>
           }
         />
-        <Button
-          type="button"
+        <IconTooltipButton
           size="icon-xs"
+          label={favorite ? t('connection.unfavorite') : t('connection.favorite')}
           variant="ghost"
-          title={t('connection.delete')}
+          aria-pressed={favorite}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggleFavorite()
+          }}
+        >
+          <Star className={favorite ? 'fill-current text-amber-500' : ''} />
+        </IconTooltipButton>
+        <IconTooltipButton
+          size="icon-xs"
+          label={t('connection.delete')}
+          variant="ghost"
           disabled={busy}
           onClick={(event) => {
             event.stopPropagation()
@@ -271,7 +271,7 @@ function ConnectionCard({
           }}
         >
           <Trash2 />
-        </Button>
+        </IconTooltipButton>
       </div>
     </div>
   )
@@ -318,20 +318,4 @@ function groupConnections(connections: ConnectionConfig[], ungroupedLabel: strin
 
 function groupSortKey(group: string, ungroupedLabel: string) {
   return group === ungroupedLabel ? '\uffff' : group
-}
-
-function environmentBadgeClass(tag: string) {
-  if (tag === 'prod') return 'border-red-500/45 bg-red-500/10 text-red-400'
-  if (tag === 'stage') return 'border-amber-500/45 bg-amber-500/10 text-amber-400'
-  if (tag === 'test') return 'border-sky-500/45 bg-sky-500/10 text-sky-400'
-  if (tag === 'dev') return 'border-emerald-500/45 bg-emerald-500/10 text-emerald-400'
-  return 'border-muted-foreground/30 bg-muted/40 text-muted-foreground'
-}
-
-function environmentLabel(tag: string, t: ReturnType<typeof useTranslation>['t']) {
-  if (tag === 'prod') return 'prod'
-  if (tag === 'stage') return 'stage'
-  if (tag === 'test') return 'test'
-  if (tag === 'dev') return 'dev'
-  return t('connection.noEnvironment')
 }

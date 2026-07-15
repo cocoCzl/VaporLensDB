@@ -7,10 +7,11 @@ TARGET="${1:-mac}"
 usage() {
   cat <<'EOF'
 Usage:
-  ./build.sh [mac|current|check|jdbc-bridge]
+  ./build.sh [mac|windows|current|check|jdbc-bridge]
 
 Targets:
   mac      Build a macOS app bundle and DMG on macOS.
+  windows  Build Windows MSI and NSIS installers on Windows.
   current  Build a Tauri bundle for the current platform.
   check    Run validation only: frontend lint/build and Rust tests.
   jdbc-bridge Build the lightweight Java JDBC bridge jar.
@@ -18,6 +19,8 @@ Targets:
 Outputs:
   macOS app: src-tauri/target/release/bundle/macos/VaporLensDB.app
   macOS dmg: src-tauri/target/release/bundle/dmg/*.dmg
+  Windows msi: src-tauri/target/release/bundle/msi/*.msi
+  Windows nsis: src-tauri/target/release/bundle/nsis/*.exe
 EOF
 }
 
@@ -82,6 +85,26 @@ build_mac() {
     -print
 }
 
+build_windows() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      ;;
+    *)
+      printf 'The windows target must be run on Windows. Use ./build.sh current for this machine.\n' >&2
+      exit 1
+      ;;
+  esac
+
+  log "Building Windows MSI and NSIS installers"
+  pnpm tauri build --bundles msi,nsis
+
+  log "Build artifacts"
+  find "$ROOT_DIR/src-tauri/target/release/bundle" \
+    \( -name '*.msi' -o -name '*.exe' \) \
+    -maxdepth 3 \
+    -print
+}
+
 cd "$ROOT_DIR"
 
 case "$TARGET" in
@@ -100,10 +123,28 @@ case "$TARGET" in
     build_current
     ;;
   mac)
+    if [ "$(uname -s)" != "Darwin" ]; then
+      printf 'The mac target must be run on macOS. Use ./build.sh current for this machine.\n' >&2
+      exit 1
+    fi
     ensure_dependencies
     build_jdbc_bridge
     run_checks
     build_mac
+    ;;
+  windows)
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*)
+        ;;
+      *)
+        printf 'The windows target must be run on Windows. Use ./build.sh current for this machine.\n' >&2
+        exit 1
+        ;;
+    esac
+    ensure_dependencies
+    build_jdbc_bridge
+    run_checks
+    build_windows
     ;;
   jdbc-bridge)
     build_jdbc_bridge
