@@ -524,6 +524,10 @@
     "closeTabsToRight": "Close tabs to the right",
     "lastEditedScript": "Last edited SQL script",
     "noRecentScripts": "No recent SQL drafts yet.",
+    "noRecentScriptsHint": "Continue your work here after editing SQL.",
+    "recentScriptCount": "{{count}} drafts",
+    "showAllRecentScripts": "Show all SQL drafts",
+    "collapseRecentScripts": "Collapse SQL drafts",
     "restoredDraftTitle": "Restored SQL",
     "rows": "{{count}} rows",
     "affectedRows": "{{count}} rows affected"

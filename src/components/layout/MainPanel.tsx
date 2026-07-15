@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Link, Loader2, LockKeyhole, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Link, Loader2, LockKeyhole, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
@@ -1056,7 +1056,7 @@ function ConnectionFirstLanding({
 
   return (
     <section className="ide-workspace min-h-0 flex-1 overflow-auto">
-      <div className="mx-auto grid w-full max-w-6xl gap-8 px-6 py-12 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
+      <div className="mx-auto grid w-full max-w-6xl gap-6 px-6 py-10 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-start">
         <div className="min-w-0">
           <div className="mb-7 max-w-xl">
             <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/15">
@@ -1201,37 +1201,69 @@ function RecentSqlPanel({
   compact?: boolean
 }) {
   const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const visibleDrafts = compact && !expanded ? drafts.slice(0, 4) : drafts.slice(0, compact ? undefined : 5)
+  const canExpand = compact && drafts.length > 4
 
   return (
-    <section className={compact ? 'min-w-0 border-t pt-4 xl:border-t-0 xl:border-l xl:pl-6 xl:pt-0' : 'ide-landing-card min-w-0 overflow-hidden'}>
-      <div className={compact ? 'mb-3 flex items-center gap-2' : 'flex items-center gap-2 border-b px-4 py-3'}>
-        <Clock3 className="size-4 text-muted-foreground" />
-        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          {t('sql.recentScripts')}
-        </h2>
+    <section className={compact ? 'ide-landing-card min-w-0 self-start overflow-hidden' : 'ide-landing-card min-w-0 overflow-hidden'}>
+      <div className="flex items-center justify-between gap-3 border-b bg-muted/[0.28] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-primary/15">
+            <Clock3 className="size-3.5" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-foreground">
+              {t('sql.recentScripts')}
+            </h2>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {t('sql.recentScriptCount', { count: drafts.length })}
+            </p>
+          </div>
+        </div>
       </div>
-      <div className={compact ? 'grid gap-1' : 'grid max-h-64 gap-1 overflow-auto p-2'}>
+      <div className={compact ? 'divide-y divide-border/55' : 'grid max-h-64 gap-1 overflow-auto p-2'}>
         {drafts.length === 0 ? (
-          <div className="py-2 text-xs leading-5 text-muted-foreground">{t('sql.noRecentScripts')}</div>
+          <div className="px-4 py-5 text-xs leading-5 text-muted-foreground">
+            <p>{t('sql.noRecentScripts')}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">{t('sql.noRecentScriptsHint')}</p>
+          </div>
         ) : (
-          drafts.slice(0, compact ? 4 : 5).map((draft) => (
+          visibleDrafts.map((draft) => (
             <button
               key={draft.id}
               type="button"
-              className="rounded-md px-2 py-2 text-left text-xs transition-colors hover:bg-muted"
+              className={compact
+                ? 'group w-full px-4 py-3 text-left text-xs transition-colors hover:bg-primary/[0.035] focus-visible:bg-primary/[0.05]'
+                : 'rounded-md px-2 py-2 text-left text-xs transition-colors hover:bg-muted'}
               onClick={() => onRestoreDraft(draft)}
             >
-              <span className="block truncate font-medium">{draft.title || t('sql.restoredDraftTitle')}</span>
-              <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+              <span className="block truncate font-medium group-hover:text-primary">{draft.title || t('sql.restoredDraftTitle')}</span>
+              <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
                 {sqlPreview(draft.sql)}
               </span>
-              <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+              <span className="mt-1 block truncate text-[11px] text-muted-foreground">
                 {draft.connectionNameSnapshot ?? t('connection.disconnected')} · {formatHistoryTime(draft.updatedAt)}
               </span>
             </button>
           ))
         )}
       </div>
+      {canExpand && (
+        <div className="border-t bg-muted/[0.16] p-2">
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="w-full justify-between px-2 text-muted-foreground hover:text-foreground"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <span>{expanded ? t('sql.collapseRecentScripts') : t('sql.showAllRecentScripts')}</span>
+            {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+          </Button>
+        </div>
+      )}
     </section>
   )
 }

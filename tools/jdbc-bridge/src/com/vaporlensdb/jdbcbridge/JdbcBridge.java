@@ -30,12 +30,20 @@ public final class JdbcBridge {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 4) {
+        if (args.length < 1) {
             throw new IllegalArgumentException(
                     "usage: JdbcBridge <ping|query|server> <driverClass> <url> <username> <password> [sql|connectTimeoutSeconds queryTimeoutSeconds]");
         }
 
         String command = args[0];
+        if ("server".equals(command)) {
+            server();
+            return;
+        }
+
+        if (args.length < 4) {
+            throw new IllegalArgumentException("driver class, URL and username are required");
+        }
         String driverClass = args[1];
         String url = args[2];
         String username = args[3];
@@ -65,20 +73,52 @@ public final class JdbcBridge {
                     }
                     System.out.println(query(connection, args[7], queryTimeoutSeconds));
                 }
-                case "server" -> server(connection, queryTimeoutSeconds);
                 default -> throw new IllegalArgumentException("unsupported command: " + command);
             }
         }
     }
 
-    private static void server(Connection connection, int queryTimeoutSeconds) throws Exception {
+    private static void server() throws Exception {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+        String line = reader.readLine();
+        if (line == null) {
+            return;
+        }
+
+        String[] init = line.split("\\t", 8);
+        if (init.length != 8 || !"INIT".equals(init[0]) || !"0".equals(init[1])) {
+            throw new IllegalArgumentException("JDBC bridge requires an INIT request");
+        }
+
+        String driverClass = decode(init[2]);
+        String url = decode(init[3]);
+        String username = decode(init[4]);
+        String password = decode(init[5]);
+        int connectTimeoutSeconds = parsePositiveInt(init[6], DEFAULT_CONNECT_TIMEOUT_SECONDS);
+        int queryTimeoutSeconds = parsePositiveInt(init[7], DEFAULT_QUERY_TIMEOUT_SECONDS);
+
+        Class.forName(driverClass);
+        DriverManager.setLoginTimeout(connectTimeoutSeconds);
+        Properties properties = new Properties();
+        if (!username.isEmpty()) {
+            properties.setProperty("user", username);
+        }
+        if (!password.isEmpty()) {
+            properties.setProperty("password", password);
+        }
+
+        try (Connection connection = DriverManager.getConnection(url, properties)) {
+            respondOk("0", "{\"ok\":true}");
+            serveRequests(reader, connection, queryTimeoutSeconds);
+        }
+    }
+
+    private static void serveRequests(BufferedReader reader, Connection connection, int queryTimeoutSeconds) throws Exception {
         String line;
         while ((line = reader.readLine()) != null) {
             if (line.isEmpty()) {
                 continue;
             }
-
             String[] parts = line.split("\t", 3);
             String command = parts[0];
             String requestId = parts.length >= 2 ? parts[1] : "0";

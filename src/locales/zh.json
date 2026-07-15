@@ -524,6 +524,10 @@
     "closeTabsToRight": "关闭右侧标签页",
     "lastEditedScript": "上次编辑的 SQL 脚本",
     "noRecentScripts": "还没有最近 SQL 草稿。",
+    "noRecentScriptsHint": "编辑 SQL 后可在这里继续工作。",
+    "recentScriptCount": "{{count}} 个草稿",
+    "showAllRecentScripts": "查看全部 SQL 草稿",
+    "collapseRecentScripts": "收起 SQL 草稿",
     "restoredDraftTitle": "恢复的 SQL",
     "rows": "{{count}} 行",
     "affectedRows": "影响 {{count}} 行"

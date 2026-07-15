@@ -237,12 +237,6 @@ impl JdbcBridgeSidecar {
             .arg(classpath)
             .arg("com.vaporlensdb.jdbcbridge.JdbcBridge")
             .arg("server")
-            .arg(driver_class)
-            .arg(connection_url)
-            .arg(username)
-            .arg(password)
-            .arg(JDBC_CONNECT_TIMEOUT_SECS.to_string())
-            .arg(JDBC_QUERY_TIMEOUT_SECS.to_string())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -274,15 +268,25 @@ impl JdbcBridgeSidecar {
                 message: "JDBC bridge sidecar stderr unavailable".to_string(),
             })?;
 
-        Ok(Self {
+        let sidecar = Self {
             process: Mutex::new(Some(JdbcBridgeProcess {
                 child,
                 stdin,
                 stdout: BufReader::new(stdout),
                 stderr: BufReader::new(stderr),
-                next_request_id: 1,
+                next_request_id: 0,
             })),
-        })
+        };
+
+        sidecar
+            .request(JdbcBridgeCommand::Init {
+                driver_class: driver_class.to_string(),
+                connection_url: connection_url.to_string(),
+                username: username.to_string(),
+                password: password.to_string(),
+            })
+            .await?;
+        Ok(sidecar)
     }
 
     async fn request(&self, command: JdbcBridgeCommand) -> Result<String, AppError> {
@@ -385,6 +389,12 @@ impl JdbcBridgeProcess {
 }
 
 enum JdbcBridgeCommand {
+    Init {
+        driver_class: String,
+        connection_url: String,
+        username: String,
+        password: String,
+    },
     Ping,
     Query(String),
     Metadata(String),
@@ -393,6 +403,20 @@ enum JdbcBridgeCommand {
 impl JdbcBridgeCommand {
     fn encode(&self, request_id: u64) -> String {
         match self {
+            Self::Init {
+                driver_class,
+                connection_url,
+                username,
+                password,
+            } => format!(
+                "INIT\t{request_id}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                BASE64.encode(driver_class),
+                BASE64.encode(connection_url),
+                BASE64.encode(username),
+                BASE64.encode(password),
+                JDBC_CONNECT_TIMEOUT_SECS,
+                JDBC_QUERY_TIMEOUT_SECS,
+            ),
             Self::Ping => format!("PING\t{request_id}\t-\n"),
             Self::Query(sql) => format!("QUERY\t{request_id}\t{}\n", BASE64.encode(sql)),
             Self::Metadata(payload) => {
@@ -403,6 +427,7 @@ impl JdbcBridgeCommand {
 
     fn operation_name(&self) -> &'static str {
         match self {
+            Self::Init { .. } => "initialize",
             Self::Ping => "ping",
             Self::Query(_) => "query",
             Self::Metadata(_) => "metadata",
@@ -411,6 +436,7 @@ impl JdbcBridgeCommand {
 
     fn timeout(&self) -> Duration {
         match self {
+            Self::Init { .. } => Duration::from_secs(JDBC_CONNECT_TIMEOUT_SECS as u64),
             Self::Ping => Duration::from_secs(JDBC_CONNECT_TIMEOUT_SECS as u64),
             Self::Query(_) => Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
             Self::Metadata(_) => Duration::from_secs(JDBC_METADATA_TIMEOUT_SECS as u64),
@@ -1241,7 +1267,7 @@ mod tests {
         classify_jdbc_error, clarify_metadata_error, clarify_oracle_explain_error, db_object_kind_from_value,
         db_object_kind_value, map_column_row, map_index_row, map_schema_object_row,
         normalize_jdbc_error_message, normalize_jdbc_sql, parse_metadata_sql,
-        parse_sidecar_response,
+        parse_sidecar_response, JdbcBridgeCommand,
     };
     use crate::models::{
         error::AppError,
@@ -1444,6 +1470,25 @@ mod tests {
         let payload = parse_sidecar_response(&response, 7).expect("parse sidecar response");
 
         assert_eq!(payload, "{\"ok\":true}");
+    }
+
+    #[test]
+    fn initializes_the_bridge_over_stdin() {
+        let request = JdbcBridgeCommand::Init {
+            driver_class: "oracle.jdbc.OracleDriver".to_string(),
+            connection_url: "jdbc:oracle:thin:@//db.example:1521/ORCL".to_string(),
+            username: "scott".to_string(),
+            password: "tiger".to_string(),
+        }
+        .encode(0);
+
+        let fields: Vec<_> = request.trim_end().split('\t').collect();
+        assert_eq!(fields[0], "INIT");
+        assert_eq!(fields[1], "0");
+        assert_eq!(BASE64.decode(fields[2]).unwrap(), b"oracle.jdbc.OracleDriver");
+        assert_eq!(BASE64.decode(fields[3]).unwrap(), b"jdbc:oracle:thin:@//db.example:1521/ORCL");
+        assert_eq!(BASE64.decode(fields[4]).unwrap(), b"scott");
+        assert_eq!(BASE64.decode(fields[5]).unwrap(), b"tiger");
     }
 
     #[test]
