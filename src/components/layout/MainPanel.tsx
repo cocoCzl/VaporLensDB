@@ -1005,21 +1005,6 @@ function WorkbenchHome({
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="grid w-full gap-4 xl:grid-cols-[minmax(560px,1fr)_minmax(460px,640px)]">
           <div className="grid content-start gap-3">
-            <button
-              type="button"
-              className="rounded-md border bg-card p-4 text-left transition-colors hover:bg-muted/45"
-              onClick={onNewSql}
-            >
-              <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
-                <FileCode2 className="size-4 text-primary" />
-                {t('workbench.newSqlTab')}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {activeConnection
-                  ? t('workbench.boundToDataSource', { name: activeConnection.name })
-                  : t('workbench.newSqlNoDataSourceHint')}
-              </div>
-            </button>
             <section className="overflow-hidden rounded-md border bg-card">
               <div className="flex items-center justify-between border-b px-4 py-3">
                 <div className="flex items-center gap-2 text-sm font-semibold">
