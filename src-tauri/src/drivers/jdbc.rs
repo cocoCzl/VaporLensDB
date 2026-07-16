@@ -1085,10 +1085,12 @@ fn clarify_oracle_explain_error(error: AppError) -> AppError {
 fn classify_jdbc_error(command: &str, sql: Option<&str>, error: AppError) -> AppError {
     match error {
         AppError::Timeout { .. } => error,
-        AppError::ConnectionFailed { driver, message } if command == "query" => AppError::QueryFailed {
-            sql: sql.unwrap_or("<unknown>").to_string(),
-            message: format!("{driver}: {}", normalize_jdbc_error_message(&message)),
-        },
+        AppError::ConnectionFailed { driver, message } if command == "query" => {
+            AppError::QueryFailed {
+                sql: sql.unwrap_or("<unknown>").to_string(),
+                message: format!("{driver}: {}", normalize_jdbc_error_message(&message)),
+            }
+        }
         AppError::ConnectionFailed { driver, message } => AppError::ConnectionFailed {
             driver,
             message: normalize_jdbc_error_message(&message),
@@ -1264,10 +1266,10 @@ fn unsupported(operation: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_jdbc_error, clarify_metadata_error, clarify_oracle_explain_error, db_object_kind_from_value,
-        db_object_kind_value, map_column_row, map_index_row, map_schema_object_row,
-        normalize_jdbc_error_message, normalize_jdbc_sql, parse_metadata_sql,
-        parse_sidecar_response, JdbcBridgeCommand,
+        clarify_metadata_error, clarify_oracle_explain_error, classify_jdbc_error,
+        db_object_kind_from_value, db_object_kind_value, map_column_row, map_index_row,
+        map_schema_object_row, normalize_jdbc_error_message, normalize_jdbc_sql,
+        parse_metadata_sql, parse_sidecar_response, JdbcBridgeCommand,
     };
     use crate::models::{
         error::AppError,
@@ -1485,8 +1487,14 @@ mod tests {
         let fields: Vec<_> = request.trim_end().split('\t').collect();
         assert_eq!(fields[0], "INIT");
         assert_eq!(fields[1], "0");
-        assert_eq!(BASE64.decode(fields[2]).unwrap(), b"oracle.jdbc.OracleDriver");
-        assert_eq!(BASE64.decode(fields[3]).unwrap(), b"jdbc:oracle:thin:@//db.example:1521/ORCL");
+        assert_eq!(
+            BASE64.decode(fields[2]).unwrap(),
+            b"oracle.jdbc.OracleDriver"
+        );
+        assert_eq!(
+            BASE64.decode(fields[3]).unwrap(),
+            b"jdbc:oracle:thin:@//db.example:1521/ORCL"
+        );
         assert_eq!(BASE64.decode(fields[4]).unwrap(), b"scott");
         assert_eq!(BASE64.decode(fields[5]).unwrap(), b"tiger");
     }
