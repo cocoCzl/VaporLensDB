@@ -1,17 +1,17 @@
 import { create } from 'zustand'
 import i18n from '@/i18n'
-import { cancelTask, listTasks, startNoopTask } from '@/ipc/task'
+import { cancelTask, clearCompletedTasks, listTasks } from '@/ipc/task'
 import { normalizeAppError } from '@/ipc/client'
 import { useUiStore } from '@/stores/uiStore'
-import type { StartNoopTaskInput, TaskInfo } from '@/types/task'
+import type { TaskInfo } from '@/types/task'
 
 interface TaskState {
   tasks: TaskInfo[]
   loading: boolean
   loadTasks: () => Promise<void>
   upsertTask: (task: TaskInfo) => void
-  startNoop: (input?: StartNoopTaskInput) => Promise<void>
   cancel: (taskId: string) => Promise<void>
+  clearCompleted: () => Promise<void>
 }
 
 export const useTaskStore = create<TaskState>((set) => ({
@@ -35,20 +35,22 @@ export const useTaskStore = create<TaskState>((set) => ({
         ...state.tasks.filter((candidate) => candidate.id !== task.id),
       ]),
     })),
-  startNoop: async (input) => {
-    try {
-      const task = await startNoopTask(input)
-      useTaskStore.getState().upsertTask(task)
-    } catch (error) {
-      useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.startTaskFailed'))
-    }
-  },
   cancel: async (taskId) => {
     try {
       const task = await cancelTask(taskId)
       useTaskStore.getState().upsertTask(task)
     } catch (error) {
       useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.cancelTaskFailed'))
+    }
+  },
+  clearCompleted: async () => {
+    try {
+      await clearCompletedTasks()
+      set((state) => ({
+        tasks: state.tasks.filter((task) => ['pending', 'running', 'cancelling'].includes(task.status)),
+      }))
+    } catch (error) {
+      useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.clearTasksFailed'))
     }
   },
 }))

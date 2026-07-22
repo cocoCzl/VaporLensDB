@@ -265,6 +265,7 @@
     "loadTasksFailed": "加载后台任务失败",
     "startTaskFailed": "启动后台任务失败",
     "cancelTaskFailed": "取消后台任务失败",
+    "clearTasksFailed": "清除已完成任务失败",
     "metadataIndexStarted": "已启动元数据索引",
     "startMetadataIndexFailed": "启动元数据索引失败",
     "searchMetadataIndexFailed": "搜索元数据索引失败",
@@ -303,8 +304,7 @@
   "tasks": {
     "cancel": "取消后台任务",
     "status": "后台任务状态",
-    "idle": "后台任务: 空闲",
-    "startNoop": "启动 no-op 后台任务"
+    "idle": "后台任务: 空闲"
   },
   "workbench": {
     "title": "工作台",
@@ -466,6 +466,13 @@
     "general": "常规",
     "generalHint": "主题、语言、默认值",
     "editorAndResult": "编辑器与结果",
+    "exportDirectory": {
+      "title": "导出位置",
+      "label": "默认导出文件夹",
+      "systemDefault": "系统下载文件夹",
+      "choose": "选择文件夹",
+      "restore": "使用下载文件夹"
+    },
     "systemInfo": "系统信息",
     "showSystemObjects": "显示系统对象",
     "showSystemObjectsHint": "对象树和 SQL 补全包含 vendor/internal schema。",
@@ -617,7 +624,9 @@
     "activityDetail": "{{sessions}} 个会话 · {{queries}} 个运行中的查询 · {{tasks}} 个活动任务",
     "backgroundTasks": "后台任务",
     "sessionActivity": "会话活动",
-    "testTask": "测试任务",
+    "clearCompleted": "清除已完成",
+    "revealOutput": "在文件管理器中显示",
+    "revealOutputFailed": "无法显示导出文件",
     "noTasks": "暂无任务记录。",
     "noActiveSessions": "没有活动会话。",
     "backendHealthTitle": "Tauri/Rust 后端健康检查",

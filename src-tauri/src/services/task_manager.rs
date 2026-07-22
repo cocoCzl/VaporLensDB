@@ -54,6 +54,7 @@ pub struct TaskInfo {
     pub progress: TaskProgress,
     pub logs: Vec<TaskLogEntry>,
     pub error: Option<String>,
+    pub output_path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -76,6 +77,16 @@ impl TaskManager {
     }
 
     pub async fn create_task(&self, kind: &str, title: &str, total: Option<u64>) -> TaskInfo {
+        self.create_task_with_output(kind, title, total, None).await
+    }
+
+    pub async fn create_task_with_output(
+        &self,
+        kind: &str,
+        title: &str,
+        total: Option<u64>,
+        output_path: Option<String>,
+    ) -> TaskInfo {
         let now = Utc::now();
         let info = TaskInfo {
             id: Uuid::new_v4(),
@@ -92,6 +103,7 @@ impl TaskManager {
                 message: "Task created".to_string(),
             }],
             error: None,
+            output_path,
             created_at: now,
             updated_at: now,
             finished_at: None,
@@ -185,6 +197,31 @@ impl TaskManager {
         Ok(record.info.clone())
     }
 
+    pub async fn clear_completed_tasks(&self) -> u64 {
+        let mut tasks = self.inner.lock().await;
+        let before = tasks.len();
+        tasks.retain(|_, record| {
+            !matches!(
+                record.info.status,
+                TaskStatus::Cancelled | TaskStatus::Succeeded | TaskStatus::Failed
+            )
+        });
+        (before - tasks.len()) as u64
+    }
+
+    pub async fn output_path(&self, id: Uuid) -> Result<String, AppError> {
+        let tasks = self.inner.lock().await;
+        let record = tasks.get(&id).ok_or_else(|| AppError::NotFound {
+            resource: "task".to_string(),
+            id: id.to_string(),
+        })?;
+        record
+            .info
+            .output_path
+            .clone()
+            .ok_or_else(|| AppError::ConfigError("Task has no output file".to_string()))
+    }
+
     pub async fn finish_success(
         &self,
         id: Uuid,
@@ -266,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn task_lifecycle_transitions_to_success() {
         let manager = TaskManager::new();
-        let task = manager.create_task("noop", "No-op", Some(2)).await;
+        let task = manager.create_task("export.csv.result", "Export CSV", Some(2)).await;
 
         let running = manager.start_task(task.id, "running").await.unwrap();
         assert_eq!(running.status, TaskStatus::Running);
@@ -285,7 +322,7 @@ mod tests {
     #[tokio::test]
     async fn task_lifecycle_supports_cancellation() {
         let manager = TaskManager::new();
-        let task = manager.create_task("noop", "No-op", Some(1)).await;
+        let task = manager.create_task("import.csv.table", "Import CSV", Some(1)).await;
         manager.start_task(task.id, "running").await.unwrap();
 
         let cancelling = manager.request_cancel(task.id).await.unwrap();
@@ -299,5 +336,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cancelled.status, TaskStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn clear_completed_tasks_keeps_active_tasks() {
+        let manager = TaskManager::new();
+        let completed = manager.create_task("export.csv.result", "Export CSV", Some(1)).await;
+        manager
+            .finish_success(completed.id, "done")
+            .await
+            .unwrap();
+        let active = manager.create_task("import.csv.table", "Import CSV", Some(1)).await;
+        manager.start_task(active.id, "running").await.unwrap();
+
+        assert_eq!(manager.clear_completed_tasks().await, 1);
+        let tasks = manager.list_tasks().await;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, active.id);
+        assert_eq!(tasks[0].status, TaskStatus::Running);
     }
 }

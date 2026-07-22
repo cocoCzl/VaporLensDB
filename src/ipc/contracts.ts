@@ -78,7 +78,8 @@ export const COMMANDS = {
   clearSqlDrafts: 'clear_sql_drafts',
   listTasks: 'list_tasks',
   cancelTask: 'cancel_task',
-  startNoopTask: 'start_noop_task',
+  clearCompletedTasks: 'clear_completed_tasks',
+  revealTaskOutput: 'reveal_task_output',
 } as const
 
 export type CommandName = (typeof COMMANDS)[keyof typeof COMMANDS]

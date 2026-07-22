@@ -42,6 +42,7 @@
     "test:er-diagram-export": "node scripts/er-diagram-export-smoke.mjs",
     "test:object-inspector-workspace": "node scripts/object-inspector-workspace-smoke.mjs",
     "test:session-management": "node scripts/session-management-smoke.mjs",
+    "test:task-output-workflow": "node scripts/task-output-workflow-smoke.mjs",
     "test:dbeaver-import": "node scripts/dbeaver-import-smoke.mjs",
     "test:i18n": "node scripts/i18n-smoke.mjs",
     "test:native-menu": "node scripts/native-menu-smoke.mjs",

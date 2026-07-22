@@ -364,10 +364,17 @@
     "status": "active"
   },
   {
-    "name": "start_noop_task",
+    "name": "clear_completed_tasks",
     "namespace": "task",
-    "args": "{ input?: StartNoopTaskInput }",
-    "response": "TaskInfo",
+    "args": "void",
+    "response": "number",
+    "status": "active"
+  },
+  {
+    "name": "reveal_task_output",
+    "namespace": "task",
+    "args": "{ taskId: string }",
+    "response": "void",
     "status": "active"
   }
 ]

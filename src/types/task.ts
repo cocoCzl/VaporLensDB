@@ -25,13 +25,8 @@ export interface TaskInfo {
   progress: TaskProgress
   logs: TaskLogEntry[]
   error?: string | null
+  outputPath?: string | null
   createdAt: string
   updatedAt: string
   finishedAt?: string | null
-}
-
-export interface StartNoopTaskInput {
-  title?: string
-  steps?: number
-  stepDelayMs?: number
 }

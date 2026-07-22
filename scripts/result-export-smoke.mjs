@@ -22,7 +22,7 @@ const exportCommand = read('src-tauri/src/commands/export.rs')
 includesAll(
   exportCommand,
   [
-    'create_task(',
+    'create_task_with_output(',
     '"export.csv.result"',
     'tokio::spawn(async move',
     'handle.is_cancel_requested()',
@@ -49,7 +49,7 @@ includesAll(
   [
     "import { downloadDir, join } from '@tauri-apps/api/path'",
     'exportQueryResultCsv',
-    'const directory = await downloadDir()',
+    'const directory = exportDirectory ?? await downloadDir()',
     'const path = await join(directory, fileName)',
     'upsertTask(task)',
     "title: i18n.t('workbench.csvExportStarted')",

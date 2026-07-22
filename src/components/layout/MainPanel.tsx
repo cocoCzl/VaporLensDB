@@ -101,6 +101,7 @@ export function MainPanel() {
   const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
   const showSystemObjects = useUiStore((state) => state.showSystemObjects)
   const queryHistoryRequest = useUiStore((state) => state.queryHistoryRequest)
+  const exportDirectory = useUiStore((state) => state.exportDirectory)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
   const [selectedSql, setSelectedSql] = useState({ tabId: null as string | null, sql: '' })
   const [editorLoaded, setEditorLoaded] = useState(false)
@@ -528,6 +529,7 @@ export function MainPanel() {
             result={activeResult}
             error={activeTab.error ?? null}
             running={activeTab.running === true}
+            exportDirectory={exportDirectory}
             onRefresh={() => {
               if (activeTab.connectionId) {
                 runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {
@@ -578,6 +580,7 @@ export function MainPanel() {
                 notify,
                 notifyError,
                 upsertTask,
+                exportDirectory,
               )
             }
           />
@@ -831,7 +834,7 @@ export function MainPanel() {
               disabled={Boolean(activeExplain) || !activeResult || activeResult.columns.length === 0}
               onClick={() =>
                 activeResult &&
-                exportCurrentResult(activeResult, activeTab.title, notify, notifyError, upsertTask)
+                exportCurrentResult(activeResult, activeTab.title, notify, notifyError, upsertTask, exportDirectory)
               }
             >
               <Download className="size-3.5" />
@@ -1495,6 +1498,7 @@ function DataTabPanel({
   onContextChange,
   onOpenSqlTab,
   onExport,
+  exportDirectory,
 }: {
   tab: EditorTab & { dataContext: NonNullable<EditorTab['dataContext']> }
   result?: QueryResult
@@ -1505,6 +1509,7 @@ function DataTabPanel({
   onContextChange: (patch: Partial<NonNullable<EditorTab['dataContext']>>) => void
   onOpenSqlTab: () => void
   onExport: () => void
+  exportDirectory: string | null
 }) {
   const { t } = useTranslation()
   const notifyError = useUiStore((state) => state.notifyError)
@@ -1555,7 +1560,7 @@ function DataTabPanel({
     }
 
     try {
-      const directory = await downloadDir()
+      const directory = exportDirectory ?? await downloadDir()
       const fileName = `${safeFileName(`${tab.dataContext.schema}-${tab.dataContext.object}`)}-${new Date()
         .toISOString()
         .replace(/[:.]/g, '-')}.csv`
@@ -2606,9 +2611,10 @@ async function exportCurrentResult(
   notify: (notification: Omit<AppNotification, 'id'>) => void,
   notifyError: (error: AppError, title?: string) => void,
   upsertTask: (task: TaskInfo) => void,
+  exportDirectory: string | null,
 ) {
   try {
-    const directory = await downloadDir()
+    const directory = exportDirectory ?? await downloadDir()
     const fileName = `${safeFileName(title || 'query-result')}-${new Date()
       .toISOString()
       .replace(/[:.]/g, '-')}.csv`

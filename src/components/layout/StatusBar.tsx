@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Activity, AlertCircle, Database, Loader2, Play, Square } from 'lucide-react'
+import { Activity, AlertCircle, Database, FolderOpen, Loader2, Square, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -14,6 +14,9 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
 import { useTaskStore } from '@/stores/taskStore'
+import { revealTaskOutput } from '@/ipc/task'
+import { normalizeAppError } from '@/ipc/client'
+import { useUiStore } from '@/stores/uiStore'
 import type { DriverType } from '@/types/connection'
 import type { TaskInfo } from '@/types/task'
 
@@ -97,7 +100,8 @@ function TaskSessionStatus() {
   const { t } = useTranslation()
   const tasks = useTaskStore((state) => state.tasks)
   const cancelTask = useTaskStore((state) => state.cancel)
-  const startNoop = useTaskStore((state) => state.startNoop)
+  const clearCompleted = useTaskStore((state) => state.clearCompleted)
+  const notifyError = useUiStore((state) => state.notifyError)
   const connections = useConnectionStore((state) => state.connections)
   const statuses = useConnectionStore((state) => state.statuses)
   const tabs = useEditorStore((state) => state.tabs)
@@ -156,10 +160,11 @@ function TaskSessionStatus() {
                 type="button"
                 size="xs"
                 variant="ghost"
-                onClick={() => startNoop({ title: 'No-op task', steps: 5, stepDelayMs: 180 })}
+                disabled={!tasks.some((task) => !['pending', 'running', 'cancelling'].includes(task.status))}
+                onClick={() => void clearCompleted()}
               >
-                <Play className="size-3.5" />
-                {t('status.testTask')}
+                <Trash2 className="size-3.5" />
+                {t('status.clearCompleted')}
               </Button>
             </div>
             {tasks.length === 0 ? (
@@ -167,7 +172,17 @@ function TaskSessionStatus() {
             ) : (
               <div className="space-y-2">
                 {tasks.slice(0, 12).map((task) => (
-                  <TaskRow key={task.id} task={task} onCancel={() => cancelTask(task.id)} />
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    onCancel={() => cancelTask(task.id)}
+                    onReveal={() => {
+                      void revealTaskOutput(task.id).catch((error) =>
+                        notifyError(normalizeAppError(error), t('status.revealOutputFailed')),
+                      )
+                    }}
+                    revealLabel={t('status.revealOutput')}
+                  />
                 ))}
               </div>
             )}
@@ -245,7 +260,7 @@ function TaskSessionStatus() {
   )
 }
 
-function TaskRow({ task, onCancel }: { task: TaskInfo; onCancel: () => void }) {
+function TaskRow({ task, onCancel, onReveal, revealLabel }: { task: TaskInfo; onCancel: () => void; onReveal: () => void; revealLabel: string }) {
   const active = ['pending', 'running', 'cancelling'].includes(task.status)
   const total = task.progress.total
   const progress = total ? `${task.progress.current}/${total}` : task.progress.message
@@ -260,15 +275,24 @@ function TaskRow({ task, onCancel }: { task: TaskInfo; onCancel: () => void }) {
           {task.error ? ` · ${task.error}` : ''}
         </div>
       </div>
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        disabled={!active || task.status === 'cancelling'}
-        onClick={onCancel}
-      >
-        <Square className="size-3.5" />
-      </Button>
+      <div className="flex items-center gap-1">
+        {task.status === 'succeeded' && task.outputPath && (
+          <Button type="button" size="icon-xs" variant="ghost" title={revealLabel} onClick={onReveal}>
+            <FolderOpen className="size-3.5" />
+          </Button>
+        )}
+        {active && (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            disabled={task.status === 'cancelling'}
+            onClick={onCancel}
+          >
+            <Square className="size-3.5" />
+          </Button>
+        )}
+      </div>
     </div>
   )
 }

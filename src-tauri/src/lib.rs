@@ -108,7 +108,8 @@ pub fn run() {
             commands::settings::set_application_menu_language,
             commands::task::list_tasks,
             commands::task::cancel_task,
-            commands::task::start_noop_task
+            commands::task::clear_completed_tasks,
+            commands::task::reveal_task_output
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

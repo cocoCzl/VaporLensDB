@@ -27,6 +27,7 @@ interface UserSettings {
   showSystemObjects: boolean
   sidebarWidth: number
   sidebarCollapsed: boolean
+  exportDirectory: string | null
 }
 
 interface UiState {
@@ -39,6 +40,7 @@ interface UiState {
   dataPreviewDefaultRows: number
   editorFontSize: number
   showSystemObjects: boolean
+  exportDirectory: string | null
   notifications: AppNotification[]
   queryHistoryRequest: number
   setTheme: (theme: Theme) => void
@@ -50,6 +52,7 @@ interface UiState {
   setDataPreviewDefaultRows: (rows: number) => void
   setEditorFontSize: (fontSize: number) => void
   setShowSystemObjects: (showSystemObjects: boolean) => void
+  setExportDirectory: (exportDirectory: string | null) => void
   requestQueryHistory: () => void
   notify: (notification: Omit<AppNotification, 'id'>) => void
   notifyError: (error: AppError, title?: string) => void
@@ -117,6 +120,12 @@ export const useUiStore = create<UiState>((set) => ({
       writeStoredSettings(next)
       return { showSystemObjects }
     }),
+  setExportDirectory: (exportDirectory) =>
+    set((state) => {
+      const next = { ...settingsFromState(state), exportDirectory }
+      writeStoredSettings(next)
+      return { exportDirectory }
+    }),
   requestQueryHistory: () =>
     set((state) => ({ queryHistoryRequest: state.queryHistoryRequest + 1 })),
   notify: (notification) =>
@@ -169,6 +178,7 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: false,
       sidebarWidth: 288,
       sidebarCollapsed: false,
+      exportDirectory: null,
     }
   }
 
@@ -187,6 +197,9 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: parsed.showSystemObjects === true,
       sidebarWidth: clampNumber(parsed.sidebarWidth, 232, 460, 288),
       sidebarCollapsed: parsed.sidebarCollapsed === true,
+      exportDirectory: typeof parsed.exportDirectory === 'string' && parsed.exportDirectory.trim()
+        ? parsed.exportDirectory
+        : null,
     }
   } catch {
     return {
@@ -196,11 +209,12 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: false,
       sidebarWidth: 288,
       sidebarCollapsed: false,
+      exportDirectory: null,
     }
   }
 }
 
-function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed'>): UserSettings {
+function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed' | 'exportDirectory'>): UserSettings {
   return {
     queryMaxRows: state.queryMaxRows,
     dataPreviewDefaultRows: state.dataPreviewDefaultRows,
@@ -208,6 +222,7 @@ function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDef
     showSystemObjects: state.showSystemObjects,
     sidebarWidth: state.sidebarWidth,
     sidebarCollapsed: state.sidebarCollapsed,
+    exportDirectory: state.exportDirectory,
   }
 }
 

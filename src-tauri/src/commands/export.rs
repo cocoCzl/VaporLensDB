@@ -128,10 +128,11 @@ pub async fn export_query_result_csv(
     let row_count = input.result.rows.len() as u64;
     let manager = state.task_manager.clone();
     let task = manager
-        .create_task(
+        .create_task_with_output(
             "export.csv.result",
             &format!("Export CSV: {}", display_file_name(&path)),
             Some(row_count),
+            Some(path.display().to_string()),
         )
         .await;
     let handle = manager.handle(task.id).await?;
@@ -199,10 +200,11 @@ pub async fn export_table_csv(
     let path = PathBuf::from(&input.path);
     let manager = state.task_manager.clone();
     let task = manager
-        .create_task(
+        .create_task_with_output(
             "export.csv.table",
             &format!("Export table CSV: {}", display_file_name(&path)),
             input.max_rows,
+            Some(path.display().to_string()),
         )
         .await;
     let handle = manager.handle(task.id).await?;

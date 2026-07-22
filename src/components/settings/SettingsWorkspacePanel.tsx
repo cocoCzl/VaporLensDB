@@ -45,6 +45,7 @@ type SettingsDraft = {
   queryMaxRows: number
   dataPreviewDefaultRows: number
   editorFontSize: number
+  exportDirectory: string | null
 }
 
 const DEFAULT_QUERY_MAX_ROWS = 5_000
@@ -62,6 +63,8 @@ export function SettingsWorkspacePanel() {
   const setDataPreviewDefaultRows = useUiStore((state) => state.setDataPreviewDefaultRows)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const setEditorFontSize = useUiStore((state) => state.setEditorFontSize)
+  const exportDirectory = useUiStore((state) => state.exportDirectory)
+  const setExportDirectory = useUiStore((state) => state.setExportDirectory)
   const notify = useUiStore((state) => state.notify)
   const notifyError = useUiStore((state) => state.notifyError)
   const history = useQueryHistoryStore((state) => state.entries)
@@ -75,14 +78,15 @@ export function SettingsWorkspacePanel() {
   const [health, setHealth] = useState<HealthCheckResponse | null>(null)
   const [healthUnavailable, setHealthUnavailable] = useState(false)
   const [draft, setDraft] = useState<SettingsDraft>(() =>
-    settingsDraftFromCurrent(theme, i18n.language, queryMaxRows, dataPreviewDefaultRows, editorFontSize),
+    settingsDraftFromCurrent(theme, i18n.language, queryMaxRows, dataPreviewDefaultRows, editorFontSize, exportDirectory),
   )
   const hasSettingsChanges =
     draft.theme !== theme ||
     draft.language !== normalizedLanguage(i18n.language) ||
     draft.queryMaxRows !== queryMaxRows ||
     draft.dataPreviewDefaultRows !== dataPreviewDefaultRows ||
-    draft.editorFontSize !== editorFontSize
+    draft.editorFontSize !== editorFontSize ||
+    draft.exportDirectory !== exportDirectory
 
   useEffect(() => {
     loadHistory()
@@ -133,7 +137,7 @@ export function SettingsWorkspacePanel() {
 
     setDiagnosticsExporting(true)
     try {
-      const baseDir = await downloadDir()
+      const baseDir = exportDirectory ?? await downloadDir()
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
       const outputPath = await join(baseDir, `vaporlensdb-diagnostics-${stamp}.json`)
       const exported = await exportDiagnosticsPackage({
@@ -152,12 +156,23 @@ export function SettingsWorkspacePanel() {
     }
   }
 
+  async function chooseExportDirectory() {
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      defaultPath: draft.exportDirectory ?? undefined,
+    })
+    if (typeof selected === 'string') {
+      updateDraft({ exportDirectory: selected })
+    }
+  }
+
   function updateDraft(patch: Partial<SettingsDraft>) {
     setDraft((current) => ({ ...current, ...patch }))
   }
 
   function discardSettingsDraft() {
-    setDraft(settingsDraftFromCurrent(theme, i18n.language, queryMaxRows, dataPreviewDefaultRows, editorFontSize))
+    setDraft(settingsDraftFromCurrent(theme, i18n.language, queryMaxRows, dataPreviewDefaultRows, editorFontSize, exportDirectory))
   }
 
   function restoreDefaultSettingsDraft() {
@@ -166,6 +181,7 @@ export function SettingsWorkspacePanel() {
       queryMaxRows: DEFAULT_QUERY_MAX_ROWS,
       dataPreviewDefaultRows: DEFAULT_DATA_PREVIEW_ROWS,
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
+      exportDirectory: null,
     }))
   }
 
@@ -174,6 +190,7 @@ export function SettingsWorkspacePanel() {
     setQueryMaxRows(draft.queryMaxRows)
     setDataPreviewDefaultRows(draft.dataPreviewDefaultRows)
     setEditorFontSize(draft.editorFontSize)
+    setExportDirectory(draft.exportDirectory)
     window.localStorage.setItem('vaporlensdb.language', draft.language)
     void i18n.changeLanguage(draft.language)
     setApplicationMenuLanguage(draft.language).catch(() => {
@@ -319,6 +336,25 @@ export function SettingsWorkspacePanel() {
                       showRange
                       onChange={(value) => updateDraft({ editorFontSize: value })}
                     />
+                  </div>
+                </SettingsCard>
+
+                <SettingsCard title={t('settings.exportDirectory.title')} icon={Download}>
+                  <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 p-3 text-xs">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-foreground">{t('settings.exportDirectory.label')}</div>
+                      <p className="mt-1 truncate font-mono text-muted-foreground" title={draft.exportDirectory ?? t('settings.exportDirectory.systemDefault')}>
+                        {draft.exportDirectory ?? t('settings.exportDirectory.systemDefault')}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => updateDraft({ exportDirectory: null })}>
+                        {t('settings.exportDirectory.restore')}
+                      </Button>
+                      <Button type="button" size="sm" onClick={() => void chooseExportDirectory()}>
+                        {t('settings.exportDirectory.choose')}
+                      </Button>
+                    </div>
                   </div>
                 </SettingsCard>
 
@@ -1325,6 +1361,7 @@ function settingsDraftFromCurrent(
   queryMaxRows: number,
   dataPreviewDefaultRows: number,
   editorFontSize: number,
+  exportDirectory: string | null,
 ): SettingsDraft {
   return {
     theme,
@@ -1332,6 +1369,7 @@ function settingsDraftFromCurrent(
     queryMaxRows,
     dataPreviewDefaultRows,
     editorFontSize,
+    exportDirectory,
   }
 }
 

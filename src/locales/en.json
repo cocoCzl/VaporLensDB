@@ -265,6 +265,7 @@
     "loadTasksFailed": "Failed to load background tasks",
     "startTaskFailed": "Failed to start background task",
     "cancelTaskFailed": "Failed to cancel background task",
+    "clearTasksFailed": "Failed to clear completed tasks",
     "metadataIndexStarted": "Metadata indexing started",
     "startMetadataIndexFailed": "Failed to start metadata indexing",
     "searchMetadataIndexFailed": "Failed to search metadata index",
@@ -303,8 +304,7 @@
   "tasks": {
     "cancel": "Cancel background task",
     "status": "Background task status",
-    "idle": "Background tasks: idle",
-    "startNoop": "Start no-op background task"
+    "idle": "Background tasks: idle"
   },
   "workbench": {
     "title": "Workbench",
@@ -466,6 +466,13 @@
     "general": "General",
     "generalHint": "Theme, language, defaults",
     "editorAndResult": "Editor and results",
+    "exportDirectory": {
+      "title": "Export location",
+      "label": "Default export folder",
+      "systemDefault": "System Downloads folder",
+      "choose": "Choose folder",
+      "restore": "Use Downloads"
+    },
     "systemInfo": "System information",
     "showSystemObjects": "Show system objects",
     "showSystemObjectsHint": "Include vendor/internal schemas in the Object Tree and SQL completion.",
@@ -616,7 +623,9 @@
     "activityDetail": "{{sessions}} sessions · {{queries}} running queries · {{tasks}} active tasks",
     "backgroundTasks": "Background tasks",
     "sessionActivity": "Session activity",
-    "testTask": "Test task",
+    "clearCompleted": "Clear completed",
+    "revealOutput": "Show in file manager",
+    "revealOutputFailed": "Could not show exported file",
     "noTasks": "No tasks recorded.",
     "noActiveSessions": "No active sessions.",
     "backendHealthTitle": "Tauri/Rust backend health check",
