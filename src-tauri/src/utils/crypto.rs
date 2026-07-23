@@ -1,8 +1,10 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
+
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
@@ -13,7 +15,9 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use crate::models::error::AppError;
 
 const KEY_FILE: &str = "dev-secret.key";
+#[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "com.vaporlensdb.encryption-key";
+#[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "VaporLensDB";
 
 pub fn key_backend_label() -> &'static str {
