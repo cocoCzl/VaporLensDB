@@ -17,10 +17,7 @@ pub async fn list_tasks(state: State<'_, AppState>) -> Result<Vec<TaskInfo>, Str
 }
 
 #[tauri::command]
-pub async fn cancel_task(
-    state: State<'_, AppState>,
-    task_id: Uuid,
-) -> Result<TaskInfo, String> {
+pub async fn cancel_task(state: State<'_, AppState>, task_id: Uuid) -> Result<TaskInfo, String> {
     let task = state
         .task_manager
         .request_cancel(task_id)

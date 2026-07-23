@@ -303,7 +303,9 @@ mod tests {
     #[tokio::test]
     async fn task_lifecycle_transitions_to_success() {
         let manager = TaskManager::new();
-        let task = manager.create_task("export.csv.result", "Export CSV", Some(2)).await;
+        let task = manager
+            .create_task("export.csv.result", "Export CSV", Some(2))
+            .await;
 
         let running = manager.start_task(task.id, "running").await.unwrap();
         assert_eq!(running.status, TaskStatus::Running);
@@ -322,7 +324,9 @@ mod tests {
     #[tokio::test]
     async fn task_lifecycle_supports_cancellation() {
         let manager = TaskManager::new();
-        let task = manager.create_task("import.csv.table", "Import CSV", Some(1)).await;
+        let task = manager
+            .create_task("import.csv.table", "Import CSV", Some(1))
+            .await;
         manager.start_task(task.id, "running").await.unwrap();
 
         let cancelling = manager.request_cancel(task.id).await.unwrap();
@@ -341,12 +345,13 @@ mod tests {
     #[tokio::test]
     async fn clear_completed_tasks_keeps_active_tasks() {
         let manager = TaskManager::new();
-        let completed = manager.create_task("export.csv.result", "Export CSV", Some(1)).await;
-        manager
-            .finish_success(completed.id, "done")
-            .await
-            .unwrap();
-        let active = manager.create_task("import.csv.table", "Import CSV", Some(1)).await;
+        let completed = manager
+            .create_task("export.csv.result", "Export CSV", Some(1))
+            .await;
+        manager.finish_success(completed.id, "done").await.unwrap();
+        let active = manager
+            .create_task("import.csv.table", "Import CSV", Some(1))
+            .await;
         manager.start_task(active.id, "running").await.unwrap();
 
         assert_eq!(manager.clear_completed_tasks().await, 1);
