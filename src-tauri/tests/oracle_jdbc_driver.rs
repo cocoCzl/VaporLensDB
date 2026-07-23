@@ -94,7 +94,7 @@ async fn explains_oracle_query_with_tabular_plan() {
     let result = explain
         .result
         .expect("Oracle explain should return a result table");
-    assert!(result.rows.len() > 0);
+    assert!(!result.rows.is_empty());
     assert!(result
         .columns
         .iter()

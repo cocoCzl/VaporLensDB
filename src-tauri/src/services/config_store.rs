@@ -387,11 +387,13 @@ impl ConfigStore {
             .map(|id| self.get_data_source_group(id))
             .transpose()?
             .flatten();
-        if group_id.is_some() && group.is_none() {
-            return Err(AppError::NotFound {
-                resource: "data source group".to_string(),
-                id: group_id.unwrap().to_string(),
-            });
+        if group.is_none() {
+            if let Some(group_id) = group_id {
+                return Err(AppError::NotFound {
+                    resource: "data source group".to_string(),
+                    id: group_id.to_string(),
+                });
+            }
         }
         let affected = self.conn()?.execute(
             "UPDATE connections SET group_id = ?2, group_name = ?3, updated_at = ?4 WHERE id = ?1",
