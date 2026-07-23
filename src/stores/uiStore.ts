@@ -15,10 +15,13 @@ export interface AppNotification {
 
 const THEME_STORAGE_KEY = 'vaporlensdb.theme'
 const SETTINGS_STORAGE_KEY = 'vaporlensdb.settings'
-const DEFAULT_THEME: Theme = 'system'
+// Dark is the product baseline; light remains a complete, switchable theme.
+const DEFAULT_THEME: Theme = 'dark'
 const DEFAULT_QUERY_MAX_ROWS = 5_000
 const DEFAULT_DATA_PREVIEW_ROWS = 200
 const DEFAULT_EDITOR_FONT_SIZE = 13
+const DEFAULT_MAX_LIVE_SESSIONS = 5
+const DEFAULT_IDLE_RECLAIM_MINUTES = 30
 
 interface UserSettings {
   queryMaxRows: number
@@ -28,6 +31,8 @@ interface UserSettings {
   sidebarWidth: number
   sidebarCollapsed: boolean
   exportDirectory: string | null
+  maxLiveSessions: number
+  idleReclaimMinutes: number | null
 }
 
 interface UiState {
@@ -41,6 +46,8 @@ interface UiState {
   editorFontSize: number
   showSystemObjects: boolean
   exportDirectory: string | null
+  maxLiveSessions: number
+  idleReclaimMinutes: number | null
   notifications: AppNotification[]
   queryHistoryRequest: number
   setTheme: (theme: Theme) => void
@@ -53,6 +60,7 @@ interface UiState {
   setEditorFontSize: (fontSize: number) => void
   setShowSystemObjects: (showSystemObjects: boolean) => void
   setExportDirectory: (exportDirectory: string | null) => void
+  setConnectionSessionPolicy: (maxLiveSessions: number, idleReclaimMinutes: number | null) => void
   requestQueryHistory: () => void
   notify: (notification: Omit<AppNotification, 'id'>) => void
   notifyError: (error: AppError, title?: string) => void
@@ -126,6 +134,11 @@ export const useUiStore = create<UiState>((set) => ({
       writeStoredSettings(next)
       return { exportDirectory }
     }),
+  setConnectionSessionPolicy: (maxLiveSessions, idleReclaimMinutes) => set((state) => {
+    const next = { ...settingsFromState(state), maxLiveSessions: clampNumber(maxLiveSessions, 1, 20, DEFAULT_MAX_LIVE_SESSIONS), idleReclaimMinutes: idleReclaimMinutes === null ? null : clampNumber(idleReclaimMinutes, 5, 120, DEFAULT_IDLE_RECLAIM_MINUTES) }
+    writeStoredSettings(next)
+    return { maxLiveSessions: next.maxLiveSessions, idleReclaimMinutes: next.idleReclaimMinutes }
+  }),
   requestQueryHistory: () =>
     set((state) => ({ queryHistoryRequest: state.queryHistoryRequest + 1 })),
   notify: (notification) =>
@@ -179,6 +192,8 @@ function readStoredSettings(): UserSettings {
       sidebarWidth: 288,
       sidebarCollapsed: false,
       exportDirectory: null,
+      maxLiveSessions: DEFAULT_MAX_LIVE_SESSIONS,
+      idleReclaimMinutes: DEFAULT_IDLE_RECLAIM_MINUTES,
     }
   }
 
@@ -200,6 +215,8 @@ function readStoredSettings(): UserSettings {
       exportDirectory: typeof parsed.exportDirectory === 'string' && parsed.exportDirectory.trim()
         ? parsed.exportDirectory
         : null,
+      maxLiveSessions: clampNumber(parsed.maxLiveSessions, 1, 20, DEFAULT_MAX_LIVE_SESSIONS),
+      idleReclaimMinutes: parsed.idleReclaimMinutes === null ? null : clampNumber(parsed.idleReclaimMinutes, 5, 120, DEFAULT_IDLE_RECLAIM_MINUTES),
     }
   } catch {
     return {
@@ -210,11 +227,13 @@ function readStoredSettings(): UserSettings {
       sidebarWidth: 288,
       sidebarCollapsed: false,
       exportDirectory: null,
+      maxLiveSessions: DEFAULT_MAX_LIVE_SESSIONS,
+      idleReclaimMinutes: DEFAULT_IDLE_RECLAIM_MINUTES,
     }
   }
 }
 
-function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed' | 'exportDirectory'>): UserSettings {
+function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed' | 'exportDirectory' | 'maxLiveSessions' | 'idleReclaimMinutes'>): UserSettings {
   return {
     queryMaxRows: state.queryMaxRows,
     dataPreviewDefaultRows: state.dataPreviewDefaultRows,
@@ -223,6 +242,8 @@ function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDef
     sidebarWidth: state.sidebarWidth,
     sidebarCollapsed: state.sidebarCollapsed,
     exportDirectory: state.exportDirectory,
+    maxLiveSessions: state.maxLiveSessions,
+    idleReclaimMinutes: state.idleReclaimMinutes,
   }
 }
 

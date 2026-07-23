@@ -27,7 +27,7 @@ function excludesAll(source, values, label) {
 }
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ["view: 'explorer'", "kind: 'settings'", '<DatabaseTree />'], 'left rail')
+includesAll(sidebar, ["view: 'explorer'", "kind: 'settings'", '<CompactDataSourceTree />', '<DatabaseTree connectionId='], 'left rail')
 excludesAll(
   sidebar,
   ["view: 'dataSources'", "view: 'sql'", "view: 'sessions'", "sidebarView === 'settings'", "sidebarView === 'sql'", "sidebarView === 'sessions'", "view: 'structure'", 'StructurePanel', 'ObjectDetails'],

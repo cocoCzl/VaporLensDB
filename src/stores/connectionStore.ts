@@ -2,18 +2,25 @@ import { create } from 'zustand'
 import i18n from '@/i18n'
 import {
   connect,
+  createDataSourceGroup,
   createConnection,
+  deleteDataSourceGroup,
   deleteConnection,
   disconnect,
   listConnections,
   listConnectionStatuses,
+  listDataSourceGroups,
+  renameDataSourceGroup,
+  reorderDataSourceGroups,
+  setConnectionDataSourceGroup,
   testConnection,
   updateConnection,
 } from '@/ipc/connection'
 import { normalizeAppError } from '@/ipc/client'
 import { useMetadataStore } from '@/stores/metadataStore'
+import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { ConnectionConfig, ConnectionInput, ConnectionStatus } from '@/types/connection'
+import type { ConnectionConfig, ConnectionInput, ConnectionStatus, DataSourceGroup } from '@/types/connection'
 
 const RECENT_DATA_SOURCES_STORAGE_KEY = 'vaporlensdb.recentDataSources'
 const FAVORITE_DATA_SOURCES_STORAGE_KEY = 'vaporlensdb.favoriteDataSources'
@@ -21,7 +28,11 @@ const MAX_RECENT_DATA_SOURCES = 6
 
 interface ConnectionState {
   connections: ConnectionConfig[]
+  dataSourceGroups: DataSourceGroup[]
   statuses: Record<string, ConnectionStatus>
+  /** The Data Source selected for object navigation. */
+  browsingConnectionId: string | null
+  /** @deprecated use browsingConnectionId; retained while existing panels migrate. */
   activeConnectionId: string | null
   recentDataSourceIds: string[]
   favoriteDataSourceIds: string[]
@@ -29,10 +40,16 @@ interface ConnectionState {
   loading: boolean
   error: string | null
   loadConnections: () => Promise<void>
+  loadDataSourceGroups: () => Promise<void>
+  createGroup: (name: string) => Promise<DataSourceGroup>
+  renameGroup: (id: string, name: string) => Promise<DataSourceGroup>
+  reorderGroups: (ids: string[]) => Promise<void>
+  deleteGroup: (id: string) => Promise<void>
+  moveConnectionToGroup: (connectionId: string, groupId: string | null) => Promise<void>
   saveConnection: (input: ConnectionInput) => Promise<ConnectionConfig>
   removeConnection: (id: string) => Promise<void>
   testConnectionInput: (input: ConnectionInput) => Promise<void>
-  connectConnection: (id: string) => Promise<void>
+  connectConnection: (id: string, options?: { selectForBrowsing?: boolean }) => Promise<void>
   disconnectConnection: (id: string) => Promise<void>
   setConnections: (connections: ConnectionConfig[]) => void
   setActiveConnection: (id: string | null) => void
@@ -63,7 +80,9 @@ function summarizeConnectionError(message: string) {
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connections: [],
+  dataSourceGroups: [],
   statuses: {},
+  browsingConnectionId: null,
   activeConnectionId: null,
   recentDataSourceIds: readStoredRecentDataSourceIds(),
   favoriteDataSourceIds: readStoredFavoriteDataSourceIds(),
@@ -71,22 +90,94 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   loading: false,
   error: null,
   loadConnections: async () => {
+    if (get().loading) return
     set({ loading: true, error: null })
-    try {
-      const [connections, statuses] = await Promise.all([
-        listConnections(),
-        listConnectionStatuses(),
-      ])
-      set((state) => ({
-        connections,
-        statuses: indexStatuses(statuses),
-        favoriteDataSourceIds: retainKnownDataSourceIds(state.favoriteDataSourceIds, connections),
-        loading: false,
-      }))
-    } catch (error) {
-      set({ error: errorMessage(error), loading: false })
-      notifyError(error, i18n.t('notifications.loadConnectionsFailed'))
+    const [connectionsResult, statusesResult, groupsResult] = await Promise.allSettled([
+      listConnections(),
+      listConnectionStatuses(),
+      listDataSourceGroups(),
+    ])
+    const failures = [
+      connectionsResult.status === 'rejected' ? `connections: ${errorMessage(connectionsResult.reason)}` : null,
+      statusesResult.status === 'rejected' ? `statuses: ${errorMessage(statusesResult.reason)}` : null,
+      groupsResult.status === 'rejected' ? `groups: ${errorMessage(groupsResult.reason)}` : null,
+    ].filter((value): value is string => value !== null)
+    const connections = connectionsResult.status === 'fulfilled' ? connectionsResult.value : get().connections
+    const statuses = statusesResult.status === 'fulfilled' ? statusesResult.value : Object.values(get().statuses)
+    const dataSourceGroups = groupsResult.status === 'fulfilled' ? groupsResult.value : get().dataSourceGroups
+    const loadError = failures.join(' · ')
+
+    set((state) => ({
+      connections,
+      dataSourceGroups,
+      statuses: indexStatuses(statuses),
+      favoriteDataSourceIds: retainKnownDataSourceIds(state.favoriteDataSourceIds, connections),
+      error: loadError || null,
+      loading: false,
+    }))
+    if (loadError) {
+      useUiStore.getState().notify({
+        kind: 'error',
+        title: i18n.t('notifications.loadConnectionsFailed'),
+        message: loadError,
+      })
     }
+    const knownIds = new Set(connections.map((connection) => connection.id))
+    for (const tab of useEditorStore.getState().tabs) {
+      if ((tab.kind === 'sql' || !tab.kind) && tab.connectionId && !knownIds.has(tab.connectionId)) {
+        useEditorStore.getState().markConnectionUnavailable(
+          tab.connectionId,
+          tab.unavailableConnectionName ?? i18n.t('connection.dataSource'),
+        )
+      }
+    }
+  },
+  loadDataSourceGroups: async () => {
+    try {
+      set({ dataSourceGroups: await listDataSourceGroups() })
+    } catch (error) {
+      notifyError(error, i18n.t('notifications.loadConnectionsFailed'))
+      throw error
+    }
+  },
+  createGroup: async (name) => {
+    const group = await createDataSourceGroup(name)
+    set((state) => ({ dataSourceGroups: [...state.dataSourceGroups, group] }))
+    return group
+  },
+  renameGroup: async (id, name) => {
+    const group = await renameDataSourceGroup(id, name)
+    set((state) => ({
+      dataSourceGroups: state.dataSourceGroups.map((item) => item.id === id ? group : item),
+      connections: state.connections.map((connection) =>
+        connection.groupId === id ? { ...connection, group: group.name } : connection,
+      ),
+    }))
+    return group
+  },
+  reorderGroups: async (ids) => {
+    const groups = await reorderDataSourceGroups(ids)
+    set({ dataSourceGroups: groups })
+  },
+  deleteGroup: async (id) => {
+    await deleteDataSourceGroup(id)
+    set((state) => ({
+      dataSourceGroups: state.dataSourceGroups.filter((group) => group.id !== id),
+      connections: state.connections.map((connection) =>
+        connection.groupId === id ? { ...connection, groupId: null, group: null } : connection,
+      ),
+    }))
+  },
+  moveConnectionToGroup: async (connectionId, groupId) => {
+    await setConnectionDataSourceGroup(connectionId, groupId)
+    set((state) => {
+      const group = groupId ? state.dataSourceGroups.find((item) => item.id === groupId) : null
+      return {
+        connections: state.connections.map((connection) => connection.id === connectionId
+          ? { ...connection, groupId, group: group?.name ?? null }
+          : connection),
+      }
+    })
   },
   saveConnection: async (input) => {
     set({ loading: true, error: null })
@@ -106,6 +197,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       error: null,
     }))
     try {
+      const removed = get().connections.find((connection) => connection.id === id)
       await deleteConnection(id)
       set((state) => ({
         connections: state.connections.filter((connection) => connection.id !== id),
@@ -113,10 +205,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           Object.entries(state.statuses).filter(([connectionId]) => connectionId !== id),
         ),
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
+        browsingConnectionId: state.browsingConnectionId === id ? null : state.browsingConnectionId,
         recentDataSourceIds: forgetRecentDataSource(state.recentDataSourceIds, id),
         favoriteDataSourceIds: forgetFavoriteDataSource(state.favoriteDataSourceIds, id),
       }))
       useMetadataStore.getState().clearConnection(id)
+      if (removed) {
+        useEditorStore.getState().markConnectionUnavailable(id, removed.name)
+      }
     } catch (error) {
       set({ error: errorMessage(error) })
       notifyError(error, i18n.t('notifications.deleteConnectionFailed'))
@@ -144,7 +240,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       throw error
     }
   },
-  connectConnection: async (id) => {
+  connectConnection: async (id, options = {}) => {
     set((state) => ({
       busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
       error: null,
@@ -154,8 +250,11 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       useMetadataStore.getState().clearConnection(id)
       set((state) => ({
         statuses: { ...state.statuses, [id]: status },
-        activeConnectionId: id,
-        recentDataSourceIds: rememberRecentDataSource(state.recentDataSourceIds, id),
+        activeConnectionId: options.selectForBrowsing === false ? state.activeConnectionId : id,
+        browsingConnectionId: options.selectForBrowsing === false ? state.browsingConnectionId : id,
+        recentDataSourceIds: options.selectForBrowsing === false
+          ? state.recentDataSourceIds
+          : rememberRecentDataSource(state.recentDataSourceIds, id),
       }))
     } catch (error) {
       const message = errorMessage(error)
@@ -169,7 +268,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
             message,
           },
         },
-        activeConnectionId: id,
+        activeConnectionId: options.selectForBrowsing === false ? state.activeConnectionId : id,
+        browsingConnectionId: options.selectForBrowsing === false ? state.browsingConnectionId : id,
       }))
       useMetadataStore.getState().clearConnection(id)
       notifyError(error, i18n.t('notifications.connectFailed'))
@@ -188,6 +288,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       set((state) => ({
         statuses: { ...state.statuses, [id]: status },
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
+        browsingConnectionId: state.browsingConnectionId === id ? null : state.browsingConnectionId,
       }))
       useMetadataStore.getState().clearConnection(id)
     } catch (error) {
@@ -202,6 +303,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   setActiveConnection: (id) =>
     set((state) => ({
       activeConnectionId: id,
+      browsingConnectionId: id,
       recentDataSourceIds: id
         ? rememberRecentDataSource(state.recentDataSourceIds, id)
         : state.recentDataSourceIds,

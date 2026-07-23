@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
+use tokio_util::sync::CancellationToken;
 
 use uuid::Uuid;
 
@@ -20,19 +27,73 @@ use crate::{
 pub struct ConnectionManager {
     connections: HashMap<Uuid, ActiveConnection>,
     statuses: HashMap<Uuid, ConnectionStatus>,
+    max_live_sessions: usize,
+    idle_reclaim_after: Option<Duration>,
 }
 
 struct ActiveConnection {
     driver: Arc<dyn DatabaseDriver>,
     _ssh_tunnel: Option<SshTunnel>,
+    last_used: Instant,
+    in_flight_operations: usize,
+    serial_query_gate: Arc<Semaphore>,
+    queued_queries: HashMap<String, CancellationToken>,
 }
+
+/// Keeps a serial-driver permit alive for the complete lifetime of a query.
+/// Concurrent drivers intentionally leave this empty.
+pub struct QueryOperation {
+    pub driver: Arc<dyn DatabaseDriver>,
+    _serial_permit: Option<OwnedSemaphorePermit>,
+}
+
+/// A query that is waiting on a driver which does not support concurrent work.
+/// It deliberately owns no `ConnectionManager` borrow, so waiting never blocks
+/// cancellation, disconnect protection, or queries against other Data Sources.
+pub struct QueuedQueryOperation {
+    driver: Arc<dyn DatabaseDriver>,
+    serial_query_gate: Arc<Semaphore>,
+    cancellation: CancellationToken,
+}
+
+pub enum QueryOperationStart {
+    Ready(QueryOperation),
+    Queued(QueuedQueryOperation),
+}
+
+impl QueuedQueryOperation {
+    pub async fn wait(self) -> Result<QueryOperation, AppError> {
+        let permit = tokio::select! {
+            permit = self.serial_query_gate.acquire_owned() => permit.map_err(|_| AppError::ConfigError("query queue is unavailable".to_string()))?,
+            () = self.cancellation.cancelled() => return Err(AppError::QueryFailed {
+                sql: "<queued query>".to_string(),
+                message: "query cancelled while waiting for this Data Source".to_string(),
+            }),
+        };
+        Ok(QueryOperation {
+            driver: self.driver,
+            _serial_permit: Some(permit),
+        })
+    }
+}
+
+const DEFAULT_MAX_LIVE_SESSIONS: usize = 5;
+const DEFAULT_IDLE_RECLAIM_AFTER: Duration = Duration::from_secs(30 * 60);
 
 impl ConnectionManager {
     pub fn new() -> Self {
         Self {
             connections: HashMap::new(),
             statuses: HashMap::new(),
+            max_live_sessions: DEFAULT_MAX_LIVE_SESSIONS,
+            idle_reclaim_after: Some(DEFAULT_IDLE_RECLAIM_AFTER),
         }
+    }
+
+    pub fn set_session_policy(&mut self, max_live_sessions: u8, idle_reclaim_minutes: Option<u16>) {
+        self.max_live_sessions = usize::from(max_live_sessions.clamp(1, 20));
+        self.idle_reclaim_after = idle_reclaim_minutes
+            .map(|minutes| Duration::from_secs(u64::from(minutes.clamp(5, 120)) * 60));
     }
 
     pub async fn test_connection(
@@ -52,6 +113,11 @@ impl ConnectionManager {
         password: Option<&str>,
         definition: Option<&DriverDefinition>,
     ) -> Result<ConnectionStatus, AppError> {
+        if self.connections.contains_key(&config.id) {
+            return Ok(self.set_status(config.id, ConnectionRuntimeStatus::Connected, None));
+        }
+        self.reclaim_idle_sessions();
+        self.reclaim_session_if_needed()?;
         self.set_status(config.id, ConnectionRuntimeStatus::Connecting, None);
 
         match create_active_connection(config, password, definition).await {
@@ -69,6 +135,16 @@ impl ConnectionManager {
     }
 
     pub fn disconnect(&mut self, connection_id: Uuid) -> Result<ConnectionStatus, AppError> {
+        if self
+            .connections
+            .get(&connection_id)
+            .map(|connection| connection.in_flight_operations > 0)
+            .unwrap_or(false)
+        {
+            return Err(AppError::ConfigError(
+                "cannot disconnect while this Data Source has running operations".to_string(),
+            ));
+        }
         self.connections.remove(&connection_id);
         Ok(self.set_status(connection_id, ConnectionRuntimeStatus::Disconnected, None))
     }
@@ -204,6 +280,158 @@ impl ConnectionManager {
             })
     }
 
+    pub fn acquire_driver(
+        &mut self,
+        connection_id: Uuid,
+    ) -> Result<Arc<dyn DatabaseDriver>, AppError> {
+        let connection =
+            self.connections
+                .get_mut(&connection_id)
+                .ok_or_else(|| AppError::NotFound {
+                    resource: "active connection".to_string(),
+                    id: connection_id.to_string(),
+                })?;
+        connection.in_flight_operations += 1;
+        connection.last_used = Instant::now();
+        Ok(connection.driver.clone())
+    }
+
+    pub fn release_operation(&mut self, connection_id: Uuid) {
+        if let Some(connection) = self.connections.get_mut(&connection_id) {
+            connection.in_flight_operations = connection.in_flight_operations.saturating_sub(1);
+            connection.last_used = Instant::now();
+        }
+    }
+
+    pub fn begin_query_operation(
+        &mut self,
+        connection_id: Uuid,
+        query_id: &str,
+    ) -> Result<QueryOperationStart, AppError> {
+        let connection =
+            self.connections
+                .get_mut(&connection_id)
+                .ok_or_else(|| AppError::NotFound {
+                    resource: "active connection".to_string(),
+                    id: connection_id.to_string(),
+                })?;
+        connection.last_used = Instant::now();
+        if connection.driver.supports_concurrent_queries() {
+            connection.in_flight_operations += 1;
+            return Ok(QueryOperationStart::Ready(QueryOperation {
+                driver: connection.driver.clone(),
+                _serial_permit: None,
+            }));
+        }
+        let cancellation = CancellationToken::new();
+        connection
+            .queued_queries
+            .insert(query_id.to_string(), cancellation.clone());
+        let driver = connection.driver.clone();
+        let serial_query_gate = connection.serial_query_gate.clone();
+        match serial_query_gate.clone().try_acquire_owned() {
+            Ok(permit) => {
+                connection.queued_queries.remove(query_id);
+                connection.in_flight_operations += 1;
+                Ok(QueryOperationStart::Ready(QueryOperation {
+                    driver,
+                    _serial_permit: Some(permit),
+                }))
+            }
+            Err(TryAcquireError::NoPermits) => {
+                Ok(QueryOperationStart::Queued(QueuedQueryOperation {
+                    driver,
+                    serial_query_gate,
+                    cancellation,
+                }))
+            }
+            Err(TryAcquireError::Closed) => {
+                connection.queued_queries.remove(query_id);
+                Err(AppError::ConfigError(
+                    "query queue is unavailable".to_string(),
+                ))
+            }
+        }
+    }
+
+    pub fn activate_queued_query(
+        &mut self,
+        connection_id: Uuid,
+        query_id: &str,
+    ) -> Result<(), AppError> {
+        let connection =
+            self.connections
+                .get_mut(&connection_id)
+                .ok_or_else(|| AppError::NotFound {
+                    resource: "active connection".to_string(),
+                    id: connection_id.to_string(),
+                })?;
+        if connection.queued_queries.remove(query_id).is_none() {
+            return Err(AppError::QueryFailed {
+                sql: "<queued query>".to_string(),
+                message: "query cancelled while waiting for this Data Source".to_string(),
+            });
+        }
+        connection.in_flight_operations += 1;
+        connection.last_used = Instant::now();
+        Ok(())
+    }
+
+    pub fn cancel_queued_query(&mut self, connection_id: Uuid, query_id: &str) -> bool {
+        self.connections
+            .get_mut(&connection_id)
+            .and_then(|connection| connection.queued_queries.remove(query_id))
+            .map(|cancellation| {
+                cancellation.cancel();
+                true
+            })
+            .unwrap_or(false)
+    }
+
+    fn reclaim_session_if_needed(&mut self) -> Result<(), AppError> {
+        if self.connections.len() < self.max_live_sessions {
+            return Ok(());
+        }
+        let candidate = self.connections.iter()
+            .filter(|(_, connection)| connection.in_flight_operations == 0)
+            .min_by_key(|(_, connection)| connection.last_used)
+            .map(|(id, _)| *id)
+            .ok_or_else(|| AppError::ConfigError(format!(
+                "Connection Session limit ({}) reached; finish or cancel a running operation before connecting another Data Source", self.max_live_sessions
+            )))?;
+        self.connections.remove(&candidate);
+        self.set_status(
+            candidate,
+            ConnectionRuntimeStatus::Disconnected,
+            Some("reclaimed after inactivity".to_string()),
+        );
+        Ok(())
+    }
+
+    fn reclaim_idle_sessions(&mut self) {
+        let Some(idle_after) = self.idle_reclaim_after else {
+            return;
+        };
+        let now = Instant::now();
+        let idle = self
+            .connections
+            .iter()
+            .filter(|(_, connection)| {
+                connection.in_flight_operations == 0
+                    && now.duration_since(connection.last_used) >= idle_after
+            })
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        for id in idle {
+            self.connections.remove(&id);
+            self.set_status(
+                id,
+                ConnectionRuntimeStatus::Disconnected,
+                Some("reclaimed after 30 minutes of inactivity".to_string()),
+            );
+        }
+    }
+
     fn set_status(
         &mut self,
         connection_id: Uuid,
@@ -236,6 +464,10 @@ async fn create_active_connection(
     Ok(ActiveConnection {
         driver,
         _ssh_tunnel: ssh_tunnel,
+        last_used: Instant::now(),
+        in_flight_operations: 0,
+        serial_query_gate: Arc::new(Semaphore::new(1)),
+        queued_queries: HashMap::new(),
     })
 }
 
@@ -330,10 +562,35 @@ fn required<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, AppError>
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::HashMap,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    use tokio::sync::Semaphore;
     use uuid::Uuid;
 
-    use super::ConnectionManager;
-    use crate::models::connection::ConnectionRuntimeStatus;
+    use super::{ActiveConnection, ConnectionManager, QueryOperationStart};
+    use crate::{drivers::sqlite::SqliteDriver, models::connection::ConnectionRuntimeStatus};
+
+    async fn sqlite_connection(
+        last_used: Instant,
+        in_flight_operations: usize,
+    ) -> ActiveConnection {
+        ActiveConnection {
+            driver: Arc::new(
+                SqliteDriver::connect(":memory:")
+                    .await
+                    .expect("in-memory SQLite connection"),
+            ),
+            _ssh_tunnel: None,
+            last_used,
+            in_flight_operations,
+            serial_query_gate: Arc::new(Semaphore::new(1)),
+            queued_queries: HashMap::new(),
+        }
+    }
 
     #[tokio::test]
     async fn shutdown_all_marks_known_connections_disconnected() {
@@ -347,5 +604,114 @@ mod tests {
             manager.status(connection_id).status,
             ConnectionRuntimeStatus::Disconnected
         ));
+    }
+
+    #[tokio::test]
+    async fn reclaims_the_least_recently_used_idle_session_at_capacity() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(1, None);
+        let oldest = Uuid::new_v4();
+        let newest = Uuid::new_v4();
+        manager.connections.insert(
+            oldest,
+            sqlite_connection(Instant::now() - Duration::from_secs(30), 0).await,
+        );
+
+        manager
+            .reclaim_session_if_needed()
+            .expect("idle session can be reclaimed");
+        manager
+            .connections
+            .insert(newest, sqlite_connection(Instant::now(), 0).await);
+
+        assert!(!manager.connections.contains_key(&oldest));
+        assert!(manager.connections.contains_key(&newest));
+        assert!(matches!(
+            manager.status(oldest).status,
+            ConnectionRuntimeStatus::Disconnected
+        ));
+    }
+
+    #[tokio::test]
+    async fn never_reclaims_a_busy_session_at_capacity() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(1, None);
+        let busy = Uuid::new_v4();
+        manager.connections.insert(
+            busy,
+            sqlite_connection(Instant::now() - Duration::from_secs(30), 1).await,
+        );
+
+        let error = manager
+            .reclaim_session_if_needed()
+            .expect_err("busy session must be protected");
+
+        assert!(error.to_string().contains("limit"));
+        assert!(manager.connections.contains_key(&busy));
+    }
+
+    #[tokio::test]
+    async fn idle_reclaim_uses_the_configured_timeout_without_waiting() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(5, Some(5));
+        let idle = Uuid::new_v4();
+        let active = Uuid::new_v4();
+        manager.connections.insert(
+            idle,
+            sqlite_connection(Instant::now() - Duration::from_secs(5 * 60 + 1), 0).await,
+        );
+        manager
+            .connections
+            .insert(active, sqlite_connection(Instant::now(), 0).await);
+
+        manager.reclaim_idle_sessions();
+
+        assert!(!manager.connections.contains_key(&idle));
+        assert!(manager.connections.contains_key(&active));
+        assert!(matches!(
+            manager.status(idle).status,
+            ConnectionRuntimeStatus::Disconnected
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_queued_serial_query_does_not_block_other_data_sources() {
+        let mut manager = ConnectionManager::new();
+        let serial_source = Uuid::new_v4();
+        let independent_source = Uuid::new_v4();
+        manager
+            .connections
+            .insert(serial_source, sqlite_connection(Instant::now(), 0).await);
+        manager.connections.insert(
+            independent_source,
+            sqlite_connection(Instant::now(), 0).await,
+        );
+
+        let running = match manager
+            .begin_query_operation(serial_source, "running")
+            .expect("first query starts")
+        {
+            QueryOperationStart::Ready(operation) => operation,
+            QueryOperationStart::Queued(_) => panic!("first serial query must not queue"),
+        };
+        let queued = match manager
+            .begin_query_operation(serial_source, "queued")
+            .expect("second query queues")
+        {
+            QueryOperationStart::Ready(_) => panic!("second serial query must queue"),
+            QueryOperationStart::Queued(operation) => operation,
+        };
+        assert!(manager.cancel_queued_query(serial_source, "queued"));
+
+        let other_source = manager
+            .begin_query_operation(independent_source, "independent")
+            .expect("other source is not blocked");
+        assert!(matches!(other_source, QueryOperationStart::Ready(_)));
+        let queued_result = queued.wait().await;
+        assert!(matches!(queued_result, Err(error) if error.to_string().contains("cancelled")));
+
+        drop(running);
+        manager.release_operation(serial_source);
+        manager.release_operation(independent_source);
     }
 }

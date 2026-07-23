@@ -33,7 +33,7 @@ includesAll(
     'const schemasByDatabase = new Map(',
     'await Promise.all(',
     'for (const schema of schemas)',
-    'schemaFolderChildIds.push(schemaNodeId)',
+    'schemaChildIdsForDatabase.push(schemaNodeId)',
     'defaultSchemaNodeId = schemaNodeId',
     'childrenLoaded && !force',
     'expanded: false',

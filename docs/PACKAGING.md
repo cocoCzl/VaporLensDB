@@ -93,8 +93,9 @@ installer formats.
      Set-Content SHA256SUMS.txt
    ```
 
-5. Create the matching Git tag and a GitHub Release. Upload the installers and
-   `SHA256SUMS.txt`, then describe the user-visible changes and known limits.
+5. Update `CHANGELOG.md`, create the matching Git tag and a GitHub Release.
+   Upload the installers and `SHA256SUMS.txt`, then describe the user-visible
+   changes and known limits.
 6. Download every uploaded asset from the draft release and verify its checksum
    before publishing the release.
 

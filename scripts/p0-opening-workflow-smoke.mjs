@@ -33,7 +33,7 @@ const sidebar = read('src/components/layout/Sidebar.tsx')
 assert(mockedDataSources.length >= 20, 'P0 smoke should mock at least 20 saved Data Sources')
 includesAll(
   sidebar,
-  ['const RAIL_ITEMS = [', "{ view: 'explorer'", 'function openSettings()', "kind: 'settings'", '<DataSourceHeader />', '<DatabaseTree />'],
+  ['const RAIL_ITEMS = [', "{ view: 'explorer'", 'function openSettings()', "kind: 'settings'", '<CompactDataSourceTree />', '<DatabaseTree connectionId='],
   'Explorer-first left rail',
 )
 excludesAll(
@@ -53,15 +53,12 @@ includesAll(
     'useQueryHistoryStore',
     'useSqlDraftStore',
     'saveTabDraft',
-    "t('sql.recentScripts')",
+    "t('workbench.emptyEditorHint')",
+    "t('workbench.emptyEditorDetail')",
     'setStatusFilter',
     'setConnectionFilter',
     "t('workbench.reuseSql')",
     "t('sql.history')",
-    'Data Sources',
-    "t('workbench.newSql')",
-    'xl:grid-cols-[minmax(0,1fr)_20rem]',
-    'xl:border-l',
     '<SettingsWorkspacePanel />',
   ],
   'main workspace opening workflow',
@@ -70,6 +67,8 @@ assert(
   !mainPanel.includes('ensureTab(activeConnectionId)'),
   'main workspace should not auto-create a SQL tab and hide home state',
 )
+assert(!mainPanel.includes('ConnectionFirstLanding'), 'home should not render landing cards')
+assert(!mainPanel.includes('RecentSqlPanel'), 'home should not render recent drafts')
 
 const tabBar = read('src/components/layout/TabBar.tsx')
 includesAll(
@@ -88,9 +87,15 @@ includesAll(
     'setEditingTabId',
     'connectionId: activeConnectionId',
     'nextSqlIndex',
+    'clearDraftTimer',
+    "t('sql.clearRecentScripts')",
   ],
   'SQL tab context and naming',
 )
+
+const toolbar = read('src/components/layout/GlobalToolbar.tsx')
+assert(!toolbar.includes("t('workbench.newSql')"), 'global toolbar must not duplicate the tab-bar SQL action')
+assert(!toolbar.includes('CreateDatabaseDialog'), 'global toolbar must not expose database creation')
 assert(
   !tabBar.includes('DropdownMenu'),
   'recent SQL menu should avoid Base UI DropdownMenu in Tauri toolbar',

@@ -40,6 +40,8 @@ export interface MetadataState {
   indexes: Record<string, IndexInfo[]>
   foreignKeys: Record<string, ForeignKeyInfo[]>
   catalogSchemaPaths: Record<string, CatalogSchemaPath>
+  /** Monotonic signal consumed by the object tree after out-of-band metadata changes. */
+  connectionRefreshTokens: Record<string, number>
   indexResults: MetadataSearchResult[]
   loading: Record<string, boolean>
   indexLoading: boolean
@@ -77,6 +79,7 @@ export interface MetadataState {
     force?: boolean,
   ) => Promise<ForeignKeyInfo[]>
   setCatalogSchemaPath: (path: CatalogSchemaPath) => void
+  requestConnectionRefresh: (connectionId: string) => void
   clearSchema: (connectionId: string, schema: string) => void
   clearSchemaObjectKind: (connectionId: string, schema: string, kind: DbObjectKind) => void
   startIndexing: (connectionId: string, force?: boolean) => Promise<void>
@@ -103,6 +106,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
   indexes: {},
   foreignKeys: {},
   catalogSchemaPaths: {},
+  connectionRefreshTokens: {},
   indexResults: [],
   loading: {},
   indexLoading: false,
@@ -223,6 +227,14 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       },
     })),
 
+  requestConnectionRefresh: (connectionId) =>
+    set((state) => ({
+      connectionRefreshTokens: {
+        ...state.connectionRefreshTokens,
+        [connectionId]: (state.connectionRefreshTokens[connectionId] ?? 0) + 1,
+      },
+    })),
+
   clearSchema: (connectionId, schema) =>
     set((state) => {
       const schemaPrefix = schemaObjectKey(connectionId, schema)
@@ -300,6 +312,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       indexes: omitByPrefix(state.indexes, connectionId),
       foreignKeys: omitByPrefix(state.foreignKeys, connectionId),
       catalogSchemaPaths: omitByPrefix(state.catalogSchemaPaths, connectionId),
+      connectionRefreshTokens: omitByPrefix(state.connectionRefreshTokens, connectionId),
       indexResults: state.indexResults.filter(
         (result) => result.entry.connectionId !== connectionId,
       ),

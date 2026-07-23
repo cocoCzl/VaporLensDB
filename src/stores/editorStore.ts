@@ -11,6 +11,8 @@ export interface EditorTab {
     | 'definition'
     | 'diagram'
     | 'dataSources'
+    | 'sqlScripts'
+    | 'queryHistory'
     | 'settings'
     | 'objectSummary'
   title: string
@@ -30,7 +32,13 @@ export interface EditorTab {
   draftId?: string | null
   dirty?: boolean
   pinned?: boolean
+  /** Set when the saved Data Source was removed; SQL remains recoverable. */
+  unavailableConnectionName?: string | null
+  /** Optional initial data-source scope for the SQL records workspace. */
+  recordsConnectionFilter?: string | null
 }
+
+const SQL_WORKSPACE_STORAGE_KEY = 'vaporlensdb.sqlWorkspace.v1'
 
 export interface DataTabContext {
   database?: string | null
@@ -95,16 +103,20 @@ interface EditorState {
   updateDataTabContext: (id: string, dataContext: DataTabContext, sql: string) => void
   updateTabConnection: (id: string, connectionId: string | null) => void
   setTabDraft: (id: string, draftId: string | null) => void
+  setRecordsConnectionFilter: (id: string, connectionId: string | null) => void
   toggleTabPinned: (id: string) => void
   setTabRunning: (id: string, running: boolean, queryId?: string | null) => void
   setTabCancelling: (id: string, cancelling: boolean) => void
   setTabQueryState: (id: string, queryId: string | null, error?: string | null) => void
+  markConnectionUnavailable: (connectionId: string, name: string) => void
   closeTab: (id: string) => void
 }
 
+const restoredWorkspace = readStoredSqlWorkspace()
+
 export const useEditorStore = create<EditorState>((set) => ({
-  tabs: [],
-  activeTabId: null,
+  tabs: restoredWorkspace.tabs,
+  activeTabId: restoredWorkspace.activeTabId,
   setActiveTab: (id) => set({ activeTabId: id }),
   addTab: (tab) => set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id })),
   ensureTab: (connectionId) => {
@@ -158,13 +170,17 @@ export const useEditorStore = create<EditorState>((set) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === id
-          ? { ...t, connectionId, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty }
+          ? { ...t, connectionId, unavailableConnectionName: null, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty }
           : t,
       ),
     })),
   setTabDraft: (id, draftId) =>
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, draftId, dirty: false } : t)),
+    })),
+  setRecordsConnectionFilter: (id, connectionId) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, recordsConnectionFilter: connectionId } : t)),
     })),
   toggleTabPinned: (id) =>
     set((s) => ({
@@ -197,9 +213,76 @@ export const useEditorStore = create<EditorState>((set) => ({
           : t,
       ),
     })),
+  markConnectionUnavailable: (connectionId, name) =>
+    set((state) => ({
+      tabs: state.tabs.map((tab) => tab.connectionId === connectionId
+        ? { ...tab, unavailableConnectionName: name, running: false, cancelling: false, runningQueryId: null }
+        : tab),
+    })),
   closeTab: (id) =>
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== id)
       return { tabs, activeTabId: tabs.at(-1)?.id ?? null }
     }),
 }))
+
+export function persistSqlWorkspace(tabs: EditorTab[], activeTabId: string | null) {
+  if (typeof window === 'undefined') return
+  const savedTabs = tabs
+    .filter((tab) => tab.kind === 'sql' || !tab.kind)
+    .map((tab) => ({
+      id: tab.id,
+      kind: 'sql' as const,
+      title: tab.title,
+      sql: tab.sql,
+      connectionId: tab.connectionId,
+      draftId: tab.draftId ?? null,
+      dirty: tab.dirty ?? false,
+      pinned: tab.pinned ?? false,
+      unavailableConnectionName: tab.unavailableConnectionName ?? null,
+    }))
+  try {
+    window.localStorage.setItem(SQL_WORKSPACE_STORAGE_KEY, JSON.stringify({
+      tabs: savedTabs,
+      activeTabId: savedTabs.some((tab) => tab.id === activeTabId) ? activeTabId : savedTabs.at(-1)?.id ?? null,
+    }))
+  } catch {
+    // Workspace restoration is best-effort and must never block the editor.
+  }
+}
+
+function readStoredSqlWorkspace(): Pick<EditorState, 'tabs' | 'activeTabId'> {
+  if (typeof window === 'undefined') return { tabs: [], activeTabId: null }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SQL_WORKSPACE_STORAGE_KEY) ?? '{}')
+    const rawTabs: unknown[] = Array.isArray(parsed.tabs) ? parsed.tabs as unknown[] : []
+    const tabs = rawTabs
+        .filter((tab): tab is Record<string, unknown> => Boolean(tab) && typeof tab === 'object')
+        .filter((tab) => typeof tab.id === 'string' && typeof tab.title === 'string' && typeof tab.sql === 'string')
+        .map((tab): EditorTab => ({
+          id: tab.id as string,
+          kind: 'sql',
+          title: tab.title as string,
+          sql: tab.sql as string,
+          connectionId: typeof tab.connectionId === 'string' ? tab.connectionId : null,
+          draftId: typeof tab.draftId === 'string' ? tab.draftId : null,
+          dirty: tab.dirty === true,
+          pinned: tab.pinned === true,
+          unavailableConnectionName: typeof tab.unavailableConnectionName === 'string'
+            ? tab.unavailableConnectionName
+            : null,
+          // Results and live execution state are intentionally never restored.
+          lastQueryId: null,
+          runningQueryId: null,
+          running: false,
+          cancelling: false,
+          error: null,
+        }))
+    const activeTabId = typeof parsed.activeTabId === 'string' && tabs.some((tab) => tab.id === parsed.activeTabId)
+      ? parsed.activeTabId
+      : tabs.at(-1)?.id ?? null
+    return { tabs, activeTabId }
+  } catch {
+    return { tabs: [], activeTabId: null }
+  }
+}

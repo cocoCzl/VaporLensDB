@@ -140,7 +140,7 @@
   }
 
   .ide-landing-card {
-    @apply rounded-lg border bg-card text-card-foreground shadow-[0_12px_30px_-26px_hsl(var(--overlay)/0.55)];
+    @apply rounded-md border bg-card text-card-foreground shadow-none;
   }
 
   .ide-icon-button {
@@ -169,6 +169,14 @@
 
   .ide-divider {
     @apply border-border/80;
+  }
+
+  /* Long data-source lists can contain hundreds of compact rows. Browsers that
+     support this skip off-screen paint/layout work while preserving normal DOM
+     keyboard navigation and the simple, variable-height grouped structure. */
+  .content-visibility-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 2.25rem;
   }
 }
 

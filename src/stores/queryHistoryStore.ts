@@ -22,7 +22,7 @@ export const useQueryHistoryStore = create<QueryHistoryState>((set, get) => ({
   entries: [],
   loading: false,
   error: null,
-  loadHistory: async (limit = 200) => {
+  loadHistory: async (limit = 500) => {
     set({ loading: true, error: null })
     try {
       const entries = await listQueryHistory(limit)
@@ -36,7 +36,7 @@ export const useQueryHistoryStore = create<QueryHistoryState>((set, get) => ({
   addEntry: async (entry) => {
     try {
       const saved = await addQueryHistory(entry)
-      set((state) => ({ entries: [saved, ...state.entries].slice(0, 200) }))
+      set((state) => ({ entries: [saved, ...state.entries].slice(0, 500) }))
     } catch (error) {
       notifyError(error, i18n.t('notifications.saveQueryHistoryFailed'))
       await get().loadHistory()

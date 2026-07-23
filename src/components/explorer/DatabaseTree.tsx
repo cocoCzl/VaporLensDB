@@ -139,9 +139,16 @@ const OBJECT_CATEGORY_ORDER: ObjectCategoryDefinition[] = [
   },
 ]
 
-export function DatabaseTree() {
+export function DatabaseTree({
+  connectionId: connectionIdOverride,
+  compact = false,
+}: {
+  connectionId?: string | null
+  compact?: boolean
+} = {}) {
   const { t } = useTranslation()
-  const { activeConnectionId, connections, statuses, setActiveConnection } = useConnectionStore()
+  const { activeConnectionId: browsingConnectionId, connections, statuses, setActiveConnection } = useConnectionStore()
+  const activeConnectionId = connectionIdOverride ?? browsingConnectionId
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
   const setActiveTab = useEditorStore((state) => state.setActiveTab)
@@ -170,6 +177,9 @@ export function DatabaseTree() {
 
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
   const activePath = activeConnectionId ? metadata.catalogSchemaPaths[activeConnectionId] : null
+  const connectionRefreshToken = activeConnectionId
+    ? metadata.connectionRefreshTokens[activeConnectionId] ?? 0
+    : 0
   const activeStatus = activeConnectionId ? statuses[activeConnectionId] : undefined
   const activeRuntimeStatus = activeStatus?.status ?? 'disconnected'
   const isConnected =
@@ -387,6 +397,14 @@ export function DatabaseTree() {
     activePath?.database,
     activePath?.schema,
   ])
+
+  useEffect(() => {
+    if (!connectionRefreshToken || !activeConnectionId || !isConnected) return
+    queueMicrotask(() => refreshNode(ROOT_ID))
+    // Refreshes are explicit mutations (for example CREATE DATABASE), unlike
+    // normal catalog-path changes, which should preserve lazy tree state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionRefreshToken])
 
   async function toggleNode(id: string, force = false) {
     const node = nodes[id]
@@ -1050,7 +1068,12 @@ export function DatabaseTree() {
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col border-t ide-surface">
+    <section
+      className={compact
+        ? 'relative flex h-[clamp(19rem,45vh,30rem)] min-h-[19rem] max-h-[calc(100vh-11rem)] min-w-0 resize-y flex-col overflow-hidden border-t ide-surface'
+        : 'flex min-h-0 flex-1 flex-col border-t ide-surface'}
+      title={compact ? t('explorer.resizeObjectTree') : undefined}
+    >
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <Server className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
@@ -1096,7 +1119,7 @@ export function DatabaseTree() {
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            id="object-tree-search-input"
+            id={connectionIdOverride ? `object-tree-search-input-${connectionIdOverride}` : 'object-tree-search-input'}
             className="h-7 rounded-md pl-7 text-xs"
             value={filter}
             disabled={!isConnected || !objectBrowsingSupported}
@@ -1232,6 +1255,7 @@ export function DatabaseTree() {
           onClose={() => setContextMenu(null)}
         />
       )}
+      {compact && <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-1 border-t border-border/80" />}
     </section>
   )
 }

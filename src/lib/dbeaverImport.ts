@@ -19,6 +19,8 @@ export interface DbeaverConnectionPreview {
   database?: string | null
   username?: string | null
   connectionUrl?: string | null
+  /** DBeaver folders are flattened into one VaporLensDB Data Source Group. */
+  groupPath?: string | null
   passwordStatus: 'manualEntryRequired' | 'notPresent'
   sourceDriver: string
 }
@@ -46,6 +48,7 @@ interface RawDbeaverConnection {
   database?: string | null
   username?: string | null
   hasPasswordReference: boolean
+  groupPath?: string | null
 }
 
 interface ParsedConnectionUrl {
@@ -103,6 +106,7 @@ export function dbeaverPreviewToConnectionInput(preview: DbeaverConnectionPrevie
     username: preview.username ?? null,
     password: null,
     driverPaths: [],
+    group: preview.groupPath ?? null,
   }
 }
 
@@ -112,9 +116,11 @@ function parseDbeaverJson(source: string): RawDbeaverConnection[] {
     folders?: Record<string, unknown>
   }
   const connections = parsed.connections ?? {}
+  const folderPaths = dbeaverFolderPaths(parsed.folders ?? {})
   return Object.entries(connections).map(([id, value]) => {
     const item = value as Record<string, unknown>
     const configuration = (item.configuration as Record<string, unknown> | undefined) ?? {}
+    const folderId = stringValue(item.folder) ?? stringValue(item.folderId) ?? stringValue(configuration.folder)
     const driver = stringValue(item.driver) ?? stringValue(item.provider) ?? ''
     const url = stringValue(configuration.url)
     const parsedUrl = url ? parseJdbcUrl(url, driver) : {}
@@ -139,6 +145,7 @@ function parseDbeaverJson(source: string): RawDbeaverConnection[] {
         Boolean(configuration.password) ||
         Boolean(configuration.auth) ||
         Boolean(configuration.credentials),
+      groupPath: folderId ? folderPaths.get(folderId) ?? null : null,
     }
   })
 }
@@ -178,6 +185,7 @@ function parseDbeaverXml(source: string): RawDbeaverConnection[] {
         Boolean(attr(node, 'password')) ||
         Boolean(textChild(node, 'password')) ||
         Boolean(node.querySelector('credentials')),
+      groupPath: attr(node, 'folder') ?? attr(node, 'folder-id') ?? null,
     }
   })
 }
@@ -224,6 +232,7 @@ function buildPreview(sourceName: string, rawConnections: RawDbeaverConnection[]
       connectionUrl: raw.url ?? null,
       passwordStatus: raw.hasPasswordReference ? 'manualEntryRequired' : 'notPresent',
       sourceDriver: raw.sourceDriver || 'unknown',
+      groupPath: raw.groupPath ?? null,
     })
   }
 
@@ -234,6 +243,33 @@ function buildPreview(sourceName: string, rawConnections: RawDbeaverConnection[]
     skipped,
     passwordEntries,
   }
+}
+
+function dbeaverFolderPaths(folders: Record<string, unknown>) {
+  const entries = new Map<string, { name: string; parentId: string | null }>()
+  for (const [id, value] of Object.entries(folders)) {
+    const folder = value as Record<string, unknown>
+    const name = stringValue(folder.name) ?? stringValue(folder.label) ?? id
+    entries.set(id, {
+      name,
+      parentId: stringValue(folder.parent) ?? stringValue(folder.parentId) ?? null,
+    })
+  }
+  const paths = new Map<string, string>()
+  for (const id of entries.keys()) {
+    const names: string[] = []
+    const seen = new Set<string>()
+    let cursor: string | null = id
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor)
+      const folder = entries.get(cursor)
+      if (!folder) break
+      names.unshift(folder.name)
+      cursor = folder.parentId
+    }
+    if (names.length) paths.set(id, names.join(' / '))
+  }
+  return paths
 }
 
 function mapDriver(value: string) {

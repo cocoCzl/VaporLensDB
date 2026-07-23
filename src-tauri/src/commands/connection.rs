@@ -27,6 +27,7 @@ pub struct ConnectionInput {
     pub driver_class: Option<String>,
     pub driver_paths: Option<Vec<String>>,
     pub ssl_mode: Option<String>,
+    pub group_id: Option<Uuid>,
     pub group: Option<String>,
     pub color_tag: Option<String>,
     pub ssh_tunnel: Option<SshTunnelInput>,
@@ -180,6 +181,26 @@ pub async fn list_connection_statuses(
     Ok(state.connection_manager.lock().await.statuses())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetConnectionSessionPolicyInput {
+    pub max_live_sessions: u8,
+    pub idle_reclaim_minutes: Option<u16>,
+}
+
+#[tauri::command]
+pub async fn set_connection_session_policy(
+    state: State<'_, AppState>,
+    input: SetConnectionSessionPolicyInput,
+) -> Result<(), String> {
+    state
+        .connection_manager
+        .lock()
+        .await
+        .set_session_policy(input.max_live_sessions, input.idle_reclaim_minutes);
+    Ok(())
+}
+
 fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
     let now = Utc::now();
     ConnectionConfig {
@@ -197,6 +218,7 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
         driver_class: input.driver_class,
         driver_paths: input.driver_paths.unwrap_or_default(),
         ssl_mode: input.ssl_mode,
+        group_id: input.group_id,
         group: input.group,
         color_tag: input.color_tag,
         ssh_tunnel: input.ssh_tunnel.and_then(input_to_ssh_tunnel),

@@ -46,6 +46,8 @@ type SettingsDraft = {
   dataPreviewDefaultRows: number
   editorFontSize: number
   exportDirectory: string | null
+  maxLiveSessions: number
+  idleReclaimMinutes: number | null
 }
 
 const DEFAULT_QUERY_MAX_ROWS = 5_000
@@ -65,6 +67,9 @@ export function SettingsWorkspacePanel() {
   const setEditorFontSize = useUiStore((state) => state.setEditorFontSize)
   const exportDirectory = useUiStore((state) => state.exportDirectory)
   const setExportDirectory = useUiStore((state) => state.setExportDirectory)
+  const maxLiveSessions = useUiStore((state) => state.maxLiveSessions)
+  const idleReclaimMinutes = useUiStore((state) => state.idleReclaimMinutes)
+  const setConnectionSessionPolicy = useUiStore((state) => state.setConnectionSessionPolicy)
   const notify = useUiStore((state) => state.notify)
   const notifyError = useUiStore((state) => state.notifyError)
   const history = useQueryHistoryStore((state) => state.entries)
@@ -78,7 +83,7 @@ export function SettingsWorkspacePanel() {
   const [health, setHealth] = useState<HealthCheckResponse | null>(null)
   const [healthUnavailable, setHealthUnavailable] = useState(false)
   const [draft, setDraft] = useState<SettingsDraft>(() =>
-    settingsDraftFromCurrent(theme, i18n.language, queryMaxRows, dataPreviewDefaultRows, editorFontSize, exportDirectory),
+    settingsDraftFromCurrent(theme, i18n.language, queryMaxRows, dataPreviewDefaultRows, editorFontSize, exportDirectory, maxLiveSessions, idleReclaimMinutes),
   )
   const hasSettingsChanges =
     draft.theme !== theme ||
@@ -87,6 +92,7 @@ export function SettingsWorkspacePanel() {
     draft.dataPreviewDefaultRows !== dataPreviewDefaultRows ||
     draft.editorFontSize !== editorFontSize ||
     draft.exportDirectory !== exportDirectory
+    || draft.maxLiveSessions !== maxLiveSessions || draft.idleReclaimMinutes !== idleReclaimMinutes
 
   useEffect(() => {
     loadHistory()
@@ -172,7 +178,7 @@ export function SettingsWorkspacePanel() {
   }
 
   function discardSettingsDraft() {
-    setDraft(settingsDraftFromCurrent(theme, i18n.language, queryMaxRows, dataPreviewDefaultRows, editorFontSize, exportDirectory))
+    setDraft(settingsDraftFromCurrent(theme, i18n.language, queryMaxRows, dataPreviewDefaultRows, editorFontSize, exportDirectory, maxLiveSessions, idleReclaimMinutes))
   }
 
   function restoreDefaultSettingsDraft() {
@@ -182,6 +188,8 @@ export function SettingsWorkspacePanel() {
       dataPreviewDefaultRows: DEFAULT_DATA_PREVIEW_ROWS,
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
       exportDirectory: null,
+      maxLiveSessions: 5,
+      idleReclaimMinutes: 30,
     }))
   }
 
@@ -191,6 +199,7 @@ export function SettingsWorkspacePanel() {
     setDataPreviewDefaultRows(draft.dataPreviewDefaultRows)
     setEditorFontSize(draft.editorFontSize)
     setExportDirectory(draft.exportDirectory)
+    setConnectionSessionPolicy(draft.maxLiveSessions, draft.idleReclaimMinutes)
     window.localStorage.setItem('vaporlensdb.language', draft.language)
     void i18n.changeLanguage(draft.language)
     setApplicationMenuLanguage(draft.language).catch(() => {
@@ -336,6 +345,14 @@ export function SettingsWorkspacePanel() {
                       showRange
                       onChange={(value) => updateDraft({ editorFontSize: value })}
                     />
+                  </div>
+                </SettingsCard>
+
+                <SettingsCard title={t('settings.connectionSessions.title')} icon={Database}>
+                  <div className="grid gap-2">
+                    <NumberSetting label={t('settings.connectionSessions.max')} value={draft.maxLiveSessions} min={1} max={20} step={1} defaultValue={5} presets={[1, 3, 5, 10, 20]} onChange={(value) => updateDraft({ maxLiveSessions: value })} />
+                    <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 p-3 text-xs"><div><div className="font-semibold">{t('settings.connectionSessions.idle')}</div><p className="mt-1 text-muted-foreground">{t('settings.connectionSessions.hint')}</p></div><Button type="button" size="sm" variant={draft.idleReclaimMinutes === null ? 'secondary' : 'outline'} onClick={() => updateDraft({ idleReclaimMinutes: draft.idleReclaimMinutes === null ? 30 : null })}>{draft.idleReclaimMinutes === null ? t('settings.connectionSessions.enable') : t('settings.connectionSessions.disable')}</Button></div>
+                    {draft.idleReclaimMinutes !== null && <NumberSetting label={t('settings.connectionSessions.minutes')} value={draft.idleReclaimMinutes} min={5} max={120} step={5} defaultValue={30} presets={[5, 15, 30, 60, 120]} onChange={(value) => updateDraft({ idleReclaimMinutes: value })} />}
                   </div>
                 </SettingsCard>
 
@@ -1105,6 +1122,11 @@ function DbeaverImportSettings({
                         ? 'password manual entry'
                         : 'no password'}
                     </div>
+                    {connection.groupPath && (
+                      <div className="mt-1 truncate text-[10px] text-muted-foreground">
+                        {t('connectionForm.group')}: {connection.groupPath}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -1362,6 +1384,8 @@ function settingsDraftFromCurrent(
   dataPreviewDefaultRows: number,
   editorFontSize: number,
   exportDirectory: string | null,
+  maxLiveSessions: number,
+  idleReclaimMinutes: number | null,
 ): SettingsDraft {
   return {
     theme,
@@ -1370,6 +1394,8 @@ function settingsDraftFromCurrent(
     dataPreviewDefaultRows,
     editorFontSize,
     exportDirectory,
+    maxLiveSessions,
+    idleReclaimMinutes,
   }
 }
 

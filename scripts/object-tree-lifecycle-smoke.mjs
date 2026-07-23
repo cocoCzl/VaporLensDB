@@ -54,11 +54,11 @@ includesAll(
   'connection lifecycle store',
 )
 
-const connectionList = read('src/components/connection/ConnectionList.tsx')
-includesAll(connectionList, ['setActiveConnection(id)'], 'left connection selection')
+const sidebar = read('src/components/layout/Sidebar.tsx')
+includesAll(sidebar, ['setActiveConnection(connection.id)'], 'left connection selection')
 excludesAll(
-  connectionList,
-  ['updateTabConnection', 'ensureTab', 'activeTabId'],
+  sidebar,
+  ['updateTabConnection', 'ensureTab'],
   'left connection selection must not rewrite SQL tabs',
 )
 

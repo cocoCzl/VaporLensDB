@@ -101,7 +101,10 @@ includesAll(
 const app = read('src/App.tsx')
 includesAll(
   app,
-  ['setApplicationMenuLanguage', 'normalizedApplicationMenuLanguage(i18n.language)'],
+  [
+    'setApplicationMenuLanguage',
+    'normalizedApplicationMenuLanguage(i18n.language)',
+  ],
   'startup native menu sync',
 )
 

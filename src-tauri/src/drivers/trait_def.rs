@@ -14,6 +14,11 @@ use crate::models::{
 pub trait DatabaseDriver: Send + Sync {
     fn driver_name(&self) -> &'static str;
     fn capabilities(&self) -> DriverCapabilities;
+    /// Whether this driver can safely execute more than one query at a time
+    /// using the same saved Data Source session.
+    fn supports_concurrent_queries(&self) -> bool {
+        false
+    }
     async fn ping(&self) -> Result<(), AppError>;
     async fn execute_query(
         &self,

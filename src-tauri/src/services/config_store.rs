@@ -3,13 +3,14 @@ use std::{
     str::FromStr,
 };
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 use crate::{
     models::{
         connection::{ConnectionConfig, DriverType, SshTunnelConfig},
+        data_source_group::DataSourceGroup,
         driver_catalog::{
             DriverBackend, DriverConnectionVariant, DriverDefinition, DriverDefinitionCapabilities,
             DriverStatus,
@@ -85,6 +86,11 @@ const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
         name: "create sql draft store",
         apply: create_sql_draft_store,
     },
+    ConfigMigration {
+        version: 11,
+        name: "migrate legacy connection groups to data source groups",
+        apply: migrate_data_source_groups,
+    },
 ];
 
 impl ConfigStore {
@@ -128,6 +134,7 @@ impl ConfigStore {
         mut config: ConnectionConfig,
         password: Option<String>,
     ) -> Result<ConnectionConfig, AppError> {
+        self.resolve_group_reference(&mut config)?;
         let now = Utc::now();
         config.created_at = now;
         config.updated_at = now;
@@ -142,11 +149,11 @@ impl ConfigStore {
             "
             INSERT INTO connections (
                 id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
-                password_encrypted, driver_class, driver_paths, ssl_mode, group_name, color_tag,
+                password_encrypted, driver_class, driver_paths, ssl_mode, group_id, group_name, color_tag,
                 ssh_tunnel_json, ssh_password_encrypted, ssh_private_key_passphrase_encrypted,
                 created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
             ",
             params_from_config(&config),
         )?;
@@ -166,6 +173,7 @@ impl ConfigStore {
                 id: config.id.to_string(),
             })?;
 
+        self.resolve_group_reference(&mut config)?;
         config.created_at = existing.created_at;
         config.updated_at = Utc::now();
         config.password_encrypted = match password {
@@ -192,13 +200,14 @@ impl ConfigStore {
                 driver_class = ?12,
                 driver_paths = ?13,
                 ssl_mode = ?14,
-                group_name = ?15,
-                color_tag = ?16,
-                ssh_tunnel_json = ?17,
-                ssh_password_encrypted = ?18,
-                ssh_private_key_passphrase_encrypted = ?19,
-                created_at = ?20,
-                updated_at = ?21
+                group_id = ?15,
+                group_name = ?16,
+                color_tag = ?17,
+                ssh_tunnel_json = ?18,
+                ssh_password_encrypted = ?19,
+                ssh_private_key_passphrase_encrypted = ?20,
+                created_at = ?21,
+                updated_at = ?22
             WHERE id = ?1
             ",
             params_from_config(&config),
@@ -226,7 +235,7 @@ impl ConfigStore {
         let mut statement = conn.prepare(
             "
             SELECT id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
-                   password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
+                   password_encrypted, driver_class, driver_paths, ssl_mode, group_id, group_name,
                    color_tag, ssh_tunnel_json, ssh_password_encrypted,
                    ssh_private_key_passphrase_encrypted, created_at, updated_at
             FROM connections
@@ -236,7 +245,8 @@ impl ConfigStore {
         )?;
 
         let rows = statement.query_map([], row_to_connection)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::ConfigError(format!("list connections: {error}")))
     }
 
     pub fn get_connection(&self, id: Uuid) -> Result<Option<ConnectionConfig>, AppError> {
@@ -244,7 +254,7 @@ impl ConfigStore {
             .query_row(
                 "
             SELECT id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
-                   password_encrypted, driver_class, driver_paths, ssl_mode, group_name,
+                   password_encrypted, driver_class, driver_paths, ssl_mode, group_id, group_name,
                    color_tag, ssh_tunnel_json, ssh_password_encrypted,
                    ssh_private_key_passphrase_encrypted, created_at, updated_at
                 FROM connections
@@ -256,6 +266,201 @@ impl ConfigStore {
             )
             .optional()
             .map_err(AppError::from)
+    }
+
+    pub fn list_data_source_groups(&self) -> Result<Vec<DataSourceGroup>, AppError> {
+        let conn = self.conn()?;
+        let mut statement = conn.prepare(
+            "SELECT id, name, sort_order, created_at, updated_at FROM data_source_groups ORDER BY sort_order, name COLLATE NOCASE",
+        )?;
+        let groups = statement
+            .query_map([], row_to_data_source_group)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::ConfigError(format!("list data source groups: {error}")))?;
+        Ok(groups)
+    }
+
+    pub fn create_data_source_group(&self, name: String) -> Result<DataSourceGroup, AppError> {
+        let name = normalize_group_name(&name)?;
+        let now = Utc::now();
+        let group = DataSourceGroup {
+            id: Uuid::new_v4(),
+            name,
+            sort_order: self.next_group_sort_order()?,
+            created_at: now,
+            updated_at: now,
+        };
+        self.conn()?.execute(
+            "INSERT INTO data_source_groups (id, name, sort_order, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![group.id.to_string(), group.name, group.sort_order, group.created_at.to_rfc3339(), group.updated_at.to_rfc3339()],
+        )?;
+        Ok(group)
+    }
+
+    pub fn rename_data_source_group(
+        &self,
+        id: Uuid,
+        name: String,
+    ) -> Result<DataSourceGroup, AppError> {
+        let name = normalize_group_name(&name)?;
+        let existing = self
+            .get_data_source_group(id)?
+            .ok_or_else(|| AppError::NotFound {
+                resource: "data source group".to_string(),
+                id: id.to_string(),
+            })?;
+        let updated_at = Utc::now();
+        let conn = self.conn()?;
+        let transaction = conn.unchecked_transaction()?;
+        transaction.execute(
+            "UPDATE data_source_groups SET name = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id.to_string(), name, updated_at.to_rfc3339()],
+        )?;
+        transaction.execute(
+            "UPDATE connections SET group_name = ?2, updated_at = ?3 WHERE group_id = ?1",
+            params![id.to_string(), name, updated_at.to_rfc3339()],
+        )?;
+        transaction.commit()?;
+        Ok(DataSourceGroup {
+            name,
+            updated_at,
+            ..existing
+        })
+    }
+
+    pub fn delete_data_source_group(&self, id: Uuid) -> Result<(), AppError> {
+        let conn = self.conn()?;
+        let transaction = conn.unchecked_transaction()?;
+        let affected = transaction.execute(
+            "UPDATE connections SET group_id = NULL, group_name = NULL, updated_at = ?2 WHERE group_id = ?1",
+            params![id.to_string(), Utc::now().to_rfc3339()],
+        )?;
+        let deleted = transaction.execute(
+            "DELETE FROM data_source_groups WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        if deleted == 0 {
+            return Err(AppError::NotFound {
+                resource: "data source group".to_string(),
+                id: id.to_string(),
+            });
+        }
+        let _ = affected;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn reorder_data_source_groups(
+        &self,
+        ids: Vec<Uuid>,
+    ) -> Result<Vec<DataSourceGroup>, AppError> {
+        let existing = self.list_data_source_groups()?;
+        if ids.len() != existing.len()
+            || ids.iter().collect::<std::collections::HashSet<_>>().len() != ids.len()
+            || ids
+                .iter()
+                .any(|id| !existing.iter().any(|group| group.id == *id))
+        {
+            return Err(AppError::ConfigError(
+                "Data Source Group order must contain every group exactly once".to_string(),
+            ));
+        }
+        let conn = self.conn()?;
+        let transaction = conn.unchecked_transaction()?;
+        let now = Utc::now().to_rfc3339();
+        for (index, id) in ids.iter().enumerate() {
+            transaction.execute(
+                "UPDATE data_source_groups SET sort_order = ?2, updated_at = ?3 WHERE id = ?1",
+                params![id.to_string(), (index as i64 + 1) * 100, now],
+            )?;
+        }
+        transaction.commit()?;
+        self.list_data_source_groups()
+    }
+
+    pub fn set_connection_group(
+        &self,
+        connection_id: Uuid,
+        group_id: Option<Uuid>,
+    ) -> Result<(), AppError> {
+        let group = group_id
+            .map(|id| self.get_data_source_group(id))
+            .transpose()?
+            .flatten();
+        if group_id.is_some() && group.is_none() {
+            return Err(AppError::NotFound {
+                resource: "data source group".to_string(),
+                id: group_id.unwrap().to_string(),
+            });
+        }
+        let affected = self.conn()?.execute(
+            "UPDATE connections SET group_id = ?2, group_name = ?3, updated_at = ?4 WHERE id = ?1",
+            params![
+                connection_id.to_string(),
+                group_id.map(|id| id.to_string()),
+                group.map(|item| item.name),
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound {
+                resource: "connection".to_string(),
+                id: connection_id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn get_data_source_group(&self, id: Uuid) -> Result<Option<DataSourceGroup>, AppError> {
+        self.conn()?.query_row(
+            "SELECT id, name, sort_order, created_at, updated_at FROM data_source_groups WHERE id = ?1",
+            params![id.to_string()],
+            row_to_data_source_group,
+        ).optional().map_err(AppError::from)
+    }
+
+    fn next_group_sort_order(&self) -> Result<i64, AppError> {
+        self.conn()?
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), 0) + 100 FROM data_source_groups",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(AppError::from)
+    }
+
+    fn resolve_group_reference(&self, config: &mut ConnectionConfig) -> Result<(), AppError> {
+        if let Some(group_id) = config.group_id {
+            let group =
+                self.get_data_source_group(group_id)?
+                    .ok_or_else(|| AppError::NotFound {
+                        resource: "data source group".to_string(),
+                        id: group_id.to_string(),
+                    })?;
+            config.group = Some(group.name);
+            return Ok(());
+        }
+        let Some(name) = config
+            .group
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            config.group = None;
+            return Ok(());
+        };
+        let name = normalize_group_name(name)?;
+        let existing = self.conn()?.query_row(
+            "SELECT id, name, sort_order, created_at, updated_at FROM data_source_groups WHERE name = ? COLLATE NOCASE",
+            params![name], row_to_data_source_group,
+        ).optional()?;
+        let group = match existing {
+            Some(group) => group,
+            None => self.create_data_source_group(name)?,
+        };
+        config.group_id = Some(group.id);
+        config.group = Some(group.name);
+        Ok(())
     }
 
     pub fn decrypt_password(&self, config: &ConnectionConfig) -> Result<Option<String>, AppError> {
@@ -761,6 +966,49 @@ fn create_sql_draft_store(conn: &Connection) -> Result<(), AppError> {
     .map_err(AppError::from)
 }
 
+fn migrate_data_source_groups(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS data_source_groups (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_data_source_groups_order
+        ON data_source_groups(sort_order, name);
+        ",
+    )?;
+    ensure_column(conn, "connections", "group_id", "TEXT")?;
+
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT trim(group_name) FROM connections WHERE group_name IS NOT NULL AND trim(group_name) <> '' ORDER BY group_name COLLATE NOCASE",
+    )?;
+    let legacy_names = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (index, name) in legacy_names.into_iter().enumerate() {
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT id FROM data_source_groups WHERE name = ?1 COLLATE NOCASE",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let id = existing.unwrap_or_else(|| Uuid::new_v4().to_string());
+        conn.execute(
+            "INSERT OR IGNORE INTO data_source_groups (id, name, sort_order, created_at, updated_at) VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            params![id, name, (index as i64 + 1) * 100],
+        )?;
+    }
+    conn.execute(
+        "UPDATE connections SET group_id = (SELECT id FROM data_source_groups WHERE data_source_groups.name = connections.group_name COLLATE NOCASE) WHERE group_id IS NULL AND group_name IS NOT NULL AND trim(group_name) <> ''",
+        [],
+    )?;
+    Ok(())
+}
+
 fn create_driver_definition_store(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
         "
@@ -1034,7 +1282,7 @@ fn encrypt_ssh_tunnel_secrets(
     Ok(())
 }
 
-fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 21] {
+fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 22] {
     let driver_paths = serde_json::to_string(&config.driver_paths).unwrap_or_default();
     let ssh_tunnel_json = config
         .ssh_tunnel
@@ -1066,6 +1314,7 @@ fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 2
         Box::new(config.driver_class.clone()),
         Box::new(driver_paths),
         Box::new(config.ssl_mode.clone()),
+        Box::new(config.group_id.map(|id| id.to_string())),
         Box::new(config.group.clone()),
         Box::new(config.color_tag.clone()),
         Box::new(ssh_tunnel_json),
@@ -1079,17 +1328,17 @@ fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 2
 fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error> {
     let id: String = row.get(0)?;
     let driver_type: String = row.get(3)?;
-    let created_at: String = row.get(19)?;
-    let updated_at: String = row.get(20)?;
+    let created_at: String = row.get(20)?;
+    let updated_at: String = row.get(21)?;
     let port: Option<i64> = row.get(6)?;
     let driver_paths: Option<String> = row.get(12)?;
-    let ssh_tunnel_json: Option<String> = row.get(16)?;
+    let ssh_tunnel_json: Option<String> = row.get(17)?;
     let mut ssh_tunnel = ssh_tunnel_json
         .as_deref()
         .and_then(|value| serde_json::from_str::<SshTunnelConfig>(value).ok());
     if let Some(tunnel) = ssh_tunnel.as_mut() {
-        tunnel.password_encrypted = row.get(17)?;
-        tunnel.private_key_passphrase_encrypted = row.get(18)?;
+        tunnel.password_encrypted = row.get(18)?;
+        tunnel.private_key_passphrase_encrypted = row.get(19)?;
     }
 
     Ok(ConnectionConfig {
@@ -1110,8 +1359,14 @@ fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error>
             .and_then(|value| serde_json::from_str(value).ok())
             .unwrap_or_default(),
         ssl_mode: row.get(13)?,
-        group: row.get(14)?,
-        color_tag: row.get(15)?,
+        group_id: row
+            .get::<_, Option<String>>(14)?
+            .as_deref()
+            .map(Uuid::parse_str)
+            .transpose()
+            .map_err(parse_error)?,
+        group: row.get(15)?,
+        color_tag: row.get(16)?,
         ssh_tunnel,
         created_at: DateTime::parse_from_rfc3339(&created_at)
             .map_err(parse_error)?
@@ -1120,6 +1375,57 @@ fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error>
             .map_err(parse_error)?
             .with_timezone(&Utc),
     })
+}
+
+fn row_to_data_source_group(row: &Row<'_>) -> Result<DataSourceGroup, rusqlite::Error> {
+    let id: String = row.get(0)?;
+    let created_at: String = row.get(3)?;
+    let updated_at: String = row.get(4)?;
+    Ok(DataSourceGroup {
+        id: Uuid::parse_str(&id).map_err(parse_error)?,
+        name: row.get(1)?,
+        sort_order: row.get(2)?,
+        created_at: parse_data_source_group_timestamp(&created_at)
+            .map_err(|error| data_source_group_timestamp_error(3, &created_at, error))?,
+        updated_at: parse_data_source_group_timestamp(&updated_at)
+            .map_err(|error| data_source_group_timestamp_error(4, &updated_at, error))?,
+    })
+}
+
+fn parse_data_source_group_timestamp(value: &str) -> Result<DateTime<Utc>, String> {
+    if let Ok(timestamp) = DateTime::parse_from_rfc3339(value) {
+        return Ok(timestamp.with_timezone(&Utc));
+    }
+
+    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+        .map(|timestamp| timestamp.and_utc())
+        .map_err(|_| "expected RFC 3339 or legacy SQLite datetime".to_string())
+}
+
+fn data_source_group_timestamp_error(column: usize, value: &str, error: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column,
+        rusqlite::types::Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid data source group timestamp {value:?}: {error}"),
+        )),
+    )
+}
+
+fn normalize_group_name(value: &str) -> Result<String, AppError> {
+    let name = value.trim();
+    if name.is_empty() {
+        return Err(AppError::ConfigError(
+            "data source group name is required".to_string(),
+        ));
+    }
+    if name.chars().count() > 80 {
+        return Err(AppError::ConfigError(
+            "data source group name must be at most 80 characters".to_string(),
+        ));
+    }
+    Ok(name.to_string())
 }
 
 fn row_to_query_history(row: &Row<'_>) -> Result<QueryHistoryEntry, rusqlite::Error> {
@@ -1255,7 +1561,7 @@ fn parse_error(error: impl ToString) -> rusqlite::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{table_columns, table_exists, ConfigStore};
+    use super::{migrate_data_source_groups, table_columns, table_exists, ConfigStore};
     use crate::models::{
         connection::{ConnectionConfig, DriverType, SshAuthMethod, SshTunnelConfig},
         driver_catalog::{
@@ -1280,7 +1586,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
         );
         let drivers = store
             .list_driver_definitions()
@@ -1357,7 +1663,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
         );
         assert!(columns.iter().any(|column| column == "connection_url"));
         assert!(columns.iter().any(|column| column == "driver_class"));
@@ -1372,7 +1678,8 @@ mod tests {
         assert!(table_exists(&conn, "query_history").expect("query history table exists"));
         assert!(table_exists(&conn, "sql_drafts").expect("sql drafts table exists"));
         assert!(table_exists(&conn, "driver_definitions").expect("driver definitions table exists"));
-
+        assert!(table_exists(&conn, "data_source_groups").expect("data source groups table exists"));
+        assert!(columns.iter().any(|column| column == "group_id"));
         assert!(store
             .get_connection(old_connection_id)
             .expect("legacy connection lookup after model rebuild")
@@ -1435,6 +1742,7 @@ mod tests {
             driver_class: None,
             driver_paths: Vec::new(),
             ssl_mode: None,
+            group_id: None,
             group: None,
             color_tag: None,
             ssh_tunnel: None,
@@ -1455,6 +1763,96 @@ mod tests {
 
         let connections = store.list_connections().expect("list connections");
         assert_eq!(connections.len(), 1);
+    }
+
+    #[test]
+    fn manages_data_source_groups_without_deleting_connections() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-data-source-groups-test-{}",
+            Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let group = store
+            .create_data_source_group("Development".to_string())
+            .expect("create group");
+        assert_eq!(
+            store.list_data_source_groups().expect("list groups").len(),
+            1
+        );
+
+        let renamed = store
+            .rename_data_source_group(group.id, "Shared development".to_string())
+            .expect("rename group");
+        assert_eq!(renamed.name, "Shared development");
+
+        let production = store
+            .create_data_source_group("Production".to_string())
+            .expect("create second group");
+        let reordered = store
+            .reorder_data_source_groups(vec![production.id, group.id])
+            .expect("reorder groups");
+        assert_eq!(
+            reordered.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![production.id, group.id]
+        );
+        assert!(store.reorder_data_source_groups(vec![group.id]).is_err());
+
+        store
+            .delete_data_source_group(group.id)
+            .expect("delete group");
+        assert_eq!(
+            store.list_data_source_groups().expect("list groups").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn lists_data_source_groups_with_legacy_sqlite_timestamps() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-legacy-data-source-group-timestamp-test-{}",
+            Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let id = Uuid::new_v4();
+        let conn = Connection::open(store.db_path()).expect("open config database");
+        conn.execute(
+            "INSERT INTO data_source_groups (id, name, sort_order, created_at, updated_at) VALUES (?1, 'Legacy timestamp', 100, '2026-07-22 09:04:56', '2026-07-22 09:04:56')",
+            params![id.to_string()],
+        )
+        .expect("insert legacy data source group");
+        drop(conn);
+
+        let groups = store
+            .list_data_source_groups()
+            .expect("list data source groups with legacy timestamps");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, id);
+        assert_eq!(groups[0].name, "Legacy timestamp");
+    }
+
+    #[test]
+    fn data_source_group_migration_writes_rfc3339_timestamps() {
+        let conn = Connection::open_in_memory().expect("open in-memory config database");
+        conn.execute_batch(
+            "
+            CREATE TABLE connections (group_name TEXT);
+            INSERT INTO connections (group_name) VALUES ('Migrated group');
+            ",
+        )
+        .expect("create legacy connection group");
+
+        migrate_data_source_groups(&conn).expect("migrate data source groups");
+
+        let created_at: String = conn
+            .query_row(
+                "SELECT created_at FROM data_source_groups WHERE name = 'Migrated group'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read migrated group timestamp");
+        assert!(chrono::DateTime::parse_from_rfc3339(&created_at).is_ok());
     }
 
     #[test]
@@ -1485,6 +1883,7 @@ mod tests {
                     driver_class: None,
                     driver_paths: Vec::new(),
                     ssl_mode: None,
+                    group_id: None,
                     group: None,
                     color_tag: None,
                     ssh_tunnel: Some(SshTunnelConfig {
@@ -1556,6 +1955,7 @@ mod tests {
                     driver_class: None,
                     driver_paths: Vec::new(),
                     ssl_mode: Some("prefer".to_string()),
+                    group_id: None,
                     group: Some("Local".to_string()),
                     color_tag: Some("dev".to_string()),
                     ssh_tunnel: None,
@@ -1602,6 +2002,85 @@ mod tests {
     }
 
     #[test]
+    fn saves_a_connection_into_a_new_or_existing_data_source_group() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-connection-group-save-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let now = Utc::now();
+
+        let first = store
+            .create_connection(
+                ConnectionConfig {
+                    id: Uuid::new_v4(),
+                    name: "Grouped Postgres".to_string(),
+                    driver_definition_id: Some("postgres".to_string()),
+                    driver_type: DriverType::Postgres,
+                    driver_dialect: Some("postgresql".to_string()),
+                    host: Some("localhost".to_string()),
+                    port: Some(5432),
+                    database: Some("postgres".to_string()),
+                    connection_url: None,
+                    username: Some("postgres".to_string()),
+                    password_encrypted: None,
+                    driver_class: None,
+                    driver_paths: Vec::new(),
+                    ssl_mode: None,
+                    group_id: None,
+                    group: Some("test".to_string()),
+                    color_tag: None,
+                    ssh_tunnel: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+                None,
+            )
+            .expect("save connection with a new group");
+        let group_id = first.group_id.expect("new group id");
+        assert_eq!(first.group.as_deref(), Some("test"));
+        assert_eq!(
+            store.list_data_source_groups().expect("list groups").len(),
+            1
+        );
+
+        let second = store
+            .create_connection(
+                ConnectionConfig {
+                    id: Uuid::new_v4(),
+                    name: "Grouped MySQL".to_string(),
+                    driver_definition_id: Some("mysql".to_string()),
+                    driver_type: DriverType::Mysql,
+                    driver_dialect: Some("mysql".to_string()),
+                    host: Some("localhost".to_string()),
+                    port: Some(3306),
+                    database: Some("app".to_string()),
+                    connection_url: None,
+                    username: Some("root".to_string()),
+                    password_encrypted: None,
+                    driver_class: None,
+                    driver_paths: Vec::new(),
+                    ssl_mode: None,
+                    group_id: Some(group_id),
+                    group: None,
+                    color_tag: None,
+                    ssh_tunnel: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+                None,
+            )
+            .expect("save connection with an existing empty or populated group");
+        assert_eq!(second.group_id, Some(group_id));
+        assert_eq!(second.group.as_deref(), Some("test"));
+        assert_eq!(
+            store.list_data_source_groups().expect("list groups").len(),
+            1
+        );
+    }
+
+    #[test]
     fn stores_connection_driver_definition_reference() {
         std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
         let dir = std::env::temp_dir().join(format!(
@@ -1629,6 +2108,7 @@ mod tests {
                     driver_class: Some("com.example.Driver".to_string()),
                     driver_paths: vec!["/tmp/example.jar".to_string()],
                     ssl_mode: None,
+                    group_id: None,
                     group: Some("Custom".to_string()),
                     color_tag: Some("dev".to_string()),
                     ssh_tunnel: None,

@@ -31,7 +31,7 @@ const useQuery = read('src/hooks/useQuery.ts')
 includesAll(
   useQuery,
   [
-    'options: { maxRows?: number } = {}',
+    'options: { maxRows?: number; database?: string | null; schema?: string | null } = {}',
     'executeQueryStream({',
     'connectionId,',
     'sql,',
@@ -46,7 +46,7 @@ includesAll(
   mainPanel,
   [
     'const sql = (sqlOverride ?? sqlToRun()).trim()',
-    'runQuery(activeTab.id, connectionId, sql)',
+    'runQuery(activeTab.id, connectionId, sql, {',
     'largeResultNotice(activeResult)',
     "i18n.t('workbench.largeResultNotice'",
     'runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {',

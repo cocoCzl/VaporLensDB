@@ -263,6 +263,7 @@ fn jdbc_config(live: JdbcLiveConfig) -> Option<(ConnectionConfig, String)> {
             driver_class: Some(live.driver_class.to_string()),
             driver_paths: vec![std::env::var(live.path_env).ok()?],
             ssl_mode: None,
+            group_id: None,
             group: None,
             color_tag: None,
             ssh_tunnel: None,

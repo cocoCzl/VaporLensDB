@@ -1,10 +1,15 @@
 # VaporLensDB Testing
 
-This file tracks the verification commands that gate release readiness and the current Object Tree and IDE workflow.
+This file tracks the verification commands that gate release readiness for the
+current IDE workspace.
 
 ## Current Status
 
-- v1 usable loop, Object Tree, SQL workspace, data preview, structure, definition/source, ER diagram, import/export, diagnostics, query history, and connection readiness smoke coverage are complete.
+- The 0.8.1 workspace covers grouped data sources, browsing versus SQL execution
+  context, Object Tree navigation, SQL drafts and query history, command palette,
+  connection readiness, and theme-aware IDE chrome.
+- Existing smoke coverage also covers data preview, structure, definition/source,
+  ER diagrams, import/export, diagnostics, tasks, and sessions.
 - Default CI verification does not require private database endpoints or local JDBC driver JARs.
 - Live database verification is available for PostgreSQL, MySQL, Oracle, SQLite,
   and JDBC template paths through ignored/manual tests.
@@ -42,6 +47,9 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```bash
 pnpm test:v1-ui-scope
 pnpm test:object-tree-workflow
+pnpm test:data-source-switcher
+pnpm test:object-tree-lifecycle
+pnpm test:object-tree-schema-search
 pnpm test:driver-manager
 pnpm test:result-export
 pnpm test:table-import-export
@@ -53,11 +61,17 @@ pnpm test:dbeaver-import
 pnpm test:i18n
 pnpm test:diagnostics-export
 pnpm test:query-history-workflow
+pnpm test:sql-execution-recall
+pnpm test:sql-records-connection-editor
 pnpm test:object-tree-action-discoverability
 pnpm test:p0-opening-workflow
 pnpm test:p1-read-only-result-workflow
 pnpm test:p2-object-understanding-workflow
 pnpm test:command-contracts
+pnpm test:command-palette
+pnpm test:native-menu
+pnpm test:ide-chrome
+pnpm test:workspace-capacity
 ```
 
 ## Live Database Verification

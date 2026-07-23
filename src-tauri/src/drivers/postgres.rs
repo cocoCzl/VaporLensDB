@@ -124,6 +124,10 @@ impl DatabaseDriver for PostgresDriver {
         }
     }
 
+    fn supports_concurrent_queries(&self) -> bool {
+        true
+    }
+
     async fn ping(&self) -> Result<(), AppError> {
         self.client
             .simple_query("SELECT 1")

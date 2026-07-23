@@ -49,9 +49,14 @@ export function StatusBar({ backendStatus }: StatusBarProps) {
 
 function CurrentDataSourceStatus() {
   const { t } = useTranslation()
-  const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
+  const browsingConnectionId = useConnectionStore((state) => state.browsingConnectionId)
   const connections = useConnectionStore((state) => state.connections)
   const statuses = useConnectionStore((state) => state.statuses)
+  const activeTabId = useEditorStore((state) => state.activeTabId)
+  const tabs = useEditorStore((state) => state.tabs)
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
+  const executionTab = activeTab && (activeTab.kind === 'sql' || !activeTab.kind) ? activeTab : null
+  const activeConnectionId = executionTab?.connectionId ?? browsingConnectionId
   const catalogSchemaPath = useMetadataStore((state) =>
     activeConnectionId ? state.catalogSchemaPaths[activeConnectionId] : null,
   )
@@ -62,9 +67,13 @@ function CurrentDataSourceStatus() {
 
   if (!connection) {
     return (
-      <span className="inline-flex min-w-0 items-center gap-1.5 truncate" title={t('connection.disconnected')}>
+      <span className="inline-flex min-w-0 items-center gap-1.5 truncate" title={executionTab?.unavailableConnectionName ?? t('connection.disconnected')}>
         <Database className="size-3 shrink-0 text-muted-foreground/70" />
-        <span className="truncate">{t('connection.disconnected')}</span>
+        <span className="truncate">
+          {executionTab?.unavailableConnectionName
+            ? `${t('status.executionDataSource')} · ${executionTab.unavailableConnectionName} · ${t('connection.disconnected')}`
+            : t('connection.disconnected')}
+        </span>
       </span>
     )
   }
@@ -76,7 +85,7 @@ function CurrentDataSourceStatus() {
   return (
     <span
       className="inline-flex min-w-0 items-center gap-1.5 truncate"
-      title={`${connection.name} · ${connection.driverType}${context ? ` · ${context}` : ''}`}
+      title={`${executionTab ? t('status.executionDataSource') : t('status.browsingDataSource')} · ${connection.name} · ${connection.driverType}${context ? ` · ${context}` : ''}`}
     >
       <span
         className={[
@@ -90,6 +99,7 @@ function CurrentDataSourceStatus() {
                 : 'bg-muted-foreground/45',
         ].join(' ')}
       />
+      <span className="shrink-0 text-[10px] text-muted-foreground">{executionTab ? t('status.executionDataSource') : t('status.browsingDataSource')}</span>
       <span className="max-w-32 truncate font-medium text-foreground/85">{connection.name}</span>
       {context && <span className="hidden max-w-72 truncate text-muted-foreground min-[900px]:inline">{context}</span>}
     </span>

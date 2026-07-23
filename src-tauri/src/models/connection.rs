@@ -21,6 +21,9 @@ pub struct ConnectionConfig {
     pub driver_class: Option<String>,
     pub driver_paths: Vec<String>,
     pub ssl_mode: Option<String>,
+    /// Stable reference to a user-managed data source group. `group` is kept
+    /// for backwards-compatible import/export of legacy configurations.
+    pub group_id: Option<Uuid>,
     pub group: Option<String>,
     pub color_tag: Option<String>,
     pub ssh_tunnel: Option<SshTunnelConfig>,

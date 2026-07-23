@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState, type ReactNode } from 'react'
+import { FormEvent, useState, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, Database, Download, PlugZap } from 'lucide-react'
@@ -29,6 +29,8 @@ interface ConnectionFormProps {
   onSaveAndConnect: (input: ConnectionInput) => Promise<void>
   onTest: (input: ConnectionInput) => Promise<void>
   onCancel: () => void
+  layout?: 'dialog' | 'panel'
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 export function ConnectionForm({
@@ -39,9 +41,11 @@ export function ConnectionForm({
   onSaveAndConnect,
   onTest,
   onCancel,
+  layout = 'dialog',
+  onDirtyChange,
 }: ConnectionFormProps) {
   const { t } = useTranslation()
-  const connections = useConnectionStore((state) => state.connections)
+  const dataSourceGroups = useConnectionStore((state) => state.dataSourceGroups)
   const [form, setForm] = useState<ConnectionInput>({
     id: connection?.id,
     name: connection?.name ?? 'Local PostgreSQL',
@@ -76,7 +80,7 @@ export function ConnectionForm({
         },
   })
   const [message, setMessage] = useState<string | null>(null)
-  const [groupSelection, setGroupSelection] = useState(connection?.group?.trim() ?? '')
+  const [groupSelection, setGroupSelection] = useState(connection?.groupId ?? '')
   const [newGroupName, setNewGroupName] = useState('')
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
     defaultConnectionVariant(connection?.driverType ?? 'postgres'),
@@ -94,7 +98,6 @@ export function ConnectionForm({
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
   const driverStatus = selectedDriver?.status ?? driverProfile.status
   const readinessIssue = connectionReadinessIssue(form, driverProfile, selectedDriver, t)
-  const groupNames = useMemo(() => existingGroupNames(connections), [connections])
 
   const activeConnectionVariant = driverProfile.connectionVariants.some(
     (variant) => variant.id === connectionVariant,
@@ -103,10 +106,12 @@ export function ConnectionForm({
     : driverProfile.connectionVariants[0].id
 
   const update = (key: keyof ConnectionInput, value: string | number | string[] | null) => {
+    onDirtyChange?.(true)
     setForm((current) => ({ ...current, [key]: value }))
   }
 
   const updateSshTunnel = (key: string, value: string | number | boolean | null) => {
+    onDirtyChange?.(true)
     setForm((current) => ({
       ...current,
       sshTunnel: {
@@ -128,6 +133,7 @@ export function ConnectionForm({
   }
 
   const changeDriver = (driverDefinitionId: string) => {
+    onDirtyChange?.(true)
     const definition = driverDefinitions.find((driver) => driver.id === driverDefinitionId)
     const driverType = definition?.driverType ?? (driverDefinitionId as DriverType)
     const profile = profileForDriver(driverType, definition)
@@ -148,10 +154,13 @@ export function ConnectionForm({
     }))
   }
 
-  const selectedGroup = groupSelection === NEW_GROUP_VALUE ? newGroupName : groupSelection
+  const selectedGroup = groupSelection === NEW_GROUP_VALUE
+    ? newGroupName
+    : dataSourceGroups.find((group) => group.id === groupSelection)?.name ?? ''
   const normalizedForm = () => normalizeInput({
     ...form,
-    group: canonicalGroupName(selectedGroup, groupNames),
+    groupId: groupSelection && groupSelection !== NEW_GROUP_VALUE ? groupSelection : null,
+    group: selectedGroup.trim() || null,
   }, activeConnectionVariant, driverProfile, selectedDriver)
 
   const validate = (requireExternalDriver: boolean) => {
@@ -166,13 +175,14 @@ export function ConnectionForm({
   }
 
   const selectGroup = (value: string) => {
+    onDirtyChange?.(true)
     setGroupSelection(value)
     if (value === NEW_GROUP_VALUE) {
       update('group', '')
       return
     }
     setNewGroupName('')
-    update('group', value)
+    update('group', dataSourceGroups.find((group) => group.id === value)?.name ?? '')
   }
 
   const submit = async (event: FormEvent) => {
@@ -184,6 +194,7 @@ export function ConnectionForm({
       return
     }
     await onSaveAndConnect(normalizedForm())
+    onDirtyChange?.(false)
   }
 
   const saveOnly = async () => {
@@ -194,6 +205,7 @@ export function ConnectionForm({
       return
     }
     await onSaveOnly(normalizedForm())
+    onDirtyChange?.(false)
   }
 
   const test = async () => {
@@ -215,11 +227,13 @@ export function ConnectionForm({
 
   return (
     <form
-      className="grid min-h-[560px] grid-cols-[240px_1fr] overflow-hidden rounded-md border"
+      className={layout === 'panel'
+        ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
+        : 'grid min-h-[560px] grid-cols-[240px_1fr] overflow-hidden rounded-md border'}
       autoComplete="off"
       onSubmit={submit}
     >
-      <aside className="border-r bg-muted/35">
+      {layout === 'dialog' && <aside className="border-r bg-muted/35">
         <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
           {t('connectionForm.projectDataSources')}
         </div>
@@ -227,9 +241,9 @@ export function ConnectionForm({
           <Database className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate">{form.name || driverProfile.defaultName}</span>
         </div>
-      </aside>
+      </aside>}
 
-      <div className="flex min-w-0 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-2 border-b p-4">
           <Label htmlFor="connection-name" className="text-right text-sm">
             {t('connectionForm.name')}
@@ -281,7 +295,10 @@ export function ConnectionForm({
                   <SegmentedControl
                     options={driverProfile.connectionVariants}
                     value={activeConnectionVariant}
-                    onChange={setConnectionVariant}
+                    onChange={(value) => {
+                      onDirtyChange?.(true)
+                      setConnectionVariant(value)
+                    }}
                   />
                 </FormRow>
 
@@ -414,20 +431,28 @@ export function ConnectionForm({
                       onChange={(event) => selectGroup(event.target.value)}
                     >
                       <option value="">{t('connectionForm.ungrouped')}</option>
-                      {groupNames.map((group) => (
-                        <option key={group} value={group}>{group}</option>
+                      {dataSourceGroups.map((group) => (
+                        <option key={group.id} value={group.id}>{group.name}</option>
                       ))}
                       <option value={NEW_GROUP_VALUE}>{t('connectionForm.newGroup')}</option>
                     </select>
                     {groupSelection === NEW_GROUP_VALUE && (
-                      <Input
-                        id="connection-new-group"
-                        value={newGroupName}
-                        placeholder={t('connectionForm.newGroupPlaceholder')}
-                        disableTextAssistance
-                        autoFocus
-                        onChange={(event) => setNewGroupName(event.target.value)}
-                      />
+                      <div className="grid gap-1.5">
+                        <Input
+                          id="connection-new-group"
+                          value={newGroupName}
+                          placeholder={t('connectionForm.newGroupPlaceholder')}
+                          disableTextAssistance
+                          autoFocus
+                          onChange={(event) => {
+                            onDirtyChange?.(true)
+                            setNewGroupName(event.target.value)
+                          }}
+                        />
+                        <p className="text-[11px] leading-4 text-muted-foreground">
+                          {t('connectionForm.newGroupHint')}
+                        </p>
+                      </div>
                     )}
                   </div>
                 </FormRow>
@@ -819,22 +844,6 @@ function emptyToNull(value: string | null | undefined) {
   return value && value.trim() ? value.trim() : null
 }
 
-function existingGroupNames(connections: ConnectionConfig[]) {
-  const groups = new Map<string, string>()
-  for (const connection of connections) {
-    const group = connection.group?.trim()
-    if (group && !groups.has(group.toLocaleLowerCase('en-US'))) {
-      groups.set(group.toLocaleLowerCase('en-US'), group)
-    }
-  }
-  return [...groups.values()].sort((left, right) => left.localeCompare(right))
-}
-
-function canonicalGroupName(value: string, groupNames: string[]) {
-  const trimmed = value.trim()
-  if (!trimmed) return ''
-  return groupNames.find((group) => group.toLocaleLowerCase('en-US') === trimmed.toLocaleLowerCase('en-US')) ?? trimmed
-}
 
 function validateRequiredFields(
   input: ConnectionInput,

@@ -3,7 +3,7 @@ use tauri::{
         AboutMetadata, MenuBuilder, MenuEvent, MenuItem, PredefinedMenuItem, SubmenuBuilder,
         HELP_SUBMENU_ID,
     },
-    AppHandle, Manager, Runtime,
+    AppHandle, Emitter, Manager, Runtime,
 };
 
 const EDIT_SUBMENU_ID: &str = "vaporlensdb-edit-menu";
@@ -12,6 +12,15 @@ const APP_WINDOW_SUBMENU_ID: &str = "vaporlensdb-window-menu";
 const WINDOW_MINIMIZE_ID: &str = "vaporlensdb-window-minimize";
 const WINDOW_ZOOM_ID: &str = "vaporlensdb-window-zoom";
 const WINDOW_BRING_ALL_TO_FRONT_ID: &str = "vaporlensdb-window-bring-all-to-front";
+const FILE_NEW_SQL_ID: &str = "vaporlensdb-file-new-sql";
+const FILE_NEW_CONNECTION_ID: &str = "vaporlensdb-file-new-connection";
+const FILE_CLOSE_TAB_ID: &str = "vaporlensdb-file-close-tab";
+const DATABASE_MANAGE_ID: &str = "vaporlensdb-database-manage";
+const DATABASE_REFRESH_ID: &str = "vaporlensdb-database-refresh";
+const DATABASE_CONNECT_ID: &str = "vaporlensdb-database-connect";
+const VIEW_COMMAND_PALETTE_ID: &str = "vaporlensdb-view-command-palette";
+const VIEW_QUERY_HISTORY_ID: &str = "vaporlensdb-view-query-history";
+const VIEW_SETTINGS_ID: &str = "vaporlensdb-view-settings";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMenuLanguage {
@@ -44,7 +53,46 @@ pub fn set_application_menu<R: Runtime>(
         .separator()
         .quit_with_text(labels.quit)
         .build()?;
+    let file_new_sql = menu_item(app, FILE_NEW_SQL_ID, labels.new_sql, "CmdOrCtrl+N")?;
+    let file_new_connection = menu_item(
+        app,
+        FILE_NEW_CONNECTION_ID,
+        labels.new_connection,
+        "CmdOrCtrl+Shift+N",
+    )?;
+    let file_close_tab = menu_item(app, FILE_CLOSE_TAB_ID, labels.close_tab, "CmdOrCtrl+W")?;
+    let database_connect = menu_item(
+        app,
+        DATABASE_CONNECT_ID,
+        labels.connect,
+        "CmdOrCtrl+Shift+C",
+    )?;
+    let database_refresh = menu_item(app, DATABASE_REFRESH_ID, labels.refresh, "CmdOrCtrl+R")?;
+    let database_manage = menu_item(
+        app,
+        DATABASE_MANAGE_ID,
+        labels.manage_data_sources,
+        "CmdOrCtrl+Shift+Comma",
+    )?;
+    let view_command_palette = menu_item(
+        app,
+        VIEW_COMMAND_PALETTE_ID,
+        labels.command_palette,
+        "CmdOrCtrl+K",
+    )?;
+    let view_query_history = menu_item(
+        app,
+        VIEW_QUERY_HISTORY_ID,
+        labels.query_history,
+        "CmdOrCtrl+Shift+H",
+    )?;
+    let view_settings = menu_item(app, VIEW_SETTINGS_ID, labels.settings, "CmdOrCtrl+,")?;
     let file_menu = SubmenuBuilder::new(app, labels.file)
+        .item(&file_new_sql)
+        .item(&file_new_connection)
+        .separator()
+        .item(&file_close_tab)
+        .separator()
         .close_window_with_text(labels.close_window)
         .build()?;
     let undo_item = PredefinedMenuItem::undo(app, Some(labels.undo))?;
@@ -72,7 +120,17 @@ pub fn set_application_menu<R: Runtime>(
         .item(&paste_item)
         .item(&select_all_item)
         .build()?;
+    let database_menu = SubmenuBuilder::new(app, labels.database)
+        .item(&database_connect)
+        .item(&database_refresh)
+        .separator()
+        .item(&database_manage)
+        .build()?;
     let view_menu = SubmenuBuilder::new(app, labels.view)
+        .item(&view_command_palette)
+        .item(&view_query_history)
+        .item(&view_settings)
+        .separator()
         .fullscreen_with_text(labels.toggle_full_screen)
         .build()?;
     let window_menu = SubmenuBuilder::with_id(app, APP_WINDOW_SUBMENU_ID, labels.window)
@@ -88,6 +146,7 @@ pub fn set_application_menu<R: Runtime>(
         .item(&app_menu)
         .item(&file_menu)
         .item(&edit_menu)
+        .item(&database_menu)
         .item(&view_menu)
         .item(&window_menu)
         .item(&help_menu)
@@ -100,6 +159,15 @@ pub fn set_application_menu<R: Runtime>(
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
     let id = event.id().0.as_str();
     match id {
+        FILE_NEW_SQL_ID => emit_workspace_command(app, "new-sql"),
+        FILE_NEW_CONNECTION_ID => emit_workspace_command(app, "new-connection"),
+        FILE_CLOSE_TAB_ID => emit_workspace_command(app, "close-tab"),
+        DATABASE_CONNECT_ID => emit_workspace_command(app, "connect-browsing-data-source"),
+        DATABASE_REFRESH_ID => emit_workspace_command(app, "refresh-browsing-data-source"),
+        DATABASE_MANAGE_ID => emit_workspace_command(app, "manage-data-sources"),
+        VIEW_COMMAND_PALETTE_ID => emit_workspace_command(app, "command-palette"),
+        VIEW_QUERY_HISTORY_ID => emit_workspace_command(app, "query-history"),
+        VIEW_SETTINGS_ID => emit_workspace_command(app, "settings"),
         WINDOW_MINIMIZE_ID => {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.minimize();
@@ -121,6 +189,10 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
         }
         _ => {}
     }
+}
+
+fn emit_workspace_command<R: Runtime>(app: &AppHandle<R>, command: &str) {
+    let _ = app.emit("vaporlensdb:workspace-command", command);
 }
 
 fn menu_item<R: Runtime>(
@@ -148,6 +220,16 @@ struct AppMenuLabels {
     show_all: &'static str,
     quit: &'static str,
     file: &'static str,
+    database: &'static str,
+    new_sql: &'static str,
+    new_connection: &'static str,
+    close_tab: &'static str,
+    connect: &'static str,
+    refresh: &'static str,
+    manage_data_sources: &'static str,
+    command_palette: &'static str,
+    query_history: &'static str,
+    settings: &'static str,
     close_window: &'static str,
     edit: &'static str,
     undo: &'static str,
@@ -175,6 +257,16 @@ fn labels(language: AppMenuLanguage) -> AppMenuLabels {
             show_all: "全部显示",
             quit: "退出 VaporLensDB",
             file: "文件",
+            database: "数据库",
+            new_sql: "新建 SQL",
+            new_connection: "新建数据源",
+            close_tab: "关闭标签页",
+            connect: "连接浏览数据源",
+            refresh: "刷新浏览数据源",
+            manage_data_sources: "管理数据源",
+            command_palette: "命令面板",
+            query_history: "查询历史",
+            settings: "设置",
             close_window: "关闭窗口",
             edit: "编辑",
             undo: "撤销",
@@ -199,6 +291,16 @@ fn labels(language: AppMenuLanguage) -> AppMenuLabels {
             show_all: "Show All",
             quit: "Quit VaporLensDB",
             file: "File",
+            database: "Database",
+            new_sql: "New SQL",
+            new_connection: "New Data Source",
+            close_tab: "Close Tab",
+            connect: "Connect Browsing Data Source",
+            refresh: "Refresh Browsing Data Source",
+            manage_data_sources: "Manage Data Sources",
+            command_palette: "Command Palette",
+            query_history: "Query History",
+            settings: "Settings",
             close_window: "Close Window",
             edit: "Edit",
             undo: "Undo",

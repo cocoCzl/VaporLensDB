@@ -2,16 +2,19 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Link, Loader2, LockKeyhole, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, FolderPlus, History, Loader2, LockKeyhole, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
-import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
+import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DataGrid } from '@/components/grid/DataGrid'
 import { ERDiagram } from '@/components/diagram/ERDiagram'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { SettingsWorkspacePanel } from '@/components/settings/SettingsWorkspacePanel'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Sheet, SheetContent } from '@/components/ui/sheet'
+import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 import { useQuery } from '@/hooks/useQuery'
 import {
   exportQueryResultCsv,
@@ -34,12 +37,11 @@ import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
 import { useSqlDraftStore } from '@/stores/sqlDraftStore'
 import { useTaskStore } from '@/stores/taskStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { ConnectionConfig, ConnectionRuntimeStatus, DriverType } from '@/types/connection'
+import type { ConnectionConfig, DriverType } from '@/types/connection'
 import type { AppError } from '@/types/error'
 import type { ColumnInfo, DbObjectInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
 import type { QueryResult } from '@/types/query'
 import type { QueryHistoryEntry, QueryHistoryStatus } from '@/types/queryHistory'
-import type { SqlDraft } from '@/types/sqlDraft'
 import type { TaskInfo } from '@/types/task'
 import type { EditorTab } from '@/stores/editorStore'
 import type { AppNotification } from '@/stores/uiStore'
@@ -67,7 +69,7 @@ const SqlEditor = lazy(loadSqlEditor)
 
 export function MainPanel() {
   const { t } = useTranslation()
-  const { connections, statuses, activeConnectionId, setActiveConnection } = useConnectionStore()
+  const { connections, dataSourceGroups, statuses, connectConnection, setActiveConnection } = useConnectionStore()
   const {
     tabs,
     activeTabId,
@@ -80,6 +82,7 @@ export function MainPanel() {
   } = useEditorStore()
   const results = useQueryResultStore((state) => state.results)
   const explains = useQueryResultStore((state) => state.explains)
+  const resultSources = useQueryResultStore((state) => state.sources)
   const metadataDatabases = useMetadataStore((state) => state.databases)
   const metadataSchemas = useMetadataStore((state) => state.schemas)
   const catalogSchemaPaths = useMetadataStore((state) => state.catalogSchemaPaths)
@@ -132,10 +135,10 @@ export function MainPanel() {
   const canRun = Boolean(
     activeTab &&
       connectionId &&
-      connectionIsConnected &&
       queryCapabilities.canQuery &&
       sqlForToolbarExecution(activeTab, selectedSql).trim(),
   )
+  const canFormat = Boolean(activeTab && sqlForToolbarExecution(activeTab, selectedSql).trim())
   const activeQueryId = activeTab?.lastQueryId ?? null
   const activeResults = activeQueryId ? results[activeQueryId] : undefined
   const activeExplain = activeQueryId ? explains[activeQueryId] : undefined
@@ -144,6 +147,10 @@ export function MainPanel() {
     ? Math.min(rawResultIndex, activeResults.length - 1)
     : 0
   const activeResult = activeResults?.[selectedResultIndex]
+  const activeResultSource = activeQueryId ? resultSources[activeQueryId] : undefined
+  const activeResultConnection = activeResultSource
+    ? connections.find((connection) => connection.id === activeResultSource.connectionId) ?? null
+    : null
   const toolbarDatabases =
     connectionId && activeDriverType === 'postgres' && activeConnection?.database
       ? [{ name: activeConnection.database }]
@@ -301,12 +308,20 @@ export function MainPanel() {
   ])
 
   async function execute(sqlOverride?: string) {
-    if (!activeTab || !connectionId || !connectionIsConnected || !queryCapabilities.canQuery) {
+    if (!activeTab || !connectionId || !queryCapabilities.canQuery) {
       return
     }
     const sql = (sqlOverride ?? sqlToRun()).trim()
     if (!sql) {
       return
+    }
+
+    if (!connectionIsConnected) {
+      try {
+        await connectConnection(connectionId, { selectForBrowsing: false })
+      } catch {
+        return
+      }
     }
 
     try {
@@ -319,14 +334,27 @@ export function MainPanel() {
       return
     }
 
-    runQuery(activeTab.id, connectionId, sql)
+    runQuery(activeTab.id, connectionId, sql, {
+      database: selectedDatabase,
+      schema: selectedSchema,
+      maxRows: queryMaxRows,
+    })
   }
 
-  function explain() {
+  async function explain() {
     if (!activeTab || !connectionId || !queryCapabilities.canExplain) {
       return
     }
-    runExplain(activeTab.id, connectionId, sqlToRun())
+    const sql = sqlToRun()
+    if (!sql) return
+    if (!connectionIsConnected) {
+      try {
+        await connectConnection(connectionId, { selectForBrowsing: false })
+      } catch {
+        return
+      }
+    }
+    await runExplain(activeTab.id, connectionId, sql)
   }
 
   function cancel() {
@@ -342,7 +370,7 @@ export function MainPanel() {
     }
     try {
       const { format } = await import('sql-formatter')
-      updateTabSql(activeTab.id, format(activeTab.sql, { language: 'postgresql' }))
+      updateTabSql(activeTab.id, format(activeTab.sql, { language: sqlFormatterLanguage(activeDriverType) }))
       setTabQueryState(activeTab.id, activeTab.lastQueryId ?? null)
     } catch (error) {
       setTabQueryState(
@@ -356,44 +384,7 @@ export function MainPanel() {
   if (!activeTab) {
     return (
       <main className="flex flex-1 overflow-hidden bg-background">
-        <WorkbenchHome
-          connections={connections}
-          activeConnectionId={activeConnectionId}
-          onNewSql={() => {
-            const connection = connections.find((item) => item.id === activeConnectionId)
-            addTab({
-              id: crypto.randomUUID(),
-              kind: 'sql',
-              title: connection ? `${connection.name} SQL` : `SQL ${nextSqlIndex(tabs.map((tab) => tab.title))}`,
-              sql: '',
-              connectionId: activeConnectionId,
-            })
-          }}
-          onManageDataSources={() => {
-            const existing = tabs.find((tab) => tab.kind === 'dataSources')
-            if (existing) {
-              useEditorStore.getState().setActiveTab(existing.id)
-              return
-            }
-            addTab({
-              id: crypto.randomUUID(),
-              kind: 'dataSources',
-              title: 'Data Sources',
-              sql: '',
-              connectionId: null,
-            })
-          }}
-          onFocusExplorer={(hasSelectedConnection = Boolean(activeConnectionId)) => {
-            if (!hasSelectedConnection) {
-              useUiStore.getState().setSidebarView('dataSources')
-              return
-            }
-            useUiStore.getState().setSidebarView('explorer')
-            window.setTimeout(() => {
-              document.getElementById('object-tree-search-input')?.focus()
-            }, 0)
-          }}
-        />
+        <WorkbenchHome />
       </main>
     )
   }
@@ -411,6 +402,22 @@ export function MainPanel() {
     return (
       <main className="flex flex-1 overflow-hidden bg-background">
         <SettingsWorkspacePanel />
+      </main>
+    )
+  }
+
+  if (activeTab.kind === 'sqlScripts' || activeTab.kind === 'queryHistory') {
+    return (
+      <main className="flex flex-1 overflow-hidden bg-background">
+        <SqlRecordsWorkspace
+          key={`${activeTab.id}:${activeTab.recordsConnectionFilter ?? 'all'}`}
+          mode={activeTab.kind === 'sqlScripts' ? 'scripts' : 'history'}
+          connections={connections}
+          initialConnectionFilter={activeTab.recordsConnectionFilter ?? null}
+          onOpenSql={(title, sql, connectionId, unavailableConnectionName = null) => addTab({
+            id: crypto.randomUUID(), kind: 'sql', title, sql, connectionId, unavailableConnectionName,
+          })}
+        />
       </main>
     )
   }
@@ -664,6 +671,7 @@ export function MainPanel() {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <EditorToolbar
         connections={connections}
+        dataSourceGroups={dataSourceGroups}
         connectionStatuses={Object.fromEntries(
           Object.entries(statuses).map(([id, status]) => [id, status.status]),
         )}
@@ -678,9 +686,20 @@ export function MainPanel() {
         canExplain={queryCapabilities.canExplain}
         explainUnsupportedReason={t('workbench.explainUnsupported')}
         disabled={!canRun}
+        formatDisabled={!canFormat}
         onConnectionChange={(id) => {
-          updateTabConnection(activeTab.id, id)
-          setActiveConnection(id)
+          if (id === connectionId) return
+          void (async () => {
+            // Prepare the target first. A failed on-demand connection must not
+            // alter this tab's SQL, result, or previous execution target.
+            if (id && statuses[id]?.status !== 'connected') {
+              try {
+                await connectConnection(id, { selectForBrowsing: false })
+              } catch {
+                return
+              }
+            }
+            updateTabConnection(activeTab.id, id)
           if (id) {
             const nextConnection = connections.find((connection) => connection.id === id)
             setCatalogSchemaPath({
@@ -690,6 +709,7 @@ export function MainPanel() {
               schemaListAvailable: true,
             })
           }
+          })()
         }}
         onDatabaseChange={(database) => {
           if (!connectionId) return
@@ -809,6 +829,16 @@ export function MainPanel() {
                 {activeResult.truncated ? largeResultNotice(activeResult) : resultSummary(activeResult)}
               </span>
             )}
+            {activeResultSource && (
+              <span
+                className={activeResultSource.connectionId === connectionId ? 'text-muted-foreground' : 'text-amber-600'}
+                title={activeResultSource.executedAt}
+              >
+                {activeResultConnection?.name ?? t('connection.disconnected')}
+                {(activeResultSource.database || activeResultSource.schema) && ` · ${[activeResultSource.database, activeResultSource.schema].filter(Boolean).join(' / ')}`}
+                {activeResultSource.connectionId === connectionId ? '' : ` · ${t('workbench.previousResult')}`}
+              </span>
+            )}
             {activeResults && !activeExplain && activeResults.length > 1 && (
               <span className="text-muted-foreground">{t('workbench.resultSets', { count: activeResults.length })}</span>
             )}
@@ -904,369 +934,200 @@ export function MainPanel() {
   )
 }
 
+function SqlRecordsWorkspace({ mode, connections, initialConnectionFilter, onOpenSql }: {
+  mode: 'scripts' | 'history'
+  connections: ConnectionConfig[]
+  initialConnectionFilter: string | null
+  onOpenSql: (title: string, sql: string, connectionId: string | null, unavailableConnectionName?: string | null) => void
+}) {
+  const { t } = useTranslation()
+  const [query, setQuery] = useState('')
+  const [connectionFilter, setConnectionFilter] = useState(initialConnectionFilter ?? 'all')
+  const [statusFilter, setStatusFilter] = useState<'all' | QueryHistoryStatus>('all')
+  const [timeRange, setTimeRange] = useState<'all' | 'day' | 'week' | 'month'>('all')
+  const [sortDirection, setSortDirection] = useState<'newest' | 'oldest'>('newest')
+  const [recordsOpenedAt] = useState(() => Date.now())
+  const drafts = useSqlDraftStore((state) => state.drafts)
+  const loadDrafts = useSqlDraftStore((state) => state.loadDrafts)
+  const history = useQueryHistoryStore((state) => state.entries)
+  const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
+  useEffect(() => { void (mode === 'scripts' ? loadDrafts(50) : loadHistory(500)) }, [loadDrafts, loadHistory, mode])
+  const entries = mode === 'scripts' ? drafts : history
+  const cutoff = timeRange === 'day' ? recordsOpenedAt - 86_400_000
+    : timeRange === 'week' ? recordsOpenedAt - 604_800_000
+      : timeRange === 'month' ? recordsOpenedAt - 2_592_000_000
+        : null
+  const filtered = [...entries]
+    .filter((entry) => {
+      const source = [('title' in entry ? entry.title : null), entry.sql, entry.connectionNameSnapshot].filter(Boolean).join(' ').toLocaleLowerCase()
+      const timestamp = new Date('updatedAt' in entry ? entry.updatedAt : entry.startedAt).getTime()
+      return (!query.trim() || source.includes(query.trim().toLocaleLowerCase()))
+        && (connectionFilter === 'all' || entry.connectionId === connectionFilter)
+        && (mode !== 'history' || statusFilter === 'all' || ('status' in entry && entry.status === statusFilter))
+        && (cutoff === null || timestamp >= cutoff)
+    })
+    .sort((left, right) => {
+      const leftTime = new Date('updatedAt' in left ? left.updatedAt : left.startedAt).getTime()
+      const rightTime = new Date('updatedAt' in right ? right.updatedAt : right.startedAt).getTime()
+      return sortDirection === 'newest' ? rightTime - leftTime : leftTime - rightTime
+    })
+  return <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
+      <div className="min-w-0 flex-1"><h1 className="text-sm font-semibold">{mode === 'scripts' ? t('sql.drafts') : t('sql.history')}</h1><p className="text-[11px] text-muted-foreground">{entries.length}</p></div>
+      <Input className="h-8 w-56 text-xs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('connection.searchDataSources')} />
+      <select className="ide-select h-8 max-w-44 text-xs" value={connectionFilter} onChange={(event) => setConnectionFilter(event.target.value)}>
+        <option value="all">{t('sql.historyFilterAllConnections')}</option>
+        {[...new Map(entries.filter((entry) => Boolean(entry.connectionId)).map((entry) => [entry.connectionId ?? '', entry.connectionNameSnapshot ?? entry.connectionId ?? ''])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+      </select>
+      {mode === 'history' && <select className="ide-select h-8 max-w-28 text-xs" aria-label={t('sql.historyStatusFilter')} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | QueryHistoryStatus)}>
+        <option value="all">{t('sql.historyFilterAll')}</option>
+        <option value="success">{t('sql.historyFilterSuccess')}</option>
+        <option value="failed">{t('sql.historyFilterFailed')}</option>
+      </select>}
+      <select className="ide-select h-8 max-w-28 text-xs" aria-label={t('sql.timeRange')} value={timeRange} onChange={(event) => setTimeRange(event.target.value as 'all' | 'day' | 'week' | 'month')}>
+        <option value="all">{t('sql.timeAll')}</option>
+        <option value="day">{t('sql.timeDay')}</option>
+        <option value="week">{t('sql.timeWeek')}</option>
+        <option value="month">{t('sql.timeMonth')}</option>
+      </select>
+      <select className="ide-select h-8 max-w-28 text-xs" aria-label={t('sql.sortByTime')} value={sortDirection} onChange={(event) => setSortDirection(event.target.value as 'newest' | 'oldest')}>
+        <option value="newest">{t('sql.sortNewest')}</option>
+        <option value="oldest">{t('sql.sortOldest')}</option>
+      </select>
+    </header>
+    <div className="min-h-0 flex-1 overflow-auto p-3">
+      <div className="mx-auto max-w-5xl divide-y rounded-md border bg-card">
+        {filtered.map((entry) => {
+          const available = !entry.connectionId || connections.some((connection) => connection.id === entry.connectionId)
+          return <button key={entry.id} type="button" className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-4 px-4 py-3 text-left hover:bg-muted/45" onDoubleClick={() => onOpenSql(('title' in entry ? entry.title : null) || `${entry.connectionNameSnapshot} SQL`, entry.sql, available ? entry.connectionId ?? null : null, available ? null : entry.connectionNameSnapshot ?? null)}>
+            <span className="min-w-0"><span className="block truncate text-xs font-medium">{('title' in entry ? entry.title : null) || sqlPreview(entry.sql)}</span><span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">{sqlPreview(entry.sql)}</span></span>
+            <span className="text-right text-[11px] text-muted-foreground"><span className="block">{entry.connectionNameSnapshot ?? t('connection.disconnected')}</span><span>{'updatedAt' in entry ? formatHistoryTime(entry.updatedAt) : formatHistoryTime(entry.startedAt)}</span></span>
+          </button>
+        })}
+        {filtered.length === 0 && <div className="p-8 text-center text-xs text-muted-foreground">{t('workbench.historyNoMatches')}</div>}
+      </div>
+    </div>
+  </section>
+}
+
 function DataSourcesManagementPanel() {
   const { t } = useTranslation()
-  const loading = useConnectionStore((state) => state.loading)
-  const loadConnections = useConnectionStore((state) => state.loadConnections)
+  const createGroup = useConnectionStore((state) => state.createGroup)
+  const connections = useConnectionStore((state) => state.connections)
+  const [groupName, setGroupName] = useState('')
+  const [groupCreatorOpen, setGroupCreatorOpen] = useState(false)
+  const [editor, setEditor] = useState<{ mode: 'none' | 'new' | 'edit'; connectionId: string | null }>({ mode: 'none', connectionId: null })
+  const [editorDirty, setEditorDirty] = useState(false)
+  const [compact, setCompact] = useState(false)
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 959px)')
+    const update = () => setCompact(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+
+  async function addGroup() {
+    const name = groupName.trim()
+    if (!name) return
+    try {
+      await createGroup(name)
+      setGroupName('')
+      setGroupCreatorOpen(false)
+    } catch {
+      // The connection store surfaces a consistent actionable notification.
+    }
+  }
+
+  function requestEditor(next: { mode: 'none' | 'new' | 'edit'; connectionId: string | null }) {
+    if (editorDirty && !window.confirm(t('connectionForm.discardChanges'))) return
+    setEditorDirty(false)
+    setEditor(next)
+  }
+
+  const editedConnection = editor.mode === 'edit'
+    ? connections.find((connection) => connection.id === editor.connectionId) ?? null
+    : null
+  const editorContent = (
+    <ConnectionEditorPanel
+      connection={editedConnection}
+      isNew={editor.mode === 'new'}
+      onNew={() => requestEditor({ mode: 'new', connectionId: null })}
+      onDirtyChange={setEditorDirty}
+      onCancel={() => requestEditor({ mode: 'none', connectionId: null })}
+      onSaved={(connection) => {
+        setEditorDirty(false)
+        setEditor({ mode: 'edit', connectionId: connection.id })
+      }}
+    />
+  )
+
   return (
     <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">{t('connection.dataSources')}</h1>
+          <h1 className="truncate text-sm font-semibold">{t('connection.manageDataSources')}</h1>
           <p className="truncate text-xs text-muted-foreground">
             {t('workbench.dataSourcesSubtitle')}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <ConnectionDialog
-            trigger={
-              <IconTooltipButton label={t('connection.new')} variant="secondary">
-                <Plus className="size-3.5" />
-              </IconTooltipButton>
-            }
-          />
-          <IconTooltipButton
-            label={t('connection.refresh')}
-            variant="ghost"
-            disabled={loading}
-            onClick={() => loadConnections()}
-          >
-            <RefreshCw className="size-4" />
-          </IconTooltipButton>
+        <div className="flex shrink-0 items-center">
+          <Popover open={groupCreatorOpen} onOpenChange={setGroupCreatorOpen}>
+            <PopoverTrigger render={<IconTooltipButton label={t('connection.createGroup')} variant="ghost"><FolderPlus className="size-4" /></IconTooltipButton>} />
+            <PopoverContent align="end" className="w-64 gap-2 p-3">
+              <PopoverHeader>
+                <PopoverTitle>{t('connection.createGroup')}</PopoverTitle>
+              </PopoverHeader>
+              <Input
+                autoFocus
+                className="h-8 text-xs"
+                value={groupName}
+                placeholder={t('connectionForm.newGroupPlaceholder')}
+                onChange={(event) => setGroupName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void addGroup()
+                }}
+              />
+              <div className="flex justify-end gap-1">
+                <Button type="button" size="xs" variant="ghost" onClick={() => setGroupCreatorOpen(false)}>{t('common.cancel')}</Button>
+                <Button type="button" size="xs" disabled={!groupName.trim()} onClick={() => void addGroup()}>{t('common.confirm')}</Button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <ConnectionList mode="manager" />
+        <div className="flex h-full min-h-0">
+          <div className="min-w-0 flex-1 overflow-hidden border-r">
+            <ConnectionList
+              mode="manager"
+              managerSelectedConnectionId={editor.mode === 'edit' ? editor.connectionId : null}
+              onManagerSelect={(connection) => requestEditor({ mode: 'edit', connectionId: connection.id })}
+            />
+          </div>
+          {!compact && <div className="hidden min-w-[34rem] flex-[1.15] md:flex">{editorContent}</div>}
+        </div>
+        {compact && <Sheet open={editor.mode !== 'none'} onOpenChange={(open) => {
+          if (!open) requestEditor({ mode: 'none', connectionId: null })
+        }}>
+          <SheetContent side="right" showCloseButton className="w-full max-w-none gap-0 p-0 sm:max-w-xl">
+            {editorContent}
+          </SheetContent>
+        </Sheet>}
       </div>
     </section>
   )
 }
 
-function WorkbenchHome({
-  connections,
-  activeConnectionId,
-  onNewSql,
-  onManageDataSources,
-  onFocusExplorer,
-}: {
-  connections: ConnectionConfig[]
-  activeConnectionId: string | null
-  onNewSql: () => void
-  onManageDataSources: () => void
-  onFocusExplorer: (hasSelectedConnection?: boolean) => void
-}) {
+function WorkbenchHome() {
   const { t } = useTranslation()
-  const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
-  const statuses = useConnectionStore((state) => state.statuses)
-  const busyConnectionIds = useConnectionStore((state) => state.busyConnectionIds)
-  const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
-  const connectConnection = useConnectionStore((state) => state.connectConnection)
-  const recentDataSourceIds = useConnectionStore((state) => state.recentDataSourceIds)
-  const favoriteDataSourceIds = useConnectionStore((state) => state.favoriteDataSourceIds)
-  const drafts = useSqlDraftStore((state) => state.drafts)
-  const tabs = useEditorStore((state) => state.tabs)
-  const addTab = useEditorStore((state) => state.addTab)
-  const setActiveTab = useEditorStore((state) => state.setActiveTab)
-  const prioritizedConnections = [...favoriteDataSourceIds, ...recentDataSourceIds]
-    .filter((id, index, all) => all.indexOf(id) === index)
-    .map((id) => connections.find((connection) => connection.id === id))
-    .filter((connection): connection is ConnectionConfig => Boolean(connection))
-    .slice(0, 6)
-
-  async function connectRecent(connection: ConnectionConfig) {
-    setActiveConnection(connection.id)
-    try {
-      await connectConnection(connection.id)
-    } catch {
-      // The connection store surfaces the failure toast and row status.
-    }
-  }
-
-  function restoreDraft(draft: SqlDraft) {
-    const existing = tabs.find((tab) => tab.draftId === draft.id)
-    if (existing) {
-      setActiveTab(existing.id)
-      if (existing.connectionId) setActiveConnection(existing.connectionId)
-      return
-    }
-
-    const connectionExists = connections.some((connection) => connection.id === draft.connectionId)
-    addTab({
-      id: crypto.randomUUID(),
-      kind: 'sql',
-      title: draft.title || t('sql.restoredDraftTitle'),
-      sql: draft.sql,
-      connectionId: connectionExists ? draft.connectionId ?? null : null,
-      draftId: draft.id,
-    })
-    if (connectionExists && draft.connectionId) {
-      setActiveConnection(draft.connectionId)
-    }
-  }
-
-  const activeStatus = activeConnection
-    ? statuses[activeConnection.id]?.status ?? 'disconnected'
-    : 'disconnected'
-
-  if (activeConnection && activeStatus === 'connected') {
-    return (
-      <DataSourceStartWorkspace
-        connection={activeConnection}
-        drafts={drafts.filter((draft) => draft.connectionId === activeConnection.id)}
-        onNewSql={onNewSql}
-        onFocusExplorer={onFocusExplorer}
-        onRestoreDraft={restoreDraft}
-      />
-    )
-  }
-
   return (
-    <ConnectionFirstLanding
-      connections={prioritizedConnections}
-      activeConnectionId={activeConnectionId}
-      statuses={statuses}
-      busyConnectionIds={busyConnectionIds}
-      drafts={drafts}
-      onConnect={(connection) => {
-        void connectRecent(connection)
-      }}
-      onManageDataSources={onManageDataSources}
-      onRestoreDraft={restoreDraft}
-    />
-  )
-}
-
-function ConnectionFirstLanding({
-  connections,
-  activeConnectionId,
-  statuses,
-  busyConnectionIds,
-  drafts,
-  onConnect,
-  onManageDataSources,
-  onRestoreDraft,
-}: {
-  connections: ConnectionConfig[]
-  activeConnectionId: string | null
-  statuses: Record<string, { status: ConnectionRuntimeStatus }>
-  busyConnectionIds: Record<string, true>
-  drafts: SqlDraft[]
-  onConnect: (connection: ConnectionConfig) => void
-  onManageDataSources: () => void
-  onRestoreDraft: (draft: SqlDraft) => void
-}) {
-  const { t } = useTranslation()
-
-  return (
-    <section className="ide-workspace min-h-0 flex-1 overflow-auto">
-      <div className="mx-auto grid w-full max-w-6xl gap-6 px-6 py-10 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-start">
-        <div className="min-w-0">
-          <div className="mb-7 max-w-xl">
-            <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/15">
-              <DatabaseIcon className="size-5" />
-            </div>
-            <h1 className="text-xl font-semibold tracking-[-0.02em]">{t('workbench.connectDataSource')}</h1>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              {t('workbench.connectDataSourceHint')}
-            </p>
-          </div>
-
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              {t('workbench.recentDataSources')}
-            </h2>
-            <Button type="button" size="sm" variant="outline" onClick={onManageDataSources}>
-              {t('connection.dataSources')}
-            </Button>
-          </div>
-
-          {connections.length === 0 ? (
-            <button
-              type="button"
-              className="ide-landing-card w-full border-dashed px-4 py-5 text-left text-sm text-muted-foreground transition-colors hover:border-primary/35 hover:bg-primary/[0.02]"
-              onClick={onManageDataSources}
-            >
-              {t('workbench.manageDataSourceForRecents')}
-            </button>
-          ) : (
-            <div className="grid gap-2">
-              {connections.map((connection) => {
-                const status = statuses[connection.id]?.status ?? 'disconnected'
-                const busy = Boolean(busyConnectionIds[connection.id])
-                const connected = status === 'connected'
-                return (
-                  <button
-                    key={connection.id}
-                    type="button"
-                    className={[
-                      'ide-landing-card group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 text-left transition-[border-color,background-color,box-shadow]',
-                      connection.id === activeConnectionId
-                        ? 'border-primary/35 bg-primary/[0.04]'
-                        : 'hover:border-primary/35 hover:bg-primary/[0.02]',
-                    ].join(' ')}
-                    onClick={() => onConnect(connection)}
-                    disabled={busy}
-                  >
-                    <span className="min-w-0">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate text-sm font-semibold">{connection.name}</span>
-                        <span className="rounded border bg-muted/45 px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
-                          {connection.driverType}
-                        </span>
-                      </span>
-                      <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
-                        {workbenchConnectionTarget(connection)}
-                      </span>
-                    </span>
-                    <span className={[
-                      'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium',
-                      connected
-                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-                        : status === 'failed'
-                          ? 'bg-destructive/10 text-destructive'
-                          : 'bg-primary text-primary-foreground group-hover:bg-primary/90',
-                    ].join(' ')}>
-                      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Link className="size-3.5" />}
-                      {connected ? t('connection.connected') : t('connection.connect')}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        <RecentSqlPanel drafts={drafts} onRestoreDraft={onRestoreDraft} compact />
+    <section className="ide-workspace flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+      <div className="-mt-14 grid max-w-sm gap-2 text-center text-sm text-muted-foreground">
+        <p>{t('workbench.emptyEditorHint')}</p>
+        <p className="text-xs text-muted-foreground/70">{t('workbench.emptyEditorDetail')}</p>
       </div>
-    </section>
-  )
-}
-
-function DataSourceStartWorkspace({
-  connection,
-  drafts,
-  onNewSql,
-  onFocusExplorer,
-  onRestoreDraft,
-}: {
-  connection: ConnectionConfig
-  drafts: SqlDraft[]
-  onNewSql: () => void
-  onFocusExplorer: () => void
-  onRestoreDraft: (draft: SqlDraft) => void
-}) {
-  const { t } = useTranslation()
-
-  return (
-    <section className="ide-workspace min-h-0 flex-1 overflow-auto">
-      <div className="mx-auto grid w-full max-w-5xl gap-7 px-6 py-14">
-        <div className="max-w-2xl">
-          <div className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="size-2 rounded-full bg-emerald-500" />
-            <span>{t('connection.connected')}</span>
-          </div>
-          <h1 className="truncate text-2xl font-semibold tracking-[-0.025em]">{connection.name}</h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {t('workbench.connectedStartHint')}
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Button type="button" size="lg" className="h-auto justify-start px-4 py-4 text-left" onClick={onNewSql}>
-            <Plus className="size-4" />
-            <span className="grid gap-0.5">
-              <span>{t('workbench.newSql')}</span>
-              <span className="text-xs font-normal text-primary-foreground/75">{t('workbench.newSqlHint')}</span>
-            </span>
-          </Button>
-          <Button type="button" size="lg" variant="outline" className="h-auto justify-start px-4 py-4 text-left" onClick={onFocusExplorer}>
-            <DatabaseIcon className="size-4" />
-            <span className="grid gap-0.5">
-              <span>{t('workbench.browseObjects')}</span>
-              <span className="text-xs font-normal text-muted-foreground">{t('workbench.browseObjectsHint')}</span>
-            </span>
-          </Button>
-        </div>
-
-        {drafts.length > 0 && <RecentSqlPanel drafts={drafts} onRestoreDraft={onRestoreDraft} />}
-      </div>
-    </section>
-  )
-}
-
-function RecentSqlPanel({
-  drafts,
-  onRestoreDraft,
-  compact = false,
-}: {
-  drafts: SqlDraft[]
-  onRestoreDraft: (draft: SqlDraft) => void
-  compact?: boolean
-}) {
-  const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
-  const visibleDrafts = compact && !expanded ? drafts.slice(0, 4) : drafts.slice(0, compact ? undefined : 5)
-  const canExpand = compact && drafts.length > 4
-
-  return (
-    <section className={compact ? 'ide-landing-card min-w-0 self-start overflow-hidden' : 'ide-landing-card min-w-0 overflow-hidden'}>
-      <div className="flex items-center justify-between gap-3 border-b bg-muted/[0.28] px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-primary/15">
-            <Clock3 className="size-3.5" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-foreground">
-              {t('sql.recentScripts')}
-            </h2>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {t('sql.recentScriptCount', { count: drafts.length })}
-            </p>
-          </div>
-        </div>
-      </div>
-      <div className={compact ? 'divide-y divide-border/55' : 'grid max-h-64 gap-1 overflow-auto p-2'}>
-        {drafts.length === 0 ? (
-          <div className="px-4 py-5 text-xs leading-5 text-muted-foreground">
-            <p>{t('sql.noRecentScripts')}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground/80">{t('sql.noRecentScriptsHint')}</p>
-          </div>
-        ) : (
-          visibleDrafts.map((draft) => (
-            <button
-              key={draft.id}
-              type="button"
-              className={compact
-                ? 'group w-full px-4 py-3 text-left text-xs transition-colors hover:bg-primary/[0.035] focus-visible:bg-primary/[0.05]'
-                : 'rounded-md px-2 py-2 text-left text-xs transition-colors hover:bg-muted'}
-              onClick={() => onRestoreDraft(draft)}
-            >
-              <span className="block truncate font-medium group-hover:text-primary">{draft.title || t('sql.restoredDraftTitle')}</span>
-              <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
-                {sqlPreview(draft.sql)}
-              </span>
-              <span className="mt-1 block truncate text-[11px] text-muted-foreground">
-                {draft.connectionNameSnapshot ?? t('connection.disconnected')} · {formatHistoryTime(draft.updatedAt)}
-              </span>
-            </button>
-          ))
-        )}
-      </div>
-      {canExpand && (
-        <div className="border-t bg-muted/[0.16] p-2">
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            className="w-full justify-between px-2 text-muted-foreground hover:text-foreground"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            <span>{expanded ? t('sql.collapseRecentScripts') : t('sql.showAllRecentScripts')}</span>
-            {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-          </Button>
-        </div>
-      )}
     </section>
   )
 }
@@ -2408,6 +2269,24 @@ function confirmDangerousSql(risk: SqlRiskAnalysis) {
   return window.confirm(`${title}\n\n${environmentLine}\n\n${i18n.t('workbench.dangerDetected')}\n${reasons}\n\n${i18n.t('workbench.continueExecute')}`)
 }
 
+function sqlFormatterLanguage(driverType: DriverType): 'postgresql' | 'mysql' | 'sqlite' | 'transactsql' {
+  switch (driverType) {
+    case 'mysql':
+      return 'mysql'
+    case 'sqlite':
+      return 'sqlite'
+    case 'mssql':
+      return 'transactsql'
+    case 'postgres':
+    case 'oracle':
+    case 'jdbc':
+    case 'mongo':
+    case 'redis':
+    default:
+      return 'postgresql'
+  }
+}
+
 function driverQueryCapabilities(driverType: DriverType): QueryCapabilities {
   switch (driverType) {
     case 'postgres':
@@ -2559,30 +2438,6 @@ function formatHistoryTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
-}
-
-function nextSqlIndex(titles: string[]) {
-  let index = 1
-  const existing = new Set(titles)
-  while (existing.has(`SQL ${index}`)) index += 1
-  return index
-}
-
-function workbenchConnectionTarget(connection: ConnectionConfig) {
-  const url = connection.connectionUrl?.trim()
-  if (url) {
-    return url
-      .replace(/^jdbc:/, '')
-      .replace(/^oracle:thin:@/, 'oracle:')
-      .replace(/^postgresql:\/\//, 'postgres:')
-      .replace(/^mysql:\/\//, 'mysql:')
-  }
-
-  const host = connection.host?.trim()
-  const port = connection.port ? `:${connection.port}` : ''
-  const database = connection.database?.trim()
-  const target = host ? `${host}${port}` : connection.driverType
-  return database ? `${target}/${database}` : target
 }
 
 function compactResultSummary(result: QueryResult) {

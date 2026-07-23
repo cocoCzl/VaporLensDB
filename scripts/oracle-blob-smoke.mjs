@@ -25,7 +25,7 @@ assert(!bridge.includes('return resultSet.getString(index);\n    }\n\n    privat
 
 const jdbcDriver = readFileSync(resolve(root, 'src-tauri/src/drivers/jdbc.rs'), 'utf8')
 assert(
-  jdbcDriver.includes('AppError::ConnectionFailed { driver, message } if command == "query" => AppError::QueryFailed'),
+  jdbcDriver.includes('AppError::ConnectionFailed { driver, message } if command == "query" => {\n            AppError::QueryFailed'),
   'JDBC query-side connection wrappers must be reported as query failures',
 )
 

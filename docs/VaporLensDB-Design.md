@@ -3,17 +3,24 @@
 ## Product Design
 
 VaporLensDB is designed as a desktop database IDE with a compact, work-focused
-interface. The primary flow is connection selection, Object Tree navigation,
-workspace tabs, and task/status feedback.
+interface. The primary flow is grouped Data Source navigation, Object Tree
+browsing, workspace tabs, and task/status feedback.
 
 The UI favors dense operational screens over marketing-style surfaces. Common
-actions should be discoverable through toolbar controls, context menus, and
-workspace tabs rather than explanatory in-app copy.
+actions are discoverable through toolbar controls, context menus, workspace
+tabs, and the command palette rather than explanatory in-app copy. Connection
+state uses semantic color; blue is reserved for selection and focus.
+
+Browsing a Data Source and executing SQL are separate contexts. Expanding or
+selecting a source establishes the browsing context, while each SQL tab keeps
+its own execution target to prevent an explorer action from changing where SQL
+runs.
 
 ## Application Architecture
 
-- React renders the main IDE shell, connection dialogs, Object Tree, editors,
-  data grids, inspectors, and task/status surfaces.
+- React renders the main IDE shell, grouped Data Source explorer, connection
+  dialogs, Object Tree, editors, data grids, inspectors, command palette, and
+  task/status surfaces.
 - Tauri commands form the boundary between frontend IPC contracts and backend
   services.
 - Rust services own connection storage, connection lifecycle, metadata loading,
@@ -33,4 +40,4 @@ decrypted secrets.
 
 Default validation must run from a fresh clone without private databases. Live
 database coverage is available through ignored manual tests documented in
-`docs/TESTING.md`.
+[`TESTING.md`](TESTING.md).

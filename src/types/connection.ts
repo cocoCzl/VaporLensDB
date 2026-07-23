@@ -12,6 +12,7 @@ export interface ConnectionConfig {
   driverClass?: string | null
   driverPaths?: string[]
   sslMode?: string | null
+  groupId?: string | null
   group?: string | null
   colorTag?: string | null
   sshTunnel?: SshTunnelConfig | null
@@ -52,9 +53,18 @@ export interface ConnectionInput {
   driverClass?: string | null
   driverPaths?: string[]
   sslMode?: string | null
+  groupId?: string | null
   group?: string | null
   colorTag?: string | null
   sshTunnel?: SshTunnelInput | null
+}
+
+export interface DataSourceGroup {
+  id: string
+  name: string
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
 }
 
 export type SshAuthMethod = 'password' | 'privateKey'

@@ -32,10 +32,10 @@ export function ConnectionDialog({
   const { drivers, loadDrivers } = useDriverStore()
 
   useEffect(() => {
-    if (open) {
-      loadDrivers()
-    }
-  }, [loadDrivers, open])
+    // Prime the shared catalogue before the dialog is opened. This keeps the
+    // form from switching driver definitions while its opening transition runs.
+    void loadDrivers()
+  }, [loadDrivers])
 
   const dialogTrigger = trigger ?? (
     <Button
@@ -51,11 +51,15 @@ export function ConnectionDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
+        nativeButton={false}
         render={
           <span onClick={(event) => event.stopPropagation()}>{dialogTrigger}</span>
         }
       />
-      <DialogContent className="flex max-h-[calc(100vh-4rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl" showCloseButton={false}>
+      <DialogContent
+        className="flex h-[min(47rem,calc(100vh-4rem))] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl data-open:animate-none data-closed:animate-none"
+        showCloseButton={false}
+      >
         <DialogHeader className="flex h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-4">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/15 text-primary">
@@ -81,7 +85,7 @@ export function ConnectionDialog({
                 <X />
               </Button>
         </DialogHeader>
-        <div className="min-h-0 overflow-auto p-4">
+        <div className="min-h-0 flex-1 overflow-auto p-4">
               <p className="mb-4 text-xs text-muted-foreground">
                 {t('connection.driverHelp')}
               </p>

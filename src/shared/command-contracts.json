@@ -91,6 +91,55 @@
     "status": "active"
   },
   {
+    "name": "set_connection_session_policy",
+    "namespace": "connection",
+    "args": "{ input: { maxLiveSessions: number; idleReclaimMinutes: number | null } }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "list_data_source_groups",
+    "namespace": "connection",
+    "args": "void",
+    "response": "DataSourceGroup[]",
+    "status": "active"
+  },
+  {
+    "name": "create_data_source_group",
+    "namespace": "connection",
+    "args": "{ name: string }",
+    "response": "DataSourceGroup",
+    "status": "active"
+  },
+  {
+    "name": "rename_data_source_group",
+    "namespace": "connection",
+    "args": "{ id: string; name: string }",
+    "response": "DataSourceGroup",
+    "status": "active"
+  },
+  {
+    "name": "delete_data_source_group",
+    "namespace": "connection",
+    "args": "{ id: string }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "reorder_data_source_groups",
+    "namespace": "connection",
+    "args": "{ ids: string[] }",
+    "response": "DataSourceGroup[]",
+    "status": "active"
+  },
+  {
+    "name": "set_connection_data_source_group",
+    "namespace": "connection",
+    "args": "{ connectionId: string; groupId?: string | null }",
+    "response": "void",
+    "status": "active"
+  },
+  {
     "name": "list_driver_definitions",
     "namespace": "driver",
     "args": "void",

@@ -4,8 +4,10 @@ import type { ExplainResult, QueryResult, QueryResultChunk, QueryStreamDone } fr
 interface QueryResultState {
   results: Record<string, QueryResult[]>
   explains: Record<string, ExplainResult>
+  sources: Record<string, { connectionId: string; database: string | null; schema: string | null; executedAt: string }>
   setResults: (queryId: string, results: QueryResult[]) => void
   setExplain: (queryId: string, explain: ExplainResult) => void
+  setResultSource: (queryId: string, connectionId: string, context?: { database?: string | null; schema?: string | null }) => void
   startStreamResult: (queryId: string) => void
   appendResultChunk: (chunk: QueryResultChunk) => void
   finishStreamResult: (done: QueryStreamDone) => void
@@ -15,10 +17,21 @@ interface QueryResultState {
 export const useQueryResultStore = create<QueryResultState>((set) => ({
   results: {},
   explains: {},
+  sources: {},
   setResults: (queryId, results) =>
     set((s) => ({ results: { ...s.results, [queryId]: results } })),
   setExplain: (queryId, explain) =>
     set((s) => ({ explains: { ...s.explains, [queryId]: explain } })),
+  setResultSource: (queryId, connectionId, context = {}) =>
+    set((s) => ({ sources: {
+      ...s.sources,
+      [queryId]: {
+        connectionId,
+        database: context.database ?? null,
+        schema: context.schema ?? null,
+        executedAt: new Date().toISOString(),
+      },
+    } })),
   startStreamResult: (queryId) =>
     set((s) => ({
       results: {
@@ -67,9 +80,11 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
     set((s) => {
       const results = { ...s.results }
       const explains = { ...s.explains }
+      const sources = { ...s.sources }
       delete results[queryId]
       delete explains[queryId]
-      return { results, explains }
+      delete sources[queryId]
+      return { results, explains, sources }
     }),
 }))
 

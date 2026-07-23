@@ -20,6 +20,7 @@ export function useQuery() {
   const setTabQueryState = useEditorStore((state) => state.setTabQueryState)
   const setResults = useQueryResultStore((state) => state.setResults)
   const setExplain = useQueryResultStore((state) => state.setExplain)
+  const setResultSource = useQueryResultStore((state) => state.setResultSource)
   const startStreamResult = useQueryResultStore((state) => state.startStreamResult)
   const notify = useUiStore((state) => state.notify)
   const notifyError = useUiStore((state) => state.notifyError)
@@ -28,7 +29,7 @@ export function useQuery() {
     tabId: string,
     connectionId: string,
     sql: string,
-    options: { maxRows?: number } = {},
+    options: { maxRows?: number; database?: string | null; schema?: string | null } = {},
   ) {
     const queryId = crypto.randomUUID()
     const startedAt = new Date().toISOString()
@@ -66,6 +67,7 @@ export function useQuery() {
         const response = await executeQuery({ connectionId, sql, queryId })
         setResults(queryId, response.results)
       }
+      setResultSource(queryId, connectionId, options)
       if (containsLikelyDdl(sql)) {
         notify({
           kind: 'info',

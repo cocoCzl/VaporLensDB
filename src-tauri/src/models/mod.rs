@@ -1,4 +1,5 @@
 pub mod connection;
+pub mod data_source_group;
 pub mod driver_catalog;
 pub mod error;
 pub mod metadata;

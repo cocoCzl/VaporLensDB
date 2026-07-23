@@ -9,6 +9,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Star,
@@ -18,9 +19,10 @@ import {
   Unplug,
   X,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
+import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
@@ -173,95 +175,322 @@ function SidebarPanel() {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <DataSourceHeader />
-      <DatabaseTree />
+      <CompactDataSourceTree />
     </div>
   )
 }
 
-function DataSourceHeader() {
+/**
+ * The explorer deliberately treats selecting a Data Source as browsing only.
+ * SQL tabs keep their own execution target, so moving around this tree never
+ * mutates an open editor's connection binding.
+ */
+function CompactDataSourceTree() {
   const { t } = useTranslation()
   const {
     connections,
+    dataSourceGroups,
     statuses,
-    activeConnectionId,
+    browsingConnectionId,
     busyConnectionIds,
     loadConnections,
     connectConnection,
     disconnectConnection,
     setActiveConnection,
+    favoriteDataSourceIds,
+    toggleFavoriteDataSource,
+    moveConnectionToGroup,
+    removeConnection,
+    saveConnection,
   } = useConnectionStore()
+  const tabs = useEditorStore((state) => state.tabs)
+  const addTab = useEditorStore((state) => state.addTab)
   const setSidebarView = useUiStore((state) => state.setSidebarView)
+  const { cancelRunningQuery } = useQuery()
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [contextMenu, setContextMenu] = useState<{ connection: ConnectionConfig; x: number; y: number } | null>(null)
+  const [disconnectPrompt, setDisconnectPrompt] = useState<ConnectionConfig | null>(null)
+  const [query, setQuery] = useState('')
+  const [expandedDataSourceIds, setExpandedDataSourceIds] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     void loadConnections()
   }, [loadConnections])
 
-  const activeConnection =
-    connections.find((connection) => connection.id === activeConnectionId) ?? null
-  const activeStatus = activeConnection
-    ? statuses[activeConnection.id]?.status ?? 'disconnected'
-    : 'disconnected'
-  const connected = activeStatus === 'connected'
-  const activeBusy = activeConnection ? Boolean(busyConnectionIds[activeConnection.id]) : false
-
-  async function toggleActiveConnection(event: MouseEvent) {
-    event.stopPropagation()
-    if (!activeConnection) {
-      setSidebarView('dataSources')
-      return
+  const groups = useMemo(() => {
+    const grouped = new Map<string, ConnectionConfig[]>()
+    for (const connection of connections) {
+      const key = connection.groupId ?? '__ungrouped__'
+      grouped.set(key, [...(grouped.get(key) ?? []), connection])
     }
-    setActiveConnection(activeConnection.id)
-    try {
-      if (connected) {
-        await disconnectConnection(activeConnection.id)
-      } else {
-        await connectConnection(activeConnection.id)
+    const ordered = dataSourceGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      connections: orderGroupConnections(grouped.get(group.id) ?? [], favoriteDataSourceIds),
+    }))
+    const ungrouped = orderGroupConnections(grouped.get('__ungrouped__') ?? [], favoriteDataSourceIds)
+    if (ungrouped.length > 0 || ordered.length === 0) {
+      ordered.push({ id: '__ungrouped__', name: t('connection.ungrouped'), connections: ungrouped })
+    }
+    return ordered
+  }, [connections, dataSourceGroups, favoriteDataSourceIds, t])
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const filteredGroups = useMemo(() => groups
+    .map((group) => {
+      const groupMatches = normalizedQuery.length > 0 && group.name.toLocaleLowerCase().includes(normalizedQuery)
+      return {
+        ...group,
+        connections: groupMatches || normalizedQuery.length === 0
+          ? group.connections
+          : group.connections.filter((connection) => connection.name.toLocaleLowerCase().includes(normalizedQuery)),
       }
+    })
+    .filter((group) => group.connections.length > 0 || (normalizedQuery.length === 0 && group.id !== '__ungrouped__')),
+  [groups, normalizedQuery])
+
+  function openBoundSql(connection: ConnectionConfig) {
+    addTab({
+      id: crypto.randomUUID(),
+      kind: 'sql',
+      title: `SQL · ${connection.name}`,
+      sql: '',
+      connectionId: connection.id,
+    })
+  }
+
+  async function toggleDataSourceNode(connection: ConnectionConfig) {
+    const opening = !expandedDataSourceIds[connection.id]
+    setExpandedDataSourceIds((current) => ({ ...current, [connection.id]: opening }))
+    if (!opening) return
+
+    try {
+      if (statuses[connection.id]?.status !== 'connected') {
+        // Keep this connection out of the SQL execution context while it is
+        // being opened, then explicitly make it the browsing context below.
+        await connectConnection(connection.id, { selectForBrowsing: false })
+      }
+      // The object tree and status bar must refer to the same browsing source.
+      // SQL tabs still take precedence in StatusBar through their connectionId.
+      setActiveConnection(connection.id)
     } catch {
-      // Store notifications already carry the actionable error.
+      setExpandedDataSourceIds((current) => ({ ...current, [connection.id]: false }))
     }
   }
 
+  function openManagement() {
+    const existing = tabs.find((tab) => tab.kind === 'dataSources')
+    if (existing) {
+      useEditorStore.getState().setActiveTab(existing.id)
+    } else {
+      addTab({ id: crypto.randomUUID(), kind: 'dataSources', title: t('connection.dataSources'), sql: '', connectionId: null })
+    }
+    setSidebarView('explorer')
+  }
+
+  function contextActions(connection: ConnectionConfig): ContextMenuAction[] {
+    const connected = statuses[connection.id]?.status === 'connected'
+    const busy = Boolean(busyConnectionIds[connection.id])
+    return [
+      {
+        id: connected ? 'disconnect' : 'connect',
+        label: connected ? t('connection.disconnect') : t('connection.connect'),
+        icon: connected ? 'disconnect' : 'connect',
+        disabled: busy,
+        onSelect: () => { if (connected) requestDisconnect(connection); else void connectConnection(connection.id) },
+      },
+      { id: 'edit', label: t('connection.edit'), icon: 'edit', onSelect: openManagement },
+      {
+        id: 'duplicate', label: t('common.copy'), icon: 'duplicate', onSelect: () => {
+          const { id, createdAt, updatedAt, ...input } = connection
+          void id
+          void createdAt
+          void updatedAt
+          void saveConnection({ ...input, name: `${connection.name} Copy` })
+        },
+      },
+      {
+        id: 'move', label: t('connection.moveToGroup'), icon: 'move', onSelect: () => {
+          const groupName = window.prompt(
+            `${t('connection.moveToGroup')} (${t('connection.ungrouped')})`,
+            dataSourceGroups.find((group) => group.id === connection.groupId)?.name ?? t('connection.ungrouped'),
+          )
+          if (groupName === null) return
+          const destination = dataSourceGroups.find((group) => group.name === groupName.trim())
+          if (groupName.trim() === '' || groupName.trim() === t('connection.ungrouped')) {
+            void moveConnectionToGroup(connection.id, null)
+          } else if (destination) {
+            void moveConnectionToGroup(connection.id, destination.id)
+          }
+        },
+      },
+      {
+        id: 'favorite',
+        label: favoriteDataSourceIds.includes(connection.id) ? t('connection.unfavorite') : t('connection.favorite'),
+        icon: 'favorite',
+        onSelect: () => toggleFavoriteDataSource(connection.id),
+      },
+      {
+        id: 'delete', label: t('common.delete'), icon: 'delete', onSelect: () => {
+          if (window.confirm(`${t('common.delete')} ${connection.name}?`)) {
+            void removeConnection(connection.id)
+          }
+        },
+      },
+    ]
+  }
+
+  function requestDisconnect(connection: ConnectionConfig) {
+    if (tabs.some((tab) => tab.connectionId === connection.id && tab.runningQueryId)) {
+      setDisconnectPrompt(connection)
+      return
+    }
+    void disconnectConnection(connection.id)
+  }
+
   return (
-    <div className="ide-chrome shrink-0 border-b">
-      <div className="flex min-w-0 items-center gap-1 px-2.5 py-1.5">
-        <button
+    <section className="ide-chrome shrink-0 border-b" aria-label={t('connection.dataSources')}>
+      <div className="flex h-9 items-center gap-1 border-b px-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            id="data-source-tree-search-input"
+            className="h-7 rounded-md pl-7 text-xs"
+            value={query}
+            placeholder={t('connection.searchDataSources')}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        <Button
           type="button"
-          className="group flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-background/70"
-          onClick={() => setSidebarView('dataSources')}
+          size="icon-xs"
+          variant="ghost"
+          aria-label={t('connection.reloadSaved')}
+          title={t('connection.reloadSaved')}
+          onClick={() => void loadConnections()}
         >
-          <Database className="size-3.5 shrink-0 text-primary" />
-          <div className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-semibold">
-              {activeConnection?.name ?? t('connection.select')}
-            </span>
-            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
-              <span className={runtimeStatusDotClass(activeStatus)} />
-              <span className="truncate">
-                {activeConnection
-                  ? `${activeConnection.driverType} · ${runtimeStatusLabel(activeStatus, t)}`
-                  : t('connection.disconnected')}
-              </span>
-            </span>
-          </div>
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-        </button>
-        {activeConnection && (
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            title={connected ? t('connection.disconnect') : t('connection.connect')}
-            disabled={activeBusy}
-            onClick={toggleActiveConnection}
-          >
-            {activeBusy ? <Loader2 className="animate-spin" /> : connected ? <Unplug /> : <Link />}
-          </Button>
+          <RefreshCw />
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label={t('connection.dataSources')}>
+        {filteredGroups.map((group) => {
+          const isCollapsed = collapsed[group.id] === true
+          return (
+            <div key={group.id}>
+              <button
+                type="button"
+                className="flex h-6 w-full items-center gap-1 px-2 text-left text-[11px] font-medium text-muted-foreground hover:bg-muted/70"
+                aria-expanded={!isCollapsed}
+                onClick={() => setCollapsed((value) => ({ ...value, [group.id]: !value[group.id] }))}
+              >
+                {isCollapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}
+                <span className="min-w-0 flex-1 truncate">{highlightDataSourceMatch(group.name, query)}</span>
+                <span className="font-mono text-[10px] opacity-70">{group.connections.length}</span>
+              </button>
+              {!isCollapsed && group.connections.map((connection) => {
+                const status = statuses[connection.id]?.status ?? 'disconnected'
+                const busy = Boolean(busyConnectionIds[connection.id])
+                const connected = status === 'connected'
+                const selected = browsingConnectionId === connection.id
+                const expanded = expandedDataSourceIds[connection.id] === true
+                return (
+                  <div key={connection.id}>
+                    <div
+                      role="treeitem"
+                      tabIndex={0}
+                      aria-selected={selected}
+                      aria-expanded={expanded}
+                      className={[
+                        'group flex h-7 cursor-pointer items-center gap-1.5 px-2 pl-4 text-xs outline-none hover:bg-accent/75',
+                        selected ? 'bg-accent text-accent-foreground' : '',
+                      ].join(' ')}
+                      onClick={() => setActiveConnection(connection.id)}
+                      onDoubleClick={() => openBoundSql(connection)}
+                      onContextMenu={(event) => {
+                        event.preventDefault()
+                        setContextMenu({ connection, x: event.clientX, y: event.clientY })
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setActiveConnection(connection.id)
+                        }
+                      }}
+                      title={`${connection.name} · ${connection.driverType}`}
+                    >
+                      <button
+                        type="button"
+                        className="grid size-4 shrink-0 place-items-center rounded hover:bg-background/70"
+                        aria-label={expanded ? t('explorer.collapse') : t('explorer.expand')}
+                        aria-busy={busy}
+                        onClick={(event) => { event.stopPropagation(); void toggleDataSourceNode(connection) }}
+                      >
+                        {busy ? <Loader2 className="size-3 animate-spin" /> : expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+                      </button>
+                      <Database className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className={runtimeStatusDotClass(status)} aria-label={status} />
+                      <span className="min-w-0 flex-1 truncate">{highlightDataSourceMatch(connection.name, query)}</span>
+                      {favoriteDataSourceIds.includes(connection.id) && <Star className="size-3 shrink-0 fill-current text-amber-500" />}
+                      <button
+                        type="button"
+                        className="grid size-5 shrink-0 place-items-center rounded opacity-0 hover:bg-background/70 group-hover:opacity-100 focus:opacity-100"
+                        aria-label={connected ? t('connection.disconnect') : t('connection.connect')}
+                        disabled={busy}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          if (connected) requestDisconnect(connection)
+                          else void connectConnection(connection.id)
+                        }}
+                      >
+                        {busy ? <Loader2 className="size-3 animate-spin" /> : connected ? <Unplug className="size-3" /> : <Link className="size-3" />}
+                      </button>
+                    </div>
+                    {expanded && connected && <div className="border-l border-border/70 pl-2"><DatabaseTree connectionId={connection.id} compact /></div>}
+                    {expanded && status === 'failed' && <div className="px-7 py-1.5 text-[11px] text-destructive">{statuses[connection.id]?.message ?? t('explorer.loadFailed')}</div>}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+        {filteredGroups.length === 0 && (
+          <div className="px-3 py-3 text-center text-xs text-muted-foreground">{t('connection.noMatches')}</div>
         )}
       </div>
-    </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          actions={contextActions(contextMenu.connection)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+      {disconnectPrompt && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-label={t('connection.disconnect')}>
+          <div className="w-full max-w-sm rounded-lg border bg-card p-4 shadow-xl">
+            <div className="text-sm font-semibold">{t('connection.disconnect')}</div>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">{t('sessions.runningQueriesBlockDisconnect', { name: disconnectPrompt.name })}</p>
+            <div className="mt-3 grid gap-1">{tabs.filter((tab) => tab.connectionId === disconnectPrompt.id && tab.runningQueryId).map((tab) => <div key={tab.id} className="flex items-center gap-2 rounded border px-2 py-1.5 text-xs"><span className="min-w-0 flex-1 truncate">{tab.title}</span><Button type="button" size="xs" variant="secondary" onClick={() => tab.runningQueryId && void cancelRunningQuery(tab.id, disconnectPrompt.id, tab.runningQueryId)}>{t('editor.cancel')}</Button></div>)}</div>
+            <div className="mt-4 flex justify-end"><Button type="button" size="sm" variant="outline" onClick={() => setDisconnectPrompt(null)}>{t('common.close')}</Button></div>
+          </div>
+        </div>
+      )}
+    </section>
   )
+}
+
+function highlightDataSourceMatch(value: string, query: string): ReactNode {
+  const normalizedQuery = query.trim()
+  if (!normalizedQuery) return value
+  const index = value.toLocaleLowerCase().indexOf(normalizedQuery.toLocaleLowerCase())
+  if (index < 0) return value
+  return <>{value.slice(0, index)}<mark className="rounded bg-primary/25 px-0.5 text-inherit">{value.slice(index, index + normalizedQuery.length)}</mark>{value.slice(index + normalizedQuery.length)}</>
+}
+
+function orderGroupConnections(connections: ConnectionConfig[], favoriteIds: string[]) {
+  return [...connections].sort((left, right) => {
+    const favoriteDelta = Number(favoriteIds.includes(right.id)) - Number(favoriteIds.includes(left.id))
+    return favoriteDelta || left.name.localeCompare(right.name)
+  })
 }
 
 function DataSourcesSelectorPanel() {

@@ -1,6 +1,7 @@
 pub mod config;
 pub mod connection;
 pub mod contract;
+pub mod data_source_group;
 pub mod driver;
 pub mod export;
 pub mod health;

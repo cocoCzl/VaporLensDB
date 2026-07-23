@@ -10,11 +10,13 @@ interface IconTooltipButtonProps extends Omit<ComponentProps<typeof Button>, 'ch
 export function IconTooltipButton({ label, children, size = 'icon-sm', ...props }: IconTooltipButtonProps) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex" />}>
-        <Button type="button" size={size} aria-label={label} {...props}>
-          {children}
-        </Button>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <Button type="button" size={size} aria-label={label} {...props}>
+            {children}
+          </Button>
+        }
+      />
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   )

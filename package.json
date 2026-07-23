@@ -1,7 +1,7 @@
 {
   "name": "vapor-lens-db",
   "private": true,
-  "version": "0.7.1",
+  "version": "0.8.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,6 +20,8 @@
     "test:data-tab-pagination": "node scripts/data-tab-pagination-smoke.mjs",
     "test:sql-tab-large-result": "node scripts/sql-tab-large-result-smoke.mjs",
     "test:sql-editor-shortcut": "node scripts/sql-editor-shortcut-smoke.mjs",
+    "test:sql-execution-recall": "node scripts/sql-execution-recall-smoke.mjs",
+    "test:sql-records-connection-editor": "node scripts/sql-records-connection-editor-smoke.mjs",
     "test:explain-result": "node scripts/explain-result-smoke.mjs",
     "test:oracle-explain": "node scripts/oracle-explain-smoke.mjs",
     "test:oracle-blob": "node scripts/oracle-blob-smoke.mjs",
@@ -56,6 +58,8 @@
     "test:command-contracts": "node scripts/command-contract-smoke.mjs",
     "test:command-palette": "node scripts/command-palette-smoke.mjs",
     "test:ide-chrome": "node scripts/ide-chrome-smoke.mjs",
+    "test:database-create": "node scripts/database-create-smoke.mjs",
+    "test:workspace-capacity": "node scripts/workspace-capacity-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "build:app": "./build.sh",

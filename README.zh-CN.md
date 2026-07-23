@@ -6,7 +6,7 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 它帮助开发者与数据工程师连接数据库、浏览对象、执行 SQL 和查看结果，同时保持
 轻量、专注的工作体验。
 
-当前版本：**0.7.1**
+当前版本：**0.8.1**
 
 ## 下载
 
@@ -26,8 +26,9 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 - PostgreSQL、MySQL、SQLite、SQL Server：使用原生 Rust 驱动。
 - Oracle：使用用户本地提供的 `ojdbc` JAR。
 - 自定义 JDBC：使用用户提供的 JAR、驱动类和 JDBC URL。
-- 支持可搜索的对象浏览器、SQL 编辑器、紧凑的只读结果网格、查询历史、导入导出任务、
-  SSH 隧道、诊断包导出，以及中英文界面切换。
+- 支持按分组搜索的数据源浏览器、明确的连接状态，以及相互独立的 SQL 执行数据源。
+- 支持 SQL 草稿和查询历史、命令面板、紧凑的只读结果网格、导入导出任务、SSH 隧道、
+  诊断包导出，以及中英文界面切换。
 
 结果网格有意保持只读。ODBC 和完整可配置的危险 SQL 策略目前不在范围内。
 
@@ -36,8 +37,8 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 1. 从 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest)
    下载并安装 macOS 或 Windows 版本。
 2. 打开“新建连接”，选择数据库类型并填写连接信息，然后点击“测试”和“保存并连接”。
-3. 在对象浏览器中查看 Schema 和表，或新建 SQL 标签页执行查询；可在“设置”中切换
-   界面语言和主题。
+3. 在数据源浏览器中查看 Schema 和表，或新建 SQL 标签页执行查询。SQL 标签页会保持
+   自己的执行数据源，因此浏览其他连接不会改变执行目标；可在“设置”中切换界面语言和主题。
 
 Oracle 和自定义 JDBC 连接需要本地 JDBC 驱动 JAR，创建连接时应用会提示添加。
 
@@ -68,13 +69,10 @@ pnpm tauri dev
 
 ## 文档
 
-- [安装与首次使用](docs/INSTALL.zh-CN.md)
-- [打包与发布](docs/PACKAGING.zh-CN.md)
-- [参与贡献](CONTRIBUTING.md)
-- [安全策略](SECURITY.md)
-- [测试说明](docs/TESTING.md)
-- [JDBC 元数据 SQL](docs/JDBC_METADATA_SQL.md)
-- [产品与架构设计](docs/VaporLensDB-Design.md)
-- [技术选型](docs/VaporLensDB-Technical-Selection.md)
-
-产品需求文档作为项目历史保留在 `docs/` 目录中。
+- **使用者：**[安装与首次使用](docs/INSTALL.zh-CN.md)、
+  [变更记录](CHANGELOG.md)和[安全策略](SECURITY.md)。
+- **贡献者：**[参与贡献](CONTRIBUTING.md)、[测试说明](docs/TESTING.md)和
+  [打包与发布](docs/PACKAGING.zh-CN.md)。
+- **技术参考：**[JDBC 元数据 SQL](docs/JDBC_METADATA_SQL.md)、
+  [产品与架构设计](docs/VaporLensDB-Design.md)和
+  [技术选型](docs/VaporLensDB-Technical-Selection.md)。

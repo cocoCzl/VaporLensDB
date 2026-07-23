@@ -292,6 +292,7 @@ pub async fn validate_external_driver(
         driver_class: input.driver_class,
         driver_paths: input.driver_paths.unwrap_or_default(),
         ssl_mode: None,
+        group_id: None,
         group: None,
         color_tag: None,
         ssh_tunnel: None,

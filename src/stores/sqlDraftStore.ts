@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import i18n from '@/i18n'
 import {
   deleteSqlDraft,
+  clearSqlDrafts,
   listSqlDrafts,
   markSqlDraftClosed,
   upsertSqlDraft,
@@ -24,6 +25,7 @@ interface SqlDraftState {
   ) => Promise<SqlDraft | null>
   markClosed: (id: string) => Promise<void>
   removeDraft: (id: string) => Promise<void>
+  clear: () => Promise<void>
 }
 
 export interface SqlDraftSaveContext {
@@ -94,6 +96,15 @@ export const useSqlDraftStore = create<SqlDraftState>((set, get) => ({
       set((state) => ({ drafts: state.drafts.filter((draft) => draft.id !== id) }))
     } catch (error) {
       notifyError(error, i18n.t('notifications.deleteSqlDraftFailed'))
+    }
+  },
+  clear: async () => {
+    try {
+      await clearSqlDrafts()
+      set({ drafts: [] })
+    } catch (error) {
+      notifyError(error, i18n.t('notifications.deleteSqlDraftFailed'))
+      throw error
     }
   },
 }))

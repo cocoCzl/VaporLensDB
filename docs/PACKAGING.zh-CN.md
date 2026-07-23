@@ -87,8 +87,8 @@ src-tauri/target/release/bundle/nsis/*.exe
      Set-Content SHA256SUMS.txt
    ```
 
-5. 创建对应 Git tag 和 GitHub Release，上传安装包与 `SHA256SUMS.txt`，并说明用户可见的
-   变更和已知限制。
+5. 更新 `CHANGELOG.md`，创建对应 Git tag 和 GitHub Release，上传安装包与
+   `SHA256SUMS.txt`，并说明用户可见的变更和已知限制。
 6. 在发布前从草稿 Release 下载每个附件并再次校验其 SHA-256。
 
 在真正启用并验证签名或公证前，不要在 Release 中声称安装包已经签名或已公证。

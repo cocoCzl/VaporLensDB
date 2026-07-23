@@ -1,10 +1,10 @@
-import { Clipboard, Code2, RefreshCw, Table2 } from 'lucide-react'
+import { Clipboard, Code2, Copy, FolderInput, Link, Pencil, RefreshCw, Star, Table2, Trash2, Unplug } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 export interface ContextMenuAction {
   id: string
   label: string
-  icon: 'data' | 'ddl' | 'copy' | 'copyFull' | 'refresh'
+  icon: 'data' | 'ddl' | 'copy' | 'copyFull' | 'refresh' | 'connect' | 'disconnect' | 'edit' | 'duplicate' | 'move' | 'favorite' | 'delete'
   disabled?: boolean
   onSelect: () => void
 }
@@ -22,6 +22,13 @@ const ICONS = {
   copy: Clipboard,
   copyFull: Clipboard,
   refresh: RefreshCw,
+  connect: Link,
+  disconnect: Unplug,
+  edit: Pencil,
+  duplicate: Copy,
+  move: FolderInput,
+  favorite: Star,
+  delete: Trash2,
 }
 
 export function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {

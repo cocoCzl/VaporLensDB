@@ -1,4 +1,4 @@
-import { Check, Clock3, List, Pin, Plus, X } from 'lucide-react'
+import { Check, Clock3, History, List, Pin, Plus, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
@@ -10,13 +10,15 @@ import type { SqlDraft } from '@/types/sqlDraft'
 
 export function TabBar() {
   const { t } = useTranslation()
-  const { tabs, activeTabId, setActiveTab, addTab, closeTab, renameTab, setTabDraft, toggleTabPinned } = useEditorStore()
+  const { tabs, activeTabId, setActiveTab, addTab, closeTab, renameTab, setTabDraft, setRecordsConnectionFilter, toggleTabPinned } = useEditorStore()
   const connections = useConnectionStore((state) => state.connections)
+  const statuses = useConnectionStore((state) => state.statuses)
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
   const drafts = useSqlDraftStore((state) => state.drafts)
   const saveTabDraft = useSqlDraftStore((state) => state.saveTabDraft)
   const markDraftClosed = useSqlDraftStore((state) => state.markClosed)
+  const clearDrafts = useSqlDraftStore((state) => state.clear)
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [recentOpen, setRecentOpen] = useState(false)
@@ -25,6 +27,25 @@ export function TabBar() {
   const recentMenuRef = useRef<HTMLDivElement | null>(null)
   const tabListMenuRef = useRef<HTMLDivElement | null>(null)
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
+  const clearDraftTimer = useRef<number | null>(null)
+  const [confirmClearDrafts, setConfirmClearDrafts] = useState(false)
+
+  function resetClearDraftConfirmation() {
+    if (clearDraftTimer.current !== null) {
+      window.clearTimeout(clearDraftTimer.current)
+      clearDraftTimer.current = null
+    }
+    setConfirmClearDrafts(false)
+  }
+
+  function requestClearDrafts() {
+    if (confirmClearDrafts) {
+      void clearDrafts().finally(resetClearDraftConfirmation)
+      return
+    }
+    setConfirmClearDrafts(true)
+    clearDraftTimer.current = window.setTimeout(resetClearDraftConfirmation, 4_000)
+  }
 
   function createTab() {
     const connection = connections.find((item) => item.id === activeConnectionId)
@@ -34,6 +55,27 @@ export function TabBar() {
       title: connection ? `${connection.name} SQL` : `SQL ${nextSqlIndex(tabs.map((tab) => tab.title))}`,
       sql: '',
       connectionId: activeConnectionId,
+    })
+  }
+
+  function openRecordsWorkspace(kind: 'sqlScripts' | 'queryHistory') {
+    const activeTab = tabs.find((tab) => tab.id === activeTabId)
+    const connectionId = kind === 'queryHistory'
+      ? activeTab?.connectionId ?? activeConnectionId
+      : null
+    const existing = tabs.find((tab) => tab.kind === kind)
+    if (existing) {
+      setRecordsConnectionFilter(existing.id, connectionId)
+      setActiveTab(existing.id)
+      return
+    }
+    addTab({
+      id: crypto.randomUUID(),
+      kind,
+      title: kind === 'sqlScripts' ? t('sql.drafts') : t('sql.history'),
+      sql: '',
+      connectionId: null,
+      recordsConnectionFilter: connectionId,
     })
   }
 
@@ -94,12 +136,14 @@ export function TabBar() {
     function closeOnOutside(event: MouseEvent) {
       if (!recentMenuRef.current?.contains(event.target as Node)) {
         setRecentOpen(false)
+        resetClearDraftConfirmation()
       }
     }
 
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setRecentOpen(false)
+        resetClearDraftConfirmation()
       }
     }
 
@@ -110,6 +154,10 @@ export function TabBar() {
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [recentOpen])
+
+  useEffect(() => () => {
+    if (clearDraftTimer.current !== null) window.clearTimeout(clearDraftTimer.current)
+  }, [])
 
   useEffect(() => {
     if (!tabListOpen && !tabContextMenu) return
@@ -214,9 +262,9 @@ export function TabBar() {
                     <span
                       className={[
                         'size-1.5 shrink-0 rounded-full',
-                        connection ? 'bg-primary/75' : 'bg-muted-foreground/40',
+                        connectionStatusClass(connection ? statuses[connection.id]?.status ?? 'disconnected' : 'disconnected'),
                       ].join(' ')}
-                      title={connection?.name ?? t('connection.disconnected')}
+                      title={connection ? `${connection.name} · ${connectionStatusLabel(statuses[connection.id]?.status ?? 'disconnected', t)}` : t('connection.disconnected')}
                     />
                   )}
                   <span className="min-w-0 truncate">{tab.title}</span>
@@ -283,7 +331,7 @@ export function TabBar() {
                   setTabListOpen(false)
                 }}
               >
-                <span className={['size-1.5 rounded-full', tab.connectionId ? 'bg-primary/75' : 'bg-muted-foreground/40'].join(' ')} />
+                <span className={['size-1.5 rounded-full', connectionStatusClass(tab.connectionId ? statuses[tab.connectionId]?.status ?? 'disconnected' : 'disconnected')].join(' ')} />
                 <span className="min-w-0 flex-1 truncate">{tab.title}</span>
                 {tab.dirty && <span className="size-1.5 rounded-full bg-primary" title={t('sql.unsavedChanges')} />}
                 {tab.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" />}
@@ -310,8 +358,21 @@ export function TabBar() {
             role="menu"
             className="absolute right-0 top-9 z-[100] max-h-[70vh] w-80 overflow-auto rounded-lg border bg-card p-1 text-card-foreground shadow-xl"
           >
-            <div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">
-              {t('sql.recentScripts')}
+            <div className="flex items-center justify-between gap-2 px-1.5 py-1 text-xs font-medium text-muted-foreground">
+              <span>{t('sql.recentScripts')}</span>
+              {drafts.length > 0 && (
+                <button
+                  type="button"
+                  className={confirmClearDrafts
+                    ? 'grid size-6 place-items-center rounded text-destructive hover:bg-destructive/10'
+                    : 'grid size-6 place-items-center rounded hover:bg-muted hover:text-foreground'}
+                  title={confirmClearDrafts ? t('sql.confirmClearRecentScripts') : t('sql.clearRecentScripts')}
+                  aria-label={confirmClearDrafts ? t('sql.confirmClearRecentScripts') : t('sql.clearRecentScripts')}
+                  onClick={requestClearDrafts}
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              )}
             </div>
             <button
               type="button"
@@ -347,9 +408,26 @@ export function TabBar() {
                 </button>
               ))
             )}
+            <div className="-mx-1 mt-1 border-t px-1 pt-1">
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  setRecentOpen(false)
+                  openRecordsWorkspace('sqlScripts')
+                }}
+              >
+                <List className="size-3.5" />
+                {t('sql.showAllRecentScripts')}
+              </button>
+            </div>
           </div>
         )}
       </div>
+      <IconTooltipButton label={t('sql.history')} variant="ghost" onClick={() => openRecordsWorkspace('queryHistory')}>
+        <History />
+      </IconTooltipButton>
       {tabContextMenu && (() => {
         const tab = tabs.find((candidate) => candidate.id === tabContextMenu.tabId)
         if (!tab) return null
@@ -408,6 +486,20 @@ export function TabBar() {
       })()}
     </div>
   )
+}
+
+function connectionStatusClass(status: string) {
+  if (status === 'connected') return 'bg-emerald-500'
+  if (status === 'connecting') return 'bg-amber-500'
+  if (status === 'failed') return 'bg-destructive'
+  return 'bg-muted-foreground/40'
+}
+
+function connectionStatusLabel(status: string, t: ReturnType<typeof useTranslation>['t']) {
+  if (status === 'connected') return t('connection.connected')
+  if (status === 'connecting') return t('connection.connecting')
+  if (status === 'failed') return t('connection.failed')
+  return t('connection.disconnected')
 }
 
 function nextSqlIndex(titles: string[]) {

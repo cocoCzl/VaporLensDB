@@ -38,6 +38,7 @@ fn test_oracle_config() -> Option<(ConnectionConfig, String)> {
             ),
             driver_paths: vec![driver_path],
             ssl_mode: None,
+            group_id: None,
             group: None,
             color_tag: None,
             ssh_tunnel: None,
