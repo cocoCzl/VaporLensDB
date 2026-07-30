@@ -74,7 +74,7 @@ const tabBar = read('src/components/layout/TabBar.tsx')
 includesAll(
   tabBar,
   [
-    'connection?.name ??',
+    'connection ? `${connection.name} SQL` :',
     'renameTab',
     'restoreDraft',
     'closeEditorTab',
