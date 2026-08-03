@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { Input } from '@/components/ui/input'
+import { AppSelect } from '@/components/ui/app-select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { ConnectionConfig, DataSourceGroup } from '@/types/connection'
 import type { DatabaseInfo, SchemaInfo } from '@/types/metadata'
@@ -75,47 +76,32 @@ export function EditorToolbar({
           disabled={running}
           onChange={onConnectionChange}
         />
-        <select
-          className="ide-select hidden min-w-28 max-w-40 shrink-0 sm:block"
+        <AppSelect
+          className="hidden min-w-28 max-w-40 shrink-0 sm:flex"
           aria-label={t('metadata.database')}
           value={database ?? ''}
           disabled={!connectionId || databases.length === 0}
           title={t('editor.databaseSelectHint')}
-          onChange={(event) => onDatabaseChange?.(event.target.value || null)}
-        >
-          {!database && <option value="">{t('metadata.database')}</option>}
-          {databases.map((item) => (
-            <option key={item.name} value={item.name}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-        <select
-          className="ide-select hidden min-w-24 max-w-36 shrink-0 md:block"
+          onValueChange={(value) => onDatabaseChange?.(value || null)}
+          options={[...(!database ? [{ value: '', label: t('metadata.database') }] : []), ...databases.map((item) => ({ value: item.name, label: item.name }))]}
+        />
+        <AppSelect
+          className="hidden min-w-24 max-w-36 shrink-0 md:flex"
           aria-label={t('metadata.schema')}
           value={schema ?? ''}
           disabled={!connectionId || schemas.length === 0}
-          onChange={(event) => onSchemaChange?.(event.target.value || null)}
-        >
-          {!schema && <option value="">Schema</option>}
-          {schemas.map((item) => (
-            <option key={item.name} value={item.name}>
-              {item.name}
-            </option>
-          ))}
-        </select>
+          onValueChange={(value) => onSchemaChange?.(value || null)}
+          options={[...(!schema ? [{ value: '', label: 'Schema' }] : []), ...schemas.map((item) => ({ value: item.name, label: item.name }))]}
+        />
         <label className="flex shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 text-[11px] text-muted-foreground hover:border-border">
           <span className="hidden lg:inline">{t('editor.rowLimit')}</span>
-          <select
-            className="h-7 max-w-18 bg-transparent font-mono text-xs text-foreground outline-none"
+          <AppSelect
+            className="h-7 max-w-18 border-0 bg-transparent font-mono"
             aria-label={t('editor.rowLimit')}
-            value={maxRows}
-            onChange={(event) => onMaxRowsChange(Number(event.target.value))}
-          >
-            {[100, 500, 1000, 5000, 10000, 50000].map((value) => (
-              <option key={value} value={value}>{value.toLocaleString()}</option>
-            ))}
-          </select>
+            value={String(maxRows)}
+            onValueChange={(value) => onMaxRowsChange(Number(value))}
+            options={[100, 500, 1000, 5000, 10000, 50000].map((value) => ({ value: String(value), label: value.toLocaleString() }))}
+          />
         </label>
       </div>
 

@@ -39,6 +39,7 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
         connection_url: Some(connection_url),
         username: None,
         password_encrypted: None,
+        has_saved_password: false,
         driver_class: Some("org.h2.Driver".to_string()),
         driver_paths: vec![h2_jar.display().to_string()],
         ssl_mode: None,

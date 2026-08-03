@@ -32,6 +32,7 @@ fn test_oracle_config() -> Option<(ConnectionConfig, String)> {
             connection_url: Some(connection_url),
             username: Some(std::env::var("TEST_ORACLE_USER").unwrap_or_default()),
             password_encrypted: None,
+            has_saved_password: false,
             driver_class: Some(
                 std::env::var("TEST_ORACLE_JDBC_DRIVER_CLASS")
                     .unwrap_or_else(|_| "oracle.jdbc.OracleDriver".to_string()),

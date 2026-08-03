@@ -16,6 +16,8 @@ export interface ConnectionConfig {
   group?: string | null
   colorTag?: string | null
   sshTunnel?: SshTunnelConfig | null
+  /** Non-sensitive state for rendering the password toggle. */
+  hasSavedPassword?: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -50,6 +52,8 @@ export interface ConnectionInput {
   connectionUrl?: string | null
   username?: string | null
   password?: string | null
+  /** Persist the supplied password in encrypted system storage. Defaults to true. */
+  savePassword?: boolean
   driverClass?: string | null
   driverPaths?: string[]
   sslMode?: string | null

@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Database, Link, L
 import { useTranslation } from 'react-i18next'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
+import { AppSelect } from '@/components/ui/app-select'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig } from '@/types/connection'
 
@@ -102,22 +103,18 @@ export function ConnectionList({
       {managerMode && selectedConnectionIds.length > 0 && (
         <div className="flex h-10 shrink-0 items-center gap-2 border-b bg-muted/30 px-4 text-xs">
           <span className="min-w-0 flex-1 truncate font-medium">{t('connection.selectedCount', { count: selectedConnectionIds.length })}</span>
-          <select
-            className="ide-select h-7 max-w-52 text-xs"
-            defaultValue=""
+          <AppSelect
+            className="h-7 max-w-52"
+            value=""
             aria-label={t('connection.moveToGroup')}
-            onChange={(event) => {
-              const value = event.target.value || null
-              if (event.target.value === '') return
+            onValueChange={(selectedValue) => {
+              const value = selectedValue || null
+              if (!selectedValue) return
               void Promise.all(selectedConnectionIds.map((id) => moveConnectionToGroup(id, value === '__ungrouped__' ? null : value)))
                 .then(() => setSelectedConnectionIds([]))
-              event.currentTarget.value = ''
             }}
-          >
-            <option value="" disabled>{t('connection.moveToGroup')}</option>
-            <option value="__ungrouped__">{t('connection.ungrouped')}</option>
-            {dataSourceGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-          </select>
+            options={[{ value: '', label: t('connection.moveToGroup'), disabled: true }, { value: '__ungrouped__', label: t('connection.ungrouped') }, ...dataSourceGroups.map((group) => ({ value: group.id, label: group.name }))]}
+          />
           <IconTooltipButton
             size="icon-xs"
             label={selectedConnectionIds.every((id) => favoriteDataSourceIds.includes(id))
@@ -160,15 +157,8 @@ export function ConnectionList({
             aria-label={t('connection.searchDataSources')}
             onChange={(event) => setManagerSearch(event.target.value)}
           />
-          <select className="ide-select h-8 text-xs" value={managerDriver} onChange={(event) => setManagerDriver(event.target.value)}>
-            <option value="all">{t('connectionForm.driver')}</option>
-            {[...new Set(connections.map((connection) => connection.driverType))].sort().map((driver) => <option key={driver} value={driver}>{driver}</option>)}
-          </select>
-          <select className="ide-select h-8 text-xs" value={managerGroup} onChange={(event) => setManagerGroup(event.target.value)}>
-            <option value="all">{t('connectionForm.group')}</option>
-            <option value="__ungrouped__">{t('connection.ungrouped')}</option>
-            {dataSourceGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-          </select>
+          <AppSelect className="h-8" value={managerDriver} onValueChange={setManagerDriver} options={[{ value: 'all', label: t('connectionForm.driver') }, ...[...new Set(connections.map((connection) => connection.driverType))].sort().map((driver) => ({ value: driver, label: driver }))]} />
+          <AppSelect className="h-8" value={managerGroup} onValueChange={setManagerGroup} options={[{ value: 'all', label: t('connectionForm.group') }, { value: '__ungrouped__', label: t('connection.ungrouped') }, ...dataSourceGroups.map((group) => ({ value: group.id, label: group.name }))]} />
         </div>
       )}
 
@@ -258,7 +248,7 @@ export function ConnectionList({
                           label={t('connection.edit')}
                           variant="ghost"
                           onClick={() => {
-                            const name = window.prompt(t('connectionForm.newGroupPlaceholder'), dataSourceGroup.name)
+                            const name = window.prompt(t('connectionForm.groupNamePlaceholder'), dataSourceGroup.name)
                             if (name?.trim() && name.trim() !== dataSourceGroup.name) {
                               void renameGroup(dataSourceGroup.id, name.trim())
                             }

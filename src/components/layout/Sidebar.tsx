@@ -25,6 +25,7 @@ import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { AppSelect } from '@/components/ui/app-select'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { useQuery } from '@/hooks/useQuery'
 import { useConnectionStore } from '@/stores/connectionStore'
@@ -1035,34 +1036,23 @@ export function SqlWorkspacePanel() {
               <span className="text-[10px] font-medium uppercase text-muted-foreground">
                 {t('sql.historyStatusFilter')}
               </span>
-              <select
-                className="ide-select h-7 text-xs"
+              <AppSelect
+                className="h-7"
                 value={historyStatusFilter}
-                onChange={(event) =>
-                  setHistoryStatusFilter(event.target.value as 'all' | QueryHistoryStatus)
-                }
-              >
-                <option value="all">{t('sql.historyFilterAll')}</option>
-                <option value="success">{t('sql.historyFilterSuccess')}</option>
-                <option value="failed">{t('sql.historyFilterFailed')}</option>
-              </select>
+                onValueChange={(value) => setHistoryStatusFilter(value as 'all' | QueryHistoryStatus)}
+                options={[{ value: 'all', label: t('sql.historyFilterAll') }, { value: 'success', label: t('sql.historyFilterSuccess') }, { value: 'failed', label: t('sql.historyFilterFailed') }]}
+              />
             </label>
             <label className="grid gap-1">
               <span className="text-[10px] font-medium uppercase text-muted-foreground">
                 {t('sql.historyConnectionFilter')}
               </span>
-              <select
-                className="ide-select h-7 text-xs"
+              <AppSelect
+                className="h-7"
                 value={historyConnectionFilter}
-                onChange={(event) => setHistoryConnectionFilter(event.target.value)}
-              >
-                <option value="all">{t('sql.historyFilterAllConnections')}</option>
-                {historyConnectionOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
+                onValueChange={setHistoryConnectionFilter}
+                options={[{ value: 'all', label: t('sql.historyFilterAllConnections') }, ...historyConnectionOptions.map((option) => ({ value: option.id, label: option.name }))]}
+              />
             </label>
           </div>
           {history.length === 0 ? (

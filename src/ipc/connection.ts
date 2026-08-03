@@ -22,8 +22,8 @@ export function testConnection(input: ConnectionInput) {
   return invokeCommand<void>(COMMANDS.testConnection, { input })
 }
 
-export function connect(id: string) {
-  return invokeCommand<ConnectionStatus>(COMMANDS.connect, { id })
+export function connect(id: string, password?: string | null) {
+  return invokeCommand<ConnectionStatus>(COMMANDS.connect, { id, password: password || null })
 }
 
 export function disconnect(id: string) {

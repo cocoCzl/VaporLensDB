@@ -260,6 +260,7 @@ fn jdbc_config(live: JdbcLiveConfig) -> Option<(ConnectionConfig, String)> {
             connection_url: Some(std::env::var(live.url_env).ok()?),
             username: Some(std::env::var(live.user_env).unwrap_or_default()),
             password_encrypted: None,
+            has_saved_password: false,
             driver_class: Some(live.driver_class.to_string()),
             driver_paths: vec![std::env::var(live.path_env).ok()?],
             ssl_mode: None,

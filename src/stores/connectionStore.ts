@@ -49,7 +49,7 @@ interface ConnectionState {
   saveConnection: (input: ConnectionInput) => Promise<ConnectionConfig>
   removeConnection: (id: string) => Promise<void>
   testConnectionInput: (input: ConnectionInput) => Promise<void>
-  connectConnection: (id: string, options?: { selectForBrowsing?: boolean }) => Promise<void>
+  connectConnection: (id: string, options?: { selectForBrowsing?: boolean; password?: string | null }) => Promise<void>
   disconnectConnection: (id: string) => Promise<void>
   setConnections: (connections: ConnectionConfig[]) => void
   setActiveConnection: (id: string | null) => void
@@ -246,7 +246,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       error: null,
     }))
     try {
-      const status = await connect(id)
+      const status = await connect(id, options.password)
       useMetadataStore.getState().clearConnection(id)
       set((state) => ({
         statuses: { ...state.statuses, [id]: status },

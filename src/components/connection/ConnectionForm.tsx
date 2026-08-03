@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, Database, Download, PlugZap } from 'lucide
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { AppSelect } from '@/components/ui/app-select'
 import { normalizeAppError } from '@/ipc/client'
 import { openExternalUrl } from '@/lib/openExternalUrl'
 import { useConnectionStore } from '@/stores/connectionStore'
@@ -19,7 +20,6 @@ type ConnectionVariantOption = {
 }
 
 const ORACLE_JDBC_DOWNLOAD_URL = 'https://www.oracle.com/database/technologies/appdev/jdbc-downloads.html'
-const NEW_GROUP_VALUE = '__new_group__'
 
 interface ConnectionFormProps {
   connection?: ConnectionConfig | null
@@ -58,6 +58,7 @@ export function ConnectionForm({
     connectionUrl: connection?.connectionUrl ?? '',
     username: connection?.username ?? 'postgres',
     password: '',
+    savePassword: connection?.hasSavedPassword ?? true,
     driverClass: connection?.driverClass ?? '',
     driverPaths: connection?.driverPaths ?? [],
     sslMode: connection?.sslMode ?? '',
@@ -81,7 +82,6 @@ export function ConnectionForm({
   })
   const [message, setMessage] = useState<string | null>(null)
   const [groupSelection, setGroupSelection] = useState(connection?.groupId ?? '')
-  const [newGroupName, setNewGroupName] = useState('')
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
     defaultConnectionVariant(connection?.driverType ?? 'postgres'),
   )
@@ -105,7 +105,7 @@ export function ConnectionForm({
     ? connectionVariant
     : driverProfile.connectionVariants[0].id
 
-  const update = (key: keyof ConnectionInput, value: string | number | string[] | null) => {
+  const update = (key: keyof ConnectionInput, value: string | number | string[] | boolean | null) => {
     onDirtyChange?.(true)
     setForm((current) => ({ ...current, [key]: value }))
   }
@@ -154,19 +154,14 @@ export function ConnectionForm({
     }))
   }
 
-  const selectedGroup = groupSelection === NEW_GROUP_VALUE
-    ? newGroupName
-    : dataSourceGroups.find((group) => group.id === groupSelection)?.name ?? ''
+  const selectedGroup = dataSourceGroups.find((group) => group.id === groupSelection)?.name ?? ''
   const normalizedForm = () => normalizeInput({
     ...form,
-    groupId: groupSelection && groupSelection !== NEW_GROUP_VALUE ? groupSelection : null,
+    groupId: groupSelection || null,
     group: selectedGroup.trim() || null,
   }, activeConnectionVariant, driverProfile, selectedDriver)
 
   const validate = (requireExternalDriver: boolean) => {
-    if (groupSelection === NEW_GROUP_VALUE && !newGroupName.trim()) {
-      return t('connectionForm.validation.groupRequired')
-    }
     return validateRequiredFields(form, activeConnectionVariant, {
       requireExternalDriver,
       profile: driverProfile,
@@ -177,11 +172,6 @@ export function ConnectionForm({
   const selectGroup = (value: string) => {
     onDirtyChange?.(true)
     setGroupSelection(value)
-    if (value === NEW_GROUP_VALUE) {
-      update('group', '')
-      return
-    }
-    setNewGroupName('')
     update('group', dataSourceGroups.find((group) => group.id === value)?.name ?? '')
   }
 
@@ -229,7 +219,7 @@ export function ConnectionForm({
     <form
       className={layout === 'panel'
         ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
-        : 'grid min-h-[560px] grid-cols-[240px_1fr] overflow-hidden rounded-md border'}
+        : 'grid h-full min-h-0 grid-cols-[240px_minmax(0,1fr)] overflow-hidden rounded-md border'}
       autoComplete="off"
       onSubmit={submit}
     >
@@ -257,26 +247,18 @@ export function ConnectionForm({
           />
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-5 [scrollbar-gutter:stable]">
           <div className="mx-auto grid max-w-4xl gap-3">
             <>
                 <FormRow label={t('connectionForm.driver')}>
                   <div className="grid gap-2">
                   <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                    <select
+                    <AppSelect
                       id="driver-type"
-                      className="ide-input"
                       value={selectedDriver?.id ?? form.driverType}
-                      onChange={(event) => changeDriver(event.target.value)}
-                    >
-                      {selectableDrivers.map((driver) => (
-                        <option key={driver.id} value={driver.id} disabled={driver.status === 'planned'}>
-                          {driver.name}
-                          {!driver.builtIn ? ` (${t('connectionForm.custom')})` : ''}
-                          {driver.status === 'planned' ? ` (${t('connectionForm.planned')})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      onValueChange={changeDriver}
+                      options={selectableDrivers.map((driver) => ({ value: driver.id, disabled: driver.status === 'planned', label: `${driver.name}${!driver.builtIn ? ` (${t('connectionForm.custom')})` : ''}${driver.status === 'planned' ? ` (${t('connectionForm.planned')})` : ''}` }))}
+                    />
                     <span className="inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs text-muted-foreground">
                       {driverStatusLabel(driverStatus, t)}
                     </span>
@@ -328,9 +310,7 @@ export function ConnectionForm({
                 )}
 
                 <FormRow label={t('connectionForm.authentication')}>
-                  <select className="ide-input">
-                    <option>{t('connectionForm.userPassword')}</option>
-                  </select>
+                  <AppSelect value="userPassword" disabled onValueChange={() => undefined} options={[{ value: 'userPassword', label: t('connectionForm.userPassword') }]} />
                 </FormRow>
 
                 <FormRow label={t('connectionForm.user')}>
@@ -344,7 +324,7 @@ export function ConnectionForm({
                 </FormRow>
 
                 <FormRow label={t('connectionForm.password')}>
-                  <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
+                  <div className="grid gap-2">
                     <Input
                       id="connection-password"
                       type="password"
@@ -353,12 +333,17 @@ export function ConnectionForm({
                       disableTextAssistance
                       onChange={(event) => update('password', event.target.value)}
                     />
-                    <Label className="self-center text-right text-sm">{t('connectionForm.savePassword')}</Label>
-                    <select className="ide-input" defaultValue="secure">
-                      <option value="none">{t('connectionForm.doNotSave')}</option>
-                      <option value="session">{t('connectionForm.sessionOnly')}</option>
-                      <option value="secure">{t('connectionForm.secureStorage')}</option>
-                    </select>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        className="h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted p-0.5 transition-colors checked:bg-primary before:block before:size-3 before:rounded-full before:bg-card before:transition-transform checked:before:translate-x-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                        checked={form.savePassword ?? true}
+                        onChange={(event) => update('savePassword', event.target.checked)}
+                      />
+                      <span>{t('connectionForm.savePassword')}</span>
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">{t('connectionForm.savePasswordHint')}</p>
                   </div>
                 </FormRow>
 
@@ -424,36 +409,12 @@ export function ConnectionForm({
 
                 <FormRow label={t('connectionForm.group')}>
                   <div className="grid gap-2">
-                    <select
+                    <AppSelect
                       id="connection-group"
-                      className="ide-input"
                       value={groupSelection}
-                      onChange={(event) => selectGroup(event.target.value)}
-                    >
-                      <option value="">{t('connectionForm.ungrouped')}</option>
-                      {dataSourceGroups.map((group) => (
-                        <option key={group.id} value={group.id}>{group.name}</option>
-                      ))}
-                      <option value={NEW_GROUP_VALUE}>{t('connectionForm.newGroup')}</option>
-                    </select>
-                    {groupSelection === NEW_GROUP_VALUE && (
-                      <div className="grid gap-1.5">
-                        <Input
-                          id="connection-new-group"
-                          value={newGroupName}
-                          placeholder={t('connectionForm.newGroupPlaceholder')}
-                          disableTextAssistance
-                          autoFocus
-                          onChange={(event) => {
-                            onDirtyChange?.(true)
-                            setNewGroupName(event.target.value)
-                          }}
-                        />
-                        <p className="text-[11px] leading-4 text-muted-foreground">
-                          {t('connectionForm.newGroupHint')}
-                        </p>
-                      </div>
-                    )}
+                      onValueChange={selectGroup}
+                      options={[{ value: '', label: t('connectionForm.ungrouped') }, ...dataSourceGroups.map((group) => ({ value: group.id, label: group.name }))]}
+                    />
                   </div>
                 </FormRow>
 
@@ -461,18 +422,11 @@ export function ConnectionForm({
                   <summary className="cursor-pointer text-sm font-medium">{t('connectionForm.advanced')}</summary>
                   <div className="mt-3 grid gap-3">
                     <FormRow label={t('connectionForm.sslMode')}>
-                      <select
-                        className="ide-input"
+                      <AppSelect
                         value={form.sslMode ?? ''}
-                        onChange={(event) => update('sslMode', event.target.value || null)}
-                      >
-                        <option value="">{t('common.default')}</option>
-                        <option value="disable">disable</option>
-                        <option value="prefer">prefer</option>
-                        <option value="require">require</option>
-                        <option value="verify-ca">verify-ca</option>
-                        <option value="verify-full">verify-full</option>
-                      </select>
+                        onValueChange={(value) => update('sslMode', value || null)}
+                        options={['', 'disable', 'prefer', 'require', 'verify-ca', 'verify-full'].map((value) => ({ value, label: value || t('common.default') }))}
+                      />
                     </FormRow>
 
                     <FormRow label={t('connectionForm.sshTunnel')}>
@@ -515,14 +469,11 @@ export function ConnectionForm({
                           />
                         </FormRow>
                         <FormRow label={t('connectionForm.sshAuth')}>
-                          <select
-                            className="ide-input"
+                          <AppSelect
                             value={form.sshTunnel.authMethod}
-                            onChange={(event) => updateSshTunnel('authMethod', event.target.value)}
-                          >
-                            <option value="privateKey">Private key</option>
-                            <option value="password">Password</option>
-                          </select>
+                            onValueChange={(value) => updateSshTunnel('authMethod', value)}
+                            options={[{ value: 'privateKey', label: 'Private key' }, { value: 'password', label: 'Password' }]}
+                          />
                         </FormRow>
                         {form.sshTunnel.authMethod === 'password' ? (
                           <FormRow label={t('connectionForm.sshPassword')}>

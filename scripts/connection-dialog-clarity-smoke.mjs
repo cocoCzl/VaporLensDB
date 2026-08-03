@@ -61,10 +61,11 @@ includesAll(
     "h-[min(47rem,calc(100vh-4rem))]",
     'data-open:animate-none',
     'data-closed:animate-none',
-    'min-h-0 flex-1 overflow-auto p-4',
+    'min-h-0 flex-1 overflow-hidden',
   ],
   'connection dialog stable opening layout',
 )
+includesAll(form, ['overflow-y-auto overflow-x-hidden', '[scrollbar-gutter:stable]'], 'connection dialog single stable scroll region')
 assert(!dialog.includes('if (open) {\n      loadDrivers()'), 'driver catalogue must not first load only after the dialog opens')
 
 const packageJson = read('package.json')

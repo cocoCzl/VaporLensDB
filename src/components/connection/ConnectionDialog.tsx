@@ -85,10 +85,7 @@ export function ConnectionDialog({
                 <X />
               </Button>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-auto p-4">
-              <p className="mb-4 text-xs text-muted-foreground">
-                {t('connection.driverHelp')}
-              </p>
+        <div className="min-h-0 flex-1 overflow-hidden">
               <ConnectionForm
                 connection={connection}
                 driverDefinitions={drivers}
@@ -101,7 +98,7 @@ export function ConnectionDialog({
                 }}
                 onSaveAndConnect={async (input) => {
                   const saved = await saveConnection(input)
-                  await connectConnection(saved.id)
+                  await connectConnection(saved.id, { password: input.savePassword ? null : input.password })
                   setOpen(false)
                 }}
               />

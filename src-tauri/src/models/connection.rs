@@ -18,6 +18,9 @@ pub struct ConnectionConfig {
     pub username: Option<String>,
     #[serde(skip_serializing)]
     pub password_encrypted: Option<String>,
+    /// Indicates password availability without ever exposing its value.
+    #[serde(skip_deserializing)]
+    pub has_saved_password: bool,
     pub driver_class: Option<String>,
     pub driver_paths: Vec<String>,
     pub ssl_mode: Option<String>,

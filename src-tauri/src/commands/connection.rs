@@ -24,6 +24,8 @@ pub struct ConnectionInput {
     pub connection_url: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    #[serde(default = "default_save_password")]
+    pub save_password: bool,
     pub driver_class: Option<String>,
     pub driver_paths: Option<Vec<String>>,
     pub ssl_mode: Option<String>,
@@ -55,10 +57,11 @@ pub fn create_connection(
     input: ConnectionInput,
 ) -> Result<ConnectionConfig, String> {
     let password = input.password.clone();
+    let save_password = input.save_password;
     let config = input_to_config(input, Uuid::new_v4());
     state
         .config_store
-        .create_connection(config, password)
+        .create_connection(config, password, save_password)
         .map_err(Into::into)
 }
 
@@ -71,10 +74,11 @@ pub fn update_connection(
         .id
         .ok_or_else(|| "connection id is required".to_string())?;
     let password = input.password.clone();
+    let save_password = input.save_password;
     let config = input_to_config(input, id);
     state
         .config_store
-        .update_connection(config, password)
+        .update_connection(config, password, save_password)
         .map_err(Into::into)
 }
 
@@ -115,16 +119,16 @@ pub async fn test_connection(
 }
 
 #[tauri::command]
-pub async fn connect(state: State<'_, AppState>, id: Uuid) -> Result<ConnectionStatus, String> {
+pub async fn connect(state: State<'_, AppState>, id: Uuid, password: Option<String>) -> Result<ConnectionStatus, String> {
     let config = state
         .config_store
         .get_connection(id)
         .map_err(String::from)?
         .ok_or_else(|| format!("connection not found: {id}"))?;
-    let password = state
-        .config_store
-        .decrypt_password(&config)
-        .map_err(String::from)?;
+    let password = match password.filter(|value| !value.is_empty()) {
+        Some(password) => Some(password),
+        None => state.config_store.decrypt_password(&config).map_err(String::from)?,
+    };
 
     state.metadata_service.clear_connection(id).await;
     state.metadata_index.clear_connection(id).await;
@@ -215,6 +219,7 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
         connection_url: input.connection_url,
         username: input.username,
         password_encrypted: None,
+        has_saved_password: false,
         driver_class: input.driver_class,
         driver_paths: input.driver_paths.unwrap_or_default(),
         ssl_mode: input.ssl_mode,
@@ -226,6 +231,8 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
         updated_at: now,
     }
 }
+
+fn default_save_password() -> bool { true }
 
 fn input_to_ssh_tunnel(input: SshTunnelInput) -> Option<SshTunnelConfig> {
     if !input.enabled {

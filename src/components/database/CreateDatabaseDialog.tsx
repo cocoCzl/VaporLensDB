@@ -5,6 +5,7 @@ import { executeQuery } from '@/ipc/query'
 import { normalizeAppError } from '@/ipc/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { AppSelect } from '@/components/ui/app-select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useMetadataStore } from '@/stores/metadataStore'
@@ -162,10 +163,7 @@ const POSTGRES_TABLESPACES = ['pg_default', 'pg_global']
 
 function OptionField({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[] }) {
   return <label className="grid gap-1 text-[11px] text-muted-foreground">{label}
-    <select className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground" value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">—</option>
-      {options.map((option) => <option key={option} value={option}>{option}</option>)}
-    </select>
+    <AppSelect className="h-8" value={value} onValueChange={onChange} options={[{ value: '', label: '—' }, ...options.map((option) => ({ value: option, label: option }))]} />
   </label>
 }
 

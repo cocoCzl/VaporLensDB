@@ -63,7 +63,7 @@ export function ConnectionEditorPanel({ connection, isNew = false, onNew, onCanc
           }}
           onSaveAndConnect={async (input) => {
             const saved = await saveConnection(input)
-            await connectConnection(saved.id, { selectForBrowsing: false })
+            await connectConnection(saved.id, { selectForBrowsing: false, password: input.savePassword ? null : input.password })
             onSaved(saved)
           }}
         />

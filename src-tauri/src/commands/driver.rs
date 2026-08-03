@@ -289,6 +289,7 @@ pub async fn validate_external_driver(
         connection_url: input.connection_url,
         username: None,
         password_encrypted: None,
+        has_saved_password: false,
         driver_class: input.driver_class,
         driver_paths: input.driver_paths.unwrap_or_default(),
         ssl_mode: None,

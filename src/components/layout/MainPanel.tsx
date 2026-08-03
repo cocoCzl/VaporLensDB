@@ -13,6 +13,7 @@ import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPane
 import { SettingsWorkspacePanel } from '@/components/settings/SettingsWorkspacePanel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { AppSelect } from '@/components/ui/app-select'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 import { useQuery } from '@/hooks/useQuery'
@@ -975,25 +976,10 @@ function SqlRecordsWorkspace({ mode, connections, initialConnectionFilter, onOpe
     <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
       <div className="min-w-0 flex-1"><h1 className="text-sm font-semibold">{mode === 'scripts' ? t('sql.drafts') : t('sql.history')}</h1><p className="text-[11px] text-muted-foreground">{entries.length}</p></div>
       <Input className="h-8 w-56 text-xs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('connection.searchDataSources')} />
-      <select className="ide-select h-8 max-w-44 text-xs" value={connectionFilter} onChange={(event) => setConnectionFilter(event.target.value)}>
-        <option value="all">{t('sql.historyFilterAllConnections')}</option>
-        {[...new Map(entries.filter((entry) => Boolean(entry.connectionId)).map((entry) => [entry.connectionId ?? '', entry.connectionNameSnapshot ?? entry.connectionId ?? ''])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-      </select>
-      {mode === 'history' && <select className="ide-select h-8 max-w-28 text-xs" aria-label={t('sql.historyStatusFilter')} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | QueryHistoryStatus)}>
-        <option value="all">{t('sql.historyFilterAll')}</option>
-        <option value="success">{t('sql.historyFilterSuccess')}</option>
-        <option value="failed">{t('sql.historyFilterFailed')}</option>
-      </select>}
-      <select className="ide-select h-8 max-w-28 text-xs" aria-label={t('sql.timeRange')} value={timeRange} onChange={(event) => setTimeRange(event.target.value as 'all' | 'day' | 'week' | 'month')}>
-        <option value="all">{t('sql.timeAll')}</option>
-        <option value="day">{t('sql.timeDay')}</option>
-        <option value="week">{t('sql.timeWeek')}</option>
-        <option value="month">{t('sql.timeMonth')}</option>
-      </select>
-      <select className="ide-select h-8 max-w-28 text-xs" aria-label={t('sql.sortByTime')} value={sortDirection} onChange={(event) => setSortDirection(event.target.value as 'newest' | 'oldest')}>
-        <option value="newest">{t('sql.sortNewest')}</option>
-        <option value="oldest">{t('sql.sortOldest')}</option>
-      </select>
+      <AppSelect className="h-8 max-w-44" value={connectionFilter} onValueChange={setConnectionFilter} options={[{ value: 'all', label: t('sql.historyFilterAllConnections') }, ...[...new Map(entries.filter((entry) => Boolean(entry.connectionId)).map((entry) => [entry.connectionId ?? '', entry.connectionNameSnapshot ?? entry.connectionId ?? ''])).entries()].map(([id, name]) => ({ value: id, label: name }))]} />
+      {mode === 'history' ? <AppSelect className="h-8 max-w-28" aria-label={t('sql.historyStatusFilter')} value={statusFilter} onValueChange={(value) => setStatusFilter(value as 'all' | QueryHistoryStatus)} options={[{ value: 'all', label: t('sql.historyFilterAll') }, { value: 'success', label: t('sql.historyFilterSuccess') }, { value: 'failed', label: t('sql.historyFilterFailed') }]} /> : null}
+      <AppSelect className="h-8 max-w-28" aria-label={t('sql.timeRange')} value={timeRange} onValueChange={(value) => setTimeRange(value as 'all' | 'day' | 'week' | 'month')} options={[{ value: 'all', label: t('sql.timeAll') }, { value: 'day', label: t('sql.timeDay') }, { value: 'week', label: t('sql.timeWeek') }, { value: 'month', label: t('sql.timeMonth') }]} />
+      <AppSelect className="h-8 max-w-28" aria-label={t('sql.sortByTime')} value={sortDirection} onValueChange={(value) => setSortDirection(value as 'newest' | 'oldest')} options={[{ value: 'newest', label: t('sql.sortNewest') }, { value: 'oldest', label: t('sql.sortOldest') }]} />
     </header>
     <div className="min-h-0 flex-1 overflow-auto p-3">
       <div className="mx-auto max-w-5xl divide-y rounded-md border bg-card">
@@ -1083,7 +1069,7 @@ function DataSourcesManagementPanel() {
                 autoFocus
                 className="h-8 text-xs"
                 value={groupName}
-                placeholder={t('connectionForm.newGroupPlaceholder')}
+                placeholder={t('connectionForm.groupNamePlaceholder')}
                 onChange={(event) => setGroupName(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void addGroup()
@@ -1199,27 +1185,18 @@ function SqlHistoryPanel({
         </Button>
       </div>
       <div className="grid grid-cols-2 gap-2 border-b p-2">
-        <select
-          className="ide-select h-7 text-xs"
+        <AppSelect
+          className="h-7"
           value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value as 'all' | QueryHistoryStatus)}
-        >
-          <option value="all">{t('workbench.allStatus')}</option>
-          <option value="success">{t('workbench.queryStatus.success')}</option>
-          <option value="failed">{t('workbench.queryStatus.failed')}</option>
-        </select>
-        <select
-          className="ide-select h-7 text-xs"
+          onValueChange={(value) => setStatusFilter(value as 'all' | QueryHistoryStatus)}
+          options={[{ value: 'all', label: t('workbench.allStatus') }, { value: 'success', label: t('workbench.queryStatus.success') }, { value: 'failed', label: t('workbench.queryStatus.failed') }]}
+        />
+        <AppSelect
+          className="h-7"
           value={connectionFilter}
-          onChange={(event) => setConnectionFilter(event.target.value)}
-        >
-          <option value="all">{t('sql.historyFilterAllConnections')}</option>
-          {connectionOptions.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.name}
-            </option>
-          ))}
-        </select>
+          onValueChange={setConnectionFilter}
+          options={[{ value: 'all', label: t('sql.historyFilterAllConnections') }, ...connectionOptions.map((option) => ({ value: option.id, label: option.name }))]}
+        />
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {filtered.length === 0 ? (
@@ -1589,18 +1566,12 @@ function DataTabPanel({
           <Button type="button" size="xs" variant="secondary" disabled={running} onClick={applyWhere}>
             {t('workbench.applyFilter')}
           </Button>
-          <select
-            className="ide-select h-7 min-w-32"
+          <AppSelect
+            className="h-7 min-w-32"
             value={tab.dataContext.sortColumn ?? ''}
-            onChange={(event) => changeSort(event.target.value || null)}
-          >
-            <option value="">{t('workbench.sort')}</option>
-            {displayResult?.columns.map((column) => (
-              <option key={column.name} value={column.name}>
-                {column.name}
-              </option>
-            ))}
-          </select>
+            onValueChange={(value) => changeSort(value || null)}
+            options={[{ value: '', label: t('workbench.sort') }, ...(displayResult?.columns.map((column) => ({ value: column.name, label: column.name })) ?? [])]}
+          />
           <Button
             type="button"
             size="icon-xs"

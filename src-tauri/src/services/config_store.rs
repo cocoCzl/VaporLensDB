@@ -133,16 +133,19 @@ impl ConfigStore {
         &self,
         mut config: ConnectionConfig,
         password: Option<String>,
+        save_password: bool,
     ) -> Result<ConnectionConfig, AppError> {
         self.resolve_group_reference(&mut config)?;
         let now = Utc::now();
         config.created_at = now;
         config.updated_at = now;
-        config.password_encrypted = password
+        config.password_encrypted = save_password.then_some(password)
+            .flatten()
             .as_deref()
             .filter(|value| !value.is_empty())
             .map(|value| crypto::encrypt_password(&self.config_dir, value))
             .transpose()?;
+        config.has_saved_password = config.password_encrypted.is_some();
         encrypt_ssh_tunnel_secrets(&self.config_dir, &mut config, None)?;
 
         self.conn()?.execute(
@@ -165,6 +168,7 @@ impl ConfigStore {
         &self,
         mut config: ConnectionConfig,
         password: Option<String>,
+        save_password: bool,
     ) -> Result<ConnectionConfig, AppError> {
         let existing = self
             .get_connection(config.id)?
@@ -176,12 +180,15 @@ impl ConfigStore {
         self.resolve_group_reference(&mut config)?;
         config.created_at = existing.created_at;
         config.updated_at = Utc::now();
-        config.password_encrypted = match password {
+        config.password_encrypted = if !save_password {
+            None
+        } else { match password {
             Some(password) if !password.is_empty() => {
                 Some(crypto::encrypt_password(&self.config_dir, &password)?)
             }
             _ => existing.password_encrypted,
-        };
+        }};
+        config.has_saved_password = config.password_encrypted.is_some();
         encrypt_ssh_tunnel_secrets(&self.config_dir, &mut config, existing.ssh_tunnel.as_ref())?;
 
         self.conn()?.execute(
@@ -1355,6 +1362,7 @@ fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error>
         connection_url: row.get(8)?,
         username: row.get(9)?,
         password_encrypted: row.get(10)?,
+        has_saved_password: row.get::<_, Option<String>>(10)?.is_some(),
         driver_class: row.get(11)?,
         driver_paths: driver_paths
             .as_deref()
@@ -1741,6 +1749,7 @@ mod tests {
             connection_url: None,
             username: Some("postgres".to_string()),
             password_encrypted: None,
+            has_saved_password: false,
             driver_class: None,
             driver_paths: Vec::new(),
             ssl_mode: None,
@@ -1753,7 +1762,7 @@ mod tests {
         };
 
         let saved = store
-            .create_connection(config, Some("postgres123".to_string()))
+            .create_connection(config, Some("postgres123".to_string()), true)
             .expect("save connection");
         assert_ne!(saved.password_encrypted.as_deref(), Some("postgres123"));
 
@@ -1882,6 +1891,7 @@ mod tests {
                     connection_url: None,
                     username: Some("postgres".to_string()),
                     password_encrypted: None,
+                    has_saved_password: false,
                     driver_class: None,
                     driver_paths: Vec::new(),
                     ssl_mode: None,
@@ -1905,6 +1915,7 @@ mod tests {
                     updated_at: now,
                 },
                 None,
+                true,
             )
             .expect("create connection");
 
@@ -1954,6 +1965,7 @@ mod tests {
                     connection_url: Some("mysql://root@localhost:3306/app".to_string()),
                     username: Some("root".to_string()),
                     password_encrypted: None,
+                    has_saved_password: false,
                     driver_class: None,
                     driver_paths: Vec::new(),
                     ssl_mode: Some("prefer".to_string()),
@@ -1965,6 +1977,7 @@ mod tests {
                     updated_at: created_at,
                 },
                 None,
+                true,
             )
             .expect("create connection");
 
@@ -1987,6 +2000,7 @@ mod tests {
                     ..saved
                 },
                 None,
+                true,
             )
             .expect("update connection");
 
@@ -2027,6 +2041,7 @@ mod tests {
                     connection_url: None,
                     username: Some("postgres".to_string()),
                     password_encrypted: None,
+                    has_saved_password: false,
                     driver_class: None,
                     driver_paths: Vec::new(),
                     ssl_mode: None,
@@ -2038,6 +2053,7 @@ mod tests {
                     updated_at: now,
                 },
                 None,
+                true,
             )
             .expect("save connection with a new group");
         let group_id = first.group_id.expect("new group id");
@@ -2061,6 +2077,7 @@ mod tests {
                     connection_url: None,
                     username: Some("root".to_string()),
                     password_encrypted: None,
+                    has_saved_password: false,
                     driver_class: None,
                     driver_paths: Vec::new(),
                     ssl_mode: None,
@@ -2072,6 +2089,7 @@ mod tests {
                     updated_at: now,
                 },
                 None,
+                true,
             )
             .expect("save connection with an existing empty or populated group");
         assert_eq!(second.group_id, Some(group_id));
@@ -2107,6 +2125,7 @@ mod tests {
                     connection_url: Some("jdbc:example://host/db".to_string()),
                     username: Some("reporting".to_string()),
                     password_encrypted: None,
+                    has_saved_password: false,
                     driver_class: Some("com.example.Driver".to_string()),
                     driver_paths: vec!["/tmp/example.jar".to_string()],
                     ssl_mode: None,
@@ -2118,6 +2137,7 @@ mod tests {
                     updated_at: now,
                 },
                 None,
+                true,
             )
             .expect("create connection");
 
