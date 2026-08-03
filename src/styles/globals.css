@@ -4,6 +4,8 @@
 
 @layer base {
   :root {
+    /* Keep native controls aligned with the selected app theme, not the OS theme. */
+    color-scheme: light;
     --background: 220 18% 98%;
     --foreground: 222 30% 12%;
     --card: 0 0% 100%;
@@ -35,6 +37,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     --background: 222 15% 9%;
     --foreground: 216 18% 91%;
     --card: 222 14% 12%;
@@ -87,12 +90,6 @@
   .font-mono {
     font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
     font-variant-ligatures: none;
-  }
-
-  select,
-  input,
-  textarea {
-    color-scheme: light dark;
   }
 
   ::selection {
