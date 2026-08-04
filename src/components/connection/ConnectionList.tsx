@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Database, Link, Link2Off, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Database, FolderPlus, Link, Link2Off, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { AppSelect } from '@/components/ui/app-select'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig } from '@/types/connection'
 
@@ -32,6 +35,7 @@ export function ConnectionList({
     favoriteDataSourceIds,
     toggleFavoriteDataSource,
     dataSourceGroups,
+    createGroup,
     renameGroup,
     reorderGroups,
     deleteGroup,
@@ -42,6 +46,8 @@ export function ConnectionList({
   const [managerSearch, setManagerSearch] = useState('')
   const [managerDriver, setManagerDriver] = useState('all')
   const [managerGroup, setManagerGroup] = useState('all')
+  const [groupName, setGroupName] = useState('')
+  const [groupCreatorOpen, setGroupCreatorOpen] = useState(false)
   const managerMode = mode === 'manager'
   const ungroupedLabel = t('connection.ungrouped')
   const filteredConnections = useMemo(() => {
@@ -82,6 +88,18 @@ export function ConnectionList({
       return
     }
     setActiveConnection(connection.id)
+  }
+
+  async function addGroup() {
+    const name = groupName.trim()
+    if (!name) return
+    try {
+      await createGroup(name)
+      setGroupName('')
+      setGroupCreatorOpen(false)
+    } catch {
+      // The connection store surfaces a consistent actionable notification.
+    }
   }
 
   return (
@@ -149,7 +167,7 @@ export function ConnectionList({
       )}
 
       {managerMode && (
-        <div className="grid shrink-0 gap-2 border-b bg-muted/20 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_8rem_10rem]">
+        <div className="grid shrink-0 gap-2 border-b bg-muted/20 px-4 py-2 sm:grid-cols-[minmax(0,1fr)_8rem_10rem_auto]">
           <input
             className="ide-input h-8 min-w-0 text-xs"
             value={managerSearch}
@@ -159,6 +177,17 @@ export function ConnectionList({
           />
           <AppSelect className="h-8" value={managerDriver} onValueChange={setManagerDriver} options={[{ value: 'all', label: t('connectionForm.driver') }, ...[...new Set(connections.map((connection) => connection.driverType))].sort().map((driver) => ({ value: driver, label: driver }))]} />
           <AppSelect className="h-8" value={managerGroup} onValueChange={setManagerGroup} options={[{ value: 'all', label: t('connectionForm.group') }, { value: '__ungrouped__', label: t('connection.ungrouped') }, ...dataSourceGroups.map((group) => ({ value: group.id, label: group.name }))]} />
+          <Popover open={groupCreatorOpen} onOpenChange={setGroupCreatorOpen}>
+            <PopoverTrigger render={<IconTooltipButton size="icon-sm" label={t('connection.createGroup')} variant="ghost"><FolderPlus /></IconTooltipButton>} />
+            <PopoverContent align="end" className="w-64 gap-2 p-3">
+              <PopoverHeader><PopoverTitle>{t('connection.createGroup')}</PopoverTitle></PopoverHeader>
+              <Input autoFocus className="h-8 text-xs" value={groupName} placeholder={t('connectionForm.groupNamePlaceholder')} onChange={(event) => setGroupName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void addGroup() }} />
+              <div className="flex justify-end gap-1">
+                <Button type="button" size="xs" variant="ghost" onClick={() => setGroupCreatorOpen(false)}>{t('common.cancel')}</Button>
+                <Button type="button" size="xs" disabled={!groupName.trim()} onClick={() => void addGroup()}>{t('common.confirm')}</Button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       )}
 
@@ -359,7 +388,7 @@ function ConnectionCard({
       tabIndex={0}
       className={[
         managerMode
-          ? 'content-visibility-auto group flex h-9 min-w-0 cursor-pointer items-center gap-2 rounded border border-transparent px-2 text-xs transition-colors hover:border-border'
+          ? 'group flex h-9 min-w-0 cursor-pointer items-center gap-2 rounded border border-transparent px-2 text-xs transition-colors hover:border-border'
           : 'content-visibility-auto group flex min-w-0 cursor-pointer items-center gap-1 rounded border-l-2 px-1.5 py-1 text-sm transition-colors',
         selected
           ? 'border-l-primary bg-primary/15 text-foreground ring-1 ring-primary/30'

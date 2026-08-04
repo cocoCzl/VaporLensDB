@@ -134,6 +134,14 @@
     background-color: hsl(var(--chrome));
   }
 
+  .ide-settings-nav {
+    background-color: hsl(var(--chrome));
+  }
+
+  .ide-settings-nav-item {
+    min-height: 2.75rem;
+  }
+
   /* The tab strip starts the work surface; unlike a tool bar it should not
      create another visible band below the native system title bar. */
   .ide-tab-strip {

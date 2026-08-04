@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, FolderPlus, History, Loader2, LockKeyhole, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Loader2, LockKeyhole, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
@@ -16,7 +16,6 @@ import { Input } from '@/components/ui/input'
 import { AppSelect } from '@/components/ui/app-select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
-import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 import { useQuery } from '@/hooks/useQuery'
 import {
   exportQueryResultCsv,
@@ -1048,10 +1047,7 @@ function SqlRecordsWorkspace({ mode, connections, initialConnectionFilter, onOpe
 
 function DataSourcesManagementPanel() {
   const { t } = useTranslation()
-  const createGroup = useConnectionStore((state) => state.createGroup)
   const connections = useConnectionStore((state) => state.connections)
-  const [groupName, setGroupName] = useState('')
-  const [groupCreatorOpen, setGroupCreatorOpen] = useState(false)
   const [editor, setEditor] = useState<{ mode: 'none' | 'new' | 'edit'; connectionId: string | null }>({ mode: 'none', connectionId: null })
   const [editorDirty, setEditorDirty] = useState(false)
   const [compact, setCompact] = useState(false)
@@ -1063,18 +1059,6 @@ function DataSourcesManagementPanel() {
     media.addEventListener('change', update)
     return () => media.removeEventListener('change', update)
   }, [])
-
-  async function addGroup() {
-    const name = groupName.trim()
-    if (!name) return
-    try {
-      await createGroup(name)
-      setGroupName('')
-      setGroupCreatorOpen(false)
-    } catch {
-      // The connection store surfaces a consistent actionable notification.
-    }
-  }
 
   function requestEditor(next: { mode: 'none' | 'new' | 'edit'; connectionId: string | null }) {
     if (editorDirty && !window.confirm(t('connectionForm.discardChanges'))) return
@@ -1100,39 +1084,7 @@ function DataSourcesManagementPanel() {
   )
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
-        <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">{t('connection.manageDataSources')}</h1>
-          <p className="truncate text-xs text-muted-foreground">
-            {t('workbench.dataSourcesSubtitle')}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center">
-          <Popover open={groupCreatorOpen} onOpenChange={setGroupCreatorOpen}>
-            <PopoverTrigger render={<IconTooltipButton label={t('connection.createGroup')} variant="ghost"><FolderPlus className="size-4" /></IconTooltipButton>} />
-            <PopoverContent align="end" className="w-64 gap-2 p-3">
-              <PopoverHeader>
-                <PopoverTitle>{t('connection.createGroup')}</PopoverTitle>
-              </PopoverHeader>
-              <Input
-                autoFocus
-                className="h-8 text-xs"
-                value={groupName}
-                placeholder={t('connectionForm.groupNamePlaceholder')}
-                onChange={(event) => setGroupName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void addGroup()
-                }}
-              />
-              <div className="flex justify-end gap-1">
-                <Button type="button" size="xs" variant="ghost" onClick={() => setGroupCreatorOpen(false)}>{t('common.cancel')}</Button>
-                <Button type="button" size="xs" disabled={!groupName.trim()} onClick={() => void addGroup()}>{t('common.confirm')}</Button>
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-      </div>
+    <section className="ide-workspace flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="flex h-full min-h-0">
           <div className="min-w-0 flex-1 overflow-hidden border-r">

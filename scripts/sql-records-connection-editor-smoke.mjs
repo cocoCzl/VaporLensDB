@@ -16,10 +16,6 @@ for (const marker of [
   "window.matchMedia('(max-width: 959px)')",
   "<SheetContent side=\"right\"",
   "t('connectionForm.discardChanges')",
-  "t('connection.manageDataSources')",
-  "<FolderPlus className=\"size-4\" />",
-  "groupCreatorOpen",
-  "t('connection.createGroup')",
 ]) assert(mainPanel.includes(marker), `MainPanel missing: ${marker}`)
 assert(!mainPanel.includes("label={t('connection.new')} variant=\"secondary\" onClick={() => requestEditor({ mode: 'new', connectionId: null })}"), 'manager header must not duplicate the global new connection action')
 assert(!mainPanel.includes("label={t('connection.refresh')}\n            variant=\"ghost\"\n            disabled={loading}"), 'manager header must not duplicate the saved-connections reload action')
@@ -29,6 +25,8 @@ assert(list.includes('onManagerSelect?: (connection: ConnectionConfig) => void')
 assert(list.includes('onEdit={managerMode && onManagerSelect'), 'manager edit action must select the detail editor rather than open a dialog')
 assert(list.includes('role="checkbox"'), 'manager batch selection must use the themed checkbox control')
 assert(!list.includes('accent-primary'), 'manager batch selection must not use the browser-native checkbox appearance')
+assert(list.includes("t('connection.createGroup')"), 'manager list must expose the create-group action beside its group filter')
+assert(list.includes("? 'group flex h-9"), 'manager data-source rows must repaint after favorite ordering changes')
 
 const connectionEditor = read('src/components/connection/ConnectionEditorPanel.tsx')
 assert(connectionEditor.includes("t('connection.selectToEdit')"), 'detail panel must distinguish no selection from an empty data-source list')

@@ -111,7 +111,7 @@ includesAll(
     "variant === 'ide' ? 'ide-combobox-content max-h-56 min-w-[7rem] rounded-md border p-1'",
     "'ide-combobox-item rounded-[4px] px-2.5'",
     'const useIdeSkin = variant !== \'toolbar\'',
-    "alignItemWithTrigger={variant !== 'ide'}",
+    'alignItemWithTrigger={false}',
   ],
   'toolbar select localization',
 )

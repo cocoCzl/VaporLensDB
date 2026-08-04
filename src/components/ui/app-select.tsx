@@ -65,7 +65,9 @@ export function AppSelect({
         )}
         align="start"
         sideOffset={variant === 'toolbar' ? 0 : 4}
-        alignItemWithTrigger={variant !== 'ide'}
+        // Keep every application menu below its trigger. Aligning the selected
+        // item with the trigger makes its checkmark visually overlap the field.
+        alignItemWithTrigger={false}
       >
         {options.map((option) => (
           <SelectItem key={option.value} value={option.value} disabled={option.disabled} title={option.label} className={cn('min-h-7 px-2 py-1 text-xs data-highlighted:bg-primary/10 data-highlighted:text-foreground [&_[data-slot=select-item-text]]:truncate', useIdeSkin ? 'ide-combobox-item rounded-[4px] px-2.5' : 'rounded-[1px]')}>

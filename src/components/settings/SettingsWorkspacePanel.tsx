@@ -208,17 +208,10 @@ export function SettingsWorkspacePanel() {
   }
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
-        <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">{t('settings.title')}</h1>
-          <p className="truncate text-xs text-muted-foreground">{t('settings.subtitle')}</p>
-        </div>
-      </div>
-
+    <section className="ide-workspace flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="grid min-h-full grid-cols-[220px_minmax(0,1fr)]">
-          <nav className="border-r bg-card/50 p-3">
+        <div className="grid min-h-full grid-cols-[13.5rem_minmax(0,1fr)]">
+          <nav className="ide-settings-nav border-r p-2" aria-label={t('settings.title')}>
             <SettingsNavButton
               active={activeSection === 'general'}
               icon={Settings}
@@ -249,10 +242,10 @@ export function SettingsWorkspacePanel() {
             />
           </nav>
 
-          <div className="min-w-0 p-6">
+          <div className="min-w-0 p-4 md:p-5">
             {activeSection === 'general' && (
               <div className="mx-auto grid max-w-5xl gap-4">
-                <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border bg-card/60 px-3 py-2 text-xs">
+                <div className="ide-toolbar flex min-h-9 items-center justify-between gap-3 rounded-md border px-3 py-1.5 text-xs">
                   <span className={hasSettingsChanges ? 'text-amber-600' : 'text-muted-foreground'}>
                     {hasSettingsChanges ? t('settings.unsavedChanges') : t('settings.noUnsavedChanges')}
                   </span>
@@ -1192,10 +1185,10 @@ function SettingsNavButton({
     <button
       type="button"
       className={[
-        'mb-1 grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors',
+        'ide-settings-nav-item mb-0.5 grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors',
         active
-          ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
-          : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          ? 'bg-primary/12 text-primary shadow-[inset_2px_0_0_hsl(var(--primary))]'
+          : 'text-muted-foreground hover:bg-background/75 hover:text-foreground',
       ].join(' ')}
       onClick={onClick}
     >
@@ -1210,7 +1203,7 @@ function SettingsNavButton({
 
 function SettingsCard({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: ReactNode }) {
   return (
-    <section className="grid gap-3 rounded-md border bg-card p-4">
+    <section className="ide-surface grid gap-3 rounded-md border p-4">
       <div className="flex items-center gap-2">
         <Icon className="size-4 text-primary" />
         <h2 className="text-sm font-semibold">{title}</h2>

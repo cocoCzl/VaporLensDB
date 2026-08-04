@@ -121,8 +121,6 @@ includesAll(
     'function DataSourcesManagementPanel()',
     'managerSelectedConnectionId={editor.mode === \'edit\' ? editor.connectionId : null}',
     'onManagerSelect={(connection) => requestEditor({ mode: \'edit\', connectionId: connection.id })}',
-    "t('connection.createGroup')",
-    'groupCreatorOpen',
   ],
   'Data Sources management workspace tab',
 )
@@ -146,6 +144,10 @@ includesAll(
     "connection.groupId ?? '__ungrouped__'",
     'favoriteDataSourceIds.includes(right.id)',
     'reorderGroups(ids)',
+    "t('connection.createGroup')",
+    'groupCreatorOpen',
+    'sm:grid-cols-[minmax(0,1fr)_8rem_10rem_auto]',
+    "? 'group flex h-9",
   ],
   'ConnectionList management mode',
 )
