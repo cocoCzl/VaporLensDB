@@ -119,7 +119,11 @@ pub async fn test_connection(
 }
 
 #[tauri::command]
-pub async fn connect(state: State<'_, AppState>, id: Uuid, password: Option<String>) -> Result<ConnectionStatus, String> {
+pub async fn connect(
+    state: State<'_, AppState>,
+    id: Uuid,
+    password: Option<String>,
+) -> Result<ConnectionStatus, String> {
     let config = state
         .config_store
         .get_connection(id)
@@ -127,7 +131,10 @@ pub async fn connect(state: State<'_, AppState>, id: Uuid, password: Option<Stri
         .ok_or_else(|| format!("connection not found: {id}"))?;
     let password = match password.filter(|value| !value.is_empty()) {
         Some(password) => Some(password),
-        None => state.config_store.decrypt_password(&config).map_err(String::from)?,
+        None => state
+            .config_store
+            .decrypt_password(&config)
+            .map_err(String::from)?,
     };
 
     state.metadata_service.clear_connection(id).await;
@@ -232,7 +239,9 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
     }
 }
 
-fn default_save_password() -> bool { true }
+fn default_save_password() -> bool {
+    true
+}
 
 fn input_to_ssh_tunnel(input: SshTunnelInput) -> Option<SshTunnelConfig> {
     if !input.enabled {

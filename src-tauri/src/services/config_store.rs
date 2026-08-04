@@ -139,7 +139,8 @@ impl ConfigStore {
         let now = Utc::now();
         config.created_at = now;
         config.updated_at = now;
-        config.password_encrypted = save_password.then_some(password)
+        config.password_encrypted = save_password
+            .then_some(password)
             .flatten()
             .as_deref()
             .filter(|value| !value.is_empty())
@@ -182,12 +183,14 @@ impl ConfigStore {
         config.updated_at = Utc::now();
         config.password_encrypted = if !save_password {
             None
-        } else { match password {
-            Some(password) if !password.is_empty() => {
-                Some(crypto::encrypt_password(&self.config_dir, &password)?)
+        } else {
+            match password {
+                Some(password) if !password.is_empty() => {
+                    Some(crypto::encrypt_password(&self.config_dir, &password)?)
+                }
+                _ => existing.password_encrypted,
             }
-            _ => existing.password_encrypted,
-        }};
+        };
         config.has_saved_password = config.password_encrypted.is_some();
         encrypt_ssh_tunnel_secrets(&self.config_dir, &mut config, existing.ssh_tunnel.as_ref())?;
 
