@@ -1,4 +1,4 @@
-import { Check, Clock3, History, List, Pin, Plus, Trash2, X } from 'lucide-react'
+import { Check, FileCode2, History, List, Pin, Plus, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
@@ -6,7 +6,6 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useSqlDraftStore } from '@/stores/sqlDraftStore'
 import type { EditorTab } from '@/stores/editorStore'
-import type { SqlDraft } from '@/types/sqlDraft'
 
 export function TabBar() {
   const { t } = useTranslation()
@@ -15,37 +14,14 @@ export function TabBar() {
   const statuses = useConnectionStore((state) => state.statuses)
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
-  const drafts = useSqlDraftStore((state) => state.drafts)
   const saveTabDraft = useSqlDraftStore((state) => state.saveTabDraft)
   const markDraftClosed = useSqlDraftStore((state) => state.markClosed)
-  const clearDrafts = useSqlDraftStore((state) => state.clear)
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
-  const [recentOpen, setRecentOpen] = useState(false)
   const [tabListOpen, setTabListOpen] = useState(false)
   const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
-  const recentMenuRef = useRef<HTMLDivElement | null>(null)
   const tabListMenuRef = useRef<HTMLDivElement | null>(null)
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
-  const clearDraftTimer = useRef<number | null>(null)
-  const [confirmClearDrafts, setConfirmClearDrafts] = useState(false)
-
-  function resetClearDraftConfirmation() {
-    if (clearDraftTimer.current !== null) {
-      window.clearTimeout(clearDraftTimer.current)
-      clearDraftTimer.current = null
-    }
-    setConfirmClearDrafts(false)
-  }
-
-  function requestClearDrafts() {
-    if (confirmClearDrafts) {
-      void clearDrafts().finally(resetClearDraftConfirmation)
-      return
-    }
-    setConfirmClearDrafts(true)
-    clearDraftTimer.current = window.setTimeout(resetClearDraftConfirmation, 4_000)
-  }
 
   function createTab() {
     const connection = connections.find((item) => item.id === activeConnectionId)
@@ -85,30 +61,6 @@ export function TabBar() {
     setEditingTitle('')
   }
 
-  function restoreDraft(draft: SqlDraft) {
-    setRecentOpen(false)
-    const existing = tabs.find((tab) => tab.draftId === draft.id)
-    if (existing) {
-      setActiveTab(existing.id)
-      if (existing.connectionId) setActiveConnection(existing.connectionId)
-      return
-    }
-
-    const connectionExists = connections.some((connection) => connection.id === draft.connectionId)
-    const tabId = crypto.randomUUID()
-    addTab({
-      id: tabId,
-      kind: 'sql',
-      title: draft.title || t('sql.restoredDraftTitle'),
-      sql: draft.sql,
-      connectionId: connectionExists ? draft.connectionId ?? null : null,
-      draftId: draft.id,
-    })
-    if (connectionExists && draft.connectionId) {
-      setActiveConnection(draft.connectionId)
-    }
-  }
-
   function closeEditorTab(tab: EditorTab) {
     if (!tab.kind || tab.kind === 'sql') {
       const connection = connections.find((item) => item.id === tab.connectionId) ?? null
@@ -123,41 +75,10 @@ export function TabBar() {
     closeTab(tab.id)
   }
 
-  const lastDraft = drafts[0] ?? null
-
   useEffect(() => {
     if (!activeTabId) return
     tabRefs.current.get(activeTabId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [activeTabId])
-
-  useEffect(() => {
-    if (!recentOpen) return
-
-    function closeOnOutside(event: MouseEvent) {
-      if (!recentMenuRef.current?.contains(event.target as Node)) {
-        setRecentOpen(false)
-        resetClearDraftConfirmation()
-      }
-    }
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setRecentOpen(false)
-        resetClearDraftConfirmation()
-      }
-    }
-
-    document.addEventListener('mousedown', closeOnOutside)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('mousedown', closeOnOutside)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [recentOpen])
-
-  useEffect(() => () => {
-    if (clearDraftTimer.current !== null) window.clearTimeout(clearDraftTimer.current)
-  }, [])
 
   useEffect(() => {
     if (!tabListOpen && !tabContextMenu) return
@@ -343,88 +264,9 @@ export function TabBar() {
       <IconTooltipButton label={t('sql.new')} variant="ghost" onClick={createTab}>
         <Plus />
       </IconTooltipButton>
-      <div ref={recentMenuRef} className="relative shrink-0">
-        <IconTooltipButton
-          label={t('sql.recentScripts')}
-          variant="ghost"
-          aria-haspopup="menu"
-          aria-expanded={recentOpen}
-          onClick={() => setRecentOpen((open) => !open)}
-        >
-          <Clock3 />
-        </IconTooltipButton>
-        {recentOpen && (
-          <div
-            role="menu"
-            className="absolute right-0 top-9 z-[100] max-h-[70vh] w-80 overflow-auto rounded-lg border bg-card p-1 text-card-foreground shadow-xl"
-          >
-            <div className="flex items-center justify-between gap-2 px-1.5 py-1 text-xs font-medium text-muted-foreground">
-              <span>{t('sql.recentScripts')}</span>
-              {drafts.length > 0 && (
-                <button
-                  type="button"
-                  className={confirmClearDrafts
-                    ? 'grid size-6 place-items-center rounded text-destructive hover:bg-destructive/10'
-                    : 'grid size-6 place-items-center rounded hover:bg-muted hover:text-foreground'}
-                  title={confirmClearDrafts ? t('sql.confirmClearRecentScripts') : t('sql.clearRecentScripts')}
-                  aria-label={confirmClearDrafts ? t('sql.confirmClearRecentScripts') : t('sql.clearRecentScripts')}
-                  onClick={requestClearDrafts}
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              )}
-            </div>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!lastDraft}
-              className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-              onClick={() => lastDraft && restoreDraft(lastDraft)}
-            >
-              <Clock3 className="size-3.5" />
-              <span className="min-w-0 flex-1 truncate">{t('sql.lastEditedScript')}</span>
-            </button>
-            <div className="-mx-1 my-1 h-px bg-border" />
-            {drafts.length === 0 ? (
-              <div className="px-2 py-2 text-xs text-muted-foreground">{t('sql.noRecentScripts')}</div>
-            ) : (
-              drafts.slice(0, 12).map((draft) => (
-                <button
-                  key={draft.id}
-                  type="button"
-                  role="menuitem"
-                  className="flex w-full items-start gap-1.5 rounded-md px-1.5 py-2 text-left outline-none hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => restoreDraft(draft)}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-medium">{draft.title || t('sql.restoredDraftTitle')}</div>
-                    <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                      {sqlPreview(draft.sql)}
-                    </div>
-                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                      {draft.connectionNameSnapshot ?? t('connection.disconnected')} · {formatDraftTime(draft.updatedAt)}
-                    </div>
-                  </div>
-                </button>
-              ))
-            )}
-            <div className="-mx-1 mt-1 border-t px-1 pt-1">
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-medium hover:bg-accent hover:text-accent-foreground"
-                onClick={() => {
-                  setRecentOpen(false)
-                  openRecordsWorkspace('sqlScripts')
-                }}
-              >
-                <List className="size-3.5" />
-                {t('sql.showAllRecentScripts')}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      <IconTooltipButton label={t('sql.drafts')} variant="ghost" onClick={() => openRecordsWorkspace('sqlScripts')}>
+        <FileCode2 />
+      </IconTooltipButton>
       <IconTooltipButton label={t('sql.history')} variant="ghost" onClick={() => openRecordsWorkspace('queryHistory')}>
         <History />
       </IconTooltipButton>
@@ -507,19 +349,4 @@ function nextSqlIndex(titles: string[]) {
   const existing = new Set(titles)
   while (existing.has(`SQL ${index}`)) index += 1
   return index
-}
-
-function sqlPreview(sql: string) {
-  return sql.trim().split(/\s*\n\s*/).find(Boolean) ?? ''
-}
-
-function formatDraftTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString(undefined, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }

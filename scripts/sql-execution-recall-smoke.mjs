@@ -19,7 +19,9 @@ assert(toolbar.includes('onClick={() => onFormat()}'), 'format button must not r
 assert(toolbar.includes('disabled={formatDisabled || running}'), 'format must not depend on connection readiness')
 
 const tabBar = read('src/components/layout/TabBar.tsx')
-assert(tabBar.includes("openRecordsWorkspace('sqlScripts')"), 'recent-drafts menu must expose the complete scripts workspace')
+assert(tabBar.includes("<FileCode2 />"), 'tab bar must expose SQL scripts with a direct workspace icon')
+assert(tabBar.includes("onClick={() => openRecordsWorkspace('sqlScripts')}"), 'SQL scripts icon must open the complete scripts workspace directly')
+assert(!tabBar.includes('recentOpen'), 'tab bar must not retain the duplicate recent SQL popup')
 assert(tabBar.includes("openRecordsWorkspace('queryHistory')"), 'tab bar must expose query history directly')
 assert(tabBar.includes("return 'bg-emerald-500'"), 'connected tabs must be green')
 assert(tabBar.includes("return 'bg-muted-foreground/40'"), 'disconnected tabs must be gray')

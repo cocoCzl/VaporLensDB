@@ -99,10 +99,12 @@ export const useSqlDraftStore = create<SqlDraftState>((set, get) => ({
     }
   },
   clear: async () => {
+    set({ loading: true, error: null })
     try {
       await clearSqlDrafts()
-      set({ drafts: [] })
+      set({ drafts: [], loading: false })
     } catch (error) {
+      set({ loading: false, error: normalizeAppError(error).message })
       notifyError(error, i18n.t('notifications.deleteSqlDraftFailed'))
       throw error
     }

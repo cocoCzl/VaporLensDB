@@ -45,6 +45,16 @@ includesAll(
     'historyFilterSuccess',
     'historyFilterFailed',
     'historyErrorPreview',
+    'clearHistoryDescription',
+    'clearDraftsDescription',
+    'draftsCleared',
+    'recordCount',
+    'searchRecords',
+    'searchHistory',
+    'searchScripts',
+    'historyFilterAllStatus',
+    'recordSql',
+    'recordSourceTime',
   ],
   'query history English locale',
 )
@@ -56,8 +66,78 @@ includesAll(
     'historyFilterSuccess',
     'historyFilterFailed',
     'historyErrorPreview',
+    'clearHistoryDescription',
+    'clearDraftsDescription',
+    'draftsCleared',
+    'recordCount',
+    'searchRecords',
+    'searchHistory',
+    'searchScripts',
+    'historyFilterAllStatus',
+    'recordSql',
+    'recordSourceTime',
   ],
   'query history Chinese locale',
+)
+
+const mainPanel = read('src/components/layout/MainPanel.tsx')
+includesAll(
+  mainPanel,
+  [
+    'uniqueRecordConnections(entries, connections)',
+    'selectedConnectionFilter',
+    'clearDialogOpen',
+    'clearDrafts',
+    'clearLabel',
+    'clearDescription',
+    "mode === 'scripts'",
+    "t('sql.clearHistoryDescription'",
+    "t('sql.recordCount'",
+    'variant="ide"',
+    "t('sql.historyFilterAllStatus')",
+    "t('sql.recordSourceTime')",
+  ],
+  'query history records workspace',
+)
+
+const appSelect = read('src/components/ui/app-select.tsx')
+includesAll(
+  appSelect,
+  [
+    "variant?: 'default' | 'toolbar' | 'ide'",
+    'const selectedLabel',
+    '<SelectValue placeholder={placeholder}>{selectedLabel}</SelectValue>',
+    "'ide-combobox-content max-h-56 min-w-0 rounded-md border p-1'",
+    "variant === 'ide' ? 'ide-combobox-content max-h-56 min-w-[7rem] rounded-md border p-1'",
+    "'ide-combobox-item rounded-[4px] px-2.5'",
+    'const useIdeSkin = variant !== \'toolbar\'',
+    "alignItemWithTrigger={variant !== 'ide'}",
+  ],
+  'toolbar select localization',
+)
+
+const styles = read('src/styles/globals.css')
+includesAll(
+  styles,
+  [
+    '--ide-combo-surface',
+    '--ide-combo-menu',
+    '.ide-combobox-trigger',
+    '.ide-combobox-content',
+    '.ide-combobox-item[data-selected]',
+  ],
+  'IDE combobox theme tokens',
+)
+
+const select = read('src/components/ui/select.tsx')
+includesAll(
+  select,
+  [
+    'w-(--anchor-width) min-w-0',
+    'data-slot="select-item-text"',
+    'min-w-0 flex-1 gap-2 truncate',
+  ],
+  'equal-width select menu foundation',
 )
 
 const packageJson = read('package.json')

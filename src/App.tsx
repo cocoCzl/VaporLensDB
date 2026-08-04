@@ -114,12 +114,12 @@ export default function App() {
       const openDataSources = () => {
         const existing = editor.tabs.find((tab) => tab.kind === 'dataSources')
         if (existing) editor.setActiveTab(existing.id)
-        else editor.addTab({ id: crypto.randomUUID(), kind: 'dataSources', title: 'Data Sources', sql: '', connectionId: null })
+        else editor.addTab({ id: crypto.randomUUID(), kind: 'dataSources', title: i18n.t('connection.dataSources'), sql: '', connectionId: null })
       }
       const openSettings = () => {
         const existing = editor.tabs.find((tab) => tab.kind === 'settings')
         if (existing) editor.setActiveTab(existing.id)
-        else editor.addTab({ id: crypto.randomUUID(), kind: 'settings', title: 'Settings', sql: '', connectionId: null })
+        else editor.addTab({ id: crypto.randomUUID(), kind: 'settings', title: i18n.t('settings.title'), sql: '', connectionId: null })
       }
       switch (payload) {
         case 'new-sql': {
@@ -137,7 +137,7 @@ export default function App() {
         case 'query-history': {
           const existing = editor.tabs.find((tab) => tab.kind === 'queryHistory')
           if (existing) editor.setActiveTab(existing.id)
-          else editor.addTab({ id: crypto.randomUUID(), kind: 'queryHistory', title: 'Query History', sql: '', connectionId: null })
+          else editor.addTab({ id: crypto.randomUUID(), kind: 'queryHistory', title: i18n.t('sql.history'), sql: '', connectionId: null })
           break
         }
         case 'settings': openSettings(); break

@@ -34,6 +34,13 @@
     --chrome: 220 15% 97.2%;
     --toolbar: 220 16% 96.5%;
     --overlay: 222 36% 12%;
+    --ide-combo-surface: 0 0% 100%;
+    --ide-combo-hover: 220 22% 96%;
+    --ide-combo-border: 220 14% 82%;
+    --ide-combo-focus: 218 76% 55%;
+    --ide-combo-menu: 0 0% 100%;
+    --ide-combo-selected: 218 60% 45%;
+    --ide-combo-selected-foreground: 0 0% 100%;
   }
 
   .dark {
@@ -64,6 +71,13 @@
     --chrome: 222 13% 11.5%;
     --toolbar: 222 13% 11.5%;
     --overlay: 222 38% 4%;
+    --ide-combo-surface: 222 13% 15%;
+    --ide-combo-hover: 222 12% 20%;
+    --ide-combo-border: 220 11% 29%;
+    --ide-combo-focus: 216 86% 68%;
+    --ide-combo-menu: 222 14% 16%;
+    --ide-combo-selected: 219 49% 40%;
+    --ide-combo-selected-foreground: 0 0% 100%;
   }
 }
 
@@ -142,6 +156,34 @@
 
   .ide-icon-button {
     @apply size-8 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50;
+  }
+
+  .ide-combobox-trigger {
+    background-color: hsl(var(--ide-combo-surface));
+    border-color: hsl(var(--ide-combo-border));
+    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.3), 0 1px 1px hsl(var(--overlay) / 0.04);
+  }
+
+  .ide-combobox-trigger:hover,
+  .ide-combobox-trigger[aria-expanded='true'] {
+    background-color: hsl(var(--ide-combo-hover));
+  }
+
+  .ide-combobox-trigger[aria-expanded='true'] {
+    border-color: hsl(var(--ide-combo-focus));
+    box-shadow: 0 0 0 2px hsl(var(--ide-combo-focus) / 0.16);
+  }
+
+  .ide-combobox-content {
+    background-color: hsl(var(--ide-combo-menu));
+    border-color: hsl(var(--ide-combo-border));
+    box-shadow: 0 10px 24px -14px hsl(var(--overlay) / 0.9), 0 1px 3px hsl(var(--overlay) / 0.22);
+  }
+
+  .ide-combobox-item[data-highlighted],
+  .ide-combobox-item[data-selected] {
+    background-color: hsl(var(--ide-combo-selected));
+    color: hsl(var(--ide-combo-selected-foreground));
   }
 
   .ide-select {

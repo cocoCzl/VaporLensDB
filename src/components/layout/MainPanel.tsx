@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, FolderPlus, History, Loader2, LockKeyhole, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, FolderPlus, History, Loader2, LockKeyhole, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
@@ -14,6 +14,7 @@ import { SettingsWorkspacePanel } from '@/components/settings/SettingsWorkspaceP
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AppSelect } from '@/components/ui/app-select'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 import { useQuery } from '@/hooks/useQuery'
@@ -947,13 +948,21 @@ function SqlRecordsWorkspace({ mode, connections, initialConnectionFilter, onOpe
   const [statusFilter, setStatusFilter] = useState<'all' | QueryHistoryStatus>('all')
   const [timeRange, setTimeRange] = useState<'all' | 'day' | 'week' | 'month'>('all')
   const [sortDirection, setSortDirection] = useState<'newest' | 'oldest'>('newest')
+  const [clearDialogOpen, setClearDialogOpen] = useState(false)
   const [recordsOpenedAt] = useState(() => Date.now())
   const drafts = useSqlDraftStore((state) => state.drafts)
   const loadDrafts = useSqlDraftStore((state) => state.loadDrafts)
+  const clearDrafts = useSqlDraftStore((state) => state.clear)
+  const draftsLoading = useSqlDraftStore((state) => state.loading)
   const history = useQueryHistoryStore((state) => state.entries)
   const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
+  const historyLoading = useQueryHistoryStore((state) => state.loading)
   useEffect(() => { void (mode === 'scripts' ? loadDrafts(50) : loadHistory(500)) }, [loadDrafts, loadHistory, mode])
   const entries = mode === 'scripts' ? drafts : history
+  const connectionOptions = useMemo(() => uniqueRecordConnections(entries, connections), [connections, entries])
+  const selectedConnectionFilter = connectionFilter === 'all' || connectionOptions.some((option) => option.id === connectionFilter)
+    ? connectionFilter
+    : 'all'
   const cutoff = timeRange === 'day' ? recordsOpenedAt - 86_400_000
     : timeRange === 'week' ? recordsOpenedAt - 604_800_000
       : timeRange === 'month' ? recordsOpenedAt - 2_592_000_000
@@ -963,7 +972,7 @@ function SqlRecordsWorkspace({ mode, connections, initialConnectionFilter, onOpe
       const source = [('title' in entry ? entry.title : null), entry.sql, entry.connectionNameSnapshot].filter(Boolean).join(' ').toLocaleLowerCase()
       const timestamp = new Date('updatedAt' in entry ? entry.updatedAt : entry.startedAt).getTime()
       return (!query.trim() || source.includes(query.trim().toLocaleLowerCase()))
-        && (connectionFilter === 'all' || entry.connectionId === connectionFilter)
+        && (selectedConnectionFilter === 'all' || entry.connectionId === selectedConnectionFilter)
         && (mode !== 'history' || statusFilter === 'all' || ('status' in entry && entry.status === statusFilter))
         && (cutoff === null || timestamp >= cutoff)
     })
@@ -972,27 +981,68 @@ function SqlRecordsWorkspace({ mode, connections, initialConnectionFilter, onOpe
       const rightTime = new Date('updatedAt' in right ? right.updatedAt : right.startedAt).getTime()
       return sortDirection === 'newest' ? rightTime - leftTime : leftTime - rightTime
     })
-  return <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
-      <div className="min-w-0 flex-1"><h1 className="text-sm font-semibold">{mode === 'scripts' ? t('sql.drafts') : t('sql.history')}</h1><p className="text-[11px] text-muted-foreground">{entries.length}</p></div>
-      <Input className="h-8 w-56 text-xs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('connection.searchDataSources')} />
-      <AppSelect className="h-8 max-w-44" value={connectionFilter} onValueChange={setConnectionFilter} options={[{ value: 'all', label: t('sql.historyFilterAllConnections') }, ...[...new Map(entries.filter((entry) => Boolean(entry.connectionId)).map((entry) => [entry.connectionId ?? '', entry.connectionNameSnapshot ?? entry.connectionId ?? ''])).entries()].map(([id, name]) => ({ value: id, label: name }))]} />
-      {mode === 'history' ? <AppSelect className="h-8 max-w-28" aria-label={t('sql.historyStatusFilter')} value={statusFilter} onValueChange={(value) => setStatusFilter(value as 'all' | QueryHistoryStatus)} options={[{ value: 'all', label: t('sql.historyFilterAll') }, { value: 'success', label: t('sql.historyFilterSuccess') }, { value: 'failed', label: t('sql.historyFilterFailed') }]} /> : null}
-      <AppSelect className="h-8 max-w-28" aria-label={t('sql.timeRange')} value={timeRange} onValueChange={(value) => setTimeRange(value as 'all' | 'day' | 'week' | 'month')} options={[{ value: 'all', label: t('sql.timeAll') }, { value: 'day', label: t('sql.timeDay') }, { value: 'week', label: t('sql.timeWeek') }, { value: 'month', label: t('sql.timeMonth') }]} />
-      <AppSelect className="h-8 max-w-28" aria-label={t('sql.sortByTime')} value={sortDirection} onValueChange={(value) => setSortDirection(value as 'newest' | 'oldest')} options={[{ value: 'newest', label: t('sql.sortNewest') }, { value: 'oldest', label: t('sql.sortOldest') }]} />
+  const recordsLoading = mode === 'scripts' ? draftsLoading : historyLoading
+  const clearLabel = mode === 'scripts' ? t('sql.clearRecentScripts') : t('sql.clearHistory')
+  const clearDescription = mode === 'scripts'
+    ? t('sql.clearDraftsDescription', { count: entries.length })
+    : t('sql.clearHistoryDescription', { count: entries.length })
+  async function clearRecords() {
+    if (recordsLoading) return
+    if (mode === 'scripts') {
+      try {
+        await clearDrafts()
+        setClearDialogOpen(false)
+        useUiStore.getState().notify({ kind: 'success', title: t('sql.draftsCleared') })
+      } catch {
+        // The draft store already reports a localized failure notification.
+      }
+      return
+    }
+    const cleared = await useQueryHistoryStore.getState().clear()
+    setClearDialogOpen(false)
+    if (cleared) useUiStore.getState().notify({ kind: 'success', title: t('sql.historyCleared') })
+  }
+
+  const pageLabel = mode === 'scripts' ? t('sql.drafts') : t('sql.history')
+  const searchPlaceholder = mode === 'scripts' ? t('sql.searchScripts') : t('sql.searchHistory')
+  return <section className="ide-workspace flex min-w-0 flex-1 flex-col overflow-hidden">
+    <header className="ide-toolbar shrink-0 border-b" aria-label={pageLabel}>
+      <div className="flex min-h-7 flex-wrap items-center gap-x-1 gap-y-1 px-3 py-1.5">
+        <div className="relative w-[min(20rem,42vw)] min-w-44">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input className="h-7 border-transparent bg-transparent py-1 pr-2 pl-8 text-xs shadow-none hover:border-border hover:bg-card focus-visible:border-primary/60 focus-visible:bg-card" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} aria-label={t('sql.searchRecords')} />
+        </div>
+        <span className="mx-1 h-4 w-px bg-border/80" aria-hidden="true" />
+        <AppSelect variant="ide" className="w-40" aria-label={t('sql.historyConnectionFilter')} title={t('sql.historyConnectionFilter')} value={selectedConnectionFilter} onValueChange={setConnectionFilter} options={[{ value: 'all', label: t('sql.historyFilterAllConnections') }, ...connectionOptions.map((option) => ({ value: option.id, label: option.name }))]} />
+        {mode === 'history' ? <AppSelect variant="ide" className="w-24" aria-label={t('sql.historyStatusFilter')} title={t('sql.historyStatusFilter')} value={statusFilter} onValueChange={(value) => setStatusFilter(value as 'all' | QueryHistoryStatus)} options={[{ value: 'all', label: t('sql.historyFilterAllStatus') }, { value: 'success', label: t('sql.historyFilterSuccess') }, { value: 'failed', label: t('sql.historyFilterFailed') }]} /> : null}
+        <AppSelect variant="ide" className="w-28" aria-label={t('sql.timeRange')} title={t('sql.timeRange')} value={timeRange} onValueChange={(value) => setTimeRange(value as 'all' | 'day' | 'week' | 'month')} options={[{ value: 'all', label: t('sql.timeAll') }, { value: 'day', label: t('sql.timeDay') }, { value: 'week', label: t('sql.timeWeek') }, { value: 'month', label: t('sql.timeMonth') }]} />
+        <AppSelect variant="ide" className="w-28" aria-label={t('sql.sortByTime')} title={t('sql.sortByTime')} value={sortDirection} onValueChange={(value) => setSortDirection(value as 'newest' | 'oldest')} options={[{ value: 'newest', label: t('sql.sortNewest') }, { value: 'oldest', label: t('sql.sortOldest') }]} />
+        <span className="min-w-2 flex-1" />
+        <span className="px-2 text-[11px] tabular-nums text-muted-foreground">{t('sql.recordCount', { count: filtered.length })}</span>
+        <Button type="button" size="xs" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={entries.length === 0 || recordsLoading} onClick={() => setClearDialogOpen(true)}><Trash2 className="size-3.5" />{clearLabel}</Button>
+      </div>
     </header>
-    <div className="min-h-0 flex-1 overflow-auto p-3">
-      <div className="mx-auto max-w-5xl divide-y rounded-md border bg-card">
+    <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-w-[42rem] border-b bg-card">
+        <div className="grid grid-cols-[minmax(0,1fr)_10rem] gap-4 border-b bg-muted/35 px-4 py-1.5 text-[10px] font-medium tracking-wide text-muted-foreground">
+          <span>{t('sql.recordSql')}</span><span className="text-right">{t('sql.recordSourceTime')}</span>
+        </div>
         {filtered.map((entry) => {
           const available = !entry.connectionId || connections.some((connection) => connection.id === entry.connectionId)
-          return <button key={entry.id} type="button" className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-4 px-4 py-3 text-left hover:bg-muted/45" onDoubleClick={() => onOpenSql(('title' in entry ? entry.title : null) || `${entry.connectionNameSnapshot} SQL`, entry.sql, available ? entry.connectionId ?? null : null, available ? null : entry.connectionNameSnapshot ?? null)}>
-            <span className="min-w-0"><span className="block truncate text-xs font-medium">{('title' in entry ? entry.title : null) || sqlPreview(entry.sql)}</span><span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">{sqlPreview(entry.sql)}</span></span>
-            <span className="text-right text-[11px] text-muted-foreground"><span className="block">{entry.connectionNameSnapshot ?? t('connection.disconnected')}</span><span>{'updatedAt' in entry ? formatHistoryTime(entry.updatedAt) : formatHistoryTime(entry.startedAt)}</span></span>
+          return <button key={entry.id} type="button" className="group grid w-full grid-cols-[minmax(0,1fr)_10rem] gap-4 border-b px-4 py-2 text-left transition-colors hover:bg-primary/[0.045] focus-visible:relative focus-visible:z-10 focus-visible:bg-primary/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/55" onDoubleClick={() => onOpenSql(('title' in entry ? entry.title : null) || `${entry.connectionNameSnapshot} SQL`, entry.sql, available ? entry.connectionId ?? null : null, available ? null : entry.connectionNameSnapshot ?? null)}>
+            <span className="min-w-0"><span className="block truncate text-xs font-medium leading-5 text-foreground">{('title' in entry ? entry.title : null) || sqlPreview(entry.sql)}</span><span className="block truncate font-mono text-[11px] leading-4 text-muted-foreground">{sqlPreview(entry.sql)}</span></span>
+            <span className="pt-0.5 text-right text-[11px] leading-4 text-muted-foreground"><span className="block truncate group-hover:text-foreground">{entry.connectionNameSnapshot ?? t('connection.disconnected')}</span><span className="block">{'updatedAt' in entry ? formatHistoryTime(entry.updatedAt) : formatHistoryTime(entry.startedAt)}</span></span>
           </button>
         })}
-        {filtered.length === 0 && <div className="p-8 text-center text-xs text-muted-foreground">{t('workbench.historyNoMatches')}</div>}
+        {filtered.length === 0 && <div className="p-10 text-center text-xs text-muted-foreground">{t('workbench.historyNoMatches')}</div>}
       </div>
     </div>
+    <Dialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
+      <DialogContent showCloseButton={false}>
+        <DialogHeader><DialogTitle>{clearLabel}</DialogTitle><DialogDescription>{clearDescription}</DialogDescription></DialogHeader>
+        <DialogFooter><Button type="button" variant="outline" disabled={recordsLoading} onClick={() => setClearDialogOpen(false)}>{t('common.cancel')}</Button><Button type="button" variant="destructive" disabled={recordsLoading} onClick={() => void clearRecords()}>{clearLabel}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>
 }
 
@@ -2186,7 +2236,7 @@ function ErrorDetails({ message, sql, onRetry }: { message: string; sql?: string
               SQL
             </div>
             <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-muted/35 p-2 font-mono text-[11px] leading-5">
-              {sql.trim() || 'Blank query'}
+              {sql.trim() || t('sql.blankQuery')}
             </pre>
           </div>
         )}
@@ -2384,7 +2434,7 @@ function largeResultNotice(result: QueryResult) {
 
 function sqlPreview(sql: string) {
   const preview = sql.trim().replace(/\s+/g, ' ')
-  return preview.length > 90 ? `${preview.slice(0, 90)}...` : preview || 'Blank query'
+  return preview.length > 90 ? `${preview.slice(0, 90)}...` : preview || i18n.t('sql.blankQuery')
 }
 
 function uniqueHistoryConnections(
@@ -2400,6 +2450,19 @@ function uniqueHistoryConnections(
   return Array.from(names, ([id, name]) => ({ id, name })).sort((left, right) =>
     left.name.localeCompare(right.name),
   )
+}
+
+function uniqueRecordConnections(
+  entries: { connectionId?: string | null; connectionNameSnapshot?: string | null }[],
+  connections: ConnectionConfig[],
+) {
+  const names = new Map(connections.map((connection) => [connection.id, connection.name]))
+  for (const entry of entries) {
+    if (entry.connectionId && !names.has(entry.connectionId) && entry.connectionNameSnapshot) {
+      names.set(entry.connectionId, entry.connectionNameSnapshot)
+    }
+  }
+  return Array.from(names, ([id, name]) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name))
 }
 
 function formatHistoryTime(value: string) {
