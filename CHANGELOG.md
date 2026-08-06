@@ -2,6 +2,13 @@
 
 All notable changes to VaporLensDB are documented in this file.
 
+## [0.8.2]
+
+### Changed
+
+- Added database-vendor icons across data-source surfaces, with a neutral
+  fallback for custom JDBC connections.
+
 ## [0.8.1]
 
 ### Added
