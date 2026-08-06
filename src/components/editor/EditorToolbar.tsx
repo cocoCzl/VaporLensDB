@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
+import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { Input } from '@/components/ui/input'
 import { AppSelect } from '@/components/ui/app-select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -199,7 +200,7 @@ function ExecutionDataSourcePicker({
         render={<Button type="button" size="sm" variant="outline" disabled={disabled} className="h-8 min-w-44 max-w-64 justify-between gap-2 px-2 text-xs" aria-label={t('connection.select')} />}
       >
         <span className="flex min-w-0 items-center gap-1.5">
-          <Database className="size-3.5 shrink-0 text-muted-foreground" />
+          <DatabaseVendorIcon driverType={current?.driverType} className="size-3.5 shrink-0" />
           {current && <span className={['size-1.5 shrink-0 rounded-full', connectionStatusClass(currentStatus)].join(' ')} title={connectionStatusTitle(currentStatus, t)} />}
           <span className="truncate">{current?.name ?? t('connection.select')}</span>
         </span>
@@ -221,6 +222,7 @@ function ExecutionDataSourcePicker({
               <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{group.name}</div>
               {group.connections.map((connection) => (
                 <button key={connection.id} type="button" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent" onClick={() => choose(connection.id)}>
+                  <DatabaseVendorIcon driverType={connection.driverType} className="size-3.5 shrink-0" />
                   <span className={['size-1.5 rounded-full', connectionStatusClass(statuses[connection.id] ?? 'disconnected')].join(' ')} />
                   <span className="min-w-0 flex-1 truncate">{connection.name}</span>
                   <span className="text-[10px] text-muted-foreground">{connection.driverType}</span>

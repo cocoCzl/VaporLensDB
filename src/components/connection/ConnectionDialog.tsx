@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Database, Plus, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,6 +11,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { ConnectionForm } from '@/components/connection/ConnectionForm'
+import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useDriverStore } from '@/stores/driverStore'
 import type { ConnectionConfig } from '@/types/connection'
@@ -63,7 +64,7 @@ export function ConnectionDialog({
         <DialogHeader className="flex h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-4">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/15 text-primary">
-                  <Database className="size-4" />
+                  <DatabaseVendorIcon driverType={connection?.driverType ?? 'postgres'} className="size-4" />
                 </div>
                 <div className="min-w-0">
                   <DialogTitle>

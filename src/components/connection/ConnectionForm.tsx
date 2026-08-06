@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, Database, Download, PlugZap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AppSelect } from '@/components/ui/app-select'
@@ -228,7 +229,7 @@ export function ConnectionForm({
           {t('connectionForm.projectDataSources')}
         </div>
         <div className="m-2 flex h-9 w-[calc(100%-1rem)] items-center gap-2 rounded-md bg-primary/15 px-2 text-left text-sm text-primary ring-1 ring-primary/30">
-          <Database className="size-4 shrink-0" />
+          <DatabaseVendorIcon driverType={form.driverType} className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate">{form.name || driverProfile.defaultName}</span>
         </div>
       </aside>}

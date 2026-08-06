@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Database, FolderPlus, Link, Link2Off, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
+import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
@@ -423,10 +424,11 @@ function ConnectionCard({
           <Check className="size-3 stroke-[3]" />
         </button>
       )}
-      <Database
+      <DatabaseVendorIcon
+        driverType={connection.driverType}
         className={[
           'size-4 shrink-0',
-          selected ? 'text-primary' : connected ? 'text-emerald-500' : 'text-muted-foreground',
+          selected ? 'opacity-100' : connected ? 'opacity-100' : 'opacity-85',
         ].join(' ')}
       />
       <div className="min-w-0 flex-1">

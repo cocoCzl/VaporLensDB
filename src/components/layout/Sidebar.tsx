@@ -22,6 +22,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
+import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -427,7 +428,7 @@ function CompactDataSourceTree() {
                       >
                         {busy ? <Loader2 className="size-3 animate-spin" /> : expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
                       </button>
-                      <Database className="size-3.5 shrink-0 text-muted-foreground" />
+                      <DatabaseVendorIcon driverType={connection.driverType} className="size-3.5 shrink-0" />
                       <span className={runtimeStatusDotClass(status)} aria-label={status} />
                       <span className="min-w-0 flex-1 truncate">{highlightDataSourceMatch(connection.name, query)}</span>
                       {favoriteDataSourceIds.includes(connection.id) && <Star className="size-3 shrink-0 fill-current text-amber-500" />}

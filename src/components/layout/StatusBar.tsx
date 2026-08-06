@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Activity, AlertCircle, Database, FolderOpen, Loader2, Square, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import {
   Sheet,
   SheetContent,
@@ -87,6 +88,7 @@ function CurrentDataSourceStatus() {
       className="inline-flex min-w-0 items-center gap-1.5 truncate"
       title={`${executionTab ? t('status.executionDataSource') : t('status.browsingDataSource')} · ${connection.name} · ${connection.driverType}${context ? ` · ${context}` : ''}`}
     >
+      <DatabaseVendorIcon driverType={connection.driverType} className="size-3 shrink-0" />
       <span
         className={[
           'size-1.5 shrink-0 rounded-full',
