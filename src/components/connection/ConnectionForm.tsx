@@ -55,9 +55,9 @@ export function ConnectionForm({
     driverDialect: connection?.driverDialect ?? connection?.driverType ?? 'postgresql',
     host: connection?.host ?? 'localhost',
     port: connection?.port ?? 5432,
-    database: connection?.database ?? 'postgres',
+    database: connection?.database ?? '',
     connectionUrl: connection?.connectionUrl ?? '',
-    username: connection?.username ?? 'postgres',
+    username: connection?.username ?? '',
     password: '',
     savePassword: connection?.hasSavedPassword ?? true,
     driverClass: connection?.driverClass ?? '',
@@ -392,7 +392,7 @@ export function ConnectionForm({
                       <Input
                         id="driver-paths"
                         value={form.driverPaths?.join('\n') ?? ''}
-                        placeholder="/path/to/ojdbc11.jar"
+                        placeholder={driverArtifactPathPlaceholder(selectedDriver?.driverArtifact)}
                         disableTextAssistance
                         onChange={(event) =>
                           update(
@@ -962,6 +962,11 @@ function applyUrlTemplate(template: string, input: ConnectionInput) {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''))
 }
 
+function driverArtifactPathPlaceholder(driverArtifact?: string | null) {
+  const fileName = driverArtifact?.trim()
+  return fileName ? `/path/to/${fileName}` : '/path/to/driver.jar'
+}
+
 const HOST_PORT_VARIANTS: ConnectionVariantOption[] = [
   { id: 'hostPort', label: 'Host/Port' },
   { id: 'urlOnly', label: 'URL only' },
@@ -971,8 +976,8 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
   postgres: {
     defaultName: 'Local PostgreSQL',
     defaultPort: 5432,
-    defaultDatabase: 'postgres',
-    defaultUsername: 'postgres',
+    defaultDatabase: '',
+    defaultUsername: '',
     status: 'ready',
     connectionVariants: HOST_PORT_VARIANTS,
     defaultUrl: () => '',
@@ -980,8 +985,8 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
   mysql: {
     defaultName: 'Local MySQL',
     defaultPort: 3306,
-    defaultDatabase: 'mysql',
-    defaultUsername: 'root',
+    defaultDatabase: '',
+    defaultUsername: '',
     status: 'ready',
     connectionVariants: HOST_PORT_VARIANTS,
     defaultUrl: () => '',
@@ -989,14 +994,14 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
   oracle: {
     defaultName: 'Oracle',
     defaultPort: 1521,
-    defaultDatabase: 'ORCLPDB1',
-    defaultUsername: 'system',
+    defaultDatabase: '',
+    defaultUsername: '',
     status: 'configurable',
     usesUrl: true,
     externalDriver: true,
     description: 'Oracle requires a user-provided local ojdbc.jar.',
     driverClass: 'oracle.jdbc.OracleDriver',
-    urlPlaceholder: 'jdbc:oracle:thin:@//localhost:1521/ORCLPDB1',
+    urlPlaceholder: 'jdbc:oracle:thin:@//localhost:1521/<service-name>',
     connectionVariants: [
       { id: 'oracleService', label: 'Service Name' },
       { id: 'oracleSid', label: 'SID' },
@@ -1005,7 +1010,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUrl: (input, variant) => {
       const host = input.host || 'localhost'
       const port = input.port || 1521
-      const database = input.database || 'ORCLPDB1'
+      const database = input.database || ''
       if (variant === 'oracleSid') return `jdbc:oracle:thin:@${host}:${port}:${database}`
       return `jdbc:oracle:thin:@//${host}:${port}/${database}`
     },
@@ -1038,18 +1043,18 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
   mssql: {
     defaultName: 'SQL Server',
     defaultPort: 1433,
-    defaultDatabase: 'master',
-    defaultUsername: 'sa',
+    defaultDatabase: '',
+    defaultUsername: '',
     status: 'ready',
     usesUrl: true,
-    urlPlaceholder: 'server=tcp:host,1433;database=master;user=sa;password=secret;TrustServerCertificate=true',
+    urlPlaceholder: 'server=tcp:host,1433;database=<database>;user=<username>;password=<password>;TrustServerCertificate=true',
     connectionVariants: HOST_PORT_VARIANTS,
     defaultUrl: () => '',
   },
   mongo: {
     defaultName: 'MongoDB',
     defaultPort: 27017,
-    defaultDatabase: 'admin',
+    defaultDatabase: '',
     defaultUsername: '',
     status: 'planned',
     connectionVariants: HOST_PORT_VARIANTS,

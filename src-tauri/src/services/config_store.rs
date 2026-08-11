@@ -2271,6 +2271,28 @@ mod tests {
             .find(|driver| driver.id == "oracle")
             .expect("oracle driver exists");
 
+        for driver_id in [
+            "postgres",
+            "mysql",
+            "oracle",
+            "mssql",
+            "jdbc-postgresql",
+            "jdbc-mysql",
+        ] {
+            let driver = drivers
+                .iter()
+                .find(|driver| driver.id == driver_id)
+                .expect("built-in driver exists");
+            assert_eq!(
+                driver.default_username, None,
+                "{driver_id} username default"
+            );
+            assert_eq!(
+                driver.default_database, None,
+                "{driver_id} database default"
+            );
+        }
+
         assert!(postgres.built_in);
         assert_eq!(postgres.default_port, Some(5432));
         assert!(postgres.capabilities.can_stream);

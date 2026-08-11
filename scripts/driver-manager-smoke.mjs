@@ -70,8 +70,21 @@ includesAll(
     'openExternalUrl(downloadUrl)',
     'connectionVariants',
     'applyUrlTemplate',
+    'driverArtifactPathPlaceholder(selectedDriver?.driverArtifact)',
+    "return fileName ? `/path/to/${fileName}` : '/path/to/driver.jar'",
   ],
   'connection dialog compact driver readiness and variants',
+)
+
+includesAll(
+  rustDriverCatalog,
+  [
+    'driver_artifact: Some("ojdbc11.jar".to_string())',
+    'driver_artifact: "postgresql-*.jar"',
+    'driver_artifact: "mysql-connector-j-*.jar"',
+    'driver_artifact: "sqlite-jdbc-*.jar"',
+  ],
+  'JDBC driver artifact examples',
 )
 
 excludesAll(
