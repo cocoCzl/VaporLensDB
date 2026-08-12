@@ -50,8 +50,8 @@ includesAll(
 
 const en = read('src/locales/en.json')
 const zh = read('src/locales/zh.json')
-includesAll(en, ['"supportStatus"', '"externalDriverRequirement"'], 'English connection support locale')
-includesAll(zh, ['"supportStatus"', '"externalDriverRequirement"'], 'Chinese connection support locale')
+includesAll(en, ['"supportStatus"', '"externalDriverRequirement"', '"connectionUrl"', '"urlCredentialsWarning"', '"urlCredentialsExtracted"', '"urlOnlySshUnsupported"'], 'English connection support locale')
+includesAll(zh, ['"supportStatus"', '"externalDriverRequirement"', '"connectionUrl"', '"urlCredentialsWarning"', '"urlCredentialsExtracted"', '"urlOnlySshUnsupported"'], 'Chinese connection support locale')
 
 const dialog = read('src/components/connection/ConnectionDialog.tsx')
 includesAll(
@@ -66,6 +66,22 @@ includesAll(
   'connection dialog stable opening layout',
 )
 includesAll(form, ['overflow-y-auto overflow-x-hidden', '[scrollbar-gutter:stable]'], 'connection dialog single stable scroll region')
+includesAll(
+  form,
+  [
+    "const isUrlOnly = activeConnectionVariant === 'urlOnly'",
+    "label={t('connectionForm.connectionUrl')}",
+    "updateConnectionUrl(event.target.value)",
+    "t('connectionForm.urlCredentialsWarning')",
+    "t('connectionForm.urlOnlySshUnsupported')",
+    "username: variant === 'file' ? null : emptyToNull(input.username)",
+    "password: variant === 'file' ? null : emptyToNull(input.password)",
+    "savePassword: variant === 'file' ? false : input.savePassword",
+    "sshTunnel: isUrlOnly || variant === 'file' ? null : normalizeSshTunnel(input)",
+    'align="start"',
+  ],
+  'URL-only connection form behavior',
+)
 assert(!dialog.includes('if (open) {\n      loadDrivers()'), 'driver catalogue must not first load only after the dialog opens')
 
 const packageJson = read('package.json')

@@ -29,6 +29,7 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"
 mysql_async = { version = "0.34", default-features = false, features = ["minimal"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls", "chrono"] }
+url = "2"
 tokio-util = { version = "0.7", features = ["compat"] }
 aes-gcm = "0.10"
 base64 = "0.22"

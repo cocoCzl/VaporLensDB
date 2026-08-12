@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { AppSelect } from '@/components/ui/app-select'
 import { normalizeAppError } from '@/ipc/client'
 import { openExternalUrl } from '@/lib/openExternalUrl'
+import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
 import type { DriverDefinition } from '@/types/driver'
@@ -47,6 +48,7 @@ export function ConnectionForm({
 }: ConnectionFormProps) {
   const { t } = useTranslation()
   const dataSourceGroups = useConnectionStore((state) => state.dataSourceGroups)
+  const initialUrlCredentials = extractUrlCredentials(connection?.connectionUrl ?? '')
   const [form, setForm] = useState<ConnectionInput>({
     id: connection?.id,
     name: connection?.name ?? 'Local PostgreSQL',
@@ -56,10 +58,10 @@ export function ConnectionForm({
     host: connection?.host ?? 'localhost',
     port: connection?.port ?? 5432,
     database: connection?.database ?? '',
-    connectionUrl: connection?.connectionUrl ?? '',
-    username: connection?.username ?? '',
-    password: '',
-    savePassword: connection?.hasSavedPassword ?? true,
+    connectionUrl: initialUrlCredentials.connectionUrl,
+    username: initialUrlCredentials.username ?? connection?.username ?? '',
+    password: initialUrlCredentials.password ?? '',
+    savePassword: initialUrlCredentials.password ? true : (connection?.hasSavedPassword ?? true),
     driverClass: connection?.driverClass ?? '',
     driverPaths: connection?.driverPaths ?? [],
     sslMode: connection?.sslMode ?? '',
@@ -105,10 +107,24 @@ export function ConnectionForm({
   )
     ? connectionVariant
     : driverProfile.connectionVariants[0].id
+  const isUrlOnly = activeConnectionVariant === 'urlOnly'
 
   const update = (key: keyof ConnectionInput, value: string | number | string[] | boolean | null) => {
     onDirtyChange?.(true)
     setForm((current) => ({ ...current, [key]: value }))
+  }
+
+  const updateConnectionUrl = (value: string) => {
+    const extracted = extractUrlCredentials(value)
+    onDirtyChange?.(true)
+    setForm((current) => ({
+      ...current,
+      connectionUrl: extracted.connectionUrl,
+      username: extracted.username ?? current.username,
+      password: extracted.password ?? current.password,
+      savePassword: extracted.password ? true : current.savePassword,
+    }))
+    if (extracted.username || extracted.password) setMessage(t('connectionForm.urlCredentialsExtracted'))
   }
 
   const updateSshTunnel = (key: string, value: string | number | boolean | null) => {
@@ -285,7 +301,28 @@ export function ConnectionForm({
                   />
                 </FormRow>
 
-                {activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file' && (
+                {isUrlOnly && (
+                  <FormRow label={t('connectionForm.connectionUrl')}>
+                    <div className="grid gap-2">
+                      <Input
+                        id="connection-url"
+                        value={form.connectionUrl ?? ''}
+                        placeholder={driverProfile.urlPlaceholder}
+                        disableTextAssistance
+                        onChange={(event) => updateConnectionUrl(event.target.value)}
+                        required
+                      />
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                        {t('connectionForm.urlCredentialsWarning')}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {t('connectionForm.urlOnlySshUnsupported')}
+                      </p>
+                    </div>
+                  </FormRow>
+                )}
+
+                {!isUrlOnly && activeConnectionVariant !== 'file' && (
                   <FormRow label={t('connectionForm.host')}>
                     <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
                       <Input
@@ -310,43 +347,51 @@ export function ConnectionForm({
                   </FormRow>
                 )}
 
-                <FormRow label={t('connectionForm.authentication')}>
-                  <AppSelect value="userPassword" disabled onValueChange={() => undefined} options={[{ value: 'userPassword', label: t('connectionForm.userPassword') }]} />
-                </FormRow>
+                {activeConnectionVariant !== 'file' && (
+                  <>
+                    <FormRow label={t('connectionForm.authentication')}>
+                      <AppSelect value="userPassword" disabled onValueChange={() => undefined} options={[{ value: 'userPassword', label: t('connectionForm.userPassword') }]} />
+                    </FormRow>
 
-                <FormRow label={t('connectionForm.user')}>
-                  <Input
-                    id="connection-username"
-                    value={form.username ?? ''}
-                    disableTextAssistance
-                    onChange={(event) => update('username', event.target.value)}
-                    required
-                  />
-                </FormRow>
-
-                <FormRow label={t('connectionForm.password')}>
-                  <div className="grid gap-2">
-                    <Input
-                      id="connection-password"
-                      type="password"
-                      value={form.password ?? ''}
-                      placeholder={connection ? t('common.hidden') : ''}
-                      disableTextAssistance
-                      onChange={(event) => update('password', event.target.value)}
-                    />
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        className="h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted p-0.5 transition-colors checked:bg-primary before:block before:size-3 before:rounded-full before:bg-card before:transition-transform checked:before:translate-x-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                        checked={form.savePassword ?? true}
-                        onChange={(event) => update('savePassword', event.target.checked)}
+                    <FormRow label={t('connectionForm.user')}>
+                      <Input
+                        id="connection-username"
+                        value={form.username ?? ''}
+                        disableTextAssistance
+                        onChange={(event) => update('username', event.target.value)}
+                        required
                       />
-                      <span>{t('connectionForm.savePassword')}</span>
-                    </label>
-                    <p className="text-[11px] text-muted-foreground">{t('connectionForm.savePasswordHint')}</p>
-                  </div>
-                </FormRow>
+                    </FormRow>
+
+                    <FormRow
+                      label={t('connectionForm.password')}
+                      align="start"
+                      labelClassName="pt-1.5"
+                    >
+                      <div className="grid gap-2">
+                        <Input
+                          id="connection-password"
+                          type="password"
+                          value={form.password ?? ''}
+                          placeholder={connection ? t('common.hidden') : ''}
+                          disableTextAssistance
+                          onChange={(event) => update('password', event.target.value)}
+                        />
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            role="switch"
+                            className="h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted p-0.5 transition-colors checked:bg-primary before:block before:size-3 before:rounded-full before:bg-card before:transition-transform checked:before:translate-x-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                            checked={form.savePassword ?? true}
+                            onChange={(event) => update('savePassword', event.target.checked)}
+                          />
+                          <span>{t('connectionForm.savePassword')}</span>
+                        </label>
+                        <p className="text-[11px] text-muted-foreground">{t('connectionForm.savePasswordHint')}</p>
+                      </div>
+                    </FormRow>
+                  </>
+                )}
 
                 {activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file' && (
                   <FormRow label={databaseFieldLabel(activeConnectionVariant, t)}>
@@ -360,19 +405,19 @@ export function ConnectionForm({
                   </FormRow>
                 )}
 
-                {driverProfile.usesUrl && (
-                  <FormRow label="URL:">
+                {!isUrlOnly && driverProfile.usesUrl && (
+                  <FormRow label={t('connectionForm.connectionUrl')}>
                     <Input
                       id="connection-url"
                       value={
-                        activeConnectionVariant === 'urlOnly' || activeConnectionVariant === 'file'
+                        activeConnectionVariant === 'file'
                           ? (form.connectionUrl ?? '')
                           : driverProfile.defaultUrl(form, activeConnectionVariant)
                       }
                       placeholder={driverProfile.urlPlaceholder}
                       disableTextAssistance
-                      readOnly={activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file'}
-                      onChange={(event) => update('connectionUrl', event.target.value)}
+                      readOnly={activeConnectionVariant !== 'file'}
+                      onChange={(event) => updateConnectionUrl(event.target.value)}
                     />
                   </FormRow>
                 )}
@@ -430,7 +475,7 @@ export function ConnectionForm({
                       />
                     </FormRow>
 
-                    <FormRow label={t('connectionForm.sshTunnel')}>
+                    {!isUrlOnly && <FormRow label={t('connectionForm.sshTunnel')}>
                       <label className="inline-flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -439,9 +484,9 @@ export function ConnectionForm({
                         />
                         <span>{t('connectionForm.enableSshTunnel')}</span>
                       </label>
-                    </FormRow>
+                    </FormRow>}
 
-                    {form.sshTunnel?.enabled && (
+                    {!isUrlOnly && form.sshTunnel?.enabled && (
                       <>
                         <FormRow label={t('connectionForm.sshHost')}>
                           <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
@@ -565,10 +610,20 @@ export function ConnectionForm({
   )
 }
 
-function FormRow({ label, children }: { label: string; children: ReactNode }) {
+function FormRow({
+  label,
+  children,
+  align = 'center',
+  labelClassName,
+}: {
+  label: string
+  children: ReactNode
+  align?: 'center' | 'start'
+  labelClassName?: string
+}) {
   return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] items-center gap-3">
-      <Label className="text-right text-sm">{label}</Label>
+    <div className={`grid grid-cols-[112px_minmax(0,1fr)] gap-3 ${align === 'start' ? 'items-start' : 'items-center'}`}>
+      <Label className={`text-right text-sm ${labelClassName ?? ''}`}>{label}</Label>
       <div className="min-w-0">{children}</div>
     </div>
   )
@@ -752,6 +807,7 @@ function normalizeInput(
   profile: DriverProfile,
   definition?: DriverDefinition,
 ): ConnectionInput {
+  const isUrlOnly = variant === 'urlOnly'
   return {
     ...input,
     driverDefinitionId: input.driverDefinitionId ?? input.driverType,
@@ -762,15 +818,16 @@ function normalizeInput(
       profile.usesUrl && variant !== 'urlOnly'
         ? emptyToNull(profile.defaultUrl(input, variant))
         : emptyToNull(input.connectionUrl),
-    username: emptyToNull(input.username),
-    password: emptyToNull(input.password),
+    username: variant === 'file' ? null : emptyToNull(input.username),
+    password: variant === 'file' ? null : emptyToNull(input.password),
+    savePassword: variant === 'file' ? false : input.savePassword,
     driverClass: emptyToNull(input.driverClass),
     driverPaths: input.driverPaths?.length ? input.driverPaths : (definition?.driverArtifacts ?? []),
     group: emptyToNull(input.group),
     // Legacy color tags are retained for saved-connection compatibility but no
     // longer carry environment or safety semantics in the user interface.
     colorTag: input.colorTag ?? null,
-    sshTunnel: normalizeSshTunnel(input),
+    sshTunnel: isUrlOnly || variant === 'file' ? null : normalizeSshTunnel(input),
   }
 }
 
@@ -831,6 +888,9 @@ function validateRequiredFields(
     if (!input.connectionUrl?.trim()) {
       return t('connectionForm.validation.urlRequired')
     }
+    if (variant === 'urlOnly' && requiresUsername(input.driverType) && !input.username?.trim()) {
+      return t('connectionForm.validation.usernameRequired')
+    }
     return null
   }
 
@@ -872,7 +932,7 @@ function requiresDatabase(driverType: DriverType) {
 }
 
 function requiresUsername(driverType: DriverType) {
-  return driverType === 'postgres' || driverType === 'mysql' || driverType === 'mssql'
+  return driverType === 'postgres' || driverType === 'mysql' || driverType === 'mssql' || driverType === 'oracle' || driverType === 'jdbc'
 }
 
 function requiresExternalDriverConfig(profile: DriverProfile, definition?: DriverDefinition) {

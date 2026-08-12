@@ -496,7 +496,7 @@ async fn create_driver(
     match config.driver_type {
         DriverType::Postgres => {
             let driver = if let Some(connection_url) = config.connection_url.as_deref() {
-                PostgresDriver::connect(connection_url).await?
+                PostgresDriver::connect_with_url_credentials(connection_url, config.username.as_deref(), password).await?
             } else {
                 let host = required(config.host.as_deref(), "host")?;
                 let port = config.port.unwrap_or(5432);
@@ -510,7 +510,7 @@ async fn create_driver(
         }
         DriverType::Mysql => {
             let driver = if let Some(connection_url) = config.connection_url.as_deref() {
-                MysqlDriver::connect(connection_url).await?
+                MysqlDriver::connect_with_url_credentials(connection_url, config.username.as_deref(), password).await?
             } else {
                 let host = required(config.host.as_deref(), "host")?;
                 let port = config.port.unwrap_or(3306);
@@ -532,7 +532,7 @@ async fn create_driver(
         }
         DriverType::Mssql => {
             let driver = if let Some(connection_url) = config.connection_url.as_deref() {
-                MssqlDriver::connect(connection_url).await?
+                MssqlDriver::connect_with_url_credentials(connection_url, config.username.as_deref(), password).await?
             } else {
                 let host = required(config.host.as_deref(), "host")?;
                 let port = config.port.unwrap_or(1433);

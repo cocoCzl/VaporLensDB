@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::Mutex, time::Instant};
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use futures_util::{pin_mut, TryStreamExt};
@@ -51,6 +52,22 @@ impl PostgresDriver {
             active_queries: Mutex::new(HashMap::new()),
             _connection_task: connection_task,
         })
+    }
+
+    pub async fn connect_with_url_credentials(
+        connection_url: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<Self, AppError> {
+        if username.is_none() && password.is_none() {
+            return Self::connect(connection_url).await;
+        }
+        let mut config = Config::from_str(connection_url).map_err(|error| AppError::ConfigError(format!("Invalid PostgreSQL connection URL: {error}")))?;
+        if let Some(username) = username { config.user(username); }
+        if let Some(password) = password { config.password(password); }
+        let (client, connection) = config.connect(NoTls).await.map_err(|error| AppError::ConnectionFailed { driver: "postgres".to_string(), message: error.to_string() })?;
+        let connection_task = tokio::spawn(async move { if let Err(error) = connection.await { log::error!("postgres connection task failed: {error}"); } });
+        Ok(Self { cancel_token: client.cancel_token(), client, active_queries: Mutex::new(HashMap::new()), _connection_task: connection_task })
     }
 
     pub async fn connect_with_params(
