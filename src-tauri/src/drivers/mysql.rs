@@ -39,12 +39,22 @@ impl MysqlDriver {
         username: Option<&str>,
         password: Option<&str>,
     ) -> Result<Self, AppError> {
-        let opts = Opts::from_url(connection_url).map_err(|error| AppError::ConfigError(format!("Invalid MySQL connection URL: {error}")))?;
+        let opts = Opts::from_url(connection_url).map_err(|error| {
+            AppError::ConfigError(format!("Invalid MySQL connection URL: {error}"))
+        })?;
         let mut builder = OptsBuilder::from_opts(opts);
-        if let Some(username) = username { builder = builder.user(Some(username)); }
-        if let Some(password) = password { builder = builder.pass(Some(password)); }
-        let conn = Conn::new(builder).await.map_err(map_mysql_connection_error)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        if let Some(username) = username {
+            builder = builder.user(Some(username));
+        }
+        if let Some(password) = password {
+            builder = builder.pass(Some(password));
+        }
+        let conn = Conn::new(builder)
+            .await
+            .map_err(map_mysql_connection_error)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub async fn connect_with_params(

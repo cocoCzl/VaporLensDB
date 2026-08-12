@@ -43,9 +43,15 @@ impl MssqlDriver {
         username: Option<&str>,
         password: Option<&str>,
     ) -> Result<Self, AppError> {
-        let mut config = if connection_url.trim_start().starts_with("jdbc:sqlserver:") { Config::from_jdbc_string(connection_url) } else { Config::from_ado_string(connection_url) }
-            .map_err(|error| AppError::ConfigError(format!("Invalid SQL Server URL: {error}")))?;
-        if let Some(username) = username { config.authentication(AuthMethod::sql_server(username, password.unwrap_or(""))); }
+        let mut config = if connection_url.trim_start().starts_with("jdbc:sqlserver:") {
+            Config::from_jdbc_string(connection_url)
+        } else {
+            Config::from_ado_string(connection_url)
+        }
+        .map_err(|error| AppError::ConfigError(format!("Invalid SQL Server URL: {error}")))?;
+        if let Some(username) = username {
+            config.authentication(AuthMethod::sql_server(username, password.unwrap_or("")));
+        }
         Self::connect_with_config(config).await
     }
 

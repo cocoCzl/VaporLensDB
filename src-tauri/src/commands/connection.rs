@@ -249,20 +249,31 @@ fn default_save_password() -> bool {
 /// Keep passwords out of persisted URLs even if a caller bypasses the UI.
 /// Only standard URI syntax is changed; opaque custom JDBC strings stay intact.
 fn extract_url_credentials(input: &mut ConnectionInput) {
-    let Some(connection_url) = input.connection_url.clone() else { return };
+    let Some(connection_url) = input.connection_url.clone() else {
+        return;
+    };
     if extract_sql_server_url_credentials(input, &connection_url) {
         return;
     }
     let jdbc_prefix = connection_url.strip_prefix("jdbc:").unwrap_or("");
-    let candidate = connection_url.strip_prefix("jdbc:").unwrap_or(&connection_url);
-    let Ok(mut url) = url::Url::parse(candidate) else { return };
+    let candidate = connection_url
+        .strip_prefix("jdbc:")
+        .unwrap_or(&connection_url);
+    let Ok(mut url) = url::Url::parse(candidate) else {
+        return;
+    };
     let mut username = (!url.username().is_empty()).then(|| url.username().to_string());
     let password = url.password().map(str::to_string);
     let mut query_password = None;
     if username.is_none() || password.is_none() {
-        let query_pairs = url.query_pairs().map(|(key, value)| (key.into_owned(), value.into_owned())).collect::<Vec<_>>();
+        let query_pairs = url
+            .query_pairs()
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect::<Vec<_>>();
         for (key, value) in &query_pairs {
-            if username.is_none() && (key.eq_ignore_ascii_case("user") || key.eq_ignore_ascii_case("username")) {
+            if username.is_none()
+                && (key.eq_ignore_ascii_case("user") || key.eq_ignore_ascii_case("username"))
+            {
                 username = Some(value.to_string());
             }
             if password.is_none() && key.eq_ignore_ascii_case("password") {
@@ -270,14 +281,22 @@ fn extract_url_credentials(input: &mut ConnectionInput) {
             }
         }
         if username.is_some() || query_password.is_some() {
-            url.query_pairs_mut().clear().extend_pairs(query_pairs.into_iter().filter(|(key, _)| {
-                !key.eq_ignore_ascii_case("user") && !key.eq_ignore_ascii_case("username") && !key.eq_ignore_ascii_case("password")
-            }));
+            url.query_pairs_mut()
+                .clear()
+                .extend_pairs(query_pairs.into_iter().filter(|(key, _)| {
+                    !key.eq_ignore_ascii_case("user")
+                        && !key.eq_ignore_ascii_case("username")
+                        && !key.eq_ignore_ascii_case("password")
+                }));
         }
     }
     let password = password.or(query_password);
-    if username.is_none() && password.is_none() { return; }
-    if let Some(username) = username { input.username = Some(username); }
+    if username.is_none() && password.is_none() {
+        return;
+    }
+    if let Some(username) = username {
+        input.username = Some(username);
+    }
     if let Some(password) = password {
         input.password = Some(password);
         input.save_password = true;
@@ -293,17 +312,35 @@ fn extract_sql_server_url_credentials(input: &mut ConnectionInput, connection_ur
     }
     let mut username = None;
     let mut password = None;
-    let parts = connection_url.split(';').filter(|part| {
-        let Some((key, value)) = part.split_once('=') else { return true };
-        match key.trim().to_ascii_lowercase().as_str() {
-            "user" | "user id" | "username" => { username = Some(value.trim().to_string()); false }
-            "password" => { password = Some(value.trim().to_string()); false }
-            _ => true,
-        }
-    }).collect::<Vec<_>>();
-    if username.is_none() && password.is_none() { return false; }
-    if let Some(username) = username { input.username = Some(username); }
-    if let Some(password) = password { input.password = Some(password); input.save_password = true; }
+    let parts = connection_url
+        .split(';')
+        .filter(|part| {
+            let Some((key, value)) = part.split_once('=') else {
+                return true;
+            };
+            match key.trim().to_ascii_lowercase().as_str() {
+                "user" | "user id" | "username" => {
+                    username = Some(value.trim().to_string());
+                    false
+                }
+                "password" => {
+                    password = Some(value.trim().to_string());
+                    false
+                }
+                _ => true,
+            }
+        })
+        .collect::<Vec<_>>();
+    if username.is_none() && password.is_none() {
+        return false;
+    }
+    if let Some(username) = username {
+        input.username = Some(username);
+    }
+    if let Some(password) = password {
+        input.password = Some(password);
+        input.save_password = true;
+    }
     input.connection_url = Some(parts.join(";"));
     true
 }
@@ -314,10 +351,25 @@ mod tests {
 
     fn input(url: &str) -> ConnectionInput {
         ConnectionInput {
-            id: None, name: "test".to_string(), driver_definition_id: None, driver_type: DriverType::Postgres,
-            driver_dialect: None, host: None, port: None, database: None, connection_url: Some(url.to_string()),
-            username: None, password: None, save_password: false, driver_class: None, driver_paths: None,
-            ssl_mode: None, group_id: None, group: None, color_tag: None, ssh_tunnel: None,
+            id: None,
+            name: "test".to_string(),
+            driver_definition_id: None,
+            driver_type: DriverType::Postgres,
+            driver_dialect: None,
+            host: None,
+            port: None,
+            database: None,
+            connection_url: Some(url.to_string()),
+            username: None,
+            password: None,
+            save_password: false,
+            driver_class: None,
+            driver_paths: None,
+            ssl_mode: None,
+            group_id: None,
+            group: None,
+            color_tag: None,
+            ssh_tunnel: None,
         }
     }
 
@@ -325,7 +377,10 @@ mod tests {
     fn extracts_uri_credentials_before_persisting() {
         let mut input = input("postgresql://alice:secret@db.example/app");
         extract_url_credentials(&mut input);
-        assert_eq!(input.connection_url.as_deref(), Some("postgresql://db.example/app"));
+        assert_eq!(
+            input.connection_url.as_deref(),
+            Some("postgresql://db.example/app")
+        );
         assert_eq!(input.username.as_deref(), Some("alice"));
         assert_eq!(input.password.as_deref(), Some("secret"));
         assert!(input.save_password);
@@ -333,9 +388,13 @@ mod tests {
 
     #[test]
     fn extracts_sql_server_credentials_before_persisting() {
-        let mut input = input("jdbc:sqlserver://db.example:1433;database=app;user=alice;password=secret");
+        let mut input =
+            input("jdbc:sqlserver://db.example:1433;database=app;user=alice;password=secret");
         extract_url_credentials(&mut input);
-        assert_eq!(input.connection_url.as_deref(), Some("jdbc:sqlserver://db.example:1433;database=app"));
+        assert_eq!(
+            input.connection_url.as_deref(),
+            Some("jdbc:sqlserver://db.example:1433;database=app")
+        );
         assert_eq!(input.username.as_deref(), Some("alice"));
         assert_eq!(input.password.as_deref(), Some("secret"));
     }
