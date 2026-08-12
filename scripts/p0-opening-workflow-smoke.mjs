@@ -76,19 +76,14 @@ includesAll(
   [
     'connection ? `${connection.name} SQL` :',
     'renameTab',
-    'restoreDraft',
+    'saveTabDraft',
+    'markDraftClosed',
     'closeEditorTab',
-    "t('sql.lastEditedScript')",
-    'recentOpen',
-    'aria-haspopup="menu"',
-    'role="menu"',
-    'bg-card p-1 text-card-foreground',
     'onDoubleClick',
     'setEditingTabId',
     'connectionId: activeConnectionId',
     'nextSqlIndex',
-    'clearDraftTimer',
-    "t('sql.clearRecentScripts')",
+    "openRecordsWorkspace('sqlScripts')",
   ],
   'SQL tab context and naming',
 )
@@ -97,12 +92,12 @@ const toolbar = read('src/components/layout/GlobalToolbar.tsx')
 assert(!toolbar.includes("t('workbench.newSql')"), 'global toolbar must not duplicate the tab-bar SQL action')
 assert(!toolbar.includes('CreateDatabaseDialog'), 'global toolbar must not expose database creation')
 assert(
-  !tabBar.includes('DropdownMenu'),
-  'recent SQL menu should avoid Base UI DropdownMenu in Tauri toolbar',
+  tabBar.includes("openRecordsWorkspace('sqlScripts')"),
+  'SQL drafts should open in the records workspace',
 )
 assert(
-  !tabBar.includes('bg-popover'),
-  'recent SQL menu should use an opaque locally defined surface color',
+  mainPanel.includes("t('sql.clearRecentScripts')"),
+  'SQL scripts workspace should expose draft clearing',
 )
 
 const packageJson = read('package.json')

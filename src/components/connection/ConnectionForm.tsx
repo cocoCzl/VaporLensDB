@@ -151,7 +151,7 @@ export function ConnectionForm({
       username: current.username || profile.defaultUsername,
       connectionUrl: profile.defaultUrl(current, nextVariant),
       driverClass: profile.driverClass ?? '',
-      driverPaths: current.driverPaths?.length ? current.driverPaths : (definition?.driverArtifacts ?? []),
+      driverPaths: definition?.driverArtifacts ?? [],
     }))
   }
 

@@ -52,7 +52,7 @@ includesAll(
   'primary database choices',
 )
 assert(
-  connectionForm.includes("disabled={driver.status === 'planned'}"),
+  connectionForm.includes("disabled: driver.status === 'planned'"),
   'planned database choices should be disabled',
 )
 includesAll(connectionForm, ["t('connectionForm.validation.oracleJarRequired')"], 'Oracle local validation')

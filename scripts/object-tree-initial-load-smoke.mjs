@@ -25,8 +25,8 @@ assert(
 
 const connectionStore = readFileSync(resolve(root, 'src/stores/connectionStore.ts'), 'utf8')
 const connectSuccess = connectionStore.slice(
-  connectionStore.indexOf('const status = await connect(id)'),
-  connectionStore.indexOf('} catch (error)', connectionStore.indexOf('const status = await connect(id)')),
+  connectionStore.indexOf('const status = await connect(id, options.password)'),
+  connectionStore.indexOf('} catch (error)', connectionStore.indexOf('const status = await connect(id, options.password)')),
 )
 assert(
   connectSuccess.indexOf('useMetadataStore.getState().clearConnection(id)') < connectSuccess.indexOf('statuses:'),
