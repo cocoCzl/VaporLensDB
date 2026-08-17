@@ -13,6 +13,10 @@ use crate::{
     },
 };
 
+/// Object search remains useful on very large installations without retaining
+/// every column name in the renderer process.
+const MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION: usize = 100_000;
+
 #[derive(Clone, Default)]
 pub struct MetadataIndexService {
     entries: Arc<RwLock<HashMap<Uuid, Vec<MetadataIndexEntry>>>>,
@@ -101,7 +105,7 @@ impl MetadataIndexService {
 
         let databases = driver.get_databases().await.unwrap_or_default();
         for database in &databases {
-            entries.push(database_entry(connection, database));
+            push_index_entry(&mut entries, database_entry(connection, database));
         }
         current += databases.len() as u64;
         if !on_progress(MetadataIndexProgress {
@@ -116,7 +120,10 @@ impl MetadataIndexService {
         let schemas = driver.get_schemas(connection.database.as_deref()).await?;
         let schema_total = schemas.len() as u64;
         for (schema_index, schema) in schemas.iter().enumerate() {
-            entries.push(schema_entry(connection, schema));
+            if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+                break;
+            }
+            push_index_entry(&mut entries, schema_entry(connection, schema));
 
             let tables = driver.get_tables(&schema.name).await.unwrap_or_default();
             let views = driver.get_views(&schema.name).await.unwrap_or_default();
@@ -124,15 +131,24 @@ impl MetadataIndexService {
             current += 1 + tables.len() as u64 + views.len() as u64 + functions.len() as u64;
 
             for table in &tables {
-                entries.push(table_entry(connection, schema, table));
+                push_index_entry(&mut entries, table_entry(connection, schema, table));
                 append_columns(connection, schema, table, &mut entries, &driver).await;
+                if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+                    break;
+                }
             }
             for view in &views {
-                entries.push(view_entry(connection, schema, view));
+                push_index_entry(&mut entries, view_entry(connection, schema, view));
                 append_columns(connection, schema, view, &mut entries, &driver).await;
+                if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+                    break;
+                }
             }
             for function in functions {
-                entries.push(function_entry(connection, schema, &function));
+                push_index_entry(&mut entries, function_entry(connection, schema, &function));
+                if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+                    break;
+                }
             }
 
             if !on_progress(MetadataIndexProgress {
@@ -222,7 +238,16 @@ async fn append_columns(
         .await
         .unwrap_or_default();
     for column in columns {
-        entries.push(column_entry(connection, schema, table, &column));
+        push_index_entry(entries, column_entry(connection, schema, table, &column));
+        if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+            break;
+        }
+    }
+}
+
+fn push_index_entry(entries: &mut Vec<MetadataIndexEntry>, entry: MetadataIndexEntry) {
+    if entries.len() < MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+        entries.push(entry);
     }
 }
 

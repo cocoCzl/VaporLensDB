@@ -84,7 +84,7 @@ impl DatabaseDriver for SqliteDriver {
             supports_explain: true,
             supports_cancel: false,
             supports_ddl: true,
-            supports_streaming: false,
+            supports_streaming: true,
         }
     }
 
@@ -119,42 +119,27 @@ impl DatabaseDriver for SqliteDriver {
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
         let start = Instant::now();
-        let result = self.execute_query(sql, Some(query_id)).await?;
-        let limit = max_rows.unwrap_or(result.rows.len() as u64) as usize;
-        let truncated = result.rows.len() > limit;
-        let rows = result.rows.into_iter().take(limit).collect::<Vec<_>>();
-        let chunk_size = chunk_size.max(1);
-        let mut row_offset = 0_u64;
-
-        for chunk_rows in rows.chunks(chunk_size) {
-            chunks
-                .send(Ok(QueryResultChunk {
-                    query_id: query_id.to_string(),
-                    columns: result.columns.clone(),
-                    rows: chunk_rows.to_vec(),
-                    row_offset,
-                }))
-                .await
-                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
-            row_offset += chunk_rows.len() as u64;
-        }
-
-        if row_offset == 0 && !result.columns.is_empty() {
-            chunks
-                .send(Ok(QueryResultChunk {
-                    query_id: query_id.to_string(),
-                    columns: result.columns.clone(),
-                    rows: Vec::new(),
-                    row_offset,
-                }))
-                .await
-                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
-        }
+        let sql = sql.to_string();
+        let query_id = query_id.to_string();
+        let stream_query_id = query_id.clone();
+        let limit = max_rows.unwrap_or(u64::MAX);
+        let (row_count, affected_rows, truncated) = self
+            .with_connection("stream query", move |connection| {
+                stream_sqlite_query(
+                    connection,
+                    &sql,
+                    &stream_query_id,
+                    chunk_size.max(1),
+                    limit,
+                    chunks,
+                )
+            })
+            .await?;
 
         Ok(QueryStreamSummary {
-            query_id: query_id.to_string(),
-            row_count: row_offset,
-            affected_rows: result.affected_rows,
+            query_id,
+            row_count,
+            affected_rows,
             elapsed_ms: start.elapsed().as_millis() as u64,
             truncated,
             max_rows,
@@ -529,6 +514,88 @@ fn execute_sqlite_query(
     })
 }
 
+/// Runs on SQLite's blocking worker. `blocking_send` provides backpressure to
+/// the database cursor, so only one chunk is materialized at a time.
+fn stream_sqlite_query(
+    connection: &Connection,
+    sql: &str,
+    query_id: &str,
+    chunk_size: usize,
+    limit: u64,
+    chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+) -> Result<(u64, u64, bool), AppError> {
+    let mut statement = connection
+        .prepare(sql)
+        .map_err(|error| AppError::QueryFailed {
+            sql: sql.to_string(),
+            message: error.to_string(),
+        })?;
+    if statement.column_count() == 0 {
+        let affected_rows = statement
+            .execute([])
+            .map_err(|error| AppError::QueryFailed {
+                sql: sql.to_string(),
+                message: error.to_string(),
+            })? as u64;
+        return Ok((0, affected_rows, false));
+    }
+
+    let columns = statement
+        .column_names()
+        .into_iter()
+        .map(|name| ColumnMeta {
+            name: name.to_string(),
+            data_type: "UNKNOWN".to_string(),
+            nullable: true,
+        })
+        .collect::<Vec<_>>();
+    let mut cursor = statement.query([]).map_err(|error| AppError::QueryFailed {
+        sql: sql.to_string(),
+        message: error.to_string(),
+    })?;
+    let mut rows = Vec::with_capacity(chunk_size);
+    let mut row_count = 0_u64;
+    let mut row_offset = 0_u64;
+    let mut truncated = false;
+
+    while let Some(row) = cursor.next().map_err(|error| AppError::QueryFailed {
+        sql: sql.to_string(),
+        message: error.to_string(),
+    })? {
+        if row_count >= limit {
+            truncated = true;
+            break;
+        }
+        rows.push(sqlite_row_to_json_values(row, columns.len())?);
+        row_count += 1;
+        if rows.len() == chunk_size {
+            send_sqlite_chunk(&chunks, query_id, &columns, &mut rows, row_offset)?;
+            row_offset = row_count;
+        }
+    }
+    if !rows.is_empty() || !columns.is_empty() {
+        send_sqlite_chunk(&chunks, query_id, &columns, &mut rows, row_offset)?;
+    }
+    Ok((row_count, 0, truncated))
+}
+
+fn send_sqlite_chunk(
+    chunks: &mpsc::Sender<Result<QueryResultChunk, AppError>>,
+    query_id: &str,
+    columns: &[ColumnMeta],
+    rows: &mut Vec<Vec<serde_json::Value>>,
+    row_offset: u64,
+) -> Result<(), AppError> {
+    chunks
+        .blocking_send(Ok(QueryResultChunk {
+            query_id: query_id.to_string(),
+            columns: columns.to_vec(),
+            rows: std::mem::take(rows),
+            row_offset,
+        }))
+        .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))
+}
+
 fn sqlite_row_to_json_values(
     row: &rusqlite::Row<'_>,
     column_count: usize,
@@ -589,8 +656,9 @@ fn encode_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_hex, sqlite_database_name, sqlite_value_to_json};
+    use super::{encode_hex, sqlite_database_name, sqlite_value_to_json, stream_sqlite_query};
     use rusqlite::types::ValueRef;
+    use tokio::sync::mpsc;
 
     #[test]
     fn derives_database_name_from_path() {
@@ -603,5 +671,72 @@ mod tests {
         let value = sqlite_value_to_json(ValueRef::Blob(&[0xde, 0xad, 0xbe, 0xef]));
         assert_eq!(value, serde_json::json!("deadbeef"));
         assert_eq!(encode_hex(&[0x0a, 0x1b]), "0a1b");
+    }
+
+    #[tokio::test]
+    async fn streams_rows_without_materializing_the_full_result() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let worker = std::thread::spawn(move || {
+            let connection = rusqlite::Connection::open_in_memory().unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE sample(value INTEGER); INSERT INTO sample VALUES (1), (2), (3);",
+                )
+                .unwrap();
+            stream_sqlite_query(
+                &connection,
+                "SELECT value FROM sample ORDER BY value",
+                "stream-test",
+                2,
+                2,
+                sender,
+            )
+        });
+
+        let mut received = Vec::new();
+        while let Some(chunk) = receiver.recv().await {
+            received.extend(chunk.unwrap().rows);
+        }
+        let (count, affected, truncated) = worker.join().unwrap().unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(affected, 0);
+        assert!(truncated);
+        assert_eq!(
+            received,
+            vec![vec![serde_json::json!(1)], vec![serde_json::json!(2)]]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_budget_keeps_a_large_result_bounded() {
+        const ROW_LIMIT: u64 = 50_000;
+        const CHUNK_SIZE: usize = 1_000;
+        let (sender, mut receiver) = mpsc::channel(1);
+        let worker = std::thread::spawn(move || {
+            let connection = rusqlite::Connection::open_in_memory().unwrap();
+            stream_sqlite_query(
+                &connection,
+                "WITH RECURSIVE rows(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM rows WHERE value < 100000) SELECT value FROM rows",
+                "stream-budget-test",
+                CHUNK_SIZE,
+                ROW_LIMIT,
+                sender,
+            )
+        });
+
+        let mut received = 0_u64;
+        while let Some(chunk) = receiver.recv().await {
+            let chunk = chunk.unwrap();
+            assert!(
+                chunk.rows.len() <= CHUNK_SIZE,
+                "stream chunk exceeded its memory budget"
+            );
+            received += chunk.rows.len() as u64;
+        }
+        let (count, affected, truncated) = worker.join().unwrap().unwrap();
+        assert_eq!(count, ROW_LIMIT);
+        assert_eq!(received, ROW_LIMIT);
+        assert_eq!(affected, 0);
+        assert!(truncated);
     }
 }

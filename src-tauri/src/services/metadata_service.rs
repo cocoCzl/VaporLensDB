@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -13,6 +17,12 @@ use crate::{
         },
     },
 };
+
+/// Limits metadata retained across all live Data Sources. Individual entries
+/// can be large (notably column lists and DDL), so bounding entry count avoids
+/// indefinite growth while preserving the existing explicit refresh behavior.
+const MAX_METADATA_CACHE_ENTRIES: usize = 256;
+const METADATA_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Default)]
 pub struct MetadataService {
@@ -31,6 +41,58 @@ struct MetadataCache {
     indexes: HashMap<String, Vec<IndexInfo>>,
     foreign_keys: HashMap<String, Vec<ForeignKeyInfo>>,
     ddls: HashMap<String, String>,
+    insertion_order: VecDeque<String>,
+    last_access: HashMap<String, Instant>,
+}
+
+impl MetadataCache {
+    fn prepare_insert(&mut self, key: &str) {
+        if self.insertion_order.iter().any(|existing| existing == key) {
+            self.touch(key);
+            return;
+        }
+        if self.insertion_order.len() >= MAX_METADATA_CACHE_ENTRIES {
+            if let Some(evicted) = self.insertion_order.pop_front() {
+                self.remove_key(&evicted);
+            }
+        }
+        self.insertion_order.push_back(key.to_string());
+        self.last_access.insert(key.to_string(), Instant::now());
+    }
+
+    fn is_fresh(&mut self, key: &str) -> bool {
+        let fresh = self
+            .last_access
+            .get(key)
+            .is_some_and(|accessed| accessed.elapsed() < METADATA_CACHE_TTL);
+        if fresh {
+            self.touch(key);
+        } else {
+            self.remove_key(key);
+        }
+        fresh
+    }
+
+    fn touch(&mut self, key: &str) {
+        self.insertion_order.retain(|existing| existing != key);
+        self.insertion_order.push_back(key.to_string());
+        self.last_access.insert(key.to_string(), Instant::now());
+    }
+
+    fn remove_key(&mut self, key: &str) {
+        self.databases.remove(key);
+        self.schemas.remove(key);
+        self.tables.remove(key);
+        self.views.remove(key);
+        self.functions.remove(key);
+        self.schema_objects.remove(key);
+        self.columns.remove(key);
+        self.indexes.remove(key);
+        self.foreign_keys.remove(key);
+        self.ddls.remove(key);
+        self.last_access.remove(key);
+        self.insertion_order.retain(|existing| existing != key);
+    }
 }
 
 impl MetadataService {
@@ -55,6 +117,10 @@ impl MetadataService {
             .foreign_keys
             .retain(|key, _| !key.starts_with(&prefix));
         cache.ddls.retain(|key, _| !key.starts_with(&prefix));
+        cache
+            .insertion_order
+            .retain(|key| !key.starts_with(&prefix));
+        cache.last_access.retain(|key, _| !key.starts_with(&prefix));
     }
 
     pub async fn get_databases(
@@ -63,16 +129,16 @@ impl MetadataService {
         driver: Arc<dyn DatabaseDriver>,
     ) -> Result<Vec<DatabaseInfo>, AppError> {
         let key = cache_key(connection_id, ["databases"]);
-        if let Some(cached) = self.cache.read().await.databases.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.databases.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_databases().await?;
-        self.cache
-            .write()
-            .await
-            .databases
-            .insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.databases.insert(key, values.clone());
         Ok(values)
     }
 
@@ -86,12 +152,16 @@ impl MetadataService {
             connection_id,
             ["database", database.unwrap_or(""), "schemas"],
         );
-        if let Some(cached) = self.cache.read().await.schemas.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.schemas.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_schemas(database).await?;
-        self.cache.write().await.schemas.insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.schemas.insert(key, values.clone());
         Ok(values)
     }
 
@@ -102,12 +172,16 @@ impl MetadataService {
         schema: &str,
     ) -> Result<Vec<TableInfo>, AppError> {
         let key = cache_key(connection_id, ["schema", schema, "tables"]);
-        if let Some(cached) = self.cache.read().await.tables.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.tables.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_tables(schema).await?;
-        self.cache.write().await.tables.insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.tables.insert(key, values.clone());
         Ok(values)
     }
 
@@ -118,12 +192,16 @@ impl MetadataService {
         schema: &str,
     ) -> Result<Vec<TableInfo>, AppError> {
         let key = cache_key(connection_id, ["schema", schema, "views"]);
-        if let Some(cached) = self.cache.read().await.views.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.views.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_views(schema).await?;
-        self.cache.write().await.views.insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.views.insert(key, values.clone());
         Ok(values)
     }
 
@@ -134,16 +212,16 @@ impl MetadataService {
         schema: &str,
     ) -> Result<Vec<String>, AppError> {
         let key = cache_key(connection_id, ["schema", schema, "functions"]);
-        if let Some(cached) = self.cache.read().await.functions.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.functions.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_functions(schema).await?;
-        self.cache
-            .write()
-            .await
-            .functions
-            .insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.functions.insert(key, values.clone());
         Ok(values)
     }
 
@@ -156,16 +234,16 @@ impl MetadataService {
     ) -> Result<Vec<DbObjectInfo>, AppError> {
         let kind_key = format!("{kind:?}");
         let key = cache_key(connection_id, ["schema", schema, "objects", &kind_key]);
-        if let Some(cached) = self.cache.read().await.schema_objects.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.schema_objects.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_schema_objects(schema, kind).await?;
-        self.cache
-            .write()
-            .await
-            .schema_objects
-            .insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.schema_objects.insert(key, values.clone());
         Ok(values)
     }
 
@@ -177,12 +255,16 @@ impl MetadataService {
         table: &str,
     ) -> Result<Vec<ColumnInfo>, AppError> {
         let key = cache_key(connection_id, ["schema", schema, "table", table, "columns"]);
-        if let Some(cached) = self.cache.read().await.columns.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.columns.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_columns(schema, table).await?;
-        self.cache.write().await.columns.insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.columns.insert(key, values.clone());
         Ok(values)
     }
 
@@ -194,12 +276,16 @@ impl MetadataService {
         table: &str,
     ) -> Result<Vec<IndexInfo>, AppError> {
         let key = cache_key(connection_id, ["schema", schema, "table", table, "indexes"]);
-        if let Some(cached) = self.cache.read().await.indexes.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.indexes.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_indexes(schema, table).await?;
-        self.cache.write().await.indexes.insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.indexes.insert(key, values.clone());
         Ok(values)
     }
 
@@ -214,16 +300,16 @@ impl MetadataService {
             connection_id,
             ["schema", schema, "table", table, "foreign_keys"],
         );
-        if let Some(cached) = self.cache.read().await.foreign_keys.get(&key).cloned() {
-            return Ok(cached);
+        if self.cache_is_fresh(&key).await {
+            if let Some(cached) = self.cache.read().await.foreign_keys.get(&key).cloned() {
+                return Ok(cached);
+            }
         }
 
         let values = driver.get_foreign_keys(schema, table).await?;
-        self.cache
-            .write()
-            .await
-            .foreign_keys
-            .insert(key, values.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.foreign_keys.insert(key, values.clone());
         Ok(values)
     }
 
@@ -236,14 +322,16 @@ impl MetadataService {
         force: bool,
     ) -> Result<String, AppError> {
         let key = cache_key(connection_id, ["schema", schema, "table", table, "ddl"]);
-        if !force {
+        if !force && self.cache_is_fresh(&key).await {
             if let Some(cached) = self.cache.read().await.ddls.get(&key).cloned() {
                 return Ok(cached);
             }
         }
 
         let value = driver.get_table_ddl(schema, table).await?;
-        self.cache.write().await.ddls.insert(key, value.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.ddls.insert(key, value.clone());
         Ok(value)
     }
 
@@ -261,15 +349,21 @@ impl MetadataService {
             connection_id,
             ["schema", schema, "object", name, &kind_key, "ddl"],
         );
-        if !force {
+        if !force && self.cache_is_fresh(&key).await {
             if let Some(cached) = self.cache.read().await.ddls.get(&key).cloned() {
                 return Ok(cached);
             }
         }
 
         let value = driver.get_object_ddl(schema, name, kind).await?;
-        self.cache.write().await.ddls.insert(key, value.clone());
+        let mut cache = self.cache.write().await;
+        cache.prepare_insert(&key);
+        cache.ddls.insert(key, value.clone());
         Ok(value)
+    }
+
+    async fn cache_is_fresh(&self, key: &str) -> bool {
+        self.cache.write().await.is_fresh(key)
     }
 }
 
@@ -280,4 +374,24 @@ fn cache_key<const N: usize>(connection_id: Uuid, segments: [&str; N]) -> String
         key.push_str(segment);
     }
     key
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MetadataCache, MAX_METADATA_CACHE_ENTRIES};
+
+    #[test]
+    fn bounds_metadata_cache_by_evicting_the_oldest_key() {
+        let mut cache = MetadataCache::default();
+        for index in 0..=MAX_METADATA_CACHE_ENTRIES {
+            let key = format!("key-{index}");
+            cache.prepare_insert(&key);
+            cache.ddls.insert(key, "ddl".to_string());
+        }
+        assert_eq!(cache.insertion_order.len(), MAX_METADATA_CACHE_ENTRIES);
+        assert!(!cache.ddls.contains_key("key-0"));
+        assert!(cache
+            .ddls
+            .contains_key(&format!("key-{MAX_METADATA_CACHE_ENTRIES}")));
+    }
 }

@@ -82,6 +82,7 @@ pub fn run() {
             commands::driver::remove_jdbc_driver_artifact,
             commands::driver::validate_external_driver,
             commands::export::export_query_result_csv,
+            commands::export::export_query_csv,
             commands::export::export_table_csv,
             commands::export::preview_table_csv_import,
             commands::export::import_table_csv,

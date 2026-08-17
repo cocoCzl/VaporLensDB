@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useQueryResultStore } from '@/stores/queryResultStore'
 import type { DataTabSortDirection } from '@/lib/dataTabSql'
 import type { DbObjectKind } from '@/types/metadata'
 
@@ -221,6 +222,8 @@ export const useEditorStore = create<EditorState>((set) => ({
     })),
   closeTab: (id) =>
     set((s) => {
+      const closing = s.tabs.find((tab) => tab.id === id)
+      if (closing?.lastQueryId) useQueryResultStore.getState().clearResult(closing.lastQueryId)
       const tabs = s.tabs.filter((t) => t.id !== id)
       return { tabs, activeTabId: tabs.at(-1)?.id ?? null }
     }),

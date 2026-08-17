@@ -1,4 +1,11 @@
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{
+    path::Path,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Instant,
+};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -35,15 +42,22 @@ pub struct JdbcDriver {
 }
 
 struct JdbcBridgeSidecar {
-    process: Mutex<Option<JdbcBridgeProcess>>,
+    process: Mutex<Option<Arc<JdbcBridgeProcess>>>,
+    active_stream: Mutex<Option<ActiveJdbcStream>>,
 }
 
 struct JdbcBridgeProcess {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    stderr: BufReader<ChildStderr>,
-    next_request_id: u64,
+    child: Mutex<Child>,
+    stdin: Mutex<ChildStdin>,
+    stdout: Mutex<BufReader<ChildStdout>>,
+    stderr: Mutex<BufReader<ChildStderr>>,
+    next_request_id: AtomicU64,
+}
+
+#[derive(Clone)]
+struct ActiveJdbcStream {
+    query_id: String,
+    request_id: u64,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -54,6 +68,25 @@ struct JdbcQueryOutput {
     row_count: u64,
     affected_rows: u64,
     elapsed_ms: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JdbcStreamDoneOutput {
+    row_count: u64,
+    affected_rows: u64,
+    elapsed_ms: u64,
+    #[serde(default)]
+    truncated: bool,
+    #[serde(default)]
+    max_rows: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JdbcStreamChunkOutput {
+    columns: Vec<ColumnMeta>,
+    rows: Vec<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -269,13 +302,14 @@ impl JdbcBridgeSidecar {
             })?;
 
         let sidecar = Self {
-            process: Mutex::new(Some(JdbcBridgeProcess {
-                child,
-                stdin,
-                stdout: BufReader::new(stdout),
-                stderr: BufReader::new(stderr),
-                next_request_id: 0,
-            })),
+            process: Mutex::new(Some(Arc::new(JdbcBridgeProcess {
+                child: Mutex::new(child),
+                stdin: Mutex::new(stdin),
+                stdout: Mutex::new(BufReader::new(stdout)),
+                stderr: Mutex::new(BufReader::new(stderr)),
+                next_request_id: AtomicU64::new(0),
+            }))),
+            active_stream: Mutex::new(None),
         };
 
         sidecar
@@ -290,37 +324,17 @@ impl JdbcBridgeSidecar {
     }
 
     async fn request(&self, command: JdbcBridgeCommand) -> Result<String, AppError> {
-        let mut guard = self.process.lock().await;
-        let process = guard
-            .as_mut()
-            .ok_or_else(|| broken_sidecar("JDBC bridge sidecar is not running"))?;
-        let request_id = process.next_request_id;
-        process.next_request_id += 1;
+        let process = self.process().await?;
+        let request_id = process.next_request_id.fetch_add(1, Ordering::Relaxed);
         let timeout_window = command.timeout();
         let request = command.encode(request_id);
 
-        timeout(timeout_window, process.stdin.write_all(request.as_bytes()))
-            .await
-            .map_err(|_| AppError::Timeout {
-                operation: format!("jdbc {}", command.operation_name()),
-                elapsed_ms: timeout_window.as_millis() as u64,
-            })?
-            .map_err(|error| {
-                broken_sidecar(&format!("failed to write JDBC bridge request: {error}"))
-            })?;
-
-        timeout(timeout_window, process.stdin.flush())
-            .await
-            .map_err(|_| AppError::Timeout {
-                operation: format!("jdbc {}", command.operation_name()),
-                elapsed_ms: timeout_window.as_millis() as u64,
-            })?
-            .map_err(|error| {
-                broken_sidecar(&format!("failed to flush JDBC bridge request: {error}"))
-            })?;
+        self.write_request(&process, &request, timeout_window, command.operation_name())
+            .await?;
 
         let mut response = String::new();
-        let bytes_read = timeout(timeout_window, process.stdout.read_line(&mut response))
+        let mut stdout = process.stdout.lock().await;
+        let bytes_read = timeout(timeout_window, stdout.read_line(&mut response))
             .await
             .map_err(|_| AppError::Timeout {
                 operation: format!("jdbc {}", command.operation_name()),
@@ -332,28 +346,176 @@ impl JdbcBridgeSidecar {
 
         if bytes_read == 0 {
             let error = process.take_exit_error().await;
-            *guard = None;
+            self.clear_process(&process).await;
             return Err(error);
         }
 
         parse_sidecar_response(&response, request_id)
     }
 
+    async fn request_stream(
+        &self,
+        sql: &str,
+        query_id: &str,
+        chunk_size: usize,
+        max_rows: Option<u64>,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+    ) -> Result<JdbcStreamDoneOutput, AppError> {
+        let process = self.process().await?;
+        let request_id = process.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let request = JdbcBridgeCommand::QueryStream {
+            sql: sql.to_string(),
+            chunk_size,
+            max_rows,
+        }
+        .encode(request_id);
+        {
+            let mut active = self.active_stream.lock().await;
+            *active = Some(ActiveJdbcStream {
+                query_id: query_id.to_string(),
+                request_id,
+            });
+        }
+        let result = self
+            .request_stream_frames(&process, &request, request_id, query_id, chunks)
+            .await;
+        let mut active = self.active_stream.lock().await;
+        if active
+            .as_ref()
+            .is_some_and(|stream| stream.request_id == request_id)
+        {
+            *active = None;
+        }
+        result
+    }
+
+    async fn request_stream_frames(
+        &self,
+        process: &JdbcBridgeProcess,
+        request: &str,
+        request_id: u64,
+        query_id: &str,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+    ) -> Result<JdbcStreamDoneOutput, AppError> {
+        self.write_request(
+            process,
+            request,
+            Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
+            "query stream",
+        )
+        .await?;
+        let mut row_offset = 0_u64;
+        let mut stdout = process.stdout.lock().await;
+        loop {
+            let mut response = String::new();
+            if stdout.read_line(&mut response).await.map_err(|error| {
+                broken_sidecar(&format!("failed to read JDBC stream response: {error}"))
+            })? == 0
+            {
+                return Err(process.take_exit_error().await);
+            }
+            let (status, payload) = parse_sidecar_frame(&response, request_id)?;
+            match status.as_str() {
+                "CHUNK" => {
+                    let output: JdbcStreamChunkOutput = serde_json::from_str(&payload)?;
+                    let count = output.rows.len() as u64;
+                    chunks
+                        .send(Ok(QueryResultChunk {
+                            query_id: query_id.to_string(),
+                            columns: output.columns,
+                            rows: output.rows,
+                            row_offset,
+                        }))
+                        .await
+                        .map_err(|_| {
+                            AppError::ConfigError("query stream receiver dropped".to_string())
+                        })?;
+                    row_offset += count;
+                }
+                "OK" => return serde_json::from_str(&payload).map_err(AppError::from),
+                "ERR" => return Err(broken_sidecar(&normalize_jdbc_error_message(&payload))),
+                _ => return Err(broken_sidecar("malformed JDBC stream response status")),
+            }
+        }
+    }
+
+    async fn cancel_stream(&self, query_id: &str) -> Result<(), AppError> {
+        let active = self.active_stream.lock().await.clone();
+        let Some(active) = active.filter(|stream| stream.query_id == query_id) else {
+            return Err(AppError::NotFound {
+                resource: "active JDBC query".to_string(),
+                id: query_id.to_string(),
+            });
+        };
+        let process = self.process().await?;
+        self.write_request(
+            &process,
+            &format!("CANCEL\t0\t{}\n", active.request_id),
+            Duration::from_secs(2),
+            "cancel query",
+        )
+        .await
+    }
+
+    async fn process(&self) -> Result<Arc<JdbcBridgeProcess>, AppError> {
+        self.process
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| broken_sidecar("JDBC bridge sidecar is not running"))
+    }
+
+    async fn clear_process(&self, process: &Arc<JdbcBridgeProcess>) {
+        let mut current = self.process.lock().await;
+        if current
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, process))
+        {
+            *current = None;
+        }
+    }
+
+    async fn write_request(
+        &self,
+        process: &JdbcBridgeProcess,
+        request: &str,
+        timeout_window: Duration,
+        operation: &str,
+    ) -> Result<(), AppError> {
+        let mut stdin = process.stdin.lock().await;
+        timeout(timeout_window, stdin.write_all(request.as_bytes()))
+            .await
+            .map_err(|_| AppError::Timeout {
+                operation: format!("jdbc {operation}"),
+                elapsed_ms: timeout_window.as_millis() as u64,
+            })?
+            .map_err(|error| {
+                broken_sidecar(&format!("failed to write JDBC bridge request: {error}"))
+            })?;
+        timeout(timeout_window, stdin.flush())
+            .await
+            .map_err(|_| AppError::Timeout {
+                operation: format!("jdbc {operation}"),
+                elapsed_ms: timeout_window.as_millis() as u64,
+            })?
+            .map_err(|error| {
+                broken_sidecar(&format!("failed to flush JDBC bridge request: {error}"))
+            })
+    }
+
     async fn shutdown(&self) -> Result<(), AppError> {
-        let mut process = self.process.lock().await;
-        let Some(mut process) = process.take() else {
+        let process = self.process.lock().await.take();
+        let Some(process) = process else {
             return Ok(());
         };
 
         let request = "CLOSE\t0\t-\n".to_string();
-        let _ = timeout(
-            Duration::from_secs(2),
-            process.stdin.write_all(request.as_bytes()),
-        )
-        .await;
-        let _ = timeout(Duration::from_secs(2), process.stdin.flush()).await;
-        let _ = timeout(Duration::from_secs(2), process.child.wait()).await;
-        let _ = process.child.start_kill();
+        let _ = self
+            .write_request(&process, &request, Duration::from_secs(2), "shutdown")
+            .await;
+        let _ = timeout(Duration::from_secs(2), process.child.lock().await.wait()).await;
+        let _ = process.child.lock().await.start_kill();
         Ok(())
     }
 }
@@ -362,17 +524,19 @@ impl Drop for JdbcBridgeSidecar {
     fn drop(&mut self) {
         if let Ok(mut guard) = self.process.try_lock() {
             if let Some(process) = guard.as_mut() {
-                let _ = process.child.start_kill();
+                if let Ok(mut child) = process.child.try_lock() {
+                    let _ = child.start_kill();
+                }
             }
         }
     }
 }
 
 impl JdbcBridgeProcess {
-    async fn take_exit_error(&mut self) -> AppError {
-        let status = self.child.wait().await.ok();
+    async fn take_exit_error(&self) -> AppError {
+        let status = self.child.lock().await.wait().await.ok();
         let mut stderr = String::new();
-        let _ = self.stderr.read_to_string(&mut stderr).await;
+        let _ = self.stderr.lock().await.read_to_string(&mut stderr).await;
         let stderr = stderr.trim();
         let message = if stderr.is_empty() {
             match status {
@@ -397,6 +561,11 @@ enum JdbcBridgeCommand {
     },
     Ping,
     Query(String),
+    QueryStream {
+        sql: String,
+        chunk_size: usize,
+        max_rows: Option<u64>,
+    },
     Metadata(String),
 }
 
@@ -419,6 +588,21 @@ impl JdbcBridgeCommand {
             ),
             Self::Ping => format!("PING\t{request_id}\t-\n"),
             Self::Query(sql) => format!("QUERY\t{request_id}\t{}\n", BASE64.encode(sql)),
+            Self::QueryStream {
+                sql,
+                chunk_size,
+                max_rows,
+            } => {
+                let payload = serde_json::json!({
+                    "sql": BASE64.encode(sql),
+                    "chunkSize": chunk_size,
+                    "maxRows": max_rows,
+                });
+                format!(
+                    "QUERY_STREAM\t{request_id}\t{}\n",
+                    BASE64.encode(payload.to_string())
+                )
+            }
             Self::Metadata(payload) => {
                 format!("METADATA\t{request_id}\t{}\n", BASE64.encode(payload))
             }
@@ -430,6 +614,7 @@ impl JdbcBridgeCommand {
             Self::Init { .. } => "initialize",
             Self::Ping => "ping",
             Self::Query(_) => "query",
+            Self::QueryStream { .. } => "query stream",
             Self::Metadata(_) => "metadata",
         }
     }
@@ -439,6 +624,7 @@ impl JdbcBridgeCommand {
             Self::Init { .. } => Duration::from_secs(JDBC_CONNECT_TIMEOUT_SECS as u64),
             Self::Ping => Duration::from_secs(JDBC_CONNECT_TIMEOUT_SECS as u64),
             Self::Query(_) => Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
+            Self::QueryStream { .. } => Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
             Self::Metadata(_) => Duration::from_secs(JDBC_METADATA_TIMEOUT_SECS as u64),
         }
     }
@@ -465,9 +651,9 @@ impl DatabaseDriver for JdbcDriver {
             has_schema: true,
             supports_transactions: true,
             supports_explain: self.driver_type == DriverType::Oracle,
-            supports_cancel: false,
+            supports_cancel: true,
             supports_ddl,
-            supports_streaming: false,
+            supports_streaming: true,
         }
     }
 
@@ -516,45 +702,18 @@ impl DatabaseDriver for JdbcDriver {
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
         let start = Instant::now();
-        let result = self.execute_query(sql, Some(query_id)).await?;
-        let limit = max_rows.unwrap_or(result.rows.len() as u64) as usize;
-        let truncated = result.rows.len() > limit;
-        let rows = result.rows.into_iter().take(limit).collect::<Vec<_>>();
-        let chunk_size = chunk_size.max(1);
-        let mut row_offset = 0_u64;
-
-        for chunk_rows in rows.chunks(chunk_size) {
-            chunks
-                .send(Ok(QueryResultChunk {
-                    query_id: query_id.to_string(),
-                    columns: result.columns.clone(),
-                    rows: chunk_rows.to_vec(),
-                    row_offset,
-                }))
-                .await
-                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
-            row_offset += chunk_rows.len() as u64;
-        }
-
-        if row_offset == 0 && !result.columns.is_empty() {
-            chunks
-                .send(Ok(QueryResultChunk {
-                    query_id: query_id.to_string(),
-                    columns: result.columns.clone(),
-                    rows: Vec::new(),
-                    row_offset,
-                }))
-                .await
-                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
-        }
+        let done = self
+            .sidecar
+            .request_stream(sql, query_id, chunk_size.max(1), max_rows, chunks)
+            .await?;
 
         Ok(QueryStreamSummary {
             query_id: query_id.to_string(),
-            row_count: row_offset,
-            affected_rows: result.affected_rows,
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            truncated,
-            max_rows,
+            row_count: done.row_count,
+            affected_rows: done.affected_rows,
+            elapsed_ms: done.elapsed_ms.max(start.elapsed().as_millis() as u64),
+            truncated: done.truncated,
+            max_rows: done.max_rows.or(max_rows),
         })
     }
 
@@ -811,8 +970,8 @@ impl DatabaseDriver for JdbcDriver {
         })
     }
 
-    async fn cancel_query(&self, _query_id: &str) -> Result<(), AppError> {
-        Err(unsupported("cancel_query"))
+    async fn cancel_query(&self, query_id: &str) -> Result<(), AppError> {
+        self.sidecar.cancel_stream(query_id).await
     }
 
     async fn cancel_all_queries(&self) -> Result<(), AppError> {
@@ -1129,6 +1288,20 @@ fn classify_jdbc_error(command: &str, sql: Option<&str>, error: AppError) -> App
 }
 
 fn parse_sidecar_response(response: &str, expected_request_id: u64) -> Result<String, AppError> {
+    let (status, decoded) = parse_sidecar_frame(response, expected_request_id)?;
+    match status.as_str() {
+        "OK" => Ok(decoded),
+        "ERR" => Err(broken_sidecar(&normalize_jdbc_error_message(&decoded))),
+        _ => Err(broken_sidecar(
+            "malformed JDBC bridge response: invalid status",
+        )),
+    }
+}
+
+fn parse_sidecar_frame(
+    response: &str,
+    expected_request_id: u64,
+) -> Result<(String, String), AppError> {
     let trimmed = response.trim_end();
     let mut parts = trimmed.splitn(3, '\t');
     let status = parts
@@ -1154,13 +1327,7 @@ fn parse_sidecar_response(response: &str, expected_request_id: u64) -> Result<St
     let decoded = String::from_utf8(decoded)
         .map_err(|_| broken_sidecar("JDBC bridge response payload was not valid UTF-8"))?;
 
-    match status {
-        "OK" => Ok(decoded),
-        "ERR" => Err(broken_sidecar(&normalize_jdbc_error_message(&decoded))),
-        _ => Err(broken_sidecar(
-            "malformed JDBC bridge response: invalid status",
-        )),
-    }
+    Ok((status.to_string(), decoded))
 }
 
 fn normalize_jdbc_error_message(message: &str) -> String {

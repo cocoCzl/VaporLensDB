@@ -18,6 +18,7 @@ const SETTINGS_STORAGE_KEY = 'vaporlensdb.settings'
 // Dark is the product baseline; light remains a complete, switchable theme.
 const DEFAULT_THEME: Theme = 'dark'
 const DEFAULT_QUERY_MAX_ROWS = 5_000
+export const MAX_INTERACTIVE_RESULT_ROWS = 50_000
 const DEFAULT_DATA_PREVIEW_ROWS = 200
 const DEFAULT_EDITOR_FONT_SIZE = 13
 const DEFAULT_MAX_LIVE_SESSIONS = 5
@@ -99,7 +100,7 @@ export const useUiStore = create<UiState>((set) => ({
     set((state) => {
       const next = {
         ...settingsFromState(state),
-        queryMaxRows: clampNumber(queryMaxRows, 100, 1_000_000),
+        queryMaxRows: clampNumber(queryMaxRows, 100, MAX_INTERACTIVE_RESULT_ROWS),
       }
       writeStoredSettings(next)
       return { queryMaxRows: next.queryMaxRows }
@@ -201,7 +202,7 @@ function readStoredSettings(): UserSettings {
     const value = window.localStorage.getItem(SETTINGS_STORAGE_KEY)
     const parsed = value ? JSON.parse(value) : {}
     return {
-      queryMaxRows: clampNumber(parsed.queryMaxRows, 100, 1_000_000, DEFAULT_QUERY_MAX_ROWS),
+      queryMaxRows: clampNumber(parsed.queryMaxRows, 100, MAX_INTERACTIVE_RESULT_ROWS, DEFAULT_QUERY_MAX_ROWS),
       dataPreviewDefaultRows: clampNumber(
         parsed.dataPreviewDefaultRows,
         1,

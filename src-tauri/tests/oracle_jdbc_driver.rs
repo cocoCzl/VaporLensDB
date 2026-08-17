@@ -3,6 +3,7 @@
 // TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//<oracle-host>:1521/<oracle-service>' TEST_ORACLE_USER=<oracle-user> TEST_ORACLE_PASSWORD=<oracle-password> TEST_ORACLE_JDBC_DRIVER_PATH=/path/to/ojdbc11.jar cargo test --test oracle_jdbc_driver -- --ignored
 
 use chrono::Utc;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 use vapor_lens_db_lib::{
     drivers::{jdbc::JdbcDriver, trait_def::DatabaseDriver},
@@ -71,6 +72,42 @@ async fn connects_and_queries_oracle_with_jdbc_bridge() {
         .expect("execute oracle query");
     assert_eq!(result.row_count, 1);
     assert_eq!(result.rows[0][0], serde_json::json!(1));
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH"]
+async fn streams_oracle_jdbc_rows_with_an_exact_limit() {
+    let (config, password) = test_oracle_config()
+        .expect("TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH must be set");
+    let definition = driver_definitions()
+        .into_iter()
+        .find(|definition| definition.id == "oracle")
+        .expect("oracle driver definition");
+    let driver = JdbcDriver::connect(&config, Some(&password), Some(&definition))
+        .await
+        .expect("connect oracle jdbc");
+    let (chunk_tx, mut chunk_rx) = mpsc::channel(4);
+
+    let summary = driver
+        .execute_query_stream(
+            "SELECT level AS value FROM dual CONNECT BY level <= 3",
+            "oracle-stream-integration-test",
+            2,
+            Some(2),
+            chunk_tx,
+        )
+        .await
+        .expect("stream oracle query");
+
+    let mut row_count = 0;
+    while let Some(chunk) = chunk_rx.recv().await {
+        row_count += chunk.expect("stream chunk").rows.len();
+    }
+
+    assert_eq!(summary.row_count, 2);
+    assert!(summary.truncated);
+    assert_eq!(summary.max_rows, Some(2));
+    assert_eq!(row_count, 2);
 }
 
 #[tokio::test]

@@ -60,6 +60,7 @@
     "test:ide-chrome": "node scripts/ide-chrome-smoke.mjs",
     "test:database-create": "node scripts/database-create-smoke.mjs",
     "test:workspace-capacity": "node scripts/workspace-capacity-smoke.mjs",
+    "test:performance-guardrails": "node scripts/performance-guardrails-smoke.mjs",
     "test:database-vendor-icons": "node scripts/database-vendor-icons-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",

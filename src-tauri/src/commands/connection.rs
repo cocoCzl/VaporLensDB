@@ -345,6 +345,38 @@ fn extract_sql_server_url_credentials(input: &mut ConnectionInput, connection_ur
     true
 }
 
+fn input_to_ssh_tunnel(input: SshTunnelInput) -> Option<SshTunnelConfig> {
+    if !input.enabled {
+        return Some(SshTunnelConfig {
+            enabled: false,
+            host: String::new(),
+            port: 22,
+            username: String::new(),
+            auth_method: SshAuthMethod::PrivateKey,
+            password_encrypted: None,
+            private_key_path: None,
+            private_key_passphrase_encrypted: None,
+            remote_host: None,
+            remote_port: None,
+            local_host: None,
+        });
+    }
+
+    Some(SshTunnelConfig {
+        enabled: true,
+        host: input.host.unwrap_or_default(),
+        port: input.port.unwrap_or(22),
+        username: input.username.unwrap_or_default(),
+        auth_method: input.auth_method.unwrap_or(SshAuthMethod::PrivateKey),
+        password_encrypted: input.password,
+        private_key_path: input.private_key_path,
+        private_key_passphrase_encrypted: input.private_key_passphrase,
+        remote_host: input.remote_host,
+        remote_port: input.remote_port,
+        local_host: input.local_host,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,36 +430,4 @@ mod tests {
         assert_eq!(input.username.as_deref(), Some("alice"));
         assert_eq!(input.password.as_deref(), Some("secret"));
     }
-}
-
-fn input_to_ssh_tunnel(input: SshTunnelInput) -> Option<SshTunnelConfig> {
-    if !input.enabled {
-        return Some(SshTunnelConfig {
-            enabled: false,
-            host: String::new(),
-            port: 22,
-            username: String::new(),
-            auth_method: SshAuthMethod::PrivateKey,
-            password_encrypted: None,
-            private_key_path: None,
-            private_key_passphrase_encrypted: None,
-            remote_host: None,
-            remote_port: None,
-            local_host: None,
-        });
-    }
-
-    Some(SshTunnelConfig {
-        enabled: true,
-        host: input.host.unwrap_or_default(),
-        port: input.port.unwrap_or(22),
-        username: input.username.unwrap_or_default(),
-        auth_method: input.auth_method.unwrap_or(SshAuthMethod::PrivateKey),
-        password_encrypted: input.password,
-        private_key_path: input.private_key_path,
-        private_key_passphrase_encrypted: input.private_key_passphrase,
-        remote_host: input.remote_host,
-        remote_port: input.remote_port,
-        local_host: input.local_host,
-    })
 }

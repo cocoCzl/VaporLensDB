@@ -12,7 +12,11 @@ export interface QueryResult {
   affectedRows: number
   queryId?: string | null
   truncated: boolean
+  /** The grid discarded rows beyond its bounded in-memory visual window. */
+  displayTruncated?: boolean
   maxRows?: number | null
+  firstRowMs?: number | null
+  receivedBytes?: number | null
 }
 
 export interface ExecuteQueryResponse {
@@ -34,6 +38,8 @@ export interface QueryStreamDone {
   elapsedMs: number
   truncated: boolean
   maxRows?: number | null
+  firstRowMs?: number | null
+  receivedBytes: number
 }
 
 export interface QueryStreamError {

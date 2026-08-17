@@ -39,6 +39,18 @@ pub struct ExportQueryResultCsvInput {
     pub include_header: bool,
 }
 
+/// Exports directly from the database driver. Unlike `ExportQueryResultCsvInput`,
+/// this never serializes the rendered result back across the IPC boundary.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportQueryCsvInput {
+    pub connection_id: Uuid,
+    pub sql: String,
+    pub path: String,
+    #[serde(default = "default_include_header")]
+    pub include_header: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportTableCsvInput {
@@ -185,6 +197,70 @@ pub async fn export_query_result_csv(
         }
     });
 
+    emit_task_update(&app, &task);
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn export_query_csv(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: ExportQueryCsvInput,
+) -> Result<TaskInfo, AppError> {
+    let driver = active_driver(&state, input.connection_id).await?;
+    let path = PathBuf::from(&input.path);
+    let manager = state.task_manager.clone();
+    let task = manager
+        .create_task_with_output(
+            "export.csv.query",
+            &format!("Export CSV: {}", display_file_name(&path)),
+            None,
+            Some(path.display().to_string()),
+        )
+        .await;
+    let handle = manager.handle(task.id).await?;
+    let app_for_task = app.clone();
+
+    tokio::spawn(async move {
+        if let Ok(task) = manager
+            .start_task(handle.id, "Starting query CSV export")
+            .await
+        {
+            emit_task_update(&app_for_task, &task);
+        }
+        match write_streamed_query_csv(&input, driver, &path, &manager, &handle).await {
+            Ok(report) => {
+                if let Ok(task) = manager
+                    .finish_success(
+                        handle.id,
+                        format!(
+                            "Exported {} rows to {} ({} bytes)",
+                            report.row_count, report.path, report.bytes_written,
+                        ),
+                    )
+                    .await
+                {
+                    emit_task_update(&app_for_task, &task);
+                }
+            }
+            Err(ExportTaskError::Cancelled) => {
+                if let Ok(task) = manager
+                    .finish_cancelled(handle.id, "CSV export cancelled")
+                    .await
+                {
+                    emit_task_update(&app_for_task, &task);
+                }
+            }
+            Err(ExportTaskError::Failed(error)) => {
+                if let Ok(task) = manager
+                    .finish_failed(handle.id, format!("CSV export failed: {error}"))
+                    .await
+                {
+                    emit_task_update(&app_for_task, &task);
+                }
+            }
+        }
+    });
     emit_task_update(&app, &task);
     Ok(task)
 }
@@ -459,6 +535,82 @@ async fn write_table_csv(
     Ok(ExportReport {
         path: path.to_string_lossy().to_string(),
         row_count,
+        bytes_written,
+    })
+}
+
+async fn write_streamed_query_csv(
+    input: &ExportQueryCsvInput,
+    driver: Arc<dyn DatabaseDriver>,
+    path: &PathBuf,
+    manager: &crate::services::task_manager::TaskManager,
+    handle: &TaskHandle,
+) -> Result<ExportReport, ExportTaskError> {
+    let file = File::create(path).await.map_err(AppError::from)?;
+    let mut writer = BufWriter::new(file);
+    let query_id = format!("query-export-{}", handle.id);
+    let (tx, mut rx) = mpsc::channel::<Result<QueryResultChunk, AppError>>(4);
+    let query_driver = driver.clone();
+    let sql = input.sql.clone();
+    let query_id_for_task = query_id.clone();
+    let query_task = tokio::spawn(async move {
+        query_driver
+            .execute_query_stream(&sql, &query_id_for_task, TABLE_EXPORT_CHUNK_SIZE, None, tx)
+            .await
+    });
+    let mut bytes_written = 0_u64;
+    let mut row_count = 0_u64;
+    let mut wrote_any = false;
+    let mut column_count = 0_usize;
+
+    while let Some(chunk) = rx.recv().await {
+        if handle.is_cancel_requested() {
+            let _ = driver.cancel_query(&query_id).await;
+            return Err(ExportTaskError::Cancelled);
+        }
+        let chunk = chunk?;
+        if column_count == 0 {
+            column_count = chunk.columns.len();
+            if input.include_header && !chunk.columns.is_empty() {
+                bytes_written += write_csv_line(
+                    &mut writer,
+                    chunk
+                        .columns
+                        .iter()
+                        .map(|column| csv_cell(&column.name))
+                        .collect(),
+                    false,
+                )
+                .await
+                .map_err(AppError::from)?;
+                wrote_any = true;
+            }
+        }
+        for row in chunk.rows {
+            bytes_written += write_csv_line(
+                &mut writer,
+                (0..column_count)
+                    .map(|index| csv_value(row.get(index)))
+                    .collect(),
+                wrote_any,
+            )
+            .await
+            .map_err(AppError::from)?;
+            wrote_any = true;
+            row_count += 1;
+        }
+        manager
+            .update_progress(handle.id, row_count, format!("Exported {row_count} rows"))
+            .await?;
+        yield_now().await;
+    }
+    let summary = query_task
+        .await
+        .map_err(|error| AppError::ConfigError(error.to_string()))??;
+    writer.flush().await.map_err(AppError::from)?;
+    Ok(ExportReport {
+        path: path.to_string_lossy().to_string(),
+        row_count: summary.row_count,
         bytes_written,
     })
 }

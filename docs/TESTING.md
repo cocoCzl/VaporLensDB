@@ -72,6 +72,7 @@ pnpm test:command-palette
 pnpm test:native-menu
 pnpm test:ide-chrome
 pnpm test:workspace-capacity
+pnpm test:performance-guardrails
 ```
 
 ## Live Database Verification

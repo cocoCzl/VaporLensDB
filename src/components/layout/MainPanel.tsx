@@ -19,6 +19,7 @@ import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useQuery } from '@/hooks/useQuery'
 import {
   exportQueryResultCsv,
+  exportQueryCsv,
   exportTableCsv,
   importTableCsv,
   previewTableCsvImport,
@@ -865,7 +866,17 @@ export function MainPanel() {
               disabled={Boolean(activeExplain) || !activeResult || activeResult.columns.length === 0}
               onClick={() =>
                 activeResult &&
-                exportCurrentResult(activeResult, activeTab.title, notify, notifyError, upsertTask, exportDirectory)
+                exportCurrentResult(
+                  activeResult,
+                  activeTab.title,
+                  notify,
+                  notifyError,
+                  upsertTask,
+                  exportDirectory,
+                  activeTab.connectionId && isSelectForStreamingExport(activeTab.sql)
+                    ? { connectionId: activeTab.connectionId, sql: activeTab.sql }
+                    : undefined,
+                )
               }
             >
               <Download className="size-3.5" />
@@ -2358,11 +2369,23 @@ function resultSummary(result: QueryResult) {
     })
   }
 
-  return i18n.t('workbench.rowSummary', {
+  const summary = i18n.t('workbench.rowSummary', {
     count: result.rowCount.toLocaleString(),
     truncated: result.truncated ? i18n.t('workbench.truncatedSuffix') : '',
     elapsedMs: result.elapsedMs,
   })
+  return result.firstRowMs == null
+    ? summary
+    : `${summary} · ${i18n.t('workbench.streamTelemetry', {
+      firstRowMs: result.firstRowMs,
+      bytes: formatByteCount(result.receivedBytes ?? 0),
+    })}`
+}
+
+function formatByteCount(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function dataTabDisplayResult(result: QueryResult, limit: number): QueryResult {
@@ -2381,6 +2404,11 @@ function dataTabDisplayResult(result: QueryResult, limit: number): QueryResult {
 }
 
 function largeResultNotice(result: QueryResult) {
+  if (result.displayTruncated) {
+    return i18n.t('workbench.visualResultLimitNotice', {
+      count: result.rows.length,
+    })
+  }
   return i18n.t('workbench.largeResultNotice', { count: result.maxRows ?? result.rowCount })
 }
 
@@ -2453,6 +2481,7 @@ async function exportCurrentResult(
   notifyError: (error: AppError, title?: string) => void,
   upsertTask: (task: TaskInfo) => void,
   exportDirectory: string | null,
+  source?: { connectionId: string; sql: string },
 ) {
   try {
     const directory = exportDirectory ?? await downloadDir()
@@ -2460,7 +2489,9 @@ async function exportCurrentResult(
       .toISOString()
       .replace(/[:.]/g, '-')}.csv`
     const path = await join(directory, fileName)
-    const task = await exportQueryResultCsv({ result, path, includeHeader: true })
+    const task = source
+      ? await exportQueryCsv({ ...source, path, includeHeader: true })
+      : await exportQueryResultCsv({ result, path, includeHeader: true })
     upsertTask(task)
     notify({
       kind: 'info',
@@ -2488,4 +2519,10 @@ function dataContextToSqlInput(context: NonNullable<EditorTab['dataContext']>) {
 
 function safeFileName(value: string) {
   return value.trim().replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'query-result'
+}
+
+// Re-running a result for export is only safe for a conservative read-only
+// subset. Other result-producing statements retain the existing snapshot export.
+function isSelectForStreamingExport(sql: string) {
+  return sql.trimStart().toLowerCase().startsWith('select')
 }

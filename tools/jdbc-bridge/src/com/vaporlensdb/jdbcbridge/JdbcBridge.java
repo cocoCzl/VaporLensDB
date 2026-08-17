@@ -21,10 +21,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class JdbcBridge {
     private static final int DEFAULT_CONNECT_TIMEOUT_SECONDS = 15;
     private static final int DEFAULT_QUERY_TIMEOUT_SECONDS = 60;
+    private static final int MAX_INTERACTIVE_RESULT_ROWS = 50_000;
+    private static final int MAX_STREAM_CHUNK_SIZE = 2_000;
+    private static final Pattern STREAM_SQL_PATTERN = Pattern.compile("\\\"sql\\\"\\s*:\\s*\\\"([A-Za-z0-9+/=]+)\\\"");
+    private static final Pattern STREAM_CHUNK_SIZE_PATTERN = Pattern.compile("\\\"chunkSize\\\"\\s*:\\s*(\\d+)");
+    private static final Pattern STREAM_MAX_ROWS_PATTERN = Pattern.compile("\\\"maxRows\\\"\\s*:\\s*(\\d+)");
 
     private JdbcBridge() {
     }
@@ -114,6 +122,8 @@ public final class JdbcBridge {
     }
 
     private static void serveRequests(BufferedReader reader, Connection connection, int queryTimeoutSeconds) throws Exception {
+        Map<String, Statement> activeStatements = new ConcurrentHashMap<>();
+        Set<String> cancelledRequests = ConcurrentHashMap.newKeySet();
         String line;
         while ((line = reader.readLine()) != null) {
             if (line.isEmpty()) {
@@ -131,6 +141,31 @@ public final class JdbcBridge {
                         }
                         String sql = decode(parts[2]);
                         respondOk(requestId, query(connection, sql, queryTimeoutSeconds));
+                    }
+                    case "QUERY_STREAM" -> {
+                        if (parts.length < 3) {
+                            throw new IllegalArgumentException("QUERY_STREAM command requires SQL payload");
+                        }
+                        StreamQueryRequest request = streamQueryRequest(decode(parts[2]));
+                        String streamRequestId = requestId;
+                        executeAsync(streamRequestId, () -> queryStream(
+                                connection,
+                                request,
+                                queryTimeoutSeconds,
+                                streamRequestId,
+                                activeStatements,
+                                cancelledRequests));
+                    }
+                    case "CANCEL" -> {
+                        if (parts.length < 3 || parts[2].isBlank()) {
+                            throw new IllegalArgumentException("CANCEL command requires a request id");
+                        }
+                        String targetRequestId = parts[2];
+                        cancelledRequests.add(targetRequestId);
+                        Statement activeStatement = activeStatements.get(targetRequestId);
+                        if (activeStatement != null) {
+                            activeStatement.cancel();
+                        }
                     }
                     case "METADATA" -> {
                         if (parts.length < 3) {
@@ -161,6 +196,10 @@ public final class JdbcBridge {
         long start = System.currentTimeMillis();
         try (Statement statement = connection.createStatement()) {
             statement.setQueryTimeout(queryTimeoutSeconds);
+            // Avoid a driver default that prefetches an unbounded result window.
+            // The Rust side still applies its own interactive result limit.
+            statement.setFetchSize(1_000);
+            statement.setMaxRows(MAX_INTERACTIVE_RESULT_ROWS);
             boolean hasResultSet = statement.execute(sql);
             long elapsedMs = System.currentTimeMillis() - start;
 
@@ -214,6 +253,138 @@ public final class JdbcBridge {
                 return output.toString();
             }
         }
+    }
+
+    private static void queryStream(
+            Connection connection,
+            StreamQueryRequest request,
+            int queryTimeoutSeconds,
+            String requestId,
+            Map<String, Statement> activeStatements,
+            Set<String> cancelledRequests) throws Exception {
+        long start = System.currentTimeMillis();
+        try (Statement statement = connection.createStatement()) {
+            activeStatements.put(requestId, statement);
+            if (cancelledRequests.contains(requestId)) {
+                throw new java.sql.SQLException("query cancelled");
+            }
+            statement.setQueryTimeout(queryTimeoutSeconds);
+            statement.setFetchSize(request.chunkSize());
+            // Ask for one extra row so the final frame reports truncation
+            // truthfully, while still bounding the driver-side result window.
+            if (request.maxRows() != null && request.maxRows() < Integer.MAX_VALUE) {
+                statement.setMaxRows((int) (request.maxRows() + 1));
+            }
+            boolean hasResultSet = statement.execute(request.sql());
+            if (!hasResultSet) {
+                respondOk(requestId, "{\"rowCount\":0,\"affectedRows\":" + Math.max(statement.getUpdateCount(), 0)
+                        + ",\"elapsedMs\":" + (System.currentTimeMillis() - start)
+                        + ",\"truncated\":false,\"maxRows\":" + maxRowsJson(request.maxRows()) + "}");
+                return;
+            }
+            try (ResultSet resultSet = statement.getResultSet()) {
+                ResultSetMetaData metaData = resultSet.getMetaData();
+                int columnCount = metaData.getColumnCount();
+                String columns = columnsJson(metaData, columnCount);
+                List<String> rows = new ArrayList<>(request.chunkSize());
+                long rowCount = 0;
+                boolean truncated = false;
+                while (resultSet.next()) {
+                    if (request.maxRows() != null && rowCount >= request.maxRows()) {
+                        truncated = true;
+                        break;
+                    }
+                    StringBuilder row = new StringBuilder("[");
+                    for (int index = 1; index <= columnCount; index += 1) {
+                        if (index > 1) row.append(',');
+                        appendJsonValue(row, resultValue(resultSet, index));
+                    }
+                    row.append(']');
+                    rows.add(row.toString());
+                    rowCount += 1;
+                    if (rows.size() == request.chunkSize()) {
+                        respond("CHUNK", requestId, "{\"columns\":" + columns + ",\"rows\":[" + String.join(",", rows) + "]}");
+                        rows.clear();
+                    }
+                }
+                if (!rows.isEmpty() || rowCount == 0) {
+                    respond("CHUNK", requestId, "{\"columns\":" + columns + ",\"rows\":[" + String.join(",", rows) + "]}");
+                }
+                respondOk(requestId, "{\"rowCount\":" + rowCount + ",\"affectedRows\":0,\"elapsedMs\":"
+                        + (System.currentTimeMillis() - start) + ",\"truncated\":" + truncated
+                        + ",\"maxRows\":" + maxRowsJson(request.maxRows()) + "}");
+            }
+        } finally {
+            activeStatements.remove(requestId);
+            cancelledRequests.remove(requestId);
+        }
+    }
+
+    private static void executeAsync(String requestId, JdbcRequest request) {
+        Thread worker = new Thread(() -> {
+            try {
+                request.run();
+            } catch (Exception error) {
+                respondErr(requestId, error.getMessage() == null ? error.toString() : error.getMessage());
+            }
+        }, "vaporlensdb-jdbc-query-" + requestId);
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    @FunctionalInterface
+    private interface JdbcRequest {
+        void run() throws Exception;
+    }
+
+    private static StreamQueryRequest streamQueryRequest(String payload) {
+        String encodedSql = requiredJsonString(payload, STREAM_SQL_PATTERN, "sql");
+        int chunkSize = parsePositiveInt(requiredJsonString(payload, STREAM_CHUNK_SIZE_PATTERN, "chunkSize"), 1);
+        chunkSize = Math.min(chunkSize, MAX_STREAM_CHUNK_SIZE);
+        Long maxRows = optionalPositiveLong(payload, STREAM_MAX_ROWS_PATTERN);
+        return new StreamQueryRequest(decode(encodedSql), chunkSize, maxRows);
+    }
+
+    private static String requiredJsonString(String payload, Pattern pattern, String field) {
+        Matcher matcher = pattern.matcher(payload);
+        if (!matcher.find()) {
+            throw new IllegalArgumentException("QUERY_STREAM payload requires " + field);
+        }
+        return matcher.group(1);
+    }
+
+    private static Long optionalPositiveLong(String payload, Pattern pattern) {
+        Matcher matcher = pattern.matcher(payload);
+        if (!matcher.find()) {
+            return null;
+        }
+        try {
+            long value = Long.parseLong(matcher.group(1));
+            if (value < 1) {
+                throw new IllegalArgumentException("QUERY_STREAM maxRows must be positive");
+            }
+            return value;
+        } catch (NumberFormatException error) {
+            throw new IllegalArgumentException("QUERY_STREAM maxRows is invalid", error);
+        }
+    }
+
+    private static String maxRowsJson(Long maxRows) {
+        return maxRows == null ? "null" : maxRows.toString();
+    }
+
+    private record StreamQueryRequest(String sql, int chunkSize, Long maxRows) {
+    }
+
+    private static String columnsJson(ResultSetMetaData metaData, int columnCount) throws Exception {
+        StringBuilder columns = new StringBuilder("[");
+        for (int index = 1; index <= columnCount; index += 1) {
+            if (index > 1) columns.append(',');
+            columns.append("{\"name\":\"").append(json(metaData.getColumnLabel(index)))
+                    .append("\",\"dataType\":\"").append(json(metaData.getColumnTypeName(index)))
+                    .append("\",\"nullable\":").append(metaData.isNullable(index) != ResultSetMetaData.columnNoNulls).append('}');
+        }
+        return columns.append(']').toString();
     }
 
     private static String metadata(Connection connection, String payload) throws Exception {
@@ -515,7 +686,7 @@ public final class JdbcBridge {
         respond("ERR", requestId, message);
     }
 
-    private static void respond(String status, String requestId, String payload) {
+    private static synchronized void respond(String status, String requestId, String payload) {
         System.out.println(status + "\t" + requestId + "\t"
                 + Base64.getEncoder().encodeToString(payload.getBytes(StandardCharsets.UTF_8)));
         System.out.flush();

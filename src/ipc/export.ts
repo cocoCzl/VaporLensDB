@@ -10,6 +10,13 @@ export interface ExportQueryResultCsvInput {
   includeHeader?: boolean
 }
 
+export interface ExportQueryCsvInput {
+  connectionId: string
+  sql: string
+  path: string
+  includeHeader?: boolean
+}
+
 export interface ExportTableCsvInput {
   connectionId: string
   driverType: DriverType
@@ -58,6 +65,10 @@ export interface ImportPreview {
 
 export function exportQueryResultCsv(input: ExportQueryResultCsvInput) {
   return invokeCommand<TaskInfo>(COMMANDS.exportQueryResultCsv, { input })
+}
+
+export function exportQueryCsv(input: ExportQueryCsvInput) {
+  return invokeCommand<TaskInfo>(COMMANDS.exportQueryCsv, { input })
 }
 
 export function exportTableCsv(input: ExportTableCsvInput) {

@@ -189,6 +189,13 @@
     "status": "active"
   },
   {
+    "name": "export_query_csv",
+    "namespace": "export",
+    "args": "{ input: ExportQueryCsvInput }",
+    "response": "TaskInfo",
+    "status": "active"
+  },
+  {
     "name": "export_table_csv",
     "namespace": "export",
     "args": "{ input: ExportTableCsvInput }",

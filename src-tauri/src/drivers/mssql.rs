@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use async_trait::async_trait;
-use tiberius::{AuthMethod, Client, Column, ColumnData, Config, EncryptionLevel, Row};
+use futures_util::TryStreamExt;
+use tiberius::{AuthMethod, Client, Column, ColumnData, Config, EncryptionLevel, QueryItem, Row};
 use tokio::{net::TcpStream, sync::mpsc, sync::Mutex};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
@@ -166,42 +167,72 @@ impl DatabaseDriver for MssqlDriver {
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
         let start = Instant::now();
-        let result = self.execute_query(sql, Some(query_id)).await?;
-        let limit = max_rows.unwrap_or(result.rows.len() as u64) as usize;
-        let truncated = result.rows.len() > limit;
-        let rows = result.rows.into_iter().take(limit).collect::<Vec<_>>();
         let chunk_size = chunk_size.max(1);
+        let limit = max_rows.unwrap_or(u64::MAX);
+        let mut client = self.client.lock().await;
+        let mut stream = client
+            .simple_query(sql)
+            .await
+            .map_err(|error| map_mssql_query_error(sql, error))?;
+        let mut columns = Vec::new();
+        let mut rows = Vec::with_capacity(chunk_size);
         let mut row_offset = 0_u64;
+        let mut truncated = false;
 
-        for chunk_rows in rows.chunks(chunk_size) {
-            chunks
-                .send(Ok(QueryResultChunk {
-                    query_id: query_id.to_string(),
-                    columns: result.columns.clone(),
-                    rows: chunk_rows.to_vec(),
-                    row_offset,
-                }))
-                .await
-                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
-            row_offset += chunk_rows.len() as u64;
+        while let Some(item) = stream
+            .try_next()
+            .await
+            .map_err(|error| map_mssql_query_error(sql, error))?
+        {
+            match item {
+                QueryItem::Metadata(metadata) if metadata.result_index() == 0 => {
+                    columns = columns_from_mssql(metadata.columns());
+                }
+                QueryItem::Row(row) if row.result_index() == 0 => {
+                    if row_offset + rows.len() as u64 >= limit {
+                        truncated = true;
+                        continue;
+                    }
+                    rows.push(row_to_json_values(&row));
+                    if rows.len() == chunk_size {
+                        let chunk_rows = std::mem::take(&mut rows);
+                        let row_count = chunk_rows.len() as u64;
+                        chunks
+                            .send(Ok(QueryResultChunk {
+                                query_id: query_id.to_string(),
+                                columns: columns.clone(),
+                                rows: chunk_rows,
+                                row_offset,
+                            }))
+                            .await
+                            .map_err(|_| {
+                                AppError::ConfigError("query stream receiver dropped".to_string())
+                            })?;
+                        row_offset += row_count;
+                    }
+                }
+                _ => {}
+            }
         }
 
-        if row_offset == 0 && !result.columns.is_empty() {
+        if !rows.is_empty() || !columns.is_empty() {
+            let row_count = rows.len() as u64;
             chunks
                 .send(Ok(QueryResultChunk {
                     query_id: query_id.to_string(),
-                    columns: result.columns.clone(),
-                    rows: Vec::new(),
+                    columns,
+                    rows,
                     row_offset,
                 }))
                 .await
                 .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
+            row_offset += row_count;
         }
 
         Ok(QueryStreamSummary {
             query_id: query_id.to_string(),
             row_count: row_offset,
-            affected_rows: result.affected_rows,
+            affected_rows: 0,
             elapsed_ms: start.elapsed().as_millis() as u64,
             truncated,
             max_rows,

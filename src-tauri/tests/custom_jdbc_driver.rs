@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
+use tokio::{
+    sync::mpsc,
+    time::{sleep, timeout, Duration},
+};
 use uuid::Uuid;
 use vapor_lens_db_lib::{
     drivers::{jdbc::JdbcDriver, trait_def::DatabaseDriver},
@@ -51,9 +55,11 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
         updated_at: now,
     };
     let definition = h2_definition();
-    let driver = JdbcDriver::connect(&config, None, Some(&definition))
-        .await
-        .expect("connect custom JDBC H2");
+    let driver = std::sync::Arc::new(
+        JdbcDriver::connect(&config, None, Some(&definition))
+            .await
+            .expect("connect custom JDBC H2"),
+    );
 
     driver.ping().await.expect("ping custom JDBC");
 
@@ -75,6 +81,59 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
         .expect("query H2 row");
     assert_eq!(result.row_count, 1);
     assert_eq!(result.rows[0][0], serde_json::json!("A-001"));
+
+    let (chunk_tx, mut chunk_rx) = mpsc::channel(4);
+    let summary = driver
+        .execute_query_stream(
+            "SELECT 1 AS item_value UNION ALL SELECT 2 UNION ALL SELECT 3",
+            "h2-stream-test",
+            2,
+            Some(2),
+            chunk_tx,
+        )
+        .await
+        .expect("stream H2 rows");
+    let mut streamed = Vec::new();
+    while let Some(chunk) = chunk_rx.recv().await {
+        streamed.extend(chunk.expect("stream chunk").rows);
+    }
+    assert_eq!(summary.row_count, 2);
+    assert!(summary.truncated);
+    assert_eq!(summary.max_rows, Some(2));
+    assert_eq!(streamed.len(), 2);
+
+    let (cancel_tx, _cancel_rx) = mpsc::channel(1);
+    let running_driver = driver.clone();
+    let running_query = tokio::spawn(async move {
+        running_driver
+            .execute_query_stream(
+                "SELECT SUM(a.X * b.X) FROM SYSTEM_RANGE(1, 100000) a CROSS JOIN SYSTEM_RANGE(1, 100000) b",
+                "h2-cancel-test",
+                1_000,
+                None,
+                cancel_tx,
+            )
+            .await
+    });
+    sleep(Duration::from_millis(100)).await;
+    driver
+        .cancel_query("h2-cancel-test")
+        .await
+        .expect("cancel H2 JDBC stream");
+    let cancelled = timeout(Duration::from_secs(5), running_query)
+        .await
+        .expect("cancelled H2 query should return promptly")
+        .expect("join cancelled H2 query");
+    assert!(
+        cancelled.is_err(),
+        "cancelled H2 query must report an error"
+    );
+
+    let recovered = driver
+        .execute_query("SELECT 42 AS answer_value", None)
+        .await
+        .expect("JDBC sidecar remains usable after cancellation");
+    assert_eq!(recovered.rows[0][0], serde_json::json!(42));
 
     let schemas = driver.get_schemas(None).await.expect("get H2 schemas");
     assert!(schemas.iter().any(|schema| schema.name == "PUBLIC"));

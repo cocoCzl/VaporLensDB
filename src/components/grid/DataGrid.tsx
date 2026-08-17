@@ -84,7 +84,9 @@ export function DataGrid({
           {result.truncated && (
             <div className="sticky top-0 z-30 border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-amber-900">
               {t('result.truncated', {
-                count: result.rowCount,
+                // The backend reports the total rows it streamed, while a large
+                // result may retain only the bounded visual window in memory.
+                count: result.displayTruncated ? result.rows.length : result.rowCount,
                 maxRows: result.maxRows ? t('result.maxRowsSuffix', { count: result.maxRows }) : '',
               })}
             </div>

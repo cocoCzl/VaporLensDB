@@ -42,6 +42,8 @@ pub struct QueryStreamDone {
     pub elapsed_ms: u64,
     pub truncated: bool,
     pub max_rows: Option<u64>,
+    pub first_row_ms: Option<u64>,
+    pub received_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
