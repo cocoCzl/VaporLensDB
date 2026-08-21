@@ -2,10 +2,12 @@
 
 [English](INSTALL.md) · [返回 README](../README.zh-CN.md)
 
-## 安全下载
+## 正式发布后的安全下载
 
-请只从项目的 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest)
-页面下载 VaporLensDB。每个 Release 都会提供 `SHA256SUMS.txt`，请在打开安装包前校验：
+当前尚未发布正式安装包。正式版本发布后，请只从项目的
+[GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) 页面下载 VaporLensDB。
+开发和测试阶段生成的安装包仅供私下验证，不会上传到 GitHub。每个正式 Release 都会提供
+`SHA256SUMS.txt`，请在打开安装包前校验：
 
 ```bash
 # macOS
@@ -19,22 +21,21 @@ Get-FileHash .\VaporLensDB-* -Algorithm SHA256
 
 ## macOS
 
-1. 下载与 Mac 芯片匹配的 DMG（如果同时提供 Apple Silicon 和 Intel 版本）。
+1. 正式发布后，下载与 Mac 芯片匹配的 DMG（如果同时提供 Apple Silicon 和 Intel 版本）。
 2. 打开 DMG，将 **VaporLensDB** 拖到“应用程序”。
 3. 从“应用程序”中打开 VaporLensDB。
 
-当前发布包尚未进行代码签名和公证。若 macOS 首次阻止打开，请先确认 SHA-256 和
-Release 来源，再在 Finder 中使用“打开”并确认系统提示。不要绕过来源未验证文件的警告。
+仅在确认下载自正式 Release、且 SHA-256 校验通过后再打开安装包。若 macOS 显示安全提示，
+请不要绕过来源未验证文件的警告。
 
 ## Windows
 
-1. 下载 `.msi` 安装包；若所在环境限制 MSI 安装，请使用 NSIS `.exe` 安装器。
+1. 正式发布后，下载 `.msi` 安装包；若所在环境限制 MSI 安装，请使用 NSIS `.exe` 安装器。
 2. 运行安装程序并按提示完成安装。
 3. 从开始菜单启动 **VaporLensDB**。
 
-当前发布包尚未进行代码签名，Microsoft Defender SmartScreen 可能显示提示。只有在确认
-SHA-256 且文件来自项目 GitHub Release 后，才选择继续；若组织统一管理软件安装，请联系
-管理员。
+只有在确认 SHA-256 且文件来自项目正式 GitHub Release 后，才继续安装；若组织统一管理
+软件安装，请联系管理员。
 
 ## 第一个连接
 

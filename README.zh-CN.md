@@ -6,16 +6,17 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 它帮助开发者与数据工程师连接数据库、浏览对象、执行 SQL 和查看结果，同时保持
 轻量、专注的工作体验。
 
-当前版本：**0.8.2**
+当前版本：**0.8.3**
 
 ## 下载
 
-请从 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest)
-下载对应系统的安装包。
+当前尚未发布正式安装包。正式版本发布后，才会在
+[GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) 提供对应系统的安装包；
+开发和测试阶段生成的安装包不会上传到 GitHub。
 
 | 系统 | 推荐下载 | 说明 |
 | --- | --- | --- |
-| macOS | `.dmg` | 发布时会分别提供 Apple Silicon 和 Intel 版本（如可用）。 |
+| macOS | `.dmg` | 正式发布时会分别提供 Apple Silicon 和 Intel 版本（如可用）。 |
 | Windows | `.msi` | 若系统限制 MSI 安装，可使用 NSIS `.exe` 安装器。 |
 
 请阅读[安装与首次使用指南](docs/INSTALL.zh-CN.md)，其中包含系统安装、SHA-256
@@ -34,8 +35,7 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 
 ## 快速开始
 
-1. 从 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest)
-   下载并安装 macOS 或 Windows 版本。
+1. 目前请从源码运行应用；正式版本发布后，再从 GitHub Releases 下载对应的安装包。
 2. 打开“新建连接”，选择数据库类型并填写连接信息，然后点击“测试”和“保存并连接”。
 3. 在数据源浏览器中查看 Schema 和表，或新建 SQL 标签页执行查询。SQL 标签页会保持
    自己的执行数据源，因此浏览其他连接不会改变执行目标；可在“设置”中切换界面语言和主题。
@@ -64,7 +64,9 @@ pnpm tauri dev
 ./build.sh windows   # Windows：.msi 和 NSIS .exe
 ```
 
-工具链前提、产物路径、校验和与手动发布 GitHub Release 的完整流程，请参阅
+`pnpm build:app` 会为当前平台打包：macOS 生成 App 和 DMG，Windows 生成 MSI 和 NSIS 安装包。
+
+工具链前提、产物路径，以及正式发布时的 GitHub Release 流程，请参阅
 [打包与发布指南](docs/PACKAGING.zh-CN.md)。
 
 ## 文档

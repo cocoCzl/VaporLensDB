@@ -2,6 +2,26 @@
 
 All notable changes to VaporLensDB are documented in this file.
 
+## [0.8.3]
+
+### Added
+
+- Added a local macOS DMG creation script and versioned local artifact staging
+  for App bundles, DMGs, and checksums.
+
+### Changed
+
+- Updated packaging and installation documentation to distinguish private test
+  artifacts from formal GitHub Releases.
+- Made current-platform builds select the supported installer formats and
+  validate version consistency before packaging.
+- Enabled TypeScript unused-code checks and refreshed the release verification
+  guidance.
+
+### Removed
+
+- Removed obsolete public and runtime brand assets.
+
 ## [0.8.2]
 
 ### Changed

@@ -6,6 +6,10 @@ VaporLensDB packages must be built on their target operating system. This
 repository does not currently automate releases, code signing, or macOS
 notarization.
 
+Until a formal version is approved for release, all installers are local or
+privately shared test artifacts. Do not upload DMG, MSI, EXE, App bundles, or
+checksums to the GitHub repository, pull requests, or GitHub Releases.
+
 ## Prerequisites
 
 All build machines need:
@@ -50,8 +54,22 @@ Artifacts:
 
 ```text
 src-tauri/target/release/bundle/macos/VaporLensDB.app
-src-tauri/target/release/bundle/dmg/*.dmg
+src-tauri/target/release/bundle/dmg/VaporLensDB_<version>_<architecture>.dmg
+artifacts/macos/<architecture>/<version>/VaporLensDB.app
+artifacts/macos/<architecture>/<version>/VaporLensDB_<version>_<architecture>.dmg
+artifacts/macos/<architecture>/<version>/SHA256SUMS.txt
 ```
+
+`dist/` contains Vite's generated frontend assets and is embedded into the App
+by Tauri; it is not an installer directory and is recreated by `pnpm build`.
+`src-tauri/target/` is Cargo/Tauri's raw build directory. `artifacts/` is the
+Git-ignored, versioned local staging directory. An `.app` runs directly on
+macOS; a `.dmg` contains the App and an Applications shortcut, so use the DMG
+for private test distribution.
+
+`<architecture>` is `aarch64` on Apple Silicon and `x86_64` on Intel. The build
+script validates that `package.json`, `src-tauri/tauri.conf.json`, and
+`src-tauri/Cargo.toml` use the same version before packaging.
 
 ### Windows
 
@@ -68,11 +86,13 @@ src-tauri/target/release/bundle/msi/*.msi
 src-tauri/target/release/bundle/nsis/*.exe
 ```
 
-Use `./build.sh current` only when a generic bundle for the current platform is
-needed. It is not the release command because it does not fix the intended
-installer formats.
+`./build.sh current` and `pnpm build:app` use the macOS App+DMG flow on macOS,
+the MSI+NSIS flow on Windows, and Tauri's native bundle flow on other platforms.
 
-## Manual GitHub Release
+## Formal releases only: manual GitHub Release
+
+Run this section only after a formal version is approved for release. Do not
+perform its upload steps for test builds.
 
 1. Confirm `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`
    use the same release version.

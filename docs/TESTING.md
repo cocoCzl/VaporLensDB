@@ -5,7 +5,7 @@ current IDE workspace.
 
 ## Current Status
 
-- The 0.8.2 workspace covers grouped data sources, browsing versus SQL execution
+- The 0.8.3 workspace covers grouped data sources, browsing versus SQL execution
   context, Object Tree navigation, SQL drafts and query history, command palette,
   connection readiness, and theme-aware IDE chrome.
 - Existing smoke coverage also covers data preview, structure, definition/source,
@@ -23,7 +23,9 @@ Run the local release gate before tagging or publishing:
 ./build.sh check
 ```
 
-This command builds the JDBC bridge and runs frontend lint, frontend build, Rust clippy with warnings denied, and Rust tests.
+This command builds the JDBC bridge and runs frontend lint, frontend build
+(including TypeScript unused-code checks), Rust clippy with warnings denied,
+and Rust tests.
 
 ## Default CI Verification
 

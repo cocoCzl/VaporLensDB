@@ -1,11 +1,18 @@
-# Dependencies
+# Local dependencies (never commit)
 node_modules/
 
-# Build output
+# Local frontend build output (never commit)
 dist/
 dist-ssr/
 
-# Local database files
+# Local installer build and staging output (never commit)
+artifacts/
+target/
+src-tauri/target/
+tools/**/build/
+tools/**/target/
+
+# Local databases (never commit)
 *.db
 *.db-*
 *.sqlite
@@ -14,17 +21,11 @@ dist-ssr/
 *.sqlite-shm
 *.sqlite-wal
 
-# Rust / Cargo
-target/
-src-tauri/target/
-tools/**/build/
-tools/**/target/
-
-# Local/proprietary driver artifacts
+# Local/proprietary driver artifacts (never commit)
 *.jar
 *.class
 
-# Logs
+# Local logs (never commit)
 logs/
 *.log
 npm-debug.log*
@@ -33,7 +34,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Environment & secrets
+# Local environment and secrets (never commit)
 .env
 .env.*
 !.env.example
@@ -60,6 +61,6 @@ coverage/
 # TypeScript
 *.tsbuildinfo
 
-# Local export / diagnostics output
+# Local export and diagnostics output (never commit)
 *.import-report.json
 vaporlensdb-diagnostics-*.json

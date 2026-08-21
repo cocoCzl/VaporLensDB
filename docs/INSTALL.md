@@ -2,12 +2,14 @@
 
 [简体中文](INSTALL.zh-CN.md) · [Back to README](../README.md)
 
-## Download safely
+## Download safely after a formal release
 
-Download VaporLensDB only from the project's
+No production installer has been released yet. After a formal release, download
+VaporLensDB only from the project's
 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) page.
-Each release provides a `SHA256SUMS.txt` file. Verify the downloaded installer
-before opening it:
+Development and test installers are private verification artifacts and are not
+uploaded to GitHub. Each formal release provides a `SHA256SUMS.txt` file.
+Verify the downloaded installer before opening it:
 
 ```bash
 # macOS
@@ -21,26 +23,24 @@ Compare the resulting hash with the matching entry in `SHA256SUMS.txt`.
 
 ## macOS
 
-1. Download the DMG that matches your Mac (Apple Silicon or Intel, when both
+1. After a formal release, download the DMG that matches your Mac (Apple Silicon or Intel, when both
    are available).
 2. Open the DMG and drag **VaporLensDB** to **Applications**.
 3. Open VaporLensDB from Applications.
 
-Releases are not yet code-signed or notarized. If macOS blocks the first open,
-verify the SHA-256 and release source first, then use Finder's **Open** action
-and confirm the system prompt. Do not bypass a warning for an unverified file.
+Open an installer only after verifying its SHA-256 and formal release source.
+Do not bypass a warning for an unverified file.
 
 ## Windows
 
-1. Download the `.msi` installer. Use the NSIS `.exe` installer if MSI is
+1. After a formal release, download the `.msi` installer. Use the NSIS `.exe` installer if MSI is
    restricted by your environment.
 2. Run the installer and follow its prompts.
 3. Start **VaporLensDB** from the Start menu.
 
-Releases are not yet code-signed. Microsoft Defender SmartScreen may show a
-warning. Verify the SHA-256 and that the file came from the project's GitHub
-Release before choosing any option to continue. Ask your administrator if
-software installation is managed by your organization.
+Verify the SHA-256 and that the file came from the project's formal GitHub
+Release before installing it. Ask your administrator if software installation
+is managed by your organization.
 
 ## First connection
 

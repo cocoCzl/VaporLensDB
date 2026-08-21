@@ -7,16 +7,18 @@ Rust, and React. It helps developers and data engineers connect to databases,
 browse objects, run SQL, and inspect results without becoming a heavy
 administration console.
 
-Current version: **0.8.2**
+Current version: **0.8.3**
 
 ## Download
 
-Download the installer for your platform from
-[GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest).
+No production installer has been released yet. Installers will be available
+from [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest)
+only after a formal release; development and test artifacts are never uploaded
+to GitHub.
 
 | Platform | Recommended download | Notes |
 | --- | --- | --- |
-| macOS | `.dmg` | Apple Silicon and Intel builds are released separately when available. |
+| macOS | `.dmg` | Apple Silicon and Intel builds are released separately when available in a formal release. |
 | Windows | `.msi` | Use the NSIS `.exe` installer when MSI installation is restricted. |
 
 See the [installation and first-use guide](docs/INSTALL.md) for platform
@@ -38,8 +40,8 @@ dangerous-SQL policy are outside the current scope.
 
 ## Quick start
 
-1. Download and install VaporLensDB for macOS or Windows from
-   [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest).
+1. Run the app from source for now. Download a platform installer from GitHub
+   Releases only after a formal release is announced.
 2. Open **New Connection**, choose a database type, enter the connection
    details, then select **Test** and **Save & Connect**.
 3. Browse schemas and tables in the Data Source explorer, or create a SQL tab
@@ -71,8 +73,11 @@ Build on the target operating system:
 ./build.sh windows   # Windows: .msi and NSIS .exe
 ```
 
-Detailed prerequisites, artifact locations, checksums, and manual GitHub
-Release publishing are in the [packaging guide](docs/PACKAGING.md).
+`pnpm build:app` packages for the current platform. On macOS it creates an App
+and DMG; on Windows it creates MSI and NSIS installers.
+
+Detailed prerequisites, artifact locations, and the formal GitHub Release
+process are in the [packaging guide](docs/PACKAGING.md).
 
 ## Documentation
 
