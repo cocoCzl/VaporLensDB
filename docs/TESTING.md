@@ -13,7 +13,8 @@ current IDE workspace.
 - Default CI verification does not require private database endpoints or local JDBC driver JARs.
 - Live database verification is available for PostgreSQL, MySQL, Oracle, SQLite,
   and JDBC template paths through ignored/manual tests.
-- 使用 `TEST_ORACLE_*` with a local `ojdbc` JAR when running Oracle live integration tests. The Oracle driver JAR is not committed or required by CI.
+- Use `TEST_ORACLE_*` with a local `ojdbc` JAR when running Oracle live
+  integration tests. The Oracle driver JAR is not committed or required by CI.
 
 ## Release Gate
 
@@ -79,7 +80,60 @@ pnpm test:performance-guardrails
 
 ## Live Database Verification
 
-Live tests are ignored by default because they require private database endpoints and credentials. Keep values in an untracked `.env` or your shell session, using `.env.example` as the placeholder template.
+Live tests are ignored by default because they require private endpoints,
+credentials, JDBC JARs, and optional database-creation permissions. Keep these
+values in the Git-ignored `.env` or your shell session; never add real values to
+tracked documentation.
+
+Create the local configuration and replace every placeholder in each database
+group you want to use. Remove unavailable groups rather than leaving partially
+filled values:
+
+```bash
+cp .env.example .env
+```
+
+The database component of each JDBC URL is required. JDBC driver paths must be
+absolute paths to readable JAR files. `VAPORLENSDB_TEST_POSTGRES_URL` and
+`VAPORLENSDB_TEST_MYSQL_URL` are optional unless CREATE/DROP DATABASE behavior
+must be verified; those accounts need `CREATEDB` or CREATE/DROP DATABASE
+permission respectively.
+
+`build.sh` behaves as follows:
+
+- no `.env` or shell configuration: ordinary checks pass and live tests remain
+  ignored;
+- complete configuration for some databases: those groups run and unavailable
+  groups are reported as skipped;
+- complete configuration for every group: `cargo test -- --include-ignored`
+  runs the whole Rust suite, including all live tests;
+- a partially filled group or unreadable JDBC JAR is a configuration error;
+- any configured live-test failure stops `check`, `current`, `mac`, or `windows`
+  before packaging continues.
+
+Run only configured live tests:
+
+```bash
+./build.sh live-tests
+```
+
+Run the normal validation or package flow with the same automatic live-test
+detection:
+
+```bash
+./build.sh check
+./build.sh          # Same as ./build.sh current
+./build.sh mac      # macOS only
+./build.sh windows  # Windows only
+```
+
+The PostgreSQL and MySQL suites create uniquely named `vaporlensdb_*` schemas
+or databases, verify metadata and DDL behavior, and remove them afterward. Use
+dedicated test instances and do not interrupt the process during cleanup.
+
+For manual per-target debugging, export or source the same variables and add
+`--ignored` explicitly. Running ordinary `cargo test` never enables ignored
+tests by itself.
 
 Run these from `src-tauri` when your local environment is configured:
 
@@ -96,11 +150,13 @@ Equivalent root-level commands:
 TEST_PG_JDBC_URL='jdbc:postgresql://<postgres-host>:5432/<postgres-database>' \
 TEST_PG_USER='<postgres-user>' \
 TEST_PG_PASSWORD='<postgres-password>' \
+TEST_PG_DATABASE='<postgres-database>' \
 cargo test --manifest-path src-tauri/Cargo.toml --test postgres_driver -- --ignored
 
 TEST_MYSQL_JDBC_URL='jdbc:mysql://<mysql-host>:3306/<mysql-database>' \
 TEST_MYSQL_USER='<mysql-user>' \
 TEST_MYSQL_PASSWORD='<mysql-password>' \
+TEST_MYSQL_DATABASE='<mysql-database>' \
 cargo test --manifest-path src-tauri/Cargo.toml --test mysql_driver -- --ignored
 
 TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//<oracle-host>:1521/<oracle-service>' \

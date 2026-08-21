@@ -29,6 +29,20 @@ Install JavaScript dependencies once:
 pnpm install --frozen-lockfile
 ```
 
+## Build script commands
+
+- `./build.sh` or `./build.sh current`: validate and package for the current platform.
+- `./build.sh check`: run validation without creating an installer.
+- `./build.sh mac`: validate, then replace the local macOS App and DMG artifacts.
+- `./build.sh windows`: validate, then build MSI and NSIS installers on Windows.
+- `./build.sh live-tests`: run only configured real-database integration tests.
+- `./build.sh jdbc-bridge`: build only the Java JDBC bridge.
+
+The validation commands load an optional Git-ignored `.env`. With no database
+configuration, live tests remain ignored. With complete database groups, the
+matching tests run and any failure stops packaging. See the
+[testing guide](TESTING.md) for configuration and database permissions.
+
 ## Verify before packaging
 
 Run this on each build machine before creating installation artifacts:
@@ -38,7 +52,8 @@ Run this on each build machine before creating installation artifacts:
 ```
 
 It builds the JDBC bridge, runs frontend lint and build, then runs Rust clippy
-with warnings denied and Rust tests.
+with warnings denied and Rust tests. Configured live database tests are included;
+unconfigured groups are reported as skipped.
 
 ## Build artifacts
 
@@ -54,18 +69,19 @@ Artifacts:
 
 ```text
 src-tauri/target/release/bundle/macos/VaporLensDB.app
-src-tauri/target/release/bundle/dmg/VaporLensDB_<version>_<architecture>.dmg
-artifacts/macos/<architecture>/<version>/VaporLensDB.app
-artifacts/macos/<architecture>/<version>/VaporLensDB_<version>_<architecture>.dmg
-artifacts/macos/<architecture>/<version>/SHA256SUMS.txt
+src-tauri/target/release/bundle/dmg/VaporLensDB.dmg
+artifacts/macos/<architecture>/VaporLensDB.app
+artifacts/macos/<architecture>/VaporLensDB.dmg
+artifacts/macos/<architecture>/SHA256SUMS.txt
 ```
 
 `dist/` contains Vite's generated frontend assets and is embedded into the App
 by Tauri; it is not an installer directory and is recreated by `pnpm build`.
 `src-tauri/target/` is Cargo/Tauri's raw build directory. `artifacts/` is the
-Git-ignored, versioned local staging directory. An `.app` runs directly on
-macOS; a `.dmg` contains the App and an Applications shortcut, so use the DMG
-for private test distribution.
+Git-ignored local staging directory. Each build replaces the current
+architecture directory, so it contains only the latest App, DMG, and checksum.
+An `.app` runs directly on macOS; a `.dmg` contains the App and an Applications
+shortcut, so use the DMG for private test distribution.
 
 `<architecture>` is `aarch64` on Apple Silicon and `x86_64` on Intel. The build
 script validates that `package.json`, `src-tauri/tauri.conf.json`, and
@@ -104,10 +120,10 @@ perform its upload steps for test builds.
 
    ```bash
    # macOS (run after all release assets have been copied into this directory)
-   shasum -a 256 VaporLensDB-*.dmg VaporLensDB-*.msi VaporLensDB-*.exe > SHA256SUMS.txt
+   shasum -a 256 VaporLensDB.dmg VaporLensDB-*.msi VaporLensDB-*.exe > SHA256SUMS.txt
 
    # Windows PowerShell (run after all release assets have been copied into this directory)
-   Get-ChildItem VaporLensDB-*.dmg,VaporLensDB-*.msi,VaporLensDB-*.exe |
+   Get-ChildItem VaporLensDB.dmg,VaporLensDB-*.msi,VaporLensDB-*.exe |
      Get-FileHash -Algorithm SHA256 |
      ForEach-Object { '{0}  {1}' -f $_.Hash.ToLower(), $_.Path.Split('\\')[-1] } |
      Set-Content SHA256SUMS.txt

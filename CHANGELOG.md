@@ -6,8 +6,10 @@ All notable changes to VaporLensDB are documented in this file.
 
 ### Added
 
-- Added a local macOS DMG creation script and versioned local artifact staging
-  for App bundles, DMGs, and checksums.
+- Added a local macOS DMG creation script and replaceable, fixed-name artifact
+  staging for App bundles, DMGs, and checksums.
+- Added optional `.env`-driven PostgreSQL, MySQL, Oracle, and JDBC integration
+  testing through the build script, including a dedicated `live-tests` target.
 
 ### Changed
 

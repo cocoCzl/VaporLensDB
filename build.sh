@@ -3,23 +3,25 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${1:-current}"
+LIVE_TEST_ENV_LOADED=0
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./build.sh [mac|windows|current|check|jdbc-bridge]
+  ./build.sh [mac|windows|current|check|live-tests|jdbc-bridge]
 
 Targets:
   mac      Build a macOS app bundle and DMG on macOS.
   windows  Build Windows MSI and NSIS installers on Windows.
   current  Build the supported installer format for the current platform.
   check    Run validation only: frontend lint/build and Rust tests.
+  live-tests Run configured PostgreSQL, MySQL, Oracle, and JDBC integration tests.
   jdbc-bridge Build the lightweight Java JDBC bridge jar.
 
 Outputs:
   macOS app: src-tauri/target/release/bundle/macos/VaporLensDB.app
-  macOS dmg: src-tauri/target/release/bundle/dmg/VaporLensDB_<version>_<architecture>.dmg
-  macOS local staging: artifacts/macos/<architecture>/<version>/
+  macOS dmg: src-tauri/target/release/bundle/dmg/VaporLensDB.dmg
+  macOS local staging: artifacts/macos/<architecture>/
   Windows msi: src-tauri/target/release/bundle/msi/*.msi
   Windows nsis: src-tauri/target/release/bundle/nsis/*.exe
 EOF
@@ -45,6 +47,118 @@ ensure_dependencies() {
     log "Installing frontend dependencies"
     pnpm install --frozen-lockfile
   fi
+}
+
+load_live_test_env() {
+  if [ "$LIVE_TEST_ENV_LOADED" -eq 1 ]; then
+    return
+  fi
+
+  if [ -f "$ROOT_DIR/.env" ]; then
+    log "Loading local live-test configuration from .env"
+    set -a
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/.env"
+    set +a
+  fi
+
+  LIVE_TEST_ENV_LOADED=1
+}
+
+env_has_any() {
+  local name
+  for name in "$@"; do
+    if [ -n "${!name:-}" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+require_complete_env_group() {
+  local label="$1"
+  shift
+
+  if ! env_has_any "$@"; then
+    return 1
+  fi
+
+  local missing=""
+  local name
+  for name in "$@"; do
+    if [ -z "${!name:-}" ]; then
+      missing="${missing}${missing:+, }${name}"
+    fi
+  done
+
+  if [ -n "$missing" ]; then
+    printf 'Incomplete %s live-test configuration; missing: %s\n' "$label" "$missing" >&2
+    return 2
+  fi
+
+  return 0
+}
+
+validate_live_test_configuration() {
+  local status
+
+  require_complete_env_group "PostgreSQL" \
+    TEST_PG_JDBC_URL TEST_PG_USER TEST_PG_PASSWORD TEST_PG_DATABASE || status=$?
+  if [ "${status:-0}" -eq 2 ]; then
+    return 1
+  fi
+  status=0
+
+  require_complete_env_group "MySQL" \
+    TEST_MYSQL_JDBC_URL TEST_MYSQL_USER TEST_MYSQL_PASSWORD TEST_MYSQL_DATABASE || status=$?
+  if [ "$status" -eq 2 ]; then
+    return 1
+  fi
+  status=0
+
+  require_complete_env_group "Oracle" \
+    TEST_ORACLE_JDBC_URL TEST_ORACLE_USER TEST_ORACLE_PASSWORD TEST_ORACLE_JDBC_DRIVER_PATH || status=$?
+  if [ "$status" -eq 2 ]; then
+    return 1
+  fi
+
+  local path_name
+  for path_name in \
+    TEST_PG_JDBC_DRIVER_PATH \
+    TEST_MYSQL_JDBC_DRIVER_PATH \
+    TEST_ORACLE_JDBC_DRIVER_PATH; do
+    if [ -n "${!path_name:-}" ] && [ ! -f "${!path_name}" ]; then
+      printf '%s does not point to a readable JDBC JAR: %s\n' "$path_name" "${!path_name}" >&2
+      return 1
+    fi
+  done
+}
+
+has_live_test_configuration() {
+  env_has_any \
+    TEST_PG_JDBC_URL TEST_PG_USER TEST_PG_PASSWORD TEST_PG_DATABASE TEST_PG_JDBC_DRIVER_PATH \
+    TEST_MYSQL_JDBC_URL TEST_MYSQL_USER TEST_MYSQL_PASSWORD TEST_MYSQL_DATABASE TEST_MYSQL_JDBC_DRIVER_PATH \
+    TEST_ORACLE_JDBC_URL TEST_ORACLE_USER TEST_ORACLE_PASSWORD TEST_ORACLE_JDBC_DRIVER_PATH \
+    VAPORLENSDB_TEST_POSTGRES_URL VAPORLENSDB_TEST_MYSQL_URL
+}
+
+has_complete_live_test_configuration() {
+  [ -n "${TEST_PG_JDBC_URL:-}" ] &&
+    [ -n "${TEST_PG_USER:-}" ] &&
+    [ -n "${TEST_PG_PASSWORD:-}" ] &&
+    [ -n "${TEST_PG_DATABASE:-}" ] &&
+    [ -n "${TEST_PG_JDBC_DRIVER_PATH:-}" ] &&
+    [ -n "${TEST_MYSQL_JDBC_URL:-}" ] &&
+    [ -n "${TEST_MYSQL_USER:-}" ] &&
+    [ -n "${TEST_MYSQL_PASSWORD:-}" ] &&
+    [ -n "${TEST_MYSQL_DATABASE:-}" ] &&
+    [ -n "${TEST_MYSQL_JDBC_DRIVER_PATH:-}" ] &&
+    [ -n "${TEST_ORACLE_JDBC_URL:-}" ] &&
+    [ -n "${TEST_ORACLE_USER:-}" ] &&
+    [ -n "${TEST_ORACLE_PASSWORD:-}" ] &&
+    [ -n "${TEST_ORACLE_JDBC_DRIVER_PATH:-}" ] &&
+    [ -n "${VAPORLENSDB_TEST_POSTGRES_URL:-}" ] &&
+    [ -n "${VAPORLENSDB_TEST_MYSQL_URL:-}" ]
 }
 
 project_version() {
@@ -95,8 +209,97 @@ run_checks() {
   log "Running Rust clippy"
   (cd "$ROOT_DIR/src-tauri" && cargo clippy --all-targets -- -D warnings)
 
+  run_rust_tests
+}
+
+run_rust_tests() {
+  load_live_test_env
+  validate_live_test_configuration
+
+  if has_complete_live_test_configuration; then
+    log "Running Rust tests including all configured live database tests"
+    (cd "$ROOT_DIR/src-tauri" && cargo test -- --include-ignored)
+    return
+  fi
+
   log "Running Rust tests"
   (cd "$ROOT_DIR/src-tauri" && cargo test)
+
+  if has_live_test_configuration; then
+    run_configured_live_tests
+  else
+    log "Live database tests skipped (no local configuration)"
+  fi
+}
+
+run_configured_live_tests() {
+  load_live_test_env
+  validate_live_test_configuration
+
+  local ran_any=0
+
+  if [ -n "${TEST_PG_JDBC_URL:-}" ]; then
+    log "Running PostgreSQL live integration tests"
+    (cd "$ROOT_DIR/src-tauri" && cargo test --test postgres_driver -- --ignored)
+    ran_any=1
+
+    if [ -n "${TEST_PG_JDBC_DRIVER_PATH:-}" ]; then
+      log "Running PostgreSQL JDBC template integration test"
+      (cd "$ROOT_DIR/src-tauri" && cargo test --test jdbc_template_driver \
+        postgres_jdbc_template_queries_and_reads_metadata -- --ignored)
+    else
+      log "PostgreSQL JDBC template test skipped (TEST_PG_JDBC_DRIVER_PATH is not set)"
+    fi
+  else
+    log "PostgreSQL live tests skipped (configuration is not set)"
+  fi
+
+  if [ -n "${TEST_MYSQL_JDBC_URL:-}" ]; then
+    log "Running MySQL live integration tests"
+    (cd "$ROOT_DIR/src-tauri" && cargo test --test mysql_driver -- --ignored)
+    ran_any=1
+
+    if [ -n "${TEST_MYSQL_JDBC_DRIVER_PATH:-}" ]; then
+      log "Running MySQL JDBC template integration test"
+      (cd "$ROOT_DIR/src-tauri" && cargo test --test jdbc_template_driver \
+        mysql_jdbc_template_queries_and_reads_metadata -- --ignored)
+    else
+      log "MySQL JDBC template test skipped (TEST_MYSQL_JDBC_DRIVER_PATH is not set)"
+    fi
+  else
+    log "MySQL live tests skipped (configuration is not set)"
+  fi
+
+  if [ -n "${TEST_ORACLE_JDBC_URL:-}" ]; then
+    log "Running Oracle JDBC live integration tests"
+    (cd "$ROOT_DIR/src-tauri" && cargo test --test oracle_jdbc_driver -- --ignored)
+    ran_any=1
+  else
+    log "Oracle live tests skipped (configuration is not set)"
+  fi
+
+  if [ -n "${VAPORLENSDB_TEST_POSTGRES_URL:-}" ]; then
+    log "Running PostgreSQL CREATE/DROP DATABASE integration test"
+    (cd "$ROOT_DIR/src-tauri" && cargo test --test live_database_create \
+      postgres_create_database_is_visible_and_duplicate_is_rejected -- --ignored)
+    ran_any=1
+  else
+    log "PostgreSQL CREATE/DROP DATABASE test skipped (VAPORLENSDB_TEST_POSTGRES_URL is not set)"
+  fi
+
+  if [ -n "${VAPORLENSDB_TEST_MYSQL_URL:-}" ]; then
+    log "Running MySQL CREATE/DROP DATABASE integration test"
+    (cd "$ROOT_DIR/src-tauri" && cargo test --test live_database_create \
+      mysql_create_database_is_visible_and_duplicate_is_rejected -- --ignored)
+    ran_any=1
+  else
+    log "MySQL CREATE/DROP DATABASE test skipped (VAPORLENSDB_TEST_MYSQL_URL is not set)"
+  fi
+
+  if [ "$ran_any" -eq 0 ]; then
+    printf 'No complete live database configuration was found in .env or the shell.\n' >&2
+    return 1
+  fi
 }
 
 build_current() {
@@ -124,14 +327,14 @@ build_mac() {
   require_command hdiutil
   require_command shasum
 
-  local version
   local architecture
-  version="$(project_version)"
+  project_version >/dev/null
   architecture="$(mac_architecture)"
   local bundle_dir="$ROOT_DIR/src-tauri/target/release/bundle"
   local app_path="$bundle_dir/macos/VaporLensDB.app"
-  local dmg_path="$bundle_dir/dmg/VaporLensDB_${version}_${architecture}.dmg"
-  local artifact_dir="$ROOT_DIR/artifacts/macos/$architecture/$version"
+  local dmg_dir="$bundle_dir/dmg"
+  local dmg_path="$dmg_dir/VaporLensDB.dmg"
+  local artifact_dir="$ROOT_DIR/artifacts/macos/$architecture"
 
   log "Building macOS Tauri app"
   pnpm tauri build --bundles app
@@ -142,17 +345,17 @@ build_mac() {
   fi
 
   log "Creating macOS DMG"
+  rm -rf "$dmg_dir"
   bash "$ROOT_DIR/scripts/create-macos-dmg.sh" "$app_path" "$dmg_path"
 
   log "Staging local macOS artifacts"
+  rm -rf "$artifact_dir"
   mkdir -p "$artifact_dir"
-  rm -rf "$artifact_dir/VaporLensDB.app"
-  rm -f "$artifact_dir/VaporLensDB_${version}_${architecture}.dmg" "$artifact_dir/SHA256SUMS.txt"
   ditto "$app_path" "$artifact_dir/VaporLensDB.app"
-  cp "$dmg_path" "$artifact_dir/VaporLensDB_${version}_${architecture}.dmg"
+  cp "$dmg_path" "$artifact_dir/VaporLensDB.dmg"
   (
     cd "$artifact_dir"
-    shasum -a 256 "VaporLensDB_${version}_${architecture}.dmg" > SHA256SUMS.txt
+    shasum -a 256 "VaporLensDB.dmg" > SHA256SUMS.txt
   )
 
   log "Build artifacts"
@@ -194,6 +397,11 @@ case "$TARGET" in
     ensure_dependencies
     build_jdbc_bridge
     run_checks
+    ;;
+  live-tests)
+    ensure_dependencies
+    build_jdbc_bridge
+    run_configured_live_tests
     ;;
   current)
     ensure_dependencies

@@ -55,6 +55,7 @@ pnpm tauri dev
 
 ```bash
 ./build.sh check
+./build.sh live-tests  # 可选：运行 .env 中已配置的真实数据库测试
 ```
 
 在目标操作系统上构建：
@@ -65,6 +66,11 @@ pnpm tauri dev
 ```
 
 `pnpm build:app` 会为当前平台打包：macOS 生成 App 和 DMG，Windows 生成 MSI 和 NSIS 安装包。
+不带参数运行 `./build.sh` 等价于 `./build.sh current`。
+
+未提供私密测试配置时，PostgreSQL、MySQL、Oracle 与 JDBC 联网测试会被跳过。需要运行时，
+将 `.env.example` 复制为已被 Git 忽略的 `.env`，填写本机可用的数据库配置组；之后执行校验
+或打包命令就会自动运行对应测试。所需权限和安全说明见测试文档。
 
 工具链前提、产物路径，以及正式发布时的 GitHub Release 流程，请参阅
 [打包与发布指南](docs/PACKAGING.zh-CN.md)。

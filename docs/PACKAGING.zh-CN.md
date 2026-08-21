@@ -26,6 +26,18 @@ C++ Build Tools，以及 Microsoft Edge WebView2 Runtime。缺少平台依赖时
 pnpm install --frozen-lockfile
 ```
 
+## build.sh 命令
+
+- `./build.sh` 或 `./build.sh current`：校验并为当前平台打包。
+- `./build.sh check`：只运行校验，不生成安装包。
+- `./build.sh mac`：校验后替换本地 macOS App 和 DMG 产物。
+- `./build.sh windows`：校验后在 Windows 构建 MSI 和 NSIS 安装包。
+- `./build.sh live-tests`：只运行已配置的真实数据库集成测试。
+- `./build.sh jdbc-bridge`：只构建 Java JDBC bridge。
+
+校验命令会读取可选且已被 Git 忽略的 `.env`。没有数据库配置时，联网测试保持忽略；配置组
+完整时会运行对应测试，任何失败都会停止打包。变量和数据库权限说明见[测试文档](TESTING.md)。
+
 ## 打包前校验
 
 每台构建机器生成安装包前均应执行：
@@ -35,7 +47,7 @@ pnpm install --frozen-lockfile
 ```
 
 该命令会构建 JDBC bridge，执行前端 lint 与构建，并以禁止警告的方式执行 Rust clippy
-和 Rust 测试。
+和 Rust 测试。已配置的真实数据库测试会一并执行，未配置的数据库组会明确显示为跳过。
 
 ## 构建产物
 
@@ -51,16 +63,17 @@ pnpm install --frozen-lockfile
 
 ```text
 src-tauri/target/release/bundle/macos/VaporLensDB.app
-src-tauri/target/release/bundle/dmg/VaporLensDB_<版本>_<架构>.dmg
-artifacts/macos/<架构>/<版本>/VaporLensDB.app
-artifacts/macos/<架构>/<版本>/VaporLensDB_<版本>_<架构>.dmg
-artifacts/macos/<架构>/<版本>/SHA256SUMS.txt
+src-tauri/target/release/bundle/dmg/VaporLensDB.dmg
+artifacts/macos/<架构>/VaporLensDB.app
+artifacts/macos/<架构>/VaporLensDB.dmg
+artifacts/macos/<架构>/SHA256SUMS.txt
 ```
 
 `dist/` 是 Vite 生成的前端资源，Tauri 会将其打进 App；它不是安装包目录，可删除后由
 `pnpm build` 重新生成。`src-tauri/target/` 是 Cargo/Tauri 的原始构建目录；`artifacts/`
-则是便于本地取用的版本化汇总目录，已被 Git 忽略。`.app` 可在 macOS 上直接运行，`.dmg`
-是包含 App 和“应用程序”快捷方式的安装镜像，私下测试分发应优先使用 DMG。
+则是便于本地取用的汇总目录，已被 Git 忽略。每次构建都会替换当前架构目录，其中只保留
+最新的 App、DMG 和校验和。`.app` 可在 macOS 上直接运行，`.dmg` 是包含 App 和“应用程序”
+快捷方式的安装镜像，私下测试分发应优先使用 DMG。
 
 Apple Silicon 的 `<架构>` 为 `aarch64`，Intel Mac 为 `x86_64`。打包前脚本会校验
 `package.json`、`src-tauri/tauri.conf.json` 与 `src-tauri/Cargo.toml` 的版本是否一致。
@@ -94,10 +107,10 @@ src-tauri/target/release/bundle/nsis/*.exe
 
    ```bash
    # macOS（先将所有发布附件复制到当前目录）
-   shasum -a 256 VaporLensDB-*.dmg VaporLensDB-*.msi VaporLensDB-*.exe > SHA256SUMS.txt
+   shasum -a 256 VaporLensDB.dmg VaporLensDB-*.msi VaporLensDB-*.exe > SHA256SUMS.txt
 
    # Windows PowerShell（先将所有发布附件复制到当前目录）
-   Get-ChildItem VaporLensDB-*.dmg,VaporLensDB-*.msi,VaporLensDB-*.exe |
+   Get-ChildItem VaporLensDB.dmg,VaporLensDB-*.msi,VaporLensDB-*.exe |
      Get-FileHash -Algorithm SHA256 |
      ForEach-Object { '{0}  {1}' -f $_.Hash.ToLower(), $_.Path.Split('\\')[-1] } |
      Set-Content SHA256SUMS.txt

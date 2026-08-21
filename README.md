@@ -64,6 +64,7 @@ Run the release checks before packaging:
 
 ```bash
 ./build.sh check
+./build.sh live-tests  # Optional: run real database tests configured in .env
 ```
 
 Build on the target operating system:
@@ -74,7 +75,13 @@ Build on the target operating system:
 ```
 
 `pnpm build:app` packages for the current platform. On macOS it creates an App
-and DMG; on Windows it creates MSI and NSIS installers.
+and DMG; on Windows it creates MSI and NSIS installers. Running `./build.sh`
+without a target is equivalent to `./build.sh current`.
+
+Live PostgreSQL, MySQL, Oracle, and JDBC tests are skipped when no private test
+configuration is present. Copy `.env.example` to the Git-ignored `.env` and
+fill the database groups available on your machine to run them automatically
+during checks and packaging. See the testing guide for permissions and safety.
 
 Detailed prerequisites, artifact locations, and the formal GitHub Release
 process are in the [packaging guide](docs/PACKAGING.md).
