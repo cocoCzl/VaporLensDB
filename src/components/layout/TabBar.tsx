@@ -1,6 +1,7 @@
 import { Check, FileCode2, History, List, Pin, Plus, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
@@ -9,7 +10,17 @@ import type { EditorTab } from '@/stores/editorStore'
 
 export function TabBar() {
   const { t } = useTranslation()
-  const { tabs, activeTabId, setActiveTab, addTab, closeTab, renameTab, setTabDraft, setRecordsConnectionFilter, toggleTabPinned } = useEditorStore()
+  const { tabs, activeTabId, setActiveTab, addTab, closeTab, renameTab, setTabDraft, setRecordsConnectionFilter, toggleTabPinned } = useEditorStore(useShallow((state) => ({
+    tabs: state.tabs,
+    activeTabId: state.activeTabId,
+    setActiveTab: state.setActiveTab,
+    addTab: state.addTab,
+    closeTab: state.closeTab,
+    renameTab: state.renameTab,
+    setTabDraft: state.setTabDraft,
+    setRecordsConnectionFilter: state.setRecordsConnectionFilter,
+    toggleTabPinned: state.toggleTabPinned,
+  })))
   const connections = useConnectionStore((state) => state.connections)
   const statuses = useConnectionStore((state) => state.statuses)
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
@@ -8,9 +9,7 @@ import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { DataGrid } from '@/components/grid/DataGrid'
-import { ERDiagram } from '@/components/diagram/ERDiagram'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
-import { SettingsWorkspacePanel } from '@/components/settings/SettingsWorkspacePanel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AppSelect } from '@/components/ui/app-select'
@@ -68,10 +67,22 @@ function loadSqlEditor() {
 }
 
 const SqlEditor = lazy(loadSqlEditor)
+const ERDiagram = lazy(() => import('@/components/diagram/ERDiagram').then((module) => ({
+  default: module.ERDiagram,
+})))
+const SettingsWorkspacePanel = lazy(() => import('@/components/settings/SettingsWorkspacePanel').then((module) => ({
+  default: module.SettingsWorkspacePanel,
+})))
 
 export function MainPanel() {
   const { t } = useTranslation()
-  const { connections, dataSourceGroups, statuses, connectConnection, setActiveConnection } = useConnectionStore()
+  const { connections, dataSourceGroups, statuses, connectConnection, setActiveConnection } = useConnectionStore(useShallow((state) => ({
+    connections: state.connections,
+    dataSourceGroups: state.dataSourceGroups,
+    statuses: state.statuses,
+    connectConnection: state.connectConnection,
+    setActiveConnection: state.setActiveConnection,
+  })))
   const {
     tabs,
     activeTabId,
@@ -81,10 +92,16 @@ export function MainPanel() {
     updateTabConnection,
     setTabDraft,
     setTabQueryState,
-  } = useEditorStore()
-  const results = useQueryResultStore((state) => state.results)
-  const explains = useQueryResultStore((state) => state.explains)
-  const resultSources = useQueryResultStore((state) => state.sources)
+  } = useEditorStore(useShallow((state) => ({
+    tabs: state.tabs,
+    activeTabId: state.activeTabId,
+    addTab: state.addTab,
+    updateTabSql: state.updateTabSql,
+    updateDataTabContext: state.updateDataTabContext,
+    updateTabConnection: state.updateTabConnection,
+    setTabDraft: state.setTabDraft,
+    setTabQueryState: state.setTabQueryState,
+  })))
   const metadataDatabases = useMetadataStore((state) => state.databases)
   const metadataSchemas = useMetadataStore((state) => state.schemas)
   const catalogSchemaPaths = useMetadataStore((state) => state.catalogSchemaPaths)
@@ -117,6 +134,10 @@ export function MainPanel() {
   const handledHistoryRequest = useRef(0)
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
+  const activeQueryId = activeTab?.lastQueryId ?? null
+  const activeResults = useQueryResultStore((state) => activeQueryId ? state.results[activeQueryId] : undefined)
+  const activeExplain = useQueryResultStore((state) => activeQueryId ? state.explains[activeQueryId] : undefined)
+  const activeResultSource = useQueryResultStore((state) => activeQueryId ? state.sources[activeQueryId] : undefined)
   const connectionId = activeTab?.connectionId ?? null
   const activeConnection = connections.find((connection) => connection.id === connectionId)
   const activeDriverType = activeConnection?.driverType ?? 'postgres'
@@ -141,15 +162,11 @@ export function MainPanel() {
       sqlForToolbarExecution(activeTab, selectedSql).trim(),
   )
   const canFormat = Boolean(activeTab && sqlForToolbarExecution(activeTab, selectedSql).trim())
-  const activeQueryId = activeTab?.lastQueryId ?? null
-  const activeResults = activeQueryId ? results[activeQueryId] : undefined
-  const activeExplain = activeQueryId ? explains[activeQueryId] : undefined
   const rawResultIndex = activeQueryId ? resultIndexes[activeQueryId] ?? 0 : 0
   const selectedResultIndex = activeResults?.length
     ? Math.min(rawResultIndex, activeResults.length - 1)
     : 0
   const activeResult = activeResults?.[selectedResultIndex]
-  const activeResultSource = activeQueryId ? resultSources[activeQueryId] : undefined
   const activeResultConnection = activeResultSource
     ? connections.find((connection) => connection.id === activeResultSource.connectionId) ?? null
     : null
@@ -195,21 +212,22 @@ export function MainPanel() {
     }
 
     draftSaveTimer.current = window.setTimeout(() => {
-      for (const tab of tabs) {
-        if (tab.kind && tab.kind !== 'sql') continue
-        if (!tab.sql.trim()) continue
-        const connection = connections.find((item) => item.id === tab.connectionId) ?? null
-        const schemaPath = tab.connectionId ? catalogSchemaPaths[tab.connectionId] : null
-        void saveTabDraft(tab, {
-          connection,
-          database: schemaPath?.database ?? connection?.database ?? null,
-          schema: schemaPath?.schema ?? null,
-        }).then((draft) => {
-          if (draft && tab.draftId !== draft.id) {
-            setTabDraft(tab.id, draft.id)
-          }
-        })
+      const saveDirtyDrafts = async () => {
+        for (const tab of tabs) {
+          if (tab.kind && tab.kind !== 'sql') continue
+          if (!tab.dirty) continue
+          if (!tab.sql.trim()) continue
+          const connection = connections.find((item) => item.id === tab.connectionId) ?? null
+          const schemaPath = tab.connectionId ? catalogSchemaPaths[tab.connectionId] : null
+          const draft = await saveTabDraft(tab, {
+            connection,
+            database: schemaPath?.database ?? connection?.database ?? null,
+            schema: schemaPath?.schema ?? null,
+          })
+          if (draft) setTabDraft(tab.id, draft.id)
+        }
       }
+      void saveDirtyDrafts()
     }, 700)
 
     return () => {
@@ -403,7 +421,9 @@ export function MainPanel() {
   if (activeTab.kind === 'settings') {
     return (
       <main className="flex flex-1 overflow-hidden bg-background">
-        <SettingsWorkspacePanel />
+        <Suspense fallback={<WorkspaceLoading label={t('common.loading')} />}>
+          <SettingsWorkspacePanel />
+        </Suspense>
       </main>
     )
   }
@@ -656,12 +676,14 @@ export function MainPanel() {
     return (
       <main className="flex flex-1 overflow-hidden bg-background">
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <ERDiagram
-            connectionId={activeTab.connectionId}
-            database={activeDiagramContext.database}
-            schema={activeDiagramContext.schema}
-            tables={activeDiagramContext.tables}
-          />
+          <Suspense fallback={<WorkspaceLoading label={t('diagram.loadingDetail')} />}>
+            <ERDiagram
+              connectionId={activeTab.connectionId}
+              database={activeDiagramContext.database}
+              schema={activeDiagramContext.schema}
+              tables={activeDiagramContext.tables}
+            />
+          </Suspense>
         </div>
         <ObjectInspectorPanel />
       </main>
@@ -944,6 +966,10 @@ export function MainPanel() {
       <ObjectInspectorPanel />
     </main>
   )
+}
+
+function WorkspaceLoading({ label }: { label: string }) {
+  return <div className="grid h-full flex-1 place-items-center text-xs text-muted-foreground">{label}</div>
 }
 
 function SqlRecordsWorkspace({ mode, connections, initialConnectionFilter, onOpenSql }: {
@@ -1704,7 +1730,12 @@ function StructureTabPanel({
   ) => void
 }) {
   const { t } = useTranslation()
-  const metadata = useMetadataStore()
+  const metadata = useMetadataStore(useShallow((state) => ({
+    loadColumns: state.loadColumns,
+    loadIndexes: state.loadIndexes,
+    loadForeignKeys: state.loadForeignKeys,
+    loadSchemaObjects: state.loadSchemaObjects,
+  })))
   const notifyError = useUiStore((state) => state.notifyError)
   const [section, setSection] = useState<StructureSection>('columns')
   const [columns, setColumns] = useState<ColumnInfo[]>([])

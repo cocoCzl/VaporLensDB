@@ -265,7 +265,12 @@ impl JdbcBridgeSidecar {
         let username = config.username.as_deref().unwrap_or("");
         let classpath = build_classpath(bridge_jar, &config.driver_paths);
 
+        let configured_heap = std::env::var("VAPORLENSDB_JDBC_MAX_HEAP_MB").ok();
+        let max_heap_mb = parse_jdbc_max_heap_mb(configured_heap.as_deref());
         let mut child = Command::new("java")
+            .arg("-Xms16m")
+            .arg(format!("-Xmx{max_heap_mb}m"))
+            .arg("-XX:+UseSerialGC")
             .arg("-cp")
             .arg(classpath)
             .arg("com.vaporlensdb.jdbcbridge.JdbcBridge")
@@ -1419,6 +1424,13 @@ fn required<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, AppError>
         .ok_or_else(|| AppError::ConfigError(format!("{name} is required")))
 }
 
+fn parse_jdbc_max_heap_mb(value: Option<&str>) -> u16 {
+    value
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(256)
+        .clamp(64, 1024)
+}
+
 fn normalize_jdbc_sql(sql: &str) -> String {
     sql.trim().trim_end_matches(';').trim_end().to_string()
 }
@@ -1436,7 +1448,7 @@ mod tests {
         clarify_metadata_error, clarify_oracle_explain_error, classify_jdbc_error,
         db_object_kind_from_value, db_object_kind_value, map_column_row, map_index_row,
         map_schema_object_row, normalize_jdbc_error_message, normalize_jdbc_sql,
-        parse_metadata_sql, parse_sidecar_response, JdbcBridgeCommand,
+        parse_jdbc_max_heap_mb, parse_metadata_sql, parse_sidecar_response, JdbcBridgeCommand,
     };
     use crate::models::{
         error::AppError,
@@ -1463,6 +1475,15 @@ mod tests {
             normalize_jdbc_sql("SELECT ';' AS value FROM dual;"),
             "SELECT ';' AS value FROM dual"
         );
+    }
+
+    #[test]
+    fn bounds_jdbc_heap_configuration() {
+        assert_eq!(parse_jdbc_max_heap_mb(None), 256);
+        assert_eq!(parse_jdbc_max_heap_mb(Some("invalid")), 256);
+        assert_eq!(parse_jdbc_max_heap_mb(Some("32")), 64);
+        assert_eq!(parse_jdbc_max_heap_mb(Some("512")), 512);
+        assert_eq!(parse_jdbc_max_heap_mb(Some("2048")), 1024);
     }
 
     #[test]

@@ -24,7 +24,7 @@ export default defineConfig({
     exclude: ['monaco-editor'],
   },
   build: {
-    chunkSizeWarningLimit: 4200,
+    chunkSizeWarningLimit: 1000,
     modulePreload: false,
   },
 })

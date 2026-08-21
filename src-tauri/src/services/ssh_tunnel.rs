@@ -1,6 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddr, TcpListener},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -21,7 +21,7 @@ const TUNNEL_START_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct SshTunnel {
     child: Child,
-    askpass_path: Option<PathBuf>,
+    _askpass_helper: Option<AskpassHelper>,
     pub local_host: String,
     pub local_port: u16,
 }
@@ -62,16 +62,15 @@ impl SshTunnel {
             remote_host,
             remote_port,
         );
-        let mut askpass_path = None;
+        let mut askpass_helper = None;
 
         let secret = match tunnel_config.auth_method {
             SshAuthMethod::Password => tunnel_config.password_encrypted.as_deref(),
             SshAuthMethod::PrivateKey => tunnel_config.private_key_passphrase_encrypted.as_deref(),
         };
 
-        if let Some(secret) = secret.filter(|value| !value.is_empty()) {
-            let path = write_askpass_script(secret)?;
-            askpass_path = Some(path);
+        if secret.filter(|value| !value.is_empty()).is_some() {
+            askpass_helper = Some(write_askpass_script()?);
         } else {
             args.push("-o".to_string());
             args.push("BatchMode=yes".to_string());
@@ -82,17 +81,23 @@ impl SshTunnel {
         command.stdin(std::process::Stdio::null());
         command.stdout(std::process::Stdio::null());
         command.stderr(std::process::Stdio::piped());
-        if let Some(path) = askpass_path.as_ref() {
-            command.env("SSH_ASKPASS", path);
+        if let Some(helper) = askpass_helper.as_ref() {
+            command.env("SSH_ASKPASS", helper.path());
             command.env("SSH_ASKPASS_REQUIRE", "force");
             command.env("DISPLAY", "vaporlensdb:0");
+            command.env("VAPORLENSDB_SSH_ASKPASS_SECRET", secret.unwrap_or_default());
         }
 
         let mut child = command.spawn().map_err(|error| AppError::SshTunnelError {
-            message: format!("failed to start ssh: {error}"),
+            message: format!(
+                "failed to start ssh; install the OpenSSH client and ensure ssh is on PATH: {error}"
+            ),
         })?;
 
-        wait_until_forward_ready(&mut child, &local_host, local_port).await?;
+        if let Err(error) = wait_until_forward_ready(&mut child, &local_host, local_port).await {
+            let _ = child.start_kill();
+            return Err(error);
+        }
 
         let mut runtime_config = config.clone();
         runtime_config.host = Some(local_host.clone());
@@ -108,7 +113,7 @@ impl SshTunnel {
         Ok(Some((
             Self {
                 child,
-                askpass_path,
+                _askpass_helper: askpass_helper,
                 local_host,
                 local_port,
             },
@@ -120,9 +125,22 @@ impl SshTunnel {
 impl Drop for SshTunnel {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
-        if let Some(path) = self.askpass_path.take() {
-            let _ = std::fs::remove_file(path);
-        }
+    }
+}
+
+struct AskpassHelper {
+    path: PathBuf,
+}
+
+impl AskpassHelper {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for AskpassHelper {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -211,13 +229,24 @@ fn allocate_local_port(local_host: &str) -> Result<u16, AppError> {
         })
 }
 
-fn write_askpass_script(secret: &str) -> Result<PathBuf, AppError> {
-    let path = std::env::temp_dir().join(format!("vaporlensdb-ssh-askpass-{}.sh", Uuid::new_v4()));
-    let escaped = secret.replace('\'', "'\"'\"'");
-    std::fs::write(&path, format!("#!/bin/sh\nprintf '%s' '{escaped}'\n")).map_err(|error| {
-        AppError::SshTunnelError {
-            message: format!("failed to create SSH askpass helper: {error}"),
-        }
+fn write_askpass_script() -> Result<AskpassHelper, AppError> {
+    #[cfg(windows)]
+    let (extension, contents) = (
+        "cmd",
+        "@echo off\r\n<nul set /p=\"%VAPORLENSDB_SSH_ASKPASS_SECRET%\"\r\n",
+    );
+    #[cfg(not(windows))]
+    let (extension, contents) = (
+        "sh",
+        "#!/bin/sh\nprintf '%s' \"$VAPORLENSDB_SSH_ASKPASS_SECRET\"\n",
+    );
+    let path = std::env::temp_dir().join(format!(
+        "vaporlensdb-ssh-askpass-{}.{}",
+        Uuid::new_v4(),
+        extension
+    ));
+    std::fs::write(&path, contents).map_err(|error| AppError::SshTunnelError {
+        message: format!("failed to create SSH askpass helper: {error}"),
     })?;
     #[cfg(unix)]
     {
@@ -232,7 +261,7 @@ fn write_askpass_script(secret: &str) -> Result<PathBuf, AppError> {
             message: format!("failed to mark SSH askpass helper executable: {error}"),
         })?;
     }
-    Ok(path)
+    Ok(AskpassHelper { path })
 }
 
 fn rewrite_connection_url(
@@ -305,7 +334,7 @@ async fn wait_until_forward_ready(
 
 #[cfg(test)]
 mod tests {
-    use super::{rewrite_connection_url, ssh_args};
+    use super::{rewrite_connection_url, ssh_args, write_askpass_script};
     use crate::models::connection::{SshAuthMethod, SshTunnelConfig};
 
     #[test]
@@ -331,6 +360,30 @@ mod tests {
         assert!(args.contains(&"-i".to_string()));
         assert!(args.contains(&"/keys/id_ed25519".to_string()));
         assert!(args.contains(&"deploy@bastion.example.com".to_string()));
+    }
+
+    #[test]
+    fn askpass_helper_never_contains_a_password() {
+        let helper = write_askpass_script().expect("create askpass helper");
+        let contents = std::fs::read_to_string(helper.path()).expect("read askpass helper");
+
+        assert!(contents.contains("VAPORLENSDB_SSH_ASKPASS_SECRET"));
+        assert!(!contents.contains("database-password"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(helper.path())
+                .expect("inspect askpass helper")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+
+        let path = helper.path().to_path_buf();
+        drop(helper);
+        assert!(!path.exists());
     }
 
     #[test]

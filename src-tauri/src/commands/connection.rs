@@ -7,6 +7,9 @@ use crate::{
     models::connection::{
         ConnectionConfig, ConnectionStatus, DriverType, SshAuthMethod, SshTunnelConfig,
     },
+    services::connection_manager::{
+        create_active_connection, test_connection as test_connection_service,
+    },
     AppState,
 };
 
@@ -112,11 +115,7 @@ pub async fn test_connection(
         .transpose()
         .map_err(String::from)?
         .flatten();
-    state
-        .connection_manager
-        .lock()
-        .await
-        .test_connection(&config, password.as_deref(), definition.as_ref())
+    test_connection_service(&config, password.as_deref(), definition.as_ref())
         .await
         .map_err(Into::into)
 }
@@ -158,12 +157,21 @@ pub async fn connect(
     let mut runtime_config = config.clone();
     runtime_config.ssh_tunnel = ssh_tunnel;
 
+    {
+        let mut manager = state.connection_manager.lock().await;
+        if let Some(status) = manager.begin_connect(id).map_err(String::from)? {
+            return Ok(status);
+        }
+    }
+
+    let active =
+        create_active_connection(&runtime_config, password.as_deref(), definition.as_ref()).await;
+
     state
         .connection_manager
         .lock()
         .await
-        .connect(&runtime_config, password.as_deref(), definition.as_ref())
-        .await
+        .finish_connect(id, active)
         .map_err(Into::into)
 }
 

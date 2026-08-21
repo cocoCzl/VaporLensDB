@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:smoke": "node scripts/run-smoke-tests.mjs",
+    "test:sensitive-info": "node scripts/sensitive-info-scan.mjs",
     "test:v1-ui-scope": "node scripts/v1-ui-scope-smoke.mjs",
     "test:object-tree-lifecycle": "node scripts/object-tree-lifecycle-smoke.mjs",
     "test:object-tree-initial-load": "node scripts/object-tree-initial-load-smoke.mjs",
@@ -61,6 +65,7 @@
     "test:database-create": "node scripts/database-create-smoke.mjs",
     "test:workspace-capacity": "node scripts/workspace-capacity-smoke.mjs",
     "test:performance-guardrails": "node scripts/performance-guardrails-smoke.mjs",
+    "test:bundle-budget": "node scripts/bundle-budget.mjs",
     "test:database-vendor-icons": "node scripts/database-vendor-icons-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -99,6 +104,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2.11.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -108,11 +115,13 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "jsdom": "^30.0.1",
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.19",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "vitest": "^4.1.11"
   }
 }

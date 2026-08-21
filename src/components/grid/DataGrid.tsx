@@ -175,28 +175,30 @@ export function DataGrid({
                         ].join(' ')}
                         title={formatted}
                       >
-                        <button
-                          type="button"
-                          className={`flex h-full w-full min-w-0 items-center gap-1 px-2 py-1 ${alignment}`}
-                          onClick={(event) =>
-                            setSelection((current) =>
-                              nextCellSelection(current, virtualRow.index, columnIndex, event.shiftKey),
-                            )
-                          }
-                        >
-                          <span
-                            className={[
-                              'min-w-0 flex-1 truncate',
-                              isNull ? 'font-sans text-[11px] italic text-muted-foreground' : '',
-                            ].join(' ')}
-                            aria-label={isNull ? 'NULL value' : undefined}
+                        <div className="flex h-full min-w-0 items-center">
+                          <button
+                            type="button"
+                            className={`flex h-full min-w-0 flex-1 items-center gap-1 px-2 py-1 ${alignment}`}
+                            onClick={(event) =>
+                              setSelection((current) =>
+                                nextCellSelection(current, virtualRow.index, columnIndex, event.shiftKey),
+                              )
+                            }
                           >
-                            {formatted}
-                          </span>
-                          {inspectable && (
                             <span
-                              role="button"
-                              tabIndex={0}
+                              className={[
+                                'min-w-0 flex-1 truncate',
+                                isNull ? 'font-sans text-[11px] italic text-muted-foreground' : '',
+                              ].join(' ')}
+                              aria-label={isNull ? 'NULL value' : undefined}
+                            >
+                              {formatted}
+                            </span>
+                          </button>
+                          {inspectable && (
+                            <button
+                              type="button"
+                              aria-label="Open value viewer"
                               className="grid size-5 shrink-0 place-items-center rounded opacity-0 hover:bg-background/80 group-hover:opacity-100"
                               title="Open value viewer"
                               onClick={(event) => {
@@ -206,21 +208,11 @@ export function DataGrid({
                                   value: formatted,
                                 })
                               }}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault()
-                                  event.stopPropagation()
-                                  setViewerValue({
-                                    title: `${column.name} · row ${virtualRow.index + 1}`,
-                                    value: formatted,
-                                  })
-                                }
-                              }}
                             >
                               <Maximize2 className="size-3" />
-                            </span>
+                            </button>
                           )}
-                        </button>
+                        </div>
                       </div>
                     )
                   })}

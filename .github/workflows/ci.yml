@@ -67,10 +67,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Scan for sensitive information
-        run: |
-          set -euo pipefail
-          ! (git ls-files | rg '(^|/)[.]env($|[.])' | rg -v '(^|/)[.]env[.]example$')
-          ! git ls-files -z | xargs -0 rg -n --hidden --glob '!pnpm-lock.yaml' --glob '!src-tauri/Cargo.lock' '192[.]168[.][0-9]{1,3}[.][0-9]{1,3}|10[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}|172[.](1[6-9]|2[0-9]|3[01])[.][0-9]{1,3}[.][0-9]{1,3}|jdbc:(postgresql|mysql|oracle):.*(192[.]168[.]|10[.]|172[.])|TEST_[A-Z0-9_]*PASS[W]ORD=['"'"'"]?(develop|password|root|admin|changeme)['"'"'"]?($|[[:space:]])|/Users/[A-Za-z0-9._/-]*ojdbc'
+        run: pnpm test:sensitive-info
 
       - name: Build JDBC bridge
         run: ./build.sh jdbc-bridge
@@ -81,11 +78,19 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
+      - name: Test frontend behavior
+        run: pnpm test
+
+      - name: Check performance and bundle budgets
+        run: |
+          pnpm test:performance-guardrails
+          pnpm test:bundle-budget
+
       - name: Test cross-platform artifact staging
         run: pnpm test:packaging
 
-      - name: Run object tree workflow smoke test
-        run: pnpm test:object-tree-workflow
+      - name: Run complete workflow smoke suite
+        run: pnpm test:smoke
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check

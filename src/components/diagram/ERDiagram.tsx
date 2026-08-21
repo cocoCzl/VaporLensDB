@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import {
   Background,
   Controls,
@@ -84,7 +85,11 @@ function directRelatedTableNames(seedTables: DiagramTable[], schema: string, see
 
 export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramProps) {
   const { t } = useTranslation()
-  const metadata = useMetadataStore()
+  const metadata = useMetadataStore(useShallow((state) => ({
+    loadTables: state.loadTables,
+    loadColumns: state.loadColumns,
+    loadForeignKeys: state.loadForeignKeys,
+  })))
   const notifyError = useUiStore((state) => state.notifyError)
   const [diagramTables, setDiagramTables] = useState<DiagramTable[]>([])
   const [loading, setLoading] = useState(false)

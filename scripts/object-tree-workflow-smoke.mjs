@@ -221,7 +221,7 @@ includesAll(
     'cd src-tauri && cargo test --test postgres_driver -- --ignored',
     'cd src-tauri && cargo test --test mysql_driver -- --ignored',
     'cd src-tauri && cargo test --test oracle_jdbc_driver -- --ignored',
-    '使用 `TEST_ORACLE_*`',
+    'Use `TEST_ORACLE_*`',
   ],
   'real database command documentation',
 )

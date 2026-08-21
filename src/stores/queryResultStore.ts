@@ -5,6 +5,7 @@ import { MAX_INTERACTIVE_RESULT_ROWS } from '@/stores/uiStore'
 // The database can stream more rows for counting/export, but the grid keeps a
 // fixed visual window so several open SQL tabs cannot retain unbounded data.
 const MAX_RENDERED_RESULT_ROWS = 10_000
+const MAX_RETAINED_QUERY_RESULTS = 20
 
 interface QueryResultState {
   results: Record<string, QueryResult[]>
@@ -24,11 +25,11 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
   explains: {},
   sources: {},
   setResults: (queryId, results) =>
-    set((s) => ({ results: { ...s.results, [queryId]: results.map(boundInteractiveResult) } })),
+    set((s) => ({ results: retainNewest({ ...s.results, [queryId]: results.map(boundInteractiveResult) }) })),
   setExplain: (queryId, explain) =>
-    set((s) => ({ explains: { ...s.explains, [queryId]: explain } })),
+    set((s) => ({ explains: retainNewest({ ...s.explains, [queryId]: explain }) })),
   setResultSource: (queryId, connectionId, context = {}) =>
-    set((s) => ({ sources: {
+    set((s) => ({ sources: retainNewest({
       ...s.sources,
       [queryId]: {
         connectionId,
@@ -36,10 +37,10 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
         schema: context.schema ?? null,
         executedAt: new Date().toISOString(),
       },
-    } })),
+    }) })),
   startStreamResult: (queryId) =>
     set((s) => ({
-      results: {
+      results: retainNewest({
         ...s.results,
         [queryId]: [
           {
@@ -53,7 +54,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
             maxRows: null,
           },
         ],
-      },
+      }),
     })),
   appendResultChunk: (chunk) =>
     set((s) => {
@@ -72,7 +73,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
         maxRows: current.maxRows ?? MAX_RENDERED_RESULT_ROWS,
       }
 
-      return { results: { ...s.results, [chunk.queryId]: [next] } }
+      return { results: retainNewest({ ...s.results, [chunk.queryId]: [next] }) }
     }),
   finishStreamResult: (done) =>
     set((s) => {
@@ -91,7 +92,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
         receivedBytes: done.receivedBytes,
       }
 
-      return { results: { ...s.results, [done.queryId]: [next] } }
+      return { results: retainNewest({ ...s.results, [done.queryId]: [next] }) }
     }),
   clearResult: (queryId) =>
     set((s) => {
@@ -104,6 +105,14 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
       return { results, explains, sources }
     }),
 }))
+
+function retainNewest<T>(record: Record<string, T>): Record<string, T> {
+  const keys = Object.keys(record)
+  if (keys.length <= MAX_RETAINED_QUERY_RESULTS) return record
+  const next = { ...record }
+  for (const key of keys.slice(0, keys.length - MAX_RETAINED_QUERY_RESULTS)) delete next[key]
+  return next
+}
 
 function emptyQueryResult(queryId: string): QueryResult {
   return {

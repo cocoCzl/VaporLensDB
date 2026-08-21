@@ -1,6 +1,7 @@
 import { Database, FileCode2, Folder, History, Moon, PanelTop, Settings, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import {
   CommandDialog,
   CommandEmpty,
@@ -20,8 +21,17 @@ import { useUiStore } from '@/stores/uiStore'
 export function WorkspaceCommandPalette() {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const { connections, dataSourceGroups, activeConnectionId, setActiveConnection } = useConnectionStore()
-  const { tabs, addTab, setActiveTab } = useEditorStore()
+  const { connections, dataSourceGroups, activeConnectionId, setActiveConnection } = useConnectionStore(useShallow((state) => ({
+    connections: state.connections,
+    dataSourceGroups: state.dataSourceGroups,
+    activeConnectionId: state.activeConnectionId,
+    setActiveConnection: state.setActiveConnection,
+  })))
+  const { tabs, addTab, setActiveTab } = useEditorStore(useShallow((state) => ({
+    tabs: state.tabs,
+    addTab: state.addTab,
+    setActiveTab: state.setActiveTab,
+  })))
   const historyCount = useQueryHistoryStore((state) => state.entries.length)
   const drafts = useSqlDraftStore((state) => state.drafts)
   const theme = useUiStore((state) => state.theme)

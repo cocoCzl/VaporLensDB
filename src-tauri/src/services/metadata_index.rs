@@ -15,7 +15,8 @@ use crate::{
 
 /// Object search remains useful on very large installations without retaining
 /// every column name in the renderer process.
-const MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION: usize = 100_000;
+const MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION: usize = 50_000;
+const MAX_METADATA_INDEX_ENTRIES_TOTAL: usize = 150_000;
 
 #[derive(Clone, Default)]
 pub struct MetadataIndexService {
@@ -167,7 +168,21 @@ impl MetadataIndexService {
         }
 
         let entry_count = entries.len();
-        self.entries.write().await.insert(connection.id, entries);
+        let mut indexed = self.entries.write().await;
+        while indexed
+            .iter()
+            .filter(|(id, _)| **id != connection.id)
+            .map(|(_, values)| values.len())
+            .sum::<usize>()
+            + entries.len()
+            > MAX_METADATA_INDEX_ENTRIES_TOTAL
+        {
+            let Some(evicted) = indexed.keys().copied().find(|id| *id != connection.id) else {
+                break;
+            };
+            indexed.remove(&evicted);
+        }
+        indexed.insert(connection.id, entries);
         Ok(MetadataIndexSummary {
             connection_id: connection.id,
             entry_count,
@@ -186,25 +201,36 @@ impl MetadataIndexService {
         }
 
         let entries = self.entries.read().await;
-        let mut results = entries
+        let candidates = entries
             .iter()
-            .filter(|(id, _)| connection_id.map(|target| target == **id).unwrap_or(true))
-            .flat_map(|(_, entries)| entries.iter())
-            .filter_map(|entry| {
-                score_entry(entry, &normalized).map(|score| MetadataSearchResult {
-                    entry: entry.clone(),
-                    score,
-                })
-            })
-            .collect::<Vec<_>>();
+            .filter(|(id, _)| connection_id.is_none_or(|target| target == **id))
+            .flat_map(|(_, entries)| entries.iter());
+        let mut results = Vec::with_capacity(limit);
+        for entry in candidates {
+            let Some(score) = score_entry(entry, &normalized) else {
+                continue;
+            };
+            let result = MetadataSearchResult {
+                entry: entry.clone(),
+                score,
+            };
+            if results.len() < limit {
+                results.push(result);
+                continue;
+            }
+            let Some((worst_index, worst)) = results
+                .iter()
+                .enumerate()
+                .min_by(|(_, left), (_, right)| compare_search_results(left, right))
+            else {
+                continue;
+            };
+            if compare_search_results(&result, worst).is_gt() {
+                results[worst_index] = result;
+            }
+        }
 
-        results.sort_by(|left, right| {
-            right
-                .score
-                .cmp(&left.score)
-                .then_with(|| left.entry.path.join(".").cmp(&right.entry.path.join(".")))
-        });
-        results.truncate(limit);
+        results.sort_by(|left, right| compare_search_results(right, left));
         results
     }
 
@@ -224,6 +250,15 @@ impl MetadataIndexService {
     ) {
         self.entries.write().await.insert(connection_id, entries);
     }
+}
+
+fn compare_search_results(
+    left: &MetadataSearchResult,
+    right: &MetadataSearchResult,
+) -> std::cmp::Ordering {
+    left.score
+        .cmp(&right.score)
+        .then_with(|| right.entry.path.cmp(&left.entry.path))
 }
 
 async fn append_columns(

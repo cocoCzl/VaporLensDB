@@ -3,12 +3,12 @@
 ## Reporting Security Issues
 
 Please do not file public issues for vulnerabilities or accidental credential
-exposure. Contact the maintainers privately first, or use the repository's
-private vulnerability reporting feature when it is available.
+exposure. Use GitHub's private vulnerability reporting form:
+https://github.com/cocoCzl/VaporLensDB/security/advisories/new
 
-If no private channel is configured yet, open a minimal public issue that asks
-for a private contact path without including exploit details, credentials,
-database addresses, logs, or screenshots containing secrets.
+If that form is unavailable, open a minimal public issue asking for a private
+contact path. Do not include exploit details, credentials, database addresses,
+logs, or screenshots containing secrets.
 
 ## Sensitive Data Rules
 

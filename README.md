@@ -93,7 +93,7 @@ process are in the [packaging guide](docs/PACKAGING.md).
 ## Documentation
 
 - **Users:** [Installation and first use](docs/INSTALL.md),
-  [changelog](CHANGELOG.md), and [security policy](SECURITY.md).
+  [changelog](CHANGELOG.md), [roadmap](ROADMAP.md), and [security policy](SECURITY.md).
 - **Contributors:** [Contributing](CONTRIBUTING.md), [testing](docs/TESTING.md),
   and [packaging and publishing](docs/PACKAGING.md).
 - **Technical reference:** [JDBC metadata SQL](docs/JDBC_METADATA_SQL.md),

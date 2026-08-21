@@ -15,15 +15,19 @@ assert(engine.includes('mpsc::channel::<Result<QueryResultChunk, AppError>>(8)')
 
 const resultStore = read('src/stores/queryResultStore.ts')
 assert(resultStore.includes('const MAX_RENDERED_RESULT_ROWS = 10_000'), 'grid memory window is missing')
+assert(resultStore.includes('const MAX_RETAINED_QUERY_RESULTS = 20'), 'query result retention budget is missing')
 assert(resultStore.includes('displayTruncated'), 'grid must distinguish retained-window truncation')
 assert(!resultStore.includes('rows: [...current.rows, ...chunk.rows]'), 'stream append must not copy every prior row')
 
 const metadata = read('src-tauri/src/services/metadata_service.rs')
 assert(metadata.includes('const MAX_METADATA_CACHE_ENTRIES: usize = 256'), 'metadata cache entry budget is missing')
+const metadataIndex = read('src-tauri/src/services/metadata_index.rs')
+assert(metadataIndex.includes('const MAX_METADATA_INDEX_ENTRIES_TOTAL: usize = 150_000'), 'metadata index global budget is missing')
 
 const jdbc = read('src-tauri/src/drivers/jdbc.rs')
 assert(jdbc.includes('async fn cancel_stream'), 'JDBC stream cancellation is missing')
 assert(jdbc.includes('CANCEL\\t0\\t{}'), 'JDBC cancellation command is missing')
+assert(jdbc.includes('VAPORLENSDB_JDBC_MAX_HEAP_MB'), 'JDBC heap budget is missing')
 
 if (failures.length > 0) {
   console.error('Performance guardrail smoke failed:')

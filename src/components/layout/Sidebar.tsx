@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
@@ -204,7 +205,22 @@ function CompactDataSourceTree() {
     moveConnectionToGroup,
     removeConnection,
     saveConnection,
-  } = useConnectionStore()
+  } = useConnectionStore(useShallow((state) => ({
+    connections: state.connections,
+    dataSourceGroups: state.dataSourceGroups,
+    statuses: state.statuses,
+    browsingConnectionId: state.browsingConnectionId,
+    busyConnectionIds: state.busyConnectionIds,
+    loadConnections: state.loadConnections,
+    connectConnection: state.connectConnection,
+    disconnectConnection: state.disconnectConnection,
+    setActiveConnection: state.setActiveConnection,
+    favoriteDataSourceIds: state.favoriteDataSourceIds,
+    toggleFavoriteDataSource: state.toggleFavoriteDataSource,
+    moveConnectionToGroup: state.moveConnectionToGroup,
+    removeConnection: state.removeConnection,
+    saveConnection: state.saveConnection,
+  })))
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
   const setSidebarView = useUiStore((state) => state.setSidebarView)
@@ -510,7 +526,20 @@ function DataSourcesSelectorPanel() {
     disconnectConnection,
     setActiveConnection,
     toggleFavoriteDataSource,
-  } = useConnectionStore()
+  } = useConnectionStore(useShallow((state) => ({
+    connections: state.connections,
+    statuses: state.statuses,
+    busyConnectionIds: state.busyConnectionIds,
+    error: state.error,
+    activeConnectionId: state.activeConnectionId,
+    recentDataSourceIds: state.recentDataSourceIds,
+    favoriteDataSourceIds: state.favoriteDataSourceIds,
+    loadConnections: state.loadConnections,
+    connectConnection: state.connectConnection,
+    disconnectConnection: state.disconnectConnection,
+    setActiveConnection: state.setActiveConnection,
+    toggleFavoriteDataSource: state.toggleFavoriteDataSource,
+  })))
   const setSidebarView = useUiStore((state) => state.setSidebarView)
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
@@ -915,7 +944,12 @@ function RailButton({
 
 export function SqlWorkspacePanel() {
   const { t } = useTranslation()
-  const { tabs, activeTabId, setActiveTab, addTab } = useEditorStore()
+  const { tabs, activeTabId, setActiveTab, addTab } = useEditorStore(useShallow((state) => ({
+    tabs: state.tabs,
+    activeTabId: state.activeTabId,
+    setActiveTab: state.setActiveTab,
+    addTab: state.addTab,
+  })))
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
   const history = useQueryHistoryStore((state) => state.entries)
@@ -1163,7 +1197,10 @@ export function SessionManagementPanel() {
   const statuses = useConnectionStore((state) => state.statuses)
   const disconnectConnection = useConnectionStore((state) => state.disconnectConnection)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
-  const { tabs, setActiveTab } = useEditorStore()
+  const { tabs, setActiveTab } = useEditorStore(useShallow((state) => ({
+    tabs: state.tabs,
+    setActiveTab: state.setActiveTab,
+  })))
   const { cancelRunningQuery } = useQuery()
   const notify = useUiStore((state) => state.notify)
   const [busyConnectionId, setBusyConnectionId] = useState<string | null>(null)

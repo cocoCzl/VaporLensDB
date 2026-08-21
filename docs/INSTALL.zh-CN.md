@@ -68,6 +68,19 @@ bridge，但不会内置任何专有数据库驱动文件。
 - 在连接对话框或“设置 → JDBC 驱动”中添加本地 JAR，确认驱动类和 JDBC URL 后测试连接。
 - 不要把驱动 JAR、数据库凭据或真实数据库地址提交到仓库或公开 Issue 中。
 
+每个 JDBC 数据源运行在受限 JVM 中，默认最大堆内存为 256 MB。极少数体积较大的
+厂商驱动可在启动前设置 `VAPORLENSDB_JDBC_MAX_HEAP_MB`，允许范围为 64–1024。
+
+## 保存的凭据
+
+数据库与 SSH 密码使用由 macOS Keychain、Windows DPAPI 或 Linux Secret Service
+保护的密钥加密。Linux 需要 `secret-tool` 命令（Debian/Ubuntu 的包名为
+`libsecret-tools`）。如果当前 Linux 会话没有 Secret Service，请不要勾选“保存密码”，
+并在本次会话连接时输入密码。
+
+`VAPORLENSDB_USE_DEV_KEY=1` 只用于开发测试，正常安装不得启用。升级后，旧开发密钥
+会在系统凭据存储写入成功后自动迁移。
+
 ## 偏好设置与帮助
 
 - 在“设置”中切换中英文，以及浅色、深色或跟随系统主题。

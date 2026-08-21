@@ -24,7 +24,9 @@ Run the local release gate before tagging or publishing:
 ./build.sh check
 ```
 
-This command builds the JDBC bridge and runs frontend lint, frontend build
+This command builds the JDBC bridge and runs the sensitive-information scan,
+frontend lint, behavior tests, the complete workflow smoke suite, frontend build,
+performance and bundle budgets, Rust formatting, clippy, and Rust tests.
 (including TypeScript unused-code checks), Rust clippy with warnings denied,
 and Rust tests.
 
@@ -39,11 +41,18 @@ pnpm install --frozen-lockfile
 ./build.sh jdbc-bridge
 pnpm lint
 pnpm build
+pnpm test
+pnpm test:performance-guardrails
+pnpm test:bundle-budget
 pnpm test:object-tree-workflow
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
+
+Vitest and Testing Library exercise stores and rendered components. The
+workflow smoke scripts remain focused source/contract guardrails and do not
+replace behavior tests.
 
 ## Smoke Verification
 

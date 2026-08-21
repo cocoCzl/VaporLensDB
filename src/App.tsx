@@ -101,8 +101,20 @@ export default function App() {
   }, [theme])
 
   useEffect(() => {
-    persistSqlWorkspace(editorTabs, activeEditorTabId)
+    const timer = window.setTimeout(() => {
+      persistSqlWorkspace(editorTabs, activeEditorTabId)
+    }, 800)
+    return () => window.clearTimeout(timer)
   }, [editorTabs, activeEditorTabId])
+
+  useEffect(() => {
+    const flushWorkspace = () => {
+      const editor = useEditorStore.getState()
+      persistSqlWorkspace(editor.tabs, editor.activeTabId)
+    }
+    window.addEventListener('pagehide', flushWorkspace)
+    return () => window.removeEventListener('pagehide', flushWorkspace)
+  }, [])
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -158,12 +170,7 @@ export default function App() {
   }, [])
 
   return (
-    <div
-      className="flex h-screen flex-col overflow-hidden bg-background text-foreground"
-      onContextMenu={(event) => {
-        event.preventDefault()
-      }}
-    >
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <div className="flex flex-col flex-1 overflow-hidden">

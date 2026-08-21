@@ -15,7 +15,7 @@ Targets:
   windows  Build Windows MSI and NSIS installers on Windows.
   linux    Build Linux AppImage, DEB, and RPM packages on Linux.
   current  Build the supported installer format for the current platform.
-  check    Run validation only: frontend lint/build and Rust tests.
+  check    Run all local validation without creating an installer.
   live-tests Run configured PostgreSQL, MySQL, Oracle, and JDBC integration tests.
   jdbc-bridge Build the lightweight Java JDBC bridge jar.
 
@@ -237,14 +237,30 @@ build_jdbc_bridge() {
 }
 
 run_checks() {
+  log "Scanning repository files for sensitive information"
+  pnpm test:sensitive-info
+
   log "Running frontend lint"
   pnpm lint
 
   log "Testing cross-platform artifact staging"
   pnpm test:packaging
 
+  log "Running frontend behavior tests"
+  pnpm test
+
+  log "Running complete workflow smoke suite"
+  pnpm test:smoke
+
   log "Building frontend"
   pnpm build
+
+  log "Checking performance and bundle budgets"
+  pnpm test:performance-guardrails
+  pnpm test:bundle-budget
+
+  log "Checking Rust formatting"
+  (cd "$ROOT_DIR/src-tauri" && cargo fmt -- --check)
 
   log "Running Rust clippy"
   (cd "$ROOT_DIR/src-tauri" && cargo clippy --all-targets -- -D warnings)

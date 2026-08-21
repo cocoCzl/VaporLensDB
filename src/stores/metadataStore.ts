@@ -94,6 +94,8 @@ type MetadataSet = (
 ) => void
 
 const pendingLoads = new Map<string, Promise<unknown>>()
+const MAX_FRONTEND_METADATA_KEYS = 256
+let latestIndexSearch = 0
 
 export const useMetadataStore = create<MetadataState>()((set, get) => ({
   databases: {},
@@ -118,7 +120,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, databaseLoadingKey(connectionId), async () => {
       const databases = await getDatabases(connectionId)
-      set((state) => ({ databases: { ...state.databases, [cacheKey]: databases } }))
+      set((state) => ({ databases: putBounded(state.databases, cacheKey, databases) }))
       return databases
     })
   },
@@ -130,7 +132,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, cacheKey, async () => {
       const schemas = await getSchemas(connectionId, database)
-      set((state) => ({ schemas: { ...state.schemas, [cacheKey]: schemas } }))
+      set((state) => ({ schemas: putBounded(state.schemas, cacheKey, schemas) }))
       return schemas
     })
   },
@@ -142,7 +144,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, cacheKey, async () => {
       const tables = await getTables(connectionId, schema)
-      set((state) => ({ tables: { ...state.tables, [cacheKey]: tables } }))
+      set((state) => ({ tables: putBounded(state.tables, cacheKey, tables) }))
       return tables
     })
   },
@@ -154,7 +156,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, cacheKey, async () => {
       const views = await getViews(connectionId, schema)
-      set((state) => ({ views: { ...state.views, [cacheKey]: views } }))
+      set((state) => ({ views: putBounded(state.views, cacheKey, views) }))
       return views
     })
   },
@@ -166,7 +168,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, cacheKey, async () => {
       const functions = await getFunctions(connectionId, schema)
-      set((state) => ({ functions: { ...state.functions, [cacheKey]: functions } }))
+      set((state) => ({ functions: putBounded(state.functions, cacheKey, functions) }))
       return functions
     })
   },
@@ -178,7 +180,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, cacheKey, async () => {
       const objects = await getSchemaObjects(connectionId, schema, kind)
-      set((state) => ({ schemaObjects: { ...state.schemaObjects, [cacheKey]: objects } }))
+      set((state) => ({ schemaObjects: putBounded(state.schemaObjects, cacheKey, objects) }))
       return objects
     })
   },
@@ -190,7 +192,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, cacheKey, async () => {
       const columns = await getColumns(connectionId, schema, table)
-      set((state) => ({ columns: { ...state.columns, [cacheKey]: columns } }))
+      set((state) => ({ columns: putBounded(state.columns, cacheKey, columns) }))
       return columns
     })
   },
@@ -202,7 +204,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, cacheKey, async () => {
       const indexes = await getIndexes(connectionId, schema, table)
-      set((state) => ({ indexes: { ...state.indexes, [cacheKey]: indexes } }))
+      set((state) => ({ indexes: putBounded(state.indexes, cacheKey, indexes) }))
       return indexes
     })
   },
@@ -214,7 +216,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     return withLoading(set, cacheKey, async () => {
       const foreignKeys = await getForeignKeys(connectionId, schema, table)
-      set((state) => ({ foreignKeys: { ...state.foreignKeys, [cacheKey]: foreignKeys } }))
+      set((state) => ({ foreignKeys: putBounded(state.foreignKeys, cacheKey, foreignKeys) }))
       return foreignKeys
     })
   },
@@ -284,6 +286,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
   },
 
   searchIndex: async (query, connectionId = null) => {
+    const requestId = ++latestIndexSearch
     const normalized = query.trim()
     if (normalized.length < 2) {
       set({ indexResults: [] })
@@ -292,6 +295,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     try {
       const results = await searchMetadataIndex({ query: normalized, connectionId, limit: 40 })
+      if (requestId !== latestIndexSearch) return get().indexResults
       set({ indexResults: results })
       return results
     } catch (error) {
@@ -359,4 +363,15 @@ async function withLoading<T>(
 
 function omitByPrefix<T>(record: Record<string, T>, prefix: string) {
   return Object.fromEntries(Object.entries(record).filter(([key]) => !key.startsWith(prefix)))
+}
+
+function putBounded<T>(record: Record<string, T>, key: string, value: T) {
+  const next = { ...record }
+  delete next[key]
+  next[key] = value
+  const keys = Object.keys(next)
+  for (const staleKey of keys.slice(0, Math.max(0, keys.length - MAX_FRONTEND_METADATA_KEYS))) {
+    delete next[staleKey]
+  }
+  return next
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import { Eye, EyeOff, ListFilter, RefreshCw, Search, Server } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
 import { useQuery } from '@/hooks/useQuery'
@@ -147,7 +148,12 @@ export function DatabaseTree({
   compact?: boolean
 } = {}) {
   const { t } = useTranslation()
-  const { activeConnectionId: browsingConnectionId, connections, statuses, setActiveConnection } = useConnectionStore()
+  const { activeConnectionId: browsingConnectionId, connections, statuses, setActiveConnection } = useConnectionStore(useShallow((state) => ({
+    activeConnectionId: state.activeConnectionId,
+    connections: state.connections,
+    statuses: state.statuses,
+    setActiveConnection: state.setActiveConnection,
+  })))
   const activeConnectionId = connectionIdOverride ?? browsingConnectionId
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
@@ -157,7 +163,23 @@ export function DatabaseTree({
   const showSystemObjects = useUiStore((state) => state.showSystemObjects)
   const setShowSystemObjects = useUiStore((state) => state.setShowSystemObjects)
   const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
-  const metadata = useMetadataStore()
+  const metadata = useMetadataStore(useShallow((state) => ({
+    catalogSchemaPaths: state.catalogSchemaPaths,
+    connectionRefreshTokens: state.connectionRefreshTokens,
+    loadDatabases: state.loadDatabases,
+    loadSchemas: state.loadSchemas,
+    loadTables: state.loadTables,
+    loadViews: state.loadViews,
+    loadFunctions: state.loadFunctions,
+    loadSchemaObjects: state.loadSchemaObjects,
+    loadColumns: state.loadColumns,
+    loadIndexes: state.loadIndexes,
+    loadForeignKeys: state.loadForeignKeys,
+    setCatalogSchemaPath: state.setCatalogSchemaPath,
+    clearConnection: state.clearConnection,
+    clearSchema: state.clearSchema,
+    clearSchemaObjectKind: state.clearSchemaObjectKind,
+  })))
   const inspectTable = useObjectInspectorStore((state) => state.inspectTable)
   const indexResults = useMetadataStore((state) => state.indexResults)
   const indexLoading = useMetadataStore((state) => state.indexLoading)
@@ -1332,7 +1354,17 @@ function metadataKindLabel(kind: import('@/types/metadata').MetadataIndexKind, t
 }
 
 async function loadChildren(
-  metadata: ReturnType<typeof useMetadataStore.getState>,
+  metadata: Pick<
+    ReturnType<typeof useMetadataStore.getState>,
+    | 'loadColumns'
+    | 'loadForeignKeys'
+    | 'loadFunctions'
+    | 'loadIndexes'
+    | 'loadSchemaObjects'
+    | 'loadSchemas'
+    | 'loadTables'
+    | 'loadViews'
+  >,
   connectionId: string,
   driverType: DriverType,
   node: NodeRecord,
@@ -1577,7 +1609,7 @@ function tableNode(parent: NodeRecord, name: string, kind: 'table' | 'view'): No
 }
 
 async function loadSchemaObjectNodes(
-  metadata: ReturnType<typeof useMetadataStore.getState>,
+  metadata: Pick<ReturnType<typeof useMetadataStore.getState>, 'loadSchemaObjects'>,
   connectionId: string,
   parent: NodeRecord,
   kind: DbObjectKind,

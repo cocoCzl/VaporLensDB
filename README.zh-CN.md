@@ -81,7 +81,7 @@ Linux 生成 AppImage、DEB 和 RPM。不带参数运行 `./build.sh` 等价于 
 ## 文档
 
 - **使用者：**[安装与首次使用](docs/INSTALL.zh-CN.md)、
-  [变更记录](CHANGELOG.md)和[安全策略](SECURITY.md)。
+  [变更记录](CHANGELOG.md)、[路线图](ROADMAP.md)和[安全策略](SECURITY.md)。
 - **贡献者：**[参与贡献](CONTRIBUTING.md)、[测试说明](docs/TESTING.md)和
   [打包与发布](docs/PACKAGING.zh-CN.md)。
 - **技术参考：**[JDBC 元数据 SQL](docs/JDBC_METADATA_SQL.md)、

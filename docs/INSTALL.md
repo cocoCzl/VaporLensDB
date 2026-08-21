@@ -84,6 +84,22 @@ driver files.
 - Keep driver JARs and database credentials out of this repository and out of
   public issue reports.
 
+Each JDBC Data Source runs in a bounded JVM with a 256 MB maximum heap. For an
+unusually large vendor driver, set `VAPORLENSDB_JDBC_MAX_HEAP_MB` before
+starting VaporLensDB; accepted values are 64–1024.
+
+## Saved credentials
+
+Saved database and SSH passwords are encrypted with a key protected by macOS
+Keychain, Windows DPAPI, or Linux Secret Service. Linux requires the
+`secret-tool` command (package `libsecret-tools` on Debian/Ubuntu). If no Linux
+Secret Service session is available, leave **Save password** disabled and enter
+the password for the current session.
+
+`VAPORLENSDB_USE_DEV_KEY=1` enables a local development key and must not be used
+for a normal installation. Existing development keys are migrated into the OS
+credential store after a successful upgrade.
+
 ## Preferences and help
 
 - Open **Settings** to switch between Chinese and English, and choose light,

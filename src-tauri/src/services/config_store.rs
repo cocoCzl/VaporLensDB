@@ -1,6 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -91,14 +92,32 @@ const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
         name: "migrate legacy connection groups to data source groups",
         apply: migrate_data_source_groups,
     },
+    ConfigMigration {
+        version: 12,
+        name: "index query history by start time",
+        apply: index_query_history_started_at,
+    },
 ];
 
 impl ConfigStore {
     pub fn new_default() -> Result<Self, AppError> {
-        let home = std::env::var("HOME").map_err(|_| {
-            AppError::ConfigError("HOME environment variable is required".to_string())
-        })?;
-        Self::new(PathBuf::from(home).join(".vaporlensdb"))
+        #[cfg(windows)]
+        let config_dir = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .map(|path| path.join("VaporLensDB"))
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .map(PathBuf::from)
+                    .map(|path| path.join(".vaporlensdb"))
+            });
+        #[cfg(not(windows))]
+        let config_dir = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|path| path.join(".vaporlensdb"));
+
+        Self::new(config_dir.ok_or_else(|| {
+            AppError::ConfigError("user configuration directory is unavailable".to_string())
+        })?)
     }
 
     pub fn new(config_dir: PathBuf) -> Result<Self, AppError> {
@@ -787,6 +806,7 @@ impl ConfigStore {
 
     fn init(&self) -> Result<(), AppError> {
         let conn = self.conn()?;
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         run_config_migrations(&conn)
     }
 
@@ -805,11 +825,21 @@ impl ConfigStore {
     }
 
     fn conn(&self) -> Result<Connection, AppError> {
-        Connection::open(&self.db_path).map_err(AppError::from)
+        let conn = Connection::open(&self.db_path)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        Ok(conn)
     }
 
     fn prune_query_history(&self, max_entries: u32) -> Result<(), AppError> {
-        self.conn()?.execute(
+        let conn = self.conn()?;
+        let count = conn.query_row("SELECT COUNT(*) FROM query_history", [], |row| {
+            row.get::<_, u32>(0)
+        })?;
+        if count < max_entries + 10 {
+            return Ok(());
+        }
+        conn.execute(
             "
             DELETE FROM query_history
             WHERE id NOT IN (
@@ -974,6 +1004,13 @@ fn create_sql_draft_store(conn: &Connection) -> Result<(), AppError> {
         CREATE INDEX IF NOT EXISTS idx_sql_drafts_updated_at
         ON sql_drafts(updated_at DESC);
         ",
+    )
+    .map_err(AppError::from)
+}
+
+fn index_query_history_started_at(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_query_history_started_at ON query_history(started_at DESC);",
     )
     .map_err(AppError::from)
 }
@@ -1599,7 +1636,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         );
         let drivers = store
             .list_driver_definitions()
@@ -1676,7 +1713,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         );
         assert!(columns.iter().any(|column| column == "connection_url"));
         assert!(columns.iter().any(|column| column == "driver_class"));

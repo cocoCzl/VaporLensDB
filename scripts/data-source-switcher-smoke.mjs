@@ -125,13 +125,6 @@ includesAll(
   'Data Sources management workspace tab',
 )
 
-const app = read('src/App.tsx')
-includesAll(
-  app,
-  ['onContextMenu={(event) => {', 'event.preventDefault()'],
-  'native WebView context menu suppression',
-)
-
 const connectionList = read('src/components/connection/ConnectionList.tsx')
 includesAll(
   connectionList,

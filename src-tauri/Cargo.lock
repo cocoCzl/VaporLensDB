@@ -5052,7 +5052,6 @@ name = "vapor-lens-db"
 version = "0.8.3"
 dependencies = [
  "aes-gcm",
- "anyhow",
  "async-trait",
  "base64 0.22.1",
  "chrono",
@@ -5074,6 +5073,7 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

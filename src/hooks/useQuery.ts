@@ -97,7 +97,7 @@ export function useQuery() {
 
   async function runExplain(tabId: string, connectionId: string, sql: string) {
     const queryId = crypto.randomUUID()
-    setTabRunning(tabId, true)
+    setTabRunning(tabId, true, queryId)
     try {
       const response = await explainQuery(connectionId, sql)
       setExplain(queryId, response)

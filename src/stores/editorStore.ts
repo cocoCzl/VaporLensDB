@@ -115,7 +115,7 @@ interface EditorState {
 
 const restoredWorkspace = readStoredSqlWorkspace()
 
-export const useEditorStore = create<EditorState>((set) => ({
+export const useEditorStore = create<EditorState>((set, get) => ({
   tabs: restoredWorkspace.tabs,
   activeTabId: restoredWorkspace.activeTabId,
   setActiveTab: (id) => set({ activeTabId: id }),
@@ -187,7 +187,13 @@ export const useEditorStore = create<EditorState>((set) => ({
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, pinned: !t.pinned } : t)),
     })),
-  setTabRunning: (id, running, queryId) =>
+  setTabRunning: (id, running, queryId) => {
+    if (running && queryId) {
+      const previousQueryId = get().tabs.find((tab) => tab.id === id)?.lastQueryId
+      if (previousQueryId && previousQueryId !== queryId) {
+        useQueryResultStore.getState().clearResult(previousQueryId)
+      }
+    }
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === id
@@ -201,7 +207,8 @@ export const useEditorStore = create<EditorState>((set) => ({
             }
           : t,
       ),
-    })),
+    }))
+  },
   setTabCancelling: (id, cancelling) =>
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, cancelling } : t)),

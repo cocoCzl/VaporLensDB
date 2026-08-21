@@ -45,7 +45,7 @@ includesAll(
     'const validationError = validate(true)',
     "t('connectionForm.savePassword')",
     "t('connectionForm.savePasswordHint')",
-    'savePassword: connection?.hasSavedPassword ?? true',
+    'savePassword: initialUrlCredentials.password ? true : (connection?.hasSavedPassword ?? true)',
     "t('connectionForm.testConnection')",
     'dataSourceGroups = useConnectionStore',
     'groupId: groupSelection || null',

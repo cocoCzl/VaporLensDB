@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -27,11 +27,12 @@ use crate::{
 pub struct ConnectionManager {
     connections: HashMap<Uuid, ActiveConnection>,
     statuses: HashMap<Uuid, ConnectionStatus>,
+    pending_connections: HashSet<Uuid>,
     max_live_sessions: usize,
     idle_reclaim_after: Option<Duration>,
 }
 
-struct ActiveConnection {
+pub(crate) struct ActiveConnection {
     driver: Arc<dyn DatabaseDriver>,
     _ssh_tunnel: Option<SshTunnel>,
     last_used: Instant,
@@ -85,6 +86,7 @@ impl ConnectionManager {
         Self {
             connections: HashMap::new(),
             statuses: HashMap::new(),
+            pending_connections: HashSet::new(),
             max_live_sessions: DEFAULT_MAX_LIVE_SESSIONS,
             idle_reclaim_after: Some(DEFAULT_IDLE_RECLAIM_AFTER),
         }
@@ -96,39 +98,51 @@ impl ConnectionManager {
             .map(|minutes| Duration::from_secs(u64::from(minutes.clamp(5, 120)) * 60));
     }
 
-    pub async fn test_connection(
-        &self,
-        config: &ConnectionConfig,
-        password: Option<&str>,
-        definition: Option<&DriverDefinition>,
-    ) -> Result<(), AppError> {
-        let (_tunnel, runtime_config) = open_tunnel(config).await?;
-        let driver = create_driver(&runtime_config, password, definition).await?;
-        driver.ping().await
-    }
-
-    pub async fn connect(
+    pub fn begin_connect(
         &mut self,
-        config: &ConnectionConfig,
-        password: Option<&str>,
-        definition: Option<&DriverDefinition>,
-    ) -> Result<ConnectionStatus, AppError> {
-        if self.connections.contains_key(&config.id) {
-            return Ok(self.set_status(config.id, ConnectionRuntimeStatus::Connected, None));
+        connection_id: Uuid,
+    ) -> Result<Option<ConnectionStatus>, AppError> {
+        if self.connections.contains_key(&connection_id) {
+            return Ok(Some(self.set_status(
+                connection_id,
+                ConnectionRuntimeStatus::Connected,
+                None,
+            )));
+        }
+        if self.pending_connections.contains(&connection_id) {
+            return Err(AppError::ConfigError(
+                "a connection attempt is already in progress for this Data Source".to_string(),
+            ));
         }
         self.reclaim_idle_sessions();
         self.reclaim_session_if_needed()?;
-        self.set_status(config.id, ConnectionRuntimeStatus::Connecting, None);
+        self.pending_connections.insert(connection_id);
+        self.set_status(connection_id, ConnectionRuntimeStatus::Connecting, None);
+        Ok(None)
+    }
 
-        match create_active_connection(config, password, definition).await {
+    pub(crate) fn finish_connect(
+        &mut self,
+        connection_id: Uuid,
+        result: Result<ActiveConnection, AppError>,
+    ) -> Result<ConnectionStatus, AppError> {
+        if !self.pending_connections.remove(&connection_id) {
+            return Err(AppError::ConfigError(
+                "connection attempt was cancelled".to_string(),
+            ));
+        }
+        match result {
             Ok(active) => {
-                active.driver.ping().await?;
-                self.connections.insert(config.id, active);
-                Ok(self.set_status(config.id, ConnectionRuntimeStatus::Connected, None))
+                self.connections.insert(connection_id, active);
+                Ok(self.set_status(connection_id, ConnectionRuntimeStatus::Connected, None))
             }
             Err(error) => {
                 let message = error.to_string();
-                self.set_status(config.id, ConnectionRuntimeStatus::Failed, Some(message));
+                self.set_status(
+                    connection_id,
+                    ConnectionRuntimeStatus::Failed,
+                    Some(message),
+                );
                 Err(error)
             }
         }
@@ -146,6 +160,7 @@ impl ConnectionManager {
             ));
         }
         self.connections.remove(&connection_id);
+        self.pending_connections.remove(&connection_id);
         Ok(self.set_status(connection_id, ConnectionRuntimeStatus::Disconnected, None))
     }
 
@@ -378,18 +393,19 @@ impl ConnectionManager {
     }
 
     pub fn cancel_queued_query(&mut self, connection_id: Uuid, query_id: &str) -> bool {
-        self.connections
+        let Some(cancellation) = self
+            .connections
             .get_mut(&connection_id)
             .and_then(|connection| connection.queued_queries.remove(query_id))
-            .map(|cancellation| {
-                cancellation.cancel();
-                true
-            })
-            .unwrap_or(false)
+        else {
+            return false;
+        };
+        cancellation.cancel();
+        true
     }
 
     fn reclaim_session_if_needed(&mut self) -> Result<(), AppError> {
-        if self.connections.len() < self.max_live_sessions {
+        if self.connections.len() + self.pending_connections.len() < self.max_live_sessions {
             return Ok(());
         }
         let candidate = self.connections.iter()
@@ -454,13 +470,14 @@ impl Default for ConnectionManager {
     }
 }
 
-async fn create_active_connection(
+pub(crate) async fn create_active_connection(
     config: &ConnectionConfig,
     password: Option<&str>,
     definition: Option<&DriverDefinition>,
 ) -> Result<ActiveConnection, AppError> {
     let (ssh_tunnel, runtime_config) = open_tunnel(config).await?;
     let driver = create_driver(&runtime_config, password, definition).await?;
+    driver.ping().await?;
     Ok(ActiveConnection {
         driver,
         _ssh_tunnel: ssh_tunnel,
@@ -469,6 +486,16 @@ async fn create_active_connection(
         serial_query_gate: Arc::new(Semaphore::new(1)),
         queued_queries: HashMap::new(),
     })
+}
+
+pub(crate) async fn test_connection(
+    config: &ConnectionConfig,
+    password: Option<&str>,
+    definition: Option<&DriverDefinition>,
+) -> Result<(), AppError> {
+    let (_tunnel, runtime_config) = open_tunnel(config).await?;
+    let driver = create_driver(&runtime_config, password, definition).await?;
+    driver.ping().await
 }
 
 async fn open_tunnel(
@@ -728,5 +755,50 @@ mod tests {
         drop(running);
         manager.release_operation(serial_source);
         manager.release_operation(independent_source);
+    }
+
+    #[tokio::test]
+    async fn pending_connections_count_toward_the_session_limit() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(1, None);
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+
+        assert!(manager
+            .begin_connect(first)
+            .expect("first attempt starts")
+            .is_none());
+        let error = manager
+            .begin_connect(second)
+            .expect_err("second pending attempt must respect the session limit");
+
+        assert!(error.to_string().contains("limit"));
+        assert!(matches!(
+            manager.status(first).status,
+            ConnectionRuntimeStatus::Connecting
+        ));
+    }
+
+    #[tokio::test]
+    async fn disconnect_cancels_a_pending_connection_install() {
+        let mut manager = ConnectionManager::new();
+        let connection_id = Uuid::new_v4();
+        manager
+            .begin_connect(connection_id)
+            .expect("connection attempt starts");
+        let active = sqlite_connection(Instant::now(), 0).await;
+
+        manager
+            .disconnect(connection_id)
+            .expect("pending connection can be cancelled");
+        let error = manager
+            .finish_connect(connection_id, Ok(active))
+            .expect_err("cancelled attempt must not be installed");
+
+        assert!(error.to_string().contains("cancelled"));
+        assert!(matches!(
+            manager.status(connection_id).status,
+            ConnectionRuntimeStatus::Disconnected
+        ));
     }
 }
