@@ -1,11 +1,18 @@
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
+    sync::OnceLock,
 };
 
 use tokio::process::Command;
 
 use crate::models::{connection::ConnectionConfig, error::AppError};
+
+static BUNDLED_JDBC_BRIDGE_JAR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn configure_bundled_jdbc_bridge_jar(path: PathBuf) {
+    let _ = BUNDLED_JDBC_BRIDGE_JAR.set(path);
+}
 
 pub async fn validate_jdbc_prerequisites(config: &ConnectionConfig) -> Result<(), AppError> {
     let connection_url = required(config.connection_url.as_deref(), "JDBC URL")?;
@@ -62,19 +69,24 @@ pub fn resolve_jdbc_bridge_jar() -> Result<PathBuf, AppError> {
         return validate_bridge_jar(PathBuf::from(path));
     }
 
+    if let Some(path) = BUNDLED_JDBC_BRIDGE_JAR.get().filter(|path| path.is_file()) {
+        return Ok(path.clone());
+    }
+
     let current_dir = std::env::current_dir()?;
-    let candidates = [
+    let source_candidates = [
         current_dir.join("tools/jdbc-bridge/target/jdbc-bridge.jar"),
         current_dir.join("../tools/jdbc-bridge/target/jdbc-bridge.jar"),
         current_dir.join("../../tools/jdbc-bridge/target/jdbc-bridge.jar"),
     ];
 
-    candidates
+    source_candidates
         .into_iter()
         .find(|path| path.is_file())
         .ok_or_else(|| {
             AppError::ConfigError(
-                "JDBC bridge jar not found; run ./build.sh jdbc-bridge first".to_string(),
+                "JDBC bridge jar not found in application resources or the source tree; run ./build.sh jdbc-bridge first"
+                    .to_string(),
             )
         })
 }

@@ -1,0 +1,116 @@
+name: Package smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux x86_64 packages
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            rpm \
+            wget
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and verify Linux packages
+        run: ./build.sh linux
+
+      - name: Upload temporary Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: VaporLensDB-linux-x86_64
+          path: artifacts/linux/x86_64/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows x86_64 packages
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install frontend dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and verify Windows packages
+        shell: bash
+        run: ./build.sh windows
+
+      - name: Upload temporary Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: VaporLensDB-windows-x86_64
+          path: artifacts/windows/x86_64/
+          if-no-files-found: error
+          retention-days: 7

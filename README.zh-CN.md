@@ -12,12 +12,14 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 
 当前尚未发布正式安装包。正式版本发布后，才会在
 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) 提供对应系统的安装包；
-开发和测试阶段生成的安装包不会上传到 GitHub。
+开发和测试阶段生成的安装包不会发布到 GitHub Releases。手动触发的打包验证可在
+GitHub Actions 中临时保留产物 7 天。
 
 | 系统 | 推荐下载 | 说明 |
 | --- | --- | --- |
 | macOS | `.dmg` | 正式发布时会分别提供 Apple Silicon 和 Intel 版本（如可用）。 |
 | Windows | `.msi` | 若系统限制 MSI 安装，可使用 NSIS `.exe` 安装器。 |
+| Linux | `.AppImage` | 同时构建适用于对应发行版的 DEB 和 RPM。 |
 
 请阅读[安装与首次使用指南](docs/INSTALL.zh-CN.md)，其中包含系统安装、SHA-256
 校验以及 Oracle/JDBC 配置说明。
@@ -63,10 +65,11 @@ pnpm tauri dev
 ```bash
 ./build.sh mac       # macOS：.app 和 .dmg
 ./build.sh windows   # Windows：.msi 和 NSIS .exe
+./build.sh linux     # Linux：AppImage、DEB 和 RPM
 ```
 
-`pnpm build:app` 会为当前平台打包：macOS 生成 App 和 DMG，Windows 生成 MSI 和 NSIS 安装包。
-不带参数运行 `./build.sh` 等价于 `./build.sh current`。
+`pnpm build:app` 会为当前平台打包：macOS 生成 App 和 DMG，Windows 生成 MSI 和 NSIS，
+Linux 生成 AppImage、DEB 和 RPM。不带参数运行 `./build.sh` 等价于 `./build.sh current`。
 
 未提供私密测试配置时，PostgreSQL、MySQL、Oracle 与 JDBC 联网测试会被跳过。需要运行时，
 将 `.env.example` 复制为已被 Git 忽略的 `.env`，填写本机可用的数据库配置组；之后执行校验

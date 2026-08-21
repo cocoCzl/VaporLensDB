@@ -108,7 +108,7 @@ permission respectively.
 - complete configuration for every group: `cargo test -- --include-ignored`
   runs the whole Rust suite, including all live tests;
 - a partially filled group or unreadable JDBC JAR is a configuration error;
-- any configured live-test failure stops `check`, `current`, `mac`, or `windows`
+- any configured live-test failure stops `check`, `current`, `mac`, `windows`, or `linux`
   before packaging continues.
 
 Run only configured live tests:
@@ -125,7 +125,17 @@ detection:
 ./build.sh          # Same as ./build.sh current
 ./build.sh mac      # macOS only
 ./build.sh windows  # Windows only
+./build.sh linux    # Linux only
 ```
+
+The platform-independent artifact staging tests can be run on any build machine:
+
+```bash
+pnpm test:packaging
+```
+
+They verify fixed installer names, replacement of stale output, SHA-256
+generation, and failure behavior for missing or duplicate Tauri artifacts.
 
 The PostgreSQL and MySQL suites create uniquely named `vaporlensdb_*` schemas
 or databases, verify metadata and DDL behavior, and remove them afterward. Use

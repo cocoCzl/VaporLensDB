@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "../tools/jdbc-bridge/target/jdbc-bridge.jar": "jdbc/jdbc-bridge.jar"
+    }
+  }
+}

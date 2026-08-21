@@ -7,16 +7,20 @@
 No production installer has been released yet. After a formal release, download
 VaporLensDB only from the project's
 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) page.
-Development and test installers are private verification artifacts and are not
-uploaded to GitHub. Each formal release provides a `SHA256SUMS.txt` file.
+Development and test installers are not published as GitHub Releases. A manual
+packaging check may retain temporary GitHub Actions artifacts for seven days.
+Each formal release provides a `SHA256SUMS.txt` file.
 Verify the downloaded installer before opening it:
 
 ```bash
 # macOS
-shasum -a 256 VaporLensDB-*.dmg
+shasum -a 256 VaporLensDB.dmg
 
 # Windows PowerShell
 Get-FileHash .\VaporLensDB-* -Algorithm SHA256
+
+# Linux
+sha256sum VaporLensDB.AppImage VaporLensDB.deb VaporLensDB.rpm
 ```
 
 Compare the resulting hash with the matching entry in `SHA256SUMS.txt`.
@@ -42,6 +46,17 @@ Verify the SHA-256 and that the file came from the project's formal GitHub
 Release before installing it. Ask your administrator if software installation
 is managed by your organization.
 
+## Linux
+
+- AppImage: run `chmod +x VaporLensDB.AppImage`, then start it with
+  `./VaporLensDB.AppImage`.
+- Debian/Ubuntu: install with `sudo apt install ./VaporLensDB.deb`.
+- Fedora/RHEL: install with `sudo dnf install ./VaporLensDB.rpm`.
+
+Choose the package matching the distribution and CPU architecture. Linux
+packages depend on the platform WebKitGTK runtime; use the AppImage when a
+system package is not appropriate.
+
 ## First connection
 
 1. Select **New Connection**.
@@ -59,7 +74,8 @@ needed; edits must be made through SQL or your source system.
 ## Oracle and custom JDBC
 
 Oracle and custom JDBC connections use a local JDBC driver JAR. VaporLensDB
-does not bundle proprietary driver files.
+includes its own open project bridge, but does not bundle proprietary database
+driver files.
 
 - For Oracle, obtain a compatible `ojdbc` JAR from Oracle through your approved
   licensing and distribution channel.
@@ -72,7 +88,7 @@ does not bundle proprietary driver files.
 
 - Open **Settings** to switch between Chinese and English, and choose light,
   dark, or system theme.
-- Use **Command+K** on macOS or **Ctrl+K** on Windows to open the command
+- Use **Command+K** on macOS or **Ctrl+K** on Windows/Linux to open the command
   palette.
 - Use **Diagnostics** in Settings when preparing support information; review
   the exported package before sharing it.

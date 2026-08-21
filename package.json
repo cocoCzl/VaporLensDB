@@ -64,8 +64,11 @@
     "test:database-vendor-icons": "node scripts/database-vendor-icons-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
-    "build:app": "./build.sh current",
-    "build:mac": "./build.sh mac",
+    "test:packaging": "node --test scripts/stage-build-artifacts.test.mjs",
+    "build:app": "bash ./build.sh current",
+    "build:mac": "bash ./build.sh mac",
+    "build:windows": "bash ./build.sh windows",
+    "build:linux": "bash ./build.sh linux",
     "tauri": "tauri"
   },
   "dependencies": {

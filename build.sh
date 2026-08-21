@@ -8,11 +8,12 @@ LIVE_TEST_ENV_LOADED=0
 usage() {
   cat <<'EOF'
 Usage:
-  ./build.sh [mac|windows|current|check|live-tests|jdbc-bridge]
+  ./build.sh [mac|windows|linux|current|check|live-tests|jdbc-bridge]
 
 Targets:
   mac      Build a macOS app bundle and DMG on macOS.
   windows  Build Windows MSI and NSIS installers on Windows.
+  linux    Build Linux AppImage, DEB, and RPM packages on Linux.
   current  Build the supported installer format for the current platform.
   check    Run validation only: frontend lint/build and Rust tests.
   live-tests Run configured PostgreSQL, MySQL, Oracle, and JDBC integration tests.
@@ -24,6 +25,11 @@ Outputs:
   macOS local staging: artifacts/macos/<architecture>/
   Windows msi: src-tauri/target/release/bundle/msi/*.msi
   Windows nsis: src-tauri/target/release/bundle/nsis/*.exe
+  Windows local staging: artifacts/windows/<architecture>/
+  Linux appimage: src-tauri/target/release/bundle/appimage/*.AppImage
+  Linux deb: src-tauri/target/release/bundle/deb/*.deb
+  Linux rpm: src-tauri/target/release/bundle/rpm/*.rpm
+  Linux local staging: artifacts/linux/<architecture>/
 EOF
 }
 
@@ -194,6 +200,37 @@ mac_architecture() {
   esac
 }
 
+host_architecture() {
+  local rustc_details
+  rustc_details="$(rustc -vV)"
+
+  case "$rustc_details" in
+    *"host: x86_64-"*)
+      printf 'x86_64\n'
+      ;;
+    *"host: aarch64-"*)
+      printf 'aarch64\n'
+      ;;
+    *)
+      printf 'Unsupported build architecture reported by rustc:\n%s\n' "$rustc_details" >&2
+      exit 1
+      ;;
+  esac
+}
+
+stage_installer_artifacts() {
+  local platform="$1"
+  local architecture="$2"
+  node "$ROOT_DIR/scripts/stage-build-artifacts.mjs" \
+    "$platform" \
+    "$ROOT_DIR/src-tauri/target/release/bundle" \
+    "$ROOT_DIR/artifacts/$platform/$architecture"
+}
+
+tauri_bundle_build() {
+  pnpm tauri build --config src-tauri/tauri.bundle.conf.json "$@"
+}
+
 build_jdbc_bridge() {
   log "Building JDBC bridge"
   "$ROOT_DIR/tools/jdbc-bridge/build.sh"
@@ -202,6 +239,9 @@ build_jdbc_bridge() {
 run_checks() {
   log "Running frontend lint"
   pnpm lint
+
+  log "Testing cross-platform artifact staging"
+  pnpm test:packaging
 
   log "Building frontend"
   pnpm build
@@ -310,9 +350,12 @@ build_current() {
     MINGW*|MSYS*|CYGWIN*)
       build_windows
       ;;
+    Linux)
+      build_linux
+      ;;
     *)
-      log "Building Tauri bundle for current platform"
-      pnpm tauri build
+      printf 'Unsupported packaging platform: %s\n' "$(uname -s)" >&2
+      exit 1
       ;;
   esac
 }
@@ -337,7 +380,7 @@ build_mac() {
   local artifact_dir="$ROOT_DIR/artifacts/macos/$architecture"
 
   log "Building macOS Tauri app"
-  pnpm tauri build --bundles app
+  tauri_bundle_build --bundles app
 
   if [ ! -d "$app_path" ]; then
     printf 'Expected macOS app bundle was not created: %s\n' "$app_path" >&2
@@ -375,16 +418,39 @@ build_windows() {
       ;;
   esac
 
+  local architecture
   project_version >/dev/null
+  architecture="$(host_architecture)"
 
   log "Building Windows MSI and NSIS installers"
-  pnpm tauri build --bundles msi,nsis
+  rm -rf \
+    "$ROOT_DIR/src-tauri/target/release/bundle/msi" \
+    "$ROOT_DIR/src-tauri/target/release/bundle/nsis"
+  tauri_bundle_build --bundles msi,nsis
 
-  log "Build artifacts"
-  find "$ROOT_DIR/src-tauri/target/release/bundle" \
-    \( -name '*.msi' -o -name '*.exe' \) \
-    -maxdepth 3 \
-    -print
+  log "Staging local Windows artifacts"
+  stage_installer_artifacts windows "$architecture"
+}
+
+build_linux() {
+  if [ "$(uname -s)" != "Linux" ]; then
+    printf 'The linux target must be run on Linux. Use ./build.sh current for this machine.\n' >&2
+    exit 1
+  fi
+
+  local architecture
+  project_version >/dev/null
+  architecture="$(host_architecture)"
+
+  log "Building Linux AppImage, DEB, and RPM packages"
+  rm -rf \
+    "$ROOT_DIR/src-tauri/target/release/bundle/appimage" \
+    "$ROOT_DIR/src-tauri/target/release/bundle/deb" \
+    "$ROOT_DIR/src-tauri/target/release/bundle/rpm"
+  tauri_bundle_build --bundles appimage,deb,rpm
+
+  log "Staging local Linux artifacts"
+  stage_installer_artifacts linux "$architecture"
 }
 
 cd "$ROOT_DIR"
@@ -435,6 +501,17 @@ case "$TARGET" in
     build_jdbc_bridge
     run_checks
     build_windows
+    ;;
+  linux)
+    if [ "$(uname -s)" != "Linux" ]; then
+      printf 'The linux target must be run on Linux. Use ./build.sh current for this machine.\n' >&2
+      exit 1
+    fi
+    ensure_dependencies
+    project_version >/dev/null
+    build_jdbc_bridge
+    run_checks
+    build_linux
     ;;
   jdbc-bridge)
     build_jdbc_bridge

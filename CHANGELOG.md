@@ -10,6 +10,10 @@ All notable changes to VaporLensDB are documented in this file.
   staging for App bundles, DMGs, and checksums.
 - Added optional `.env`-driven PostgreSQL, MySQL, Oracle, and JDBC integration
   testing through the build script, including a dedicated `live-tests` target.
+- Added fixed-name Windows MSI/NSIS and Linux AppImage/DEB/RPM staging, checksum
+  generation, and a manually triggered hosted packaging check.
+- Added the project-owned JDBC bridge to packaged application resources while
+  keeping all vendor JDBC drivers user-provided and local.
 
 ### Changed
 

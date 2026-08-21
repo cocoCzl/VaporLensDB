@@ -81,6 +81,9 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
+      - name: Test cross-platform artifact staging
+        run: pnpm test:packaging
+
       - name: Run object tree workflow smoke test
         run: pnpm test:object-tree-workflow
 

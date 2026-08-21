@@ -7,8 +7,8 @@ pub mod utils;
 
 use services::{
     config_store::ConfigStore, connection_manager::ConnectionManager,
-    metadata_index::MetadataIndexService, metadata_service::MetadataService,
-    query_engine::QueryEngine, task_manager::TaskManager,
+    external_driver::configure_bundled_jdbc_bridge_jar, metadata_index::MetadataIndexService,
+    metadata_service::MetadataService, query_engine::QueryEngine, task_manager::TaskManager,
 };
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -33,6 +33,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             app_menu::set_application_menu(app.handle(), app_menu::AppMenuLanguage::Zh)?;
+            configure_bundled_jdbc_bridge_jar(
+                app.path()
+                    .resource_dir()?
+                    .join("jdbc")
+                    .join("jdbc-bridge.jar"),
+            );
             Ok(())
         })
         .on_menu_event(|app, event| {

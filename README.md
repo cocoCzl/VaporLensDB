@@ -13,13 +13,15 @@ Current version: **0.8.3**
 
 No production installer has been released yet. Installers will be available
 from [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest)
-only after a formal release; development and test artifacts are never uploaded
-to GitHub.
+only after a formal release. Development and test installers are not published
+as GitHub Releases. Manually triggered packaging checks may retain temporary
+GitHub Actions artifacts for seven days.
 
 | Platform | Recommended download | Notes |
 | --- | --- | --- |
 | macOS | `.dmg` | Apple Silicon and Intel builds are released separately when available in a formal release. |
 | Windows | `.msi` | Use the NSIS `.exe` installer when MSI installation is restricted. |
+| Linux | `.AppImage` | DEB and RPM packages are also built for matching distributions. |
 
 See the [installation and first-use guide](docs/INSTALL.md) for platform
 installation steps, SHA-256 verification, and Oracle/JDBC setup.
@@ -72,11 +74,13 @@ Build on the target operating system:
 ```bash
 ./build.sh mac       # macOS: .app and .dmg
 ./build.sh windows   # Windows: .msi and NSIS .exe
+./build.sh linux     # Linux: AppImage, DEB, and RPM
 ```
 
 `pnpm build:app` packages for the current platform. On macOS it creates an App
-and DMG; on Windows it creates MSI and NSIS installers. Running `./build.sh`
-without a target is equivalent to `./build.sh current`.
+and DMG; on Windows it creates MSI and NSIS installers; on Linux it creates
+AppImage, DEB, and RPM packages. Running `./build.sh` without a target is
+equivalent to `./build.sh current`.
 
 Live PostgreSQL, MySQL, Oracle, and JDBC tests are skipped when no private test
 configuration is present. Copy `.env.example` to the Git-ignored `.env` and
