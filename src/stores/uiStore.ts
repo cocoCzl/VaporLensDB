@@ -31,6 +31,8 @@ interface UserSettings {
   showSystemObjects: boolean
   sidebarWidth: number
   sidebarCollapsed: boolean
+  bottomPanelHeight: number
+  bottomPanelCollapsed: boolean
   exportDirectory: string | null
   maxLiveSessions: number
   idleReclaimMinutes: number | null
@@ -42,6 +44,7 @@ interface UiState {
   sidebarWidth: number
   sidebarCollapsed: boolean
   bottomPanelHeight: number
+  bottomPanelCollapsed: boolean
   queryMaxRows: number
   dataPreviewDefaultRows: number
   editorFontSize: number
@@ -56,6 +59,7 @@ interface UiState {
   setSidebarWidth: (width: number) => void
   setSidebarCollapsed: (collapsed: boolean) => void
   setBottomPanelHeight: (height: number) => void
+  setBottomPanelCollapsed: (collapsed: boolean) => void
   setQueryMaxRows: (maxRows: number) => void
   setDataPreviewDefaultRows: (rows: number) => void
   setEditorFontSize: (fontSize: number) => void
@@ -72,7 +76,6 @@ export const useUiStore = create<UiState>((set) => ({
   theme: readStoredTheme(),
   ...readStoredSettings(),
   sidebarView: 'explorer',
-  bottomPanelHeight: 240,
   notifications: [],
   queryHistoryRequest: 0,
   setTheme: (theme) => {
@@ -95,7 +98,21 @@ export const useUiStore = create<UiState>((set) => ({
       writeStoredSettings(next)
       return { sidebarCollapsed }
     }),
-  setBottomPanelHeight: (bottomPanelHeight) => set({ bottomPanelHeight }),
+  setBottomPanelHeight: (bottomPanelHeight) =>
+    set((state) => {
+      const next = {
+        ...settingsFromState(state),
+        bottomPanelHeight: clampNumber(bottomPanelHeight, 160, 800, 260),
+      }
+      writeStoredSettings(next)
+      return { bottomPanelHeight: next.bottomPanelHeight }
+    }),
+  setBottomPanelCollapsed: (bottomPanelCollapsed) =>
+    set((state) => {
+      const next = { ...settingsFromState(state), bottomPanelCollapsed }
+      writeStoredSettings(next)
+      return { bottomPanelCollapsed }
+    }),
   setQueryMaxRows: (queryMaxRows) =>
     set((state) => {
       const next = {
@@ -192,6 +209,8 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: false,
       sidebarWidth: 288,
       sidebarCollapsed: false,
+      bottomPanelHeight: 260,
+      bottomPanelCollapsed: false,
       exportDirectory: null,
       maxLiveSessions: DEFAULT_MAX_LIVE_SESSIONS,
       idleReclaimMinutes: DEFAULT_IDLE_RECLAIM_MINUTES,
@@ -213,6 +232,8 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: parsed.showSystemObjects === true,
       sidebarWidth: clampNumber(parsed.sidebarWidth, 232, 460, 288),
       sidebarCollapsed: parsed.sidebarCollapsed === true,
+      bottomPanelHeight: clampNumber(parsed.bottomPanelHeight, 160, 800, 260),
+      bottomPanelCollapsed: parsed.bottomPanelCollapsed === true,
       exportDirectory: typeof parsed.exportDirectory === 'string' && parsed.exportDirectory.trim()
         ? parsed.exportDirectory
         : null,
@@ -227,6 +248,8 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: false,
       sidebarWidth: 288,
       sidebarCollapsed: false,
+      bottomPanelHeight: 260,
+      bottomPanelCollapsed: false,
       exportDirectory: null,
       maxLiveSessions: DEFAULT_MAX_LIVE_SESSIONS,
       idleReclaimMinutes: DEFAULT_IDLE_RECLAIM_MINUTES,
@@ -234,7 +257,7 @@ function readStoredSettings(): UserSettings {
   }
 }
 
-function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed' | 'exportDirectory' | 'maxLiveSessions' | 'idleReclaimMinutes'>): UserSettings {
+function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed' | 'bottomPanelHeight' | 'bottomPanelCollapsed' | 'exportDirectory' | 'maxLiveSessions' | 'idleReclaimMinutes'>): UserSettings {
   return {
     queryMaxRows: state.queryMaxRows,
     dataPreviewDefaultRows: state.dataPreviewDefaultRows,
@@ -242,6 +265,8 @@ function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDef
     showSystemObjects: state.showSystemObjects,
     sidebarWidth: state.sidebarWidth,
     sidebarCollapsed: state.sidebarCollapsed,
+    bottomPanelHeight: state.bottomPanelHeight,
+    bottomPanelCollapsed: state.bottomPanelCollapsed,
     exportDirectory: state.exportDirectory,
     maxLiveSessions: state.maxLiveSessions,
     idleReclaimMinutes: state.idleReclaimMinutes,

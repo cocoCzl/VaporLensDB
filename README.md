@@ -7,7 +7,7 @@ Rust, and React. It helps developers and data engineers connect to databases,
 browse objects, run SQL, and inspect results without becoming a heavy
 administration console.
 
-Current version: **0.8.3**
+Current version: **0.8.4**
 
 ## Download
 

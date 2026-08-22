@@ -10,8 +10,11 @@ function assert(condition, message) {
 
 const styles = readFileSync(resolve(root, 'src/styles/globals.css'), 'utf8')
 assert(styles.includes('--chrome:'), 'IDE chrome requires dedicated light and dark surface tokens')
+assert(styles.includes('--panel:'), 'IDE panel surfaces require a semantic panel token')
+assert(styles.includes('--separator:'), 'IDE chrome requires a dedicated separator token')
 assert(styles.includes('.ide-chrome'), 'IDE chrome surface class is missing')
 assert(styles.includes('.ide-tab-strip'), 'tab strip chrome class is missing')
+assert(styles.includes('.ide-splitter'), 'result panel needs a lightweight IDE splitter')
 assert(!styles.includes('box-shadow: inset 0 1px hsl(0 0% 100% / 0.58)'), 'dark IDE chrome must not use a fixed white top highlight')
 
 const tabBar = readFileSync(resolve(root, 'src/components/layout/TabBar.tsx'), 'utf8')
@@ -28,12 +31,15 @@ const compactDataSourceHeader = compactDataSourceTree.slice(
   compactDataSourceTree.indexOf('<section className="ide-chrome shrink-0 border-b"'),
   compactDataSourceTree.indexOf('<div className="min-h-0 flex-1'),
 )
-assert(!compactDataSourceTree.includes('<ConnectionDialog\n          trigger'), 'sidebar must not duplicate the global new-connection action')
+assert(compactDataSourceTree.includes('<ConnectionDialog'), 'sidebar must own the new-connection action after global toolbar consolidation')
+assert(compactDataSourceTree.includes("t('connection.manageDataSources')"), 'sidebar must expose data-source management')
 assert(compactDataSourceTree.includes("t('connection.reloadSaved')"), 'sidebar refresh must describe reloading saved connections')
 assert(!compactDataSourceHeader.includes('uppercase tracking-[0.08em]'), 'sidebar header must not repeat the Data Sources title')
 
-const toolbar = readFileSync(resolve(root, 'src/components/layout/GlobalToolbar.tsx'), 'utf8')
-assert(toolbar.includes("t('explorer.refreshObjects')"), 'global refresh must describe refreshing the current object tree')
+const app = readFileSync(resolve(root, 'src/App.tsx'), 'utf8')
+assert(!app.includes('GlobalToolbar'), 'workspace must not render a redundant global toolbar band')
+assert(!app.includes('splash-background.png'), 'startup UI must not decode the legacy raster splash')
+assert(tabBar.includes("t('commandPalette.title')"), 'tab strip must retain access to global command search')
 
 const packageJson = readFileSync(resolve(root, 'package.json'), 'utf8')
 assert(packageJson.includes('test:ide-chrome'), 'IDE chrome smoke script must be registered')

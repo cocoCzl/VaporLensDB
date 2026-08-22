@@ -1,13 +1,14 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Loader2, LockKeyhole, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Loader2, LockKeyhole, PanelBottomClose, PanelBottomOpen, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
 import { ConnectionList } from '@/components/connection/ConnectionList'
+import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { DataGrid } from '@/components/grid/DataGrid'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { Button } from '@/components/ui/button'
@@ -124,14 +125,44 @@ export function MainPanel() {
   const showSystemObjects = useUiStore((state) => state.showSystemObjects)
   const queryHistoryRequest = useUiStore((state) => state.queryHistoryRequest)
   const exportDirectory = useUiStore((state) => state.exportDirectory)
+  const bottomPanelHeight = useUiStore((state) => state.bottomPanelHeight)
+  const bottomPanelCollapsed = useUiStore((state) => state.bottomPanelCollapsed)
+  const setBottomPanelHeight = useUiStore((state) => state.setBottomPanelHeight)
+  const setBottomPanelCollapsed = useUiStore((state) => state.setBottomPanelCollapsed)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
   const [selectedSql, setSelectedSql] = useState({ tabId: null as string | null, sql: '' })
   const [editorLoaded, setEditorLoaded] = useState(false)
   const [editorShouldFocus, setEditorShouldFocus] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [resultPanelHeight, setResultPanelHeightLocal] = useState(bottomPanelHeight)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
   const draftSaveTimer = useRef<number | null>(null)
   const handledHistoryRequest = useRef(0)
+
+  function startResultResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (bottomPanelCollapsed) return
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = resultPanelHeight
+    let nextHeight = startHeight
+    const previousCursor = document.body.style.cursor
+    document.body.style.cursor = 'row-resize'
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const maxHeight = Math.max(160, window.innerHeight - 260)
+      nextHeight = Math.min(maxHeight, Math.max(160, startHeight + startY - moveEvent.clientY))
+      setResultPanelHeightLocal(nextHeight)
+    }
+    const stopResize = () => {
+      document.body.style.cursor = previousCursor
+      setBottomPanelHeight(nextHeight)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', stopResize)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', stopResize, { once: true })
+  }
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const activeQueryId = activeTab?.lastQueryId ?? null
@@ -855,8 +886,32 @@ export function MainPanel() {
         )}
         </div>
 
-        <section className="flex h-[38%] min-h-48 flex-col border-t bg-background">
-        <div className="flex h-9 items-center justify-between border-b px-3 text-xs">
+        {!bottomPanelCollapsed && (
+          <div
+            className="ide-splitter"
+            role="separator"
+            tabIndex={0}
+            aria-orientation="horizontal"
+            aria-label={t('workbench.results')}
+            aria-valuemin={160}
+            aria-valuemax={800}
+            aria-valuenow={Math.round(resultPanelHeight)}
+            onPointerDown={startResultResize}
+            onDoubleClick={() => setBottomPanelCollapsed(true)}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+              event.preventDefault()
+              const next = Math.max(160, Math.min(800, resultPanelHeight + (event.key === 'ArrowUp' ? 16 : -16)))
+              setResultPanelHeightLocal(next)
+              setBottomPanelHeight(next)
+            }}
+          />
+        )}
+        <section
+          className="flex shrink-0 flex-col bg-background"
+          style={{ height: bottomPanelCollapsed ? 32 : resultPanelHeight }}
+        >
+        <div className="ide-panel-header justify-between px-3">
           <div className="flex items-center gap-3">
             <span className="font-medium">{t('workbench.results')}</span>
             {activeTab.running && (
@@ -907,6 +962,14 @@ export function MainPanel() {
             </IconTooltipButton>
             <IconTooltipButton
               size="icon-xs"
+              label={bottomPanelCollapsed ? t('explorer.expand') : t('explorer.collapse')}
+              variant="ghost"
+              onClick={() => setBottomPanelCollapsed(!bottomPanelCollapsed)}
+            >
+              {bottomPanelCollapsed ? <PanelBottomOpen /> : <PanelBottomClose />}
+            </IconTooltipButton>
+            <IconTooltipButton
+              size="icon-xs"
               label={t('workbench.exportCsv')}
               variant="ghost"
               disabled={Boolean(activeExplain) || !activeResult || activeResult.columns.length === 0}
@@ -936,7 +999,7 @@ export function MainPanel() {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1">
+        {!bottomPanelCollapsed && <div className="min-h-0 flex-1">
           <div className="flex h-full min-h-0">
             <div className="min-w-0 flex-1">
               {activeTab.error ? (
@@ -984,7 +1047,7 @@ export function MainPanel() {
               />
             )}
           </div>
-        </div>
+        </div>}
         </section>
       </div>
       <ObjectInspectorPanel />
@@ -1171,11 +1234,31 @@ function DataSourcesManagementPanel() {
 
 function WorkbenchHome() {
   const { t } = useTranslation()
+  const addTab = useEditorStore((state) => state.addTab)
+  const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
   return (
     <section className="ide-workspace flex min-h-0 flex-1 items-center justify-center overflow-hidden">
-      <div className="-mt-14 grid max-w-sm gap-2 text-center text-sm text-muted-foreground">
-        <p>{t('workbench.emptyEditorHint')}</p>
-        <p className="text-xs text-muted-foreground/70">{t('workbench.emptyEditorDetail')}</p>
+      <div className="-mt-10 grid max-w-sm justify-items-center gap-3 text-center text-sm text-muted-foreground">
+        <div className="grid size-12 place-items-center rounded-xl border bg-card text-primary shadow-sm">
+          <DatabaseIcon className="size-6 stroke-[1.6]" />
+        </div>
+        <div>
+          <p className="font-medium text-foreground">{t('workbench.emptyEditorHint')}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground/80">{t('workbench.emptyEditorDetail')}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => addTab({ id: crypto.randomUUID(), kind: 'sql', title: 'SQL', sql: '', connectionId: activeConnectionId })}
+          >
+            <FileCode2 />
+            {t('sql.new')}
+          </Button>
+          <ConnectionDialog
+            trigger={<Button type="button" size="sm" variant="outline"><DatabaseIcon />{t('connection.new')}</Button>}
+          />
+        </div>
       </div>
     </section>
   )

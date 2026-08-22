@@ -30,7 +30,7 @@ export function StatusBar({ backendStatus }: StatusBarProps) {
   const healthy = backendStatus.startsWith('ok')
 
   return (
-    <footer className="flex h-6 items-center justify-between gap-2 border-t ide-toolbar px-2 text-[11px] text-muted-foreground">
+    <footer className="ide-toolbar flex h-[22px] items-center justify-between gap-2 border-t px-2 text-[10px] text-muted-foreground">
       <CurrentDataSourceStatus />
       <div className="flex min-w-0 items-center gap-1">
         {!healthy && (

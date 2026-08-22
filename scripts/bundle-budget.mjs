@@ -9,8 +9,8 @@ const gzipSizes = jsFiles.map((name) => gzipSync(readFileSync(resolve(assetDir, 
 const totalGzip = gzipSizes.reduce((sum, size) => sum + size, 0)
 const largestGzip = Math.max(0, ...gzipSizes)
 const limits = {
-  totalApplicationJsGzip: 550 * 1024,
-  largestApplicationChunkGzip: 350 * 1024,
+  totalApplicationJsGzip: 420 * 1024,
+  largestApplicationChunkGzip: 280 * 1024,
   favicon: 150 * 1024,
 }
 const actual = {

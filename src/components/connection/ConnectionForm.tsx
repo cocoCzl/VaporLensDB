@@ -1,4 +1,4 @@
-import { FormEvent, useState, type ReactNode } from 'react'
+import { FormEvent, useRef, useState, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, Database, Download, PlugZap } from 'lucide-react'
@@ -84,6 +84,10 @@ export function ConnectionForm({
         },
   })
   const [message, setMessage] = useState<string | null>(null)
+  const [activeSection, setActiveSection] = useState<'general' | 'sshSsl' | 'advanced'>('general')
+  const generalSectionRef = useRef<HTMLDivElement | null>(null)
+  const sshSslSectionRef = useRef<HTMLElement | null>(null)
+  const advancedSectionRef = useRef<HTMLDivElement | null>(null)
   const [groupSelection, setGroupSelection] = useState(connection?.groupId ?? '')
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
     defaultConnectionVariant(connection?.driverType ?? 'postgres'),
@@ -251,7 +255,7 @@ export function ConnectionForm({
       </aside>}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-2 border-b p-4">
+        <div className="grid min-h-11 grid-cols-[72px_minmax(0,1fr)] items-center gap-2 border-b px-4 py-2">
           <Label htmlFor="connection-name" className="text-right text-sm">
             {t('connectionForm.name')}
           </Label>
@@ -264,8 +268,34 @@ export function ConnectionForm({
           />
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-5 [scrollbar-gutter:stable]">
-          <div className="mx-auto grid max-w-4xl gap-3">
+        <nav className="flex h-9 shrink-0 items-end gap-1 border-b bg-muted/15 px-4" aria-label={t('connection.editTitle')}>
+          {([
+            ['general', t('settings.general')],
+            ['sshSsl', 'SSH / SSL'],
+            ['advanced', t('connectionForm.advanced')],
+          ] as const).map(([section, label]) => (
+            <button
+              key={section}
+              type="button"
+              className={[
+                'relative h-9 px-3 text-xs transition-colors',
+                activeSection === section ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+              ].join(' ')}
+              aria-current={activeSection === section ? 'page' : undefined}
+              onClick={() => {
+                setActiveSection(section)
+                const target = section === 'general' ? generalSectionRef.current : section === 'sshSsl' ? sshSslSectionRef.current : advancedSectionRef.current
+                target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+              }}
+            >
+              {label}
+              {activeSection === section && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" />}
+            </button>
+          ))}
+        </nav>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 [scrollbar-gutter:stable]">
+          <div ref={generalSectionRef} className="mx-auto grid max-w-4xl scroll-mt-4 gap-3">
             <>
                 <FormRow label={t('connectionForm.driver')}>
                   <div className="grid gap-2">
@@ -422,6 +452,7 @@ export function ConnectionForm({
                   </FormRow>
                 )}
 
+                <div ref={advancedSectionRef} className="scroll-mt-4" />
                 {driverProfile.externalDriver && (
                   <>
                     <FormRow label={t('connectionForm.driverClass')}>
@@ -464,9 +495,12 @@ export function ConnectionForm({
                   </div>
                 </FormRow>
 
-                <details className="rounded-md border bg-muted/20 p-3">
-                  <summary className="cursor-pointer text-sm font-medium">{t('connectionForm.advanced')}</summary>
-                  <div className="mt-3 grid gap-3">
+                <section ref={sshSslSectionRef} className="scroll-mt-4 rounded border bg-muted/15 p-3">
+                  <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-foreground">
+                    <span className="h-4 w-0.5 rounded-full bg-primary" />
+                    SSH / SSL
+                  </div>
+                  <div className="grid gap-3">
                     <FormRow label={t('connectionForm.sslMode')}>
                       <AppSelect
                         value={form.sslMode ?? ''}
@@ -579,12 +613,12 @@ export function ConnectionForm({
                       </>
                     )}
                   </div>
-                </details>
+                </section>
               </>
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t px-4 py-3">
+        <div className="ide-toolbar flex min-h-11 items-center justify-between gap-2 border-t px-3 py-2">
           <div className="min-w-0 whitespace-pre-line text-xs text-muted-foreground">
             {message ?? readinessIssue ?? ' '}
           </div>
@@ -622,8 +656,8 @@ function FormRow({
   labelClassName?: string
 }) {
   return (
-    <div className={`grid grid-cols-[112px_minmax(0,1fr)] gap-3 ${align === 'start' ? 'items-start' : 'items-center'}`}>
-      <Label className={`text-right text-sm ${labelClassName ?? ''}`}>{label}</Label>
+    <div className={`grid grid-cols-[104px_minmax(0,1fr)] gap-3 ${align === 'start' ? 'items-start' : 'items-center'}`}>
+      <Label className={`text-right text-xs ${labelClassName ?? ''}`}>{label}</Label>
       <div className="min-w-0">{children}</div>
     </div>
   )

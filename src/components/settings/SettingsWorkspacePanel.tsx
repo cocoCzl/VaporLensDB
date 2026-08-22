@@ -254,7 +254,7 @@ export function SettingsWorkspacePanel() {
                       type="button"
                       size="sm"
                       variant="ghost"
-                      className="rounded-full px-3 text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                      className="px-3 text-muted-foreground hover:bg-muted/70 hover:text-foreground"
                       disabled={!hasSettingsChanges}
                       onClick={discardSettingsDraft}
                     >
@@ -265,7 +265,7 @@ export function SettingsWorkspacePanel() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="rounded-full border-border/80 bg-background/70 px-3 shadow-sm hover:bg-muted/70"
+                      className="border-border/80 bg-background/70 px-3 hover:bg-muted/70"
                       onClick={restoreDefaultSettingsDraft}
                     >
                       {t('settings.restoreDefaults')}
@@ -273,7 +273,7 @@ export function SettingsWorkspacePanel() {
                     <Button
                       type="button"
                       size="sm"
-                      className="rounded-full px-3 shadow-sm"
+                      className="px-3"
                       disabled={!hasSettingsChanges}
                       onClick={applySettingsDraft}
                     >
@@ -1185,25 +1185,23 @@ function SettingsNavButton({
     <button
       type="button"
       className={[
-        'ide-settings-nav-item mb-0.5 grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors',
+        'ide-settings-nav-item mb-0.5 grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded px-2 py-1 text-left text-xs transition-colors',
         active
           ? 'bg-primary/12 text-primary shadow-[inset_2px_0_0_hsl(var(--primary))]'
           : 'text-muted-foreground hover:bg-background/75 hover:text-foreground',
       ].join(' ')}
+      title={detail}
       onClick={onClick}
     >
-      <Icon className="size-4" />
-      <span className="min-w-0">
-        <span className="block truncate font-semibold">{title}</span>
-        <span className="block truncate text-[11px] opacity-75">{detail}</span>
-      </span>
+      <Icon className="size-3.5" />
+      <span className="min-w-0 truncate font-medium">{title}</span>
     </button>
   )
 }
 
 function SettingsCard({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: ReactNode }) {
   return (
-    <section className="ide-surface grid gap-3 rounded-md border p-4">
+    <section className="ide-surface grid gap-3 rounded border p-3">
       <div className="flex items-center gap-2">
         <Icon className="size-4 text-primary" />
         <h2 className="text-sm font-semibold">{title}</h2>
@@ -1228,7 +1226,7 @@ function ThemeButton({
     <button
       type="button"
       className={[
-        'flex h-9 items-center justify-center gap-1.5 rounded-[calc(var(--radius)-2px)] border text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+        'flex h-8 items-center justify-center gap-1.5 rounded border text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
         active
           ? 'border-primary/35 bg-primary/15 text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12)]'
           : 'border-transparent text-muted-foreground hover:bg-background/75 hover:text-foreground',
@@ -1255,7 +1253,7 @@ function SegmentButton({
       type="button"
       aria-pressed={active}
       className={[
-        'h-9 rounded-[calc(var(--radius)-2px)] border text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+        'h-8 rounded border text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
         active
           ? 'border-primary/35 bg-primary/15 text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12)]'
           : 'border-transparent text-muted-foreground hover:bg-background/75 hover:text-foreground',
@@ -1310,7 +1308,7 @@ function NumberSetting({
   }
 
   return (
-    <div className="grid gap-3 rounded-md border bg-background/65 px-3 py-3 text-xs shadow-sm ring-1 ring-transparent transition-colors hover:border-border/80 hover:bg-background/85 lg:grid-cols-[minmax(150px,0.7fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-center">
+    <div className="grid gap-3 rounded border bg-background/65 px-3 py-2 text-xs transition-colors hover:border-border/80 hover:bg-background/85 lg:grid-cols-[minmax(150px,0.7fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-center">
       <div className="min-w-0">
         <label className="block truncate font-semibold text-foreground" htmlFor={`setting-${label}`}>
           {label}

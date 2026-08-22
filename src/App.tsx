@@ -3,7 +3,6 @@ import { Sidebar } from './components/layout/Sidebar'
 import { MainPanel } from './components/layout/MainPanel'
 import { StatusBar } from './components/layout/StatusBar'
 import { TabBar } from './components/layout/TabBar'
-import { GlobalToolbar } from './components/layout/GlobalToolbar'
 import { healthCheck } from './ipc/health'
 import { NotificationBridge } from './components/common/NotificationBridge'
 import { WorkspaceCommandPalette } from './components/common/WorkspaceCommandPalette'
@@ -16,7 +15,6 @@ import { useTaskStore } from './stores/taskStore'
 import { persistSqlWorkspace, useEditorStore } from './stores/editorStore'
 import { useConnectionStore } from './stores/connectionStore'
 import { useMetadataStore } from './stores/metadataStore'
-import splashBackground from './assets/brand/splash-background.png'
 import i18n from './i18n'
 
 export default function App() {
@@ -174,7 +172,6 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <div className="flex flex-col flex-1 overflow-hidden">
-          <GlobalToolbar />
           <TabBar />
           <MainPanel />
         </div>
@@ -189,11 +186,37 @@ export default function App() {
 
 function SplashScreen() {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/20 text-white backdrop-blur-sm">
-      <div
-        className="h-[320px] w-[524px] max-w-[86vw] overflow-hidden rounded-lg bg-cover bg-center shadow-2xl ring-1 ring-black/15"
-        style={{ backgroundImage: `url(${splashBackground})` }}
-      />
+    <div className="fixed inset-0 z-50 grid place-items-center bg-background text-foreground" role="status" aria-label="VaporLensDB loading">
+      <div className="app-splash-grid relative flex h-64 w-[440px] max-w-[86vw] overflow-hidden rounded-lg border bg-card shadow-2xl shadow-black/20">
+        <div className="flex min-w-0 flex-1 flex-col justify-between p-8">
+          <div className="flex items-center gap-3">
+            <VaporLensMark />
+            <div>
+              <div className="text-lg font-semibold tracking-[-0.02em]">VaporLensDB</div>
+              <div className="mt-0.5 text-[11px] tracking-wide text-muted-foreground">LIGHTWEIGHT DATABASE IDE</div>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div className="h-px w-full overflow-hidden bg-border">
+              <div className="h-full w-2/3 animate-pulse bg-primary" />
+            </div>
+            <div className="text-[11px] text-muted-foreground">Preparing workspace…</div>
+          </div>
+        </div>
+        <div className="w-1.5 bg-primary" />
+      </div>
     </div>
+  )
+}
+
+function VaporLensMark() {
+  return (
+    <svg viewBox="0 0 40 40" className="size-10 shrink-0" aria-hidden="true">
+      <rect width="40" height="40" rx="9" fill="hsl(var(--primary))" />
+      <ellipse cx="20" cy="11" rx="10" ry="4" fill="none" stroke="white" strokeWidth="2.2" />
+      <path d="M10 11v16c0 2.2 4.5 4 10 4s10-1.8 10-4V11M10 19c0 2.2 4.5 4 10 4s10-1.8 10-4" fill="none" stroke="white" strokeWidth="2.2" />
+      <circle cx="28.5" cy="28.5" r="5.5" fill="hsl(var(--card))" stroke="hsl(var(--primary))" strokeWidth="2" />
+      <path d="m32.5 32.5 3 3" stroke="hsl(var(--primary))" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
   )
 }

@@ -1,4 +1,4 @@
-import Editor, { loader, type OnMount } from '@monaco-editor/react'
+import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { useEffect, useRef } from 'react'
 import { registerSqlCompletionProvider } from '@/components/editor/AutoComplete'
@@ -45,10 +45,10 @@ export function SqlEditor({
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const editorTheme =
     appTheme === 'light'
-      ? 'vs'
+      ? 'vaporlens-light'
       : appTheme === 'dark' || window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'vs-dark'
-        : 'vs'
+        ? 'vaporlens-dark'
+        : 'vaporlens-light'
 
   useEffect(() => {
     connectionIdRef.current = connectionId
@@ -102,13 +102,14 @@ export function SqlEditor({
       value={value}
       theme={editorTheme}
       onChange={(next) => onChange(next ?? '')}
+      beforeMount={defineVaporLensThemes}
       onMount={handleMount}
       options={{
         minimap: { enabled: false },
         fontSize: editorFontSize,
         fontFamily: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
         lineHeight: 20,
-        padding: { top: 12, bottom: 12 },
+        padding: { top: 8, bottom: 8 },
         scrollBeyondLastLine: false,
         automaticLayout: true,
         wordWrap: 'on',
@@ -120,6 +121,56 @@ export function SqlEditor({
       }}
     />
   )
+}
+
+const defineVaporLensThemes: BeforeMount = (monaco) => {
+  monaco.editor.defineTheme('vaporlens-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: '6EA8FE', fontStyle: 'bold' },
+      { token: 'string', foreground: 'A6D189' },
+      { token: 'number', foreground: 'E5A96B' },
+      { token: 'comment', foreground: '727982', fontStyle: 'italic' },
+      { token: 'identifier', foreground: 'D8DEE7' },
+      { token: 'delimiter', foreground: 'AAB2BD' },
+    ],
+    colors: {
+      'editor.background': '#202225',
+      'editor.foreground': '#D8DEE7',
+      'editorLineNumber.foreground': '#666D76',
+      'editorLineNumber.activeForeground': '#B9C1CC',
+      'editor.selectionBackground': '#31568A',
+      'editor.inactiveSelectionBackground': '#2A405C',
+      'editor.lineHighlightBackground': '#25282C',
+      'editorCursor.foreground': '#79AFFF',
+      'editorIndentGuide.background1': '#30343A',
+      'editorIndentGuide.activeBackground1': '#4A515B',
+    },
+  })
+  monaco.editor.defineTheme('vaporlens-light', {
+    base: 'vs',
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: '2764C5', fontStyle: 'bold' },
+      { token: 'string', foreground: '2F7D4B' },
+      { token: 'number', foreground: 'A45A14' },
+      { token: 'comment', foreground: '7A838F', fontStyle: 'italic' },
+      { token: 'identifier', foreground: '20242A' },
+    ],
+    colors: {
+      'editor.background': '#FFFFFF',
+      'editor.foreground': '#20242A',
+      'editorLineNumber.foreground': '#9AA1AA',
+      'editorLineNumber.activeForeground': '#515862',
+      'editor.selectionBackground': '#C9DDFD',
+      'editor.inactiveSelectionBackground': '#DDE8F8',
+      'editor.lineHighlightBackground': '#F5F7FA',
+      'editorCursor.foreground': '#337AE8',
+      'editorIndentGuide.background1': '#E4E7EB',
+      'editorIndentGuide.activeBackground1': '#B8BEC7',
+    },
+  })
 }
 
 function selectedText(instance: editor.IStandaloneCodeEditor) {

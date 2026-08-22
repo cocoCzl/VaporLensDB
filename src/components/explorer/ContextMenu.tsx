@@ -42,7 +42,7 @@ export function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {
         onClick={onClose}
       />
       <div
-        className="fixed z-50 min-w-44 rounded-md border bg-card p-1 text-xs text-foreground shadow-lg"
+        className="ide-overlay fixed z-50 min-w-44 rounded p-1 text-xs"
         style={{ left: x, top: y }}
       >
         {actions.map((action) => {
@@ -51,7 +51,7 @@ export function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {
             <button
               key={action.id}
               type="button"
-              className="flex h-8 w-full items-center gap-2 rounded px-2 text-left disabled:opacity-45 enabled:hover:bg-accent"
+              className="flex h-7 w-full items-center gap-2 rounded px-2 text-left disabled:opacity-45 enabled:hover:bg-accent"
               disabled={action.disabled}
               onClick={() => {
                 action.onSelect()

@@ -105,7 +105,7 @@ includesAll(
     "readinessIssue ? t('connection.notReady')",
     'disabled={busy || Boolean(readinessIssue)}',
     'Missing local JDBC JAR',
-    "managerMode ? 'grid gap-5'",
+    "managerMode ? 'grid gap-3'",
     '!managerMode &&',
   ],
   'connection list readiness',

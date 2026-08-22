@@ -12,8 +12,10 @@ function read(path) {
   return readFileSync(resolve(root, path), 'utf8')
 }
 
-const toolbar = read('src/components/layout/GlobalToolbar.tsx')
-assert(!toolbar.includes('CreateDatabaseDialog'), 'global toolbar must not expose database creation')
+const tabBar = read('src/components/layout/TabBar.tsx')
+const sidebar = read('src/components/layout/Sidebar.tsx')
+assert(!tabBar.includes('CreateDatabaseDialog'), 'workspace tab bar must not expose database creation')
+assert(!sidebar.includes('CreateDatabaseDialog'), 'data-source sidebar must not expose database creation')
 
 const appMenu = read('src-tauri/src/app_menu.rs')
 assert(!appMenu.includes('DATABASE_CREATE_ID'), 'native menu must not expose database creation')

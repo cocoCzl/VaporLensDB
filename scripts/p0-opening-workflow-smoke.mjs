@@ -88,9 +88,7 @@ includesAll(
   'SQL tab context and naming',
 )
 
-const toolbar = read('src/components/layout/GlobalToolbar.tsx')
-assert(!toolbar.includes("t('workbench.newSql')"), 'global toolbar must not duplicate the tab-bar SQL action')
-assert(!toolbar.includes('CreateDatabaseDialog'), 'global toolbar must not expose database creation')
+assert(!tabBar.includes('CreateDatabaseDialog'), 'tab bar must not expose database creation')
 assert(
   tabBar.includes("openRecordsWorkspace('sqlScripts')"),
   'SQL drafts should open in the records workspace',

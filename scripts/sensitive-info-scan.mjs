@@ -39,7 +39,16 @@ for (const relativePath of listed) {
   ) {
     continue
   }
-  const bytes = await readFile(resolve(repositoryRoot, relativePath))
+  let bytes
+  try {
+    bytes = await readFile(resolve(repositoryRoot, relativePath))
+  } catch (error) {
+    // `git ls-files --cached` includes tracked files deleted by the current
+    // change until they are staged. A release check must scan the resulting
+    // worktree, so deleted paths are intentionally skipped.
+    if (error?.code === 'ENOENT') continue
+    throw error
+  }
   if (bytes.includes(0)) continue
   const lines = bytes.toString('utf8').split(/\r?\n/)
   for (const [index, line] of lines.entries()) {

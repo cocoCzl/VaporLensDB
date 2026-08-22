@@ -2,6 +2,23 @@
 
 All notable changes to VaporLensDB are documented in this file.
 
+## [0.8.4]
+
+### Added
+
+- Added persisted resizing and collapsing for the SQL result panel.
+- Added dedicated light and dark Monaco themes and section navigation for data-source editing.
+
+### Changed
+
+- Redesigned the application chrome, sidebars, tabs, toolbars, data grid, settings, dialogs, menus, and empty states around a compact professional IDE system.
+- Consolidated global actions into contextual surfaces and tightened bundle budgets without adding runtime dependencies.
+- Replaced the raster splash screen with a lightweight SVG/CSS startup experience.
+
+### Testing
+
+- Verified PostgreSQL, MySQL, and Oracle against the complete live integration and release gates.
+
 ## [0.8.3]
 
 ### Added

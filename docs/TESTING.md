@@ -5,7 +5,7 @@ current IDE workspace.
 
 ## Current Status
 
-- The 0.8.3 workspace covers grouped data sources, browsing versus SQL execution
+- The 0.8.4 workspace covers grouped data sources, browsing versus SQL execution
   context, Object Tree navigation, SQL drafts and query history, command palette,
   connection readiness, and theme-aware IDE chrome.
 - Existing smoke coverage also covers data preview, structure, definition/source,

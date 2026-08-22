@@ -1,4 +1,4 @@
-import { Check, FileCode2, History, List, Pin, Plus, X } from 'lucide-react'
+import { Check, Database, FileCode2, History, List, Network, Pin, Plus, Search, Settings2, Table2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -158,8 +158,8 @@ export function TabBar() {
               className={[
                 'group flex h-8 max-w-56 items-center gap-1.5 border-r border-border/55 px-2.5 text-xs transition-colors',
                 active
-                  ? 'bg-background text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary))]'
-                  : 'text-muted-foreground hover:bg-background/65 hover:text-foreground',
+                  ? 'bg-background text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary)),inset_0_1px_0_hsl(var(--foreground)/0.04)]'
+                  : 'text-muted-foreground hover:bg-[hsl(var(--hover))] hover:text-foreground',
               ].join(' ')}
               onClick={() => {
                 setActiveTab(tab.id)
@@ -206,6 +206,7 @@ export function TabBar() {
                 </span>
               ) : (
                 <>
+                  <TabKindGlyph kind={tab.kind} />
                   {!managementTab && (
                     <span
                       className={[
@@ -297,6 +298,14 @@ export function TabBar() {
       <IconTooltipButton label={t('sql.history')} variant="ghost" onClick={() => openRecordsWorkspace('queryHistory')}>
         <History />
       </IconTooltipButton>
+      <span className="ide-toolbar-separator" aria-hidden="true" />
+      <IconTooltipButton
+        label={t('commandPalette.title')}
+        variant="ghost"
+        onClick={() => window.dispatchEvent(new Event('vaporlensdb:open-command-palette'))}
+      >
+        <Search />
+      </IconTooltipButton>
       {tabContextMenu && (() => {
         const tab = tabs.find((candidate) => candidate.id === tabContextMenu.tabId)
         if (!tab) return null
@@ -355,6 +364,15 @@ export function TabBar() {
       })()}
     </div>
   )
+}
+
+function TabKindGlyph({ kind }: { kind: EditorTab['kind'] }) {
+  const iconClass = 'size-3.5 shrink-0 text-muted-foreground'
+  if (kind === 'dataSources') return <Database className={iconClass} />
+  if (kind === 'settings') return <Settings2 className={iconClass} />
+  if (kind === 'diagram') return <Network className={iconClass} />
+  if (kind === 'data' || kind === 'structure' || kind === 'objectSummary') return <Table2 className={iconClass} />
+  return <FileCode2 className={iconClass} />
 }
 
 function connectionStatusClass(status: string) {

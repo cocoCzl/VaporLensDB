@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Database,
   FileCode2,
+  FolderCog,
   Link,
   Loader2,
   Pencil,
@@ -121,9 +122,9 @@ export function Sidebar() {
   return (
     <aside
       className="ide-chrome relative flex shrink-0 border-r"
-      style={{ width: sidebarCollapsed ? 40 : compactViewport ? Math.min(sidebarWidth, 232) : sidebarWidth }}
+      style={{ width: sidebarCollapsed ? 36 : compactViewport ? Math.min(sidebarWidth, 232) : sidebarWidth }}
     >
-      <nav className="flex w-10 shrink-0 flex-col items-center gap-1 border-r bg-muted/25 py-1.5">
+      <nav className="flex w-9 shrink-0 flex-col items-center gap-1 border-r bg-muted/25 py-1">
         {RAIL_ITEMS.map((item) => (
           <RailButton
             key={item.view}
@@ -367,6 +368,30 @@ function CompactDataSourceTree() {
 
   return (
     <section className="ide-chrome shrink-0 border-b" aria-label={t('connection.dataSources')}>
+      <div className="ide-panel-header gap-1">
+        <Database className="size-3.5 text-primary" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">{t('connection.dataSources')}</span>
+        <ConnectionDialog
+          trigger={
+            <Button type="button" size="icon-xs" variant="ghost" title={t('connection.new')} aria-label={t('connection.new')}>
+              <Plus />
+            </Button>
+          }
+        />
+        <Button type="button" size="icon-xs" variant="ghost" title={t('connection.manageDataSources')} aria-label={t('connection.manageDataSources')} onClick={openManagement}>
+          <FolderCog />
+        </Button>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label={t('connection.reloadSaved')}
+          title={t('connection.reloadSaved')}
+          onClick={() => void loadConnections()}
+        >
+          <RefreshCw />
+        </Button>
+      </div>
       <div className="flex h-9 items-center gap-1 border-b px-2">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -378,16 +403,6 @@ function CompactDataSourceTree() {
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          aria-label={t('connection.reloadSaved')}
-          title={t('connection.reloadSaved')}
-          onClick={() => void loadConnections()}
-        >
-          <RefreshCw />
-        </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label={t('connection.dataSources')}>
         {filteredGroups.map((group) => {
@@ -418,7 +433,7 @@ function CompactDataSourceTree() {
                       aria-selected={selected}
                       aria-expanded={expanded}
                       className={[
-                        'group flex h-7 cursor-pointer items-center gap-1.5 px-2 pl-4 text-xs outline-none hover:bg-accent/75',
+                        'group flex h-6 cursor-pointer items-center gap-1.5 px-2 pl-4 text-xs outline-none hover:bg-accent/75',
                         selected ? 'bg-accent text-accent-foreground' : '',
                       ].join(' ')}
                       onClick={() => setActiveConnection(connection.id)}
@@ -927,7 +942,7 @@ function RailButton({
     <button
       type="button"
       className={[
-        'grid size-8 place-items-center rounded-md text-muted-foreground transition-colors',
+        'grid size-7 place-items-center rounded text-muted-foreground transition-colors',
         active
           ? 'bg-primary/10 text-primary shadow-[inset_2px_0_0_hsl(var(--primary))]'
           : 'hover:bg-accent hover:text-accent-foreground',
@@ -937,7 +952,7 @@ function RailButton({
       aria-pressed={active}
       onClick={onClick}
     >
-      <Icon className="size-5" />
+      <Icon className="size-4" />
     </button>
   )
 }

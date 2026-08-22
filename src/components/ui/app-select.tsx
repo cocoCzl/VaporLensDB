@@ -47,9 +47,9 @@ export function AppSelect({
         className={cn(
           'w-full min-w-0 text-xs shadow-none transition-[border-color,background-color,box-shadow] focus-visible:ring-2 focus-visible:ring-primary/15',
           useIdeSkin
-            ? `ide-combobox-trigger ${variant === 'ide' ? 'h-7' : 'h-8'} rounded-md border px-2.5 text-foreground focus-visible:border-[hsl(var(--ide-combo-focus))] focus-visible:ring-[hsl(var(--ide-combo-focus)/0.16)]`
+            ? `ide-combobox-trigger ${variant === 'ide' ? 'h-7' : 'h-[30px]'} rounded border px-2.5 text-foreground focus-visible:border-[hsl(var(--ide-combo-focus))] focus-visible:ring-[hsl(var(--ide-combo-focus)/0.16)]`
             : variant === 'toolbar'
-            ? 'h-7 rounded-sm border border-transparent bg-transparent px-2 hover:border-border hover:bg-card aria-expanded:border-border aria-expanded:bg-card focus-visible:border-primary/60'
+            ? 'h-7 rounded border border-transparent bg-transparent px-2 hover:border-border hover:bg-card aria-expanded:border-border aria-expanded:bg-card focus-visible:border-primary/60'
             : 'border-border/80 bg-card hover:border-foreground/25 hover:bg-muted/35 focus-visible:border-primary/60',
           className,
         )}

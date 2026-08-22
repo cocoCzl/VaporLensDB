@@ -58,7 +58,7 @@ includesAll(
   dialog,
   [
     'void loadDrivers()',
-    "h-[min(47rem,calc(100vh-4rem))]",
+    "h-[min(43rem,calc(100vh-3rem))]",
     'data-open:animate-none',
     'data-closed:animate-none',
     'min-h-0 flex-1 overflow-hidden',
@@ -66,6 +66,7 @@ includesAll(
   'connection dialog stable opening layout',
 )
 includesAll(form, ['overflow-y-auto overflow-x-hidden', '[scrollbar-gutter:stable]'], 'connection dialog single stable scroll region')
+includesAll(form, ["'general' | 'sshSsl' | 'advanced'", 'generalSectionRef', 'sshSslSectionRef', 'advancedSectionRef'], 'connection dialog section navigation')
 includesAll(
   form,
   [

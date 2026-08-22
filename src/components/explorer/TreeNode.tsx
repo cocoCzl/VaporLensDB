@@ -140,7 +140,7 @@ export function TreeNode({
   return (
     <div
       className={[
-        'group flex h-7 items-center gap-1 rounded-md px-1 text-xs text-foreground/90 hover:bg-accent/75',
+        'group flex h-6 items-center gap-1 rounded px-1 text-xs text-foreground/90 hover:bg-accent/75',
         selected ? 'bg-accent text-accent-foreground' : '',
       ].join(' ')}
       data-muted={node.muted ? 'true' : undefined}

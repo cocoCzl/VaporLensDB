@@ -55,8 +55,8 @@ export function DataGrid({
 
   if (!result) {
     return (
-      <div className="grid h-full place-items-center text-xs text-muted-foreground">
-        {t('result.empty')}
+      <div className="ide-empty-state">
+        <div>{t('result.empty')}</div>
       </div>
     )
   }
@@ -78,11 +78,11 @@ export function DataGrid({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-card text-xs">
+    <div className="flex h-full min-h-0 flex-col bg-card text-xs tabular-nums">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
         <div className="relative" style={{ minWidth: minGridWidth }}>
           {result.truncated && (
-            <div className="sticky top-0 z-30 border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-amber-900">
+            <div className="sticky top-0 z-30 border-b border-amber-300/60 bg-amber-50 px-3 py-1.5 text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300">
               {t('result.truncated', {
                 // The backend reports the total rows it streamed, while a large
                 // result may retain only the bounded visual window in memory.
@@ -92,7 +92,7 @@ export function DataGrid({
             </div>
           )}
           <div
-            className="sticky top-0 z-20 grid bg-muted/85"
+            className="ide-toolbar sticky top-0 z-20 grid text-[11px]"
             style={{
               gridTemplateColumns,
               minWidth: minGridWidth,
@@ -103,7 +103,7 @@ export function DataGrid({
               #
             </div>
             {result.columns.map((column, columnIndex) => (
-              <div key={column.name} className="group relative min-w-0 border-b border-r border-border/60 px-2 py-1 font-medium">
+              <div key={column.name} className="group relative min-w-0 border-b border-r border-border/60 px-2 py-1 font-semibold">
                 <div className="flex min-w-0 items-center justify-between gap-3">
                   <span className="min-w-0 truncate">{column.name}</span>
                   <span className="shrink-0 text-[10px] text-muted-foreground">
@@ -147,7 +147,7 @@ export function DataGrid({
               return (
                 <div
                   key={virtualRow.key}
-                  className="absolute left-0 grid w-full hover:bg-accent/35"
+                  className="absolute left-0 grid w-full hover:bg-[hsl(var(--hover)/0.62)]"
                   style={{
                     height: virtualRow.size,
                     transform: `translateY(${virtualRow.start}px)`,
@@ -155,7 +155,7 @@ export function DataGrid({
                     minWidth: minGridWidth,
                   }}
                 >
-                  <div className="border-b border-r border-border/50 bg-muted/35 px-2 py-1 text-right text-muted-foreground">
+                  <div className="border-b border-r border-border/45 bg-muted/25 px-2 py-1 text-right text-[11px] text-muted-foreground">
                     {virtualRow.index + 1}
                   </div>
                   {result.columns.map((column, columnIndex) => {
@@ -170,8 +170,8 @@ export function DataGrid({
                         className={[
                           'group relative min-w-0 border-b border-r border-border/50 font-mono outline-none',
                           selected
-                            ? 'bg-primary/15 text-primary ring-1 ring-inset ring-primary/40'
-                            : 'hover:bg-accent/50',
+                            ? 'bg-primary/15 text-foreground ring-1 ring-inset ring-primary/55'
+                            : 'hover:bg-accent/45',
                         ].join(' ')}
                         title={formatted}
                       >

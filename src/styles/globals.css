@@ -6,33 +6,39 @@
   :root {
     /* Keep native controls aligned with the selected app theme, not the OS theme. */
     color-scheme: light;
-    --background: 220 18% 98%;
-    --foreground: 222 30% 12%;
+    --background: 220 18% 97.5%;
+    --foreground: 222 27% 12%;
     --card: 0 0% 100%;
     --card-foreground: 222 30% 12%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 30% 12%;
-    --border: 220 14% 86%;
-    --input: 220 14% 84%;
-    --primary: 218 78% 53%;
+    --border: 218 13% 84%;
+    --input: 218 13% 81%;
+    --primary: 216 88% 57%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 15% 94%;
+    --secondary: 218 15% 92.5%;
     --secondary-foreground: 221 26% 19%;
-    --muted: 220 14% 95%;
-    --muted-foreground: 220 10% 43%;
-    --accent: 218 42% 93%;
+    --muted: 218 14% 94%;
+    --muted-foreground: 218 9% 42%;
+    --accent: 215 53% 91%;
     --accent-foreground: 221 36% 23%;
     --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 100%;
     --ring: 218 78% 53%;
     --success: 158 63% 34%;
     --warning: 37 90% 43%;
-    --radius: 0.375rem;
-    --radius-md: 0.5rem;
-    --workspace: 220 18% 98%;
+    --radius: 0.3rem;
+    --radius-md: 0.375rem;
+    --workspace: 220 18% 97.5%;
     --workspace-raised: 0 0% 100%;
-    --chrome: 220 15% 97.2%;
-    --toolbar: 220 16% 96.5%;
+    --chrome: 218 15% 94.5%;
+    --toolbar: 220 15% 96.2%;
+    --panel: 218 15% 95.5%;
+    --panel-raised: 0 0% 100%;
+    --separator: 218 12% 81%;
+    --selection: 215 76% 91%;
+    --selection-strong: 216 83% 55%;
+    --hover: 218 17% 90%;
     --overlay: 222 36% 12%;
     --ide-combo-surface: 0 0% 100%;
     --ide-combo-hover: 220 22% 96%;
@@ -45,19 +51,19 @@
 
   .dark {
     color-scheme: dark;
-    --background: 222 15% 9%;
+    --background: 220 9% 10.5%;
     --foreground: 216 18% 91%;
-    --card: 222 14% 12%;
+    --card: 220 8% 12.5%;
     --card-foreground: 216 18% 91%;
-    --popover: 222 14% 13%;
+    --popover: 220 8% 14%;
     --popover-foreground: 216 18% 91%;
-    --border: 220 12% 22%;
-    --input: 220 12% 24%;
-    --primary: 216 90% 67%;
+    --border: 218 8% 22.5%;
+    --input: 218 8% 25%;
+    --primary: 215 91% 66%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 12% 17%;
+    --secondary: 218 8% 18%;
     --secondary-foreground: 216 15% 88%;
-    --muted: 220 12% 15%;
+    --muted: 218 8% 15.5%;
     --muted-foreground: 216 10% 62%;
     --accent: 217 47% 26%;
     --accent-foreground: 216 22% 94%;
@@ -66,10 +72,16 @@
     --ring: 216 90% 67%;
     --success: 158 57% 48%;
     --warning: 38 92% 57%;
-    --workspace: 222 15% 9%;
-    --workspace-raised: 222 14% 12%;
-    --chrome: 222 13% 11.5%;
-    --toolbar: 222 13% 11.5%;
+    --workspace: 220 9% 10.5%;
+    --workspace-raised: 220 8% 12.5%;
+    --chrome: 220 8% 12%;
+    --toolbar: 220 8% 13.5%;
+    --panel: 220 8% 12%;
+    --panel-raised: 220 8% 14.5%;
+    --separator: 218 8% 25%;
+    --selection: 216 40% 25%;
+    --selection-strong: 215 87% 68%;
+    --hover: 218 8% 18%;
     --overlay: 222 38% 4%;
     --ide-combo-surface: 222 13% 15%;
     --ide-combo-hover: 222 12% 20%;
@@ -97,6 +109,7 @@
     font-family: 'Geist Variable', 'PingFang SC', 'Microsoft YaHei UI', ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    font-size: 13px;
   }
 
   code,
@@ -126,6 +139,14 @@
     background-color: hsl(var(--workspace-raised));
   }
 
+  .ide-panel {
+    background-color: hsl(var(--panel));
+  }
+
+  .ide-panel-raised {
+    background-color: hsl(var(--panel-raised));
+  }
+
   .ide-toolbar {
     background-color: hsl(var(--toolbar));
   }
@@ -139,7 +160,7 @@
   }
 
   .ide-settings-nav-item {
-    min-height: 2.75rem;
+    min-height: 2rem;
   }
 
   /* The tab strip starts the work surface; unlike a tool bar it should not
@@ -147,15 +168,31 @@
   .ide-tab-strip {
     background-color: hsl(var(--chrome));
     border-color: hsl(var(--border) / 0.54);
-    box-shadow: none;
+    box-shadow: inset 0 -1px 0 hsl(var(--separator) / 0.42);
   }
 
   .ide-editor-surface {
     background-color: hsl(var(--card));
   }
 
+  .ide-panel-header {
+    @apply flex h-8 shrink-0 items-center border-b px-2 text-xs font-medium;
+    background-color: hsl(var(--toolbar));
+    border-color: hsl(var(--separator) / 0.72);
+  }
+
+  .ide-toolbar-group {
+    @apply flex items-center gap-0.5;
+  }
+
+  .ide-toolbar-separator {
+    @apply mx-1 h-4 w-px shrink-0;
+    background-color: hsl(var(--separator) / 0.78);
+  }
+
   .ide-overlay {
-    @apply border bg-popover text-popover-foreground shadow-[0_18px_42px_-28px_hsl(var(--overlay)/0.7)];
+    @apply border bg-popover text-popover-foreground shadow-[0_18px_42px_-22px_hsl(var(--overlay)/0.78)];
+    border-color: hsl(var(--separator));
   }
 
   .ide-landing-card {
@@ -163,7 +200,7 @@
   }
 
   .ide-icon-button {
-    @apply size-8 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50;
+    @apply size-7 rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50;
   }
 
   .ide-combobox-trigger {
@@ -199,7 +236,7 @@
   }
 
   .ide-input {
-    @apply h-8 rounded-md border border-input bg-card px-2 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20;
+    @apply h-[30px] rounded border border-input bg-card px-2 text-[13px] outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20;
   }
 
   .ide-status-success {
@@ -215,7 +252,34 @@
   }
 
   .ide-divider {
-    @apply border-border/80;
+    border-color: hsl(var(--separator) / 0.8);
+  }
+
+  .ide-splitter {
+    @apply relative z-20 h-1 shrink-0 cursor-row-resize bg-transparent outline-none;
+  }
+
+  .ide-splitter::after {
+    content: '';
+    @apply absolute inset-x-0 top-1/2 h-px -translate-y-1/2;
+    background-color: hsl(var(--separator));
+  }
+
+  .ide-splitter:hover::after,
+  .ide-splitter:focus-visible::after {
+    @apply h-0.5;
+    background-color: hsl(var(--primary) / 0.8);
+  }
+
+  .ide-status-dot {
+    @apply size-1.5 shrink-0 rounded-full ring-1 ring-background/70;
+  }
+
+  .app-splash-grid {
+    background-image:
+      linear-gradient(hsl(var(--foreground) / 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--foreground) / 0.035) 1px, transparent 1px);
+    background-size: 24px 24px;
   }
 
   /* Long data-source lists can contain hundreds of compact rows. Browsers that

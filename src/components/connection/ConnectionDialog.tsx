@@ -58,12 +58,12 @@ export function ConnectionDialog({
         }
       />
       <DialogContent
-        className="flex h-[min(47rem,calc(100vh-4rem))] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl data-open:animate-none data-closed:animate-none"
+        className="flex h-[min(43rem,calc(100vh-3rem))] max-w-[60rem] flex-col gap-0 overflow-hidden rounded-md p-0 sm:max-w-[60rem] data-open:animate-none data-closed:animate-none"
         showCloseButton={false}
       >
-        <DialogHeader className="flex h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-4">
+        <DialogHeader className="ide-toolbar flex h-10 shrink-0 flex-row items-center justify-between gap-3 border-b px-3">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/15 text-primary">
+                <div className="grid size-7 shrink-0 place-items-center rounded bg-primary/15 text-primary">
                   <DatabaseVendorIcon driverType={connection?.driverType ?? 'postgres'} className="size-4" />
                 </div>
                 <div className="min-w-0">

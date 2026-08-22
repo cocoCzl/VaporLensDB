@@ -26,8 +26,8 @@ async function fixture(platform, files) {
 
 test('stages fixed-name Windows artifacts and replaces stale output', async (context) => {
   const paths = await fixture('windows', {
-    'msi/VaporLensDB_0.8.3_x64_en-US.msi': 'msi-package',
-    'nsis/VaporLensDB_0.8.3_x64-setup.exe': 'nsis-package',
+    'msi/VaporLensDB_0.8.4_x64_en-US.msi': 'msi-package',
+    'nsis/VaporLensDB_0.8.4_x64-setup.exe': 'nsis-package',
   })
   context.after(() => rm(paths.root, { recursive: true, force: true }))
 
@@ -43,12 +43,12 @@ test('stages fixed-name Windows artifacts and replaces stale output', async (con
 
 test('stages AppImage, DEB, and RPM using fixed Linux names', async (context) => {
   const paths = await fixture('linux', {
-    'appimage/vapor-lens-db_0.8.3_amd64.AppImage': 'appimage-package',
-    'deb/vapor-lens-db_0.8.3_amd64.deb': 'deb-package',
-    'rpm/VaporLensDB-0.8.3-1.x86_64.rpm': 'rpm-package',
+    'appimage/vapor-lens-db_0.8.4_amd64.AppImage': 'appimage-package',
+    'deb/vapor-lens-db_0.8.4_amd64.deb': 'deb-package',
+    'rpm/VaporLensDB-0.8.4-1.x86_64.rpm': 'rpm-package',
   })
   context.after(() => rm(paths.root, { recursive: true, force: true }))
-  await chmod(join(paths.bundleDir, 'appimage/vapor-lens-db_0.8.3_amd64.AppImage'), 0o755)
+  await chmod(join(paths.bundleDir, 'appimage/vapor-lens-db_0.8.4_amd64.AppImage'), 0o755)
 
   const outputPaths = await stageArtifacts({ platform: 'linux', ...paths })
 
@@ -63,7 +63,7 @@ test('stages AppImage, DEB, and RPM using fixed Linux names', async (context) =>
 
 test('fails before replacing output when an artifact is missing or ambiguous', async (context) => {
   const missing = await fixture('windows', {
-    'msi/VaporLensDB_0.8.3_x64_en-US.msi': 'msi-package',
+    'msi/VaporLensDB_0.8.4_x64_en-US.msi': 'msi-package',
   })
   const duplicate = await fixture('windows', {
     'msi/one.msi': 'one',

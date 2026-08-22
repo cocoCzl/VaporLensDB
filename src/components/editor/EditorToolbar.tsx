@@ -74,7 +74,7 @@ export function EditorToolbar({
   const runShortcut = isMacPlatform() ? '⌘↵' : 'Ctrl+Enter'
 
   return (
-    <div className="flex h-11 items-center gap-2 overflow-hidden border-b ide-toolbar px-3">
+    <div className="ide-toolbar flex h-9 items-center gap-2 overflow-hidden border-b px-2" role="toolbar" aria-label={t('editor.run')}>
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
         <Database className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <ExecutionDataSourcePicker
@@ -105,7 +105,7 @@ export function EditorToolbar({
         <RowLimitMenu maxRows={maxRows} onChange={onMaxRowsChange} label={t('editor.rowLimit')} />
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="ide-toolbar-group shrink-0">
         <TransactionModeMenu
           mode={transactionMode}
           phase={transactionPhase}
@@ -120,6 +120,7 @@ export function EditorToolbar({
         />
         <IconTooltipButton label={t('editor.commit')} variant="ghost" disabled={transactionDisabled || running || transactionMode !== 'manual' || transactionPhase !== 'active'} onClick={() => onCommit?.()}><Check /></IconTooltipButton>
         <IconTooltipButton label={t('editor.rollback')} variant="ghost" disabled={transactionDisabled || running || transactionMode !== 'manual' || !['active', 'failed'].includes(transactionPhase)} onClick={() => onRollback?.()}><Undo2 /></IconTooltipButton>
+        <span className="ide-toolbar-separator" aria-hidden="true" />
         {running && canCancel ? (
           <IconTooltipButton label={t('editor.cancel')} variant="destructive" onClick={onCancel}>
             <Square />
