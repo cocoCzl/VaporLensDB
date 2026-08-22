@@ -6,6 +6,7 @@ import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useSqlDraftStore } from '@/stores/sqlDraftStore'
+import { rollbackConsoleTransaction, setConsoleTransactionMode } from '@/ipc/query'
 import type { EditorTab } from '@/stores/editorStore'
 
 export function TabBar() {
@@ -73,6 +74,21 @@ export function TabBar() {
   }
 
   function closeEditorTab(tab: EditorTab) {
+    if (tab.connectionId && tab.transactionMode === 'manual') {
+      if (tab.transactionPhase !== 'idle') {
+        if (!window.confirm('This Console has an uncommitted transaction. Roll it back and close the Console?')) return
+        void rollbackConsoleTransaction(tab.connectionId, tab.id)
+          .then(() => setConsoleTransactionMode(tab.connectionId!, tab.id, 'auto'))
+          .then(() => closeEditorTabAfterTransaction(tab))
+        return
+      }
+      void setConsoleTransactionMode(tab.connectionId, tab.id, 'auto').then(() => closeEditorTabAfterTransaction(tab))
+      return
+    }
+    closeEditorTabAfterTransaction(tab)
+  }
+
+  function closeEditorTabAfterTransaction(tab: EditorTab) {
     if (!tab.kind || tab.kind === 'sql') {
       const connection = connections.find((item) => item.id === tab.connectionId) ?? null
       if (tab.sql.trim()) {

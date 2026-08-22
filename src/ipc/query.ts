@@ -7,12 +7,15 @@ import type {
   QueryResultChunk,
   QueryStreamDone,
   QueryStreamError,
+  ConsoleTransactionState,
+  TransactionMode,
 } from '@/types/query'
 
 export interface ExecuteQueryInput {
   connectionId: string
   sql: string
   queryId?: string
+  consoleId?: string
 }
 
 export interface ExecuteQueryStreamInput {
@@ -21,6 +24,7 @@ export interface ExecuteQueryStreamInput {
   queryId: string
   chunkSize?: number
   maxRows?: number
+  consoleId?: string
 }
 
 export type SqlRiskReason =
@@ -52,6 +56,22 @@ export function cancelQuery(connectionId: string, queryId: string) {
 
 export function analyzeSqlRisk(sql: string) {
   return invokeCommand<SqlRiskAnalysis>(COMMANDS.analyzeSqlRisk, { sql })
+}
+
+export function getConsoleTransactionState(connectionId: string, consoleId: string) {
+  return invokeCommand<ConsoleTransactionState>(COMMANDS.consoleTransactionState, { input: { connectionId, consoleId } })
+}
+
+export function setConsoleTransactionMode(connectionId: string, consoleId: string, mode: TransactionMode) {
+  return invokeCommand<ConsoleTransactionState>(COMMANDS.setConsoleTransactionMode, { input: { connectionId, consoleId, mode } })
+}
+
+export function commitConsoleTransaction(connectionId: string, consoleId: string) {
+  return invokeCommand<ConsoleTransactionState>(COMMANDS.commitConsoleTransaction, { input: { connectionId, consoleId } })
+}
+
+export function rollbackConsoleTransaction(connectionId: string, consoleId: string) {
+  return invokeCommand<ConsoleTransactionState>(COMMANDS.rollbackConsoleTransaction, { input: { connectionId, consoleId } })
 }
 
 export function onQueryResultChunk(handler: (chunk: QueryResultChunk) => void): Promise<UnlistenFn> {

@@ -7,6 +7,7 @@ use std::{
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 use tokio_util::sync::CancellationToken;
 
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{
@@ -39,6 +40,30 @@ pub(crate) struct ActiveConnection {
     in_flight_operations: usize,
     serial_query_gate: Arc<Semaphore>,
     queued_queries: HashMap<String, CancellationToken>,
+    console_sessions: HashMap<String, ConsoleSession>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConsoleTransactionPhase {
+    Idle,
+    Active,
+    Failed,
+}
+
+pub(crate) struct ConsoleSession {
+    driver: Arc<dyn DatabaseDriver>,
+    _ssh_tunnel: Option<SshTunnel>,
+    phase: ConsoleTransactionPhase,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsoleTransactionState {
+    pub connection_id: Uuid,
+    pub console_id: String,
+    pub mode: String,
+    pub phase: ConsoleTransactionPhase,
 }
 
 /// Keeps a serial-driver permit alive for the complete lifetime of a query.
@@ -157,6 +182,20 @@ impl ConnectionManager {
         {
             return Err(AppError::ConfigError(
                 "cannot disconnect while this Data Source has running operations".to_string(),
+            ));
+        }
+        if self
+            .connections
+            .get(&connection_id)
+            .is_some_and(|connection| {
+                connection
+                    .console_sessions
+                    .values()
+                    .any(|session| session.phase != ConsoleTransactionPhase::Idle)
+            })
+        {
+            return Err(AppError::ConfigError(
+                "cannot disconnect while a SQL Console has an uncommitted transaction".to_string(),
             ));
         }
         self.connections.remove(&connection_id);
@@ -293,6 +332,121 @@ impl ConnectionManager {
                 resource: "active connection".to_string(),
                 id: connection_id.to_string(),
             })
+    }
+
+    pub fn console_transaction_state(
+        &self,
+        connection_id: Uuid,
+        console_id: &str,
+    ) -> ConsoleTransactionState {
+        let session = self
+            .connections
+            .get(&connection_id)
+            .and_then(|connection| connection.console_sessions.get(console_id));
+        ConsoleTransactionState {
+            connection_id,
+            console_id: console_id.to_string(),
+            mode: if session.is_some() {
+                "manual".to_string()
+            } else {
+                "auto".to_string()
+            },
+            phase: session
+                .map(|value| value.phase)
+                .unwrap_or(ConsoleTransactionPhase::Idle),
+        }
+    }
+
+    pub(crate) fn install_console_session(
+        &mut self,
+        connection_id: Uuid,
+        console_id: String,
+        active: ActiveConnection,
+    ) -> Result<ConsoleTransactionState, AppError> {
+        let connection =
+            self.connections
+                .get_mut(&connection_id)
+                .ok_or_else(|| AppError::NotFound {
+                    resource: "active connection".to_string(),
+                    id: connection_id.to_string(),
+                })?;
+        if connection.console_sessions.contains_key(&console_id) {
+            return Ok(ConsoleTransactionState {
+                connection_id,
+                console_id,
+                mode: "manual".to_string(),
+                phase: ConsoleTransactionPhase::Idle,
+            });
+        }
+        connection.console_sessions.insert(
+            console_id.clone(),
+            ConsoleSession {
+                driver: active.driver,
+                _ssh_tunnel: active._ssh_tunnel,
+                phase: ConsoleTransactionPhase::Idle,
+            },
+        );
+        Ok(ConsoleTransactionState {
+            connection_id,
+            console_id,
+            mode: "manual".to_string(),
+            phase: ConsoleTransactionPhase::Idle,
+        })
+    }
+
+    pub fn remove_console_session(
+        &mut self,
+        connection_id: Uuid,
+        console_id: &str,
+    ) -> Result<(), AppError> {
+        let connection =
+            self.connections
+                .get_mut(&connection_id)
+                .ok_or_else(|| AppError::NotFound {
+                    resource: "active connection".to_string(),
+                    id: connection_id.to_string(),
+                })?;
+        if connection
+            .console_sessions
+            .get(console_id)
+            .is_some_and(|session| session.phase != ConsoleTransactionPhase::Idle)
+        {
+            return Err(AppError::ConfigError(
+                "commit or rollback the active transaction before switching to Auto".to_string(),
+            ));
+        }
+        connection.console_sessions.remove(console_id);
+        Ok(())
+    }
+
+    pub fn console_driver(
+        &self,
+        connection_id: Uuid,
+        console_id: &str,
+    ) -> Result<Arc<dyn DatabaseDriver>, AppError> {
+        self.connections
+            .get(&connection_id)
+            .and_then(|connection| connection.console_sessions.get(console_id))
+            .map(|session| session.driver.clone())
+            .ok_or_else(|| AppError::NotFound {
+                resource: "SQL Console session".to_string(),
+                id: console_id.to_string(),
+            })
+    }
+
+    pub fn set_console_phase(
+        &mut self,
+        connection_id: Uuid,
+        console_id: &str,
+        phase: ConsoleTransactionPhase,
+    ) {
+        if let Some(session) = self
+            .connections
+            .get_mut(&connection_id)
+            .and_then(|connection| connection.console_sessions.get_mut(console_id))
+        {
+            session.phase = phase;
+        }
     }
 
     pub fn acquire_driver(
@@ -485,6 +639,7 @@ pub(crate) async fn create_active_connection(
         in_flight_operations: 0,
         serial_query_gate: Arc::new(Semaphore::new(1)),
         queued_queries: HashMap::new(),
+        console_sessions: HashMap::new(),
     })
 }
 
@@ -631,6 +786,7 @@ mod tests {
             in_flight_operations,
             serial_query_gate: Arc::new(Semaphore::new(1)),
             queued_queries: HashMap::new(),
+            console_sessions: HashMap::new(),
         }
     }
 

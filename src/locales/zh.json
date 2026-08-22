@@ -458,6 +458,14 @@
     "explainUnsupported": "当前驱动暂不支持 Explain",
     "rowLimit": "行数限制",
     "moreActions": "更多 SQL 操作",
+    "transactionMode": "事务模式",
+    "transactionAuto": "事务：自动",
+    "transactionManual": "事务：手动",
+    "commit": "提交事务",
+    "rollback": "回滚事务",
+    "transactionActive": "未提交",
+    "transactionFailed": "需要回滚",
+    "transactionConnectRequired": "连接数据源后可管理事务",
     "databaseSelectHint": "PostgreSQL 查询仍运行在连接配置的数据库中；切换数据库需要重新连接。"
   },
   "metadata": {

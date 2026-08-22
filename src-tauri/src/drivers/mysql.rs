@@ -104,6 +104,12 @@ impl DatabaseDriver for MysqlDriver {
             .map_err(map_mysql_connection_error)
     }
 
+    async fn begin_transaction(&self) -> Result<(), AppError> {
+        self.execute_query("START TRANSACTION", None)
+            .await
+            .map(|_| ())
+    }
+
     async fn execute_query(
         &self,
         sql: &str,

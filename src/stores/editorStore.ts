@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import type { DataTabSortDirection } from '@/lib/dataTabSql'
 import type { DbObjectKind } from '@/types/metadata'
+import type { TransactionMode, TransactionPhase } from '@/types/query'
 
 export interface EditorTab {
   id: string
@@ -35,6 +36,8 @@ export interface EditorTab {
   pinned?: boolean
   /** Set when the saved Data Source was removed; SQL remains recoverable. */
   unavailableConnectionName?: string | null
+  transactionMode?: TransactionMode
+  transactionPhase?: TransactionPhase
   /** Optional initial data-source scope for the SQL records workspace. */
   recordsConnectionFilter?: string | null
 }
@@ -109,6 +112,7 @@ interface EditorState {
   setTabRunning: (id: string, running: boolean, queryId?: string | null) => void
   setTabCancelling: (id: string, cancelling: boolean) => void
   setTabQueryState: (id: string, queryId: string | null, error?: string | null) => void
+  setTabTransactionState: (id: string, mode: TransactionMode, phase: TransactionPhase) => void
   markConnectionUnavailable: (connectionId: string, name: string) => void
   closeTab: (id: string) => void
 }
@@ -221,6 +225,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : t,
       ),
     })),
+  setTabTransactionState: (id, transactionMode, transactionPhase) => set((state) => ({
+    tabs: state.tabs.map((tab) => tab.id === id ? { ...tab, transactionMode, transactionPhase } : tab),
+  })),
   markConnectionUnavailable: (connectionId, name) =>
     set((state) => ({
       tabs: state.tabs.map((tab) => tab.connectionId === connectionId

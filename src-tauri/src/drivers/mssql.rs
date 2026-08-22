@@ -133,6 +133,12 @@ impl DatabaseDriver for MssqlDriver {
         Ok(())
     }
 
+    async fn begin_transaction(&self) -> Result<(), AppError> {
+        self.execute_query("BEGIN TRANSACTION", None)
+            .await
+            .map(|_| ())
+    }
+
     async fn execute_query(
         &self,
         sql: &str,

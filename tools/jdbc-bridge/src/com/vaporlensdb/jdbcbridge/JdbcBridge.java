@@ -142,6 +142,13 @@ public final class JdbcBridge {
                         String sql = decode(parts[2]);
                         respondOk(requestId, query(connection, sql, queryTimeoutSeconds));
                     }
+                    case "TRANSACTION" -> {
+                        if (parts.length < 3) {
+                            throw new IllegalArgumentException("TRANSACTION command requires an action");
+                        }
+                        transaction(connection, parts[2]);
+                        respondOk(requestId, "{\"ok\":true}");
+                    }
                     case "QUERY_STREAM" -> {
                         if (parts.length < 3) {
                             throw new IllegalArgumentException("QUERY_STREAM command requires SQL payload");
@@ -190,6 +197,15 @@ public final class JdbcBridge {
         return "{\"ok\":true,\"databaseProductName\":\""
                 + json(metaData.getDatabaseProductName()) + "\",\"databaseProductVersion\":\""
                 + json(metaData.getDatabaseProductVersion()) + "\"}";
+    }
+
+    private static void transaction(Connection connection, String action) throws Exception {
+        switch (action) {
+            case "BEGIN" -> connection.setAutoCommit(false);
+            case "COMMIT" -> connection.commit();
+            case "ROLLBACK" -> connection.rollback();
+            default -> throw new IllegalArgumentException("unsupported transaction action");
+        }
     }
 
     private static String query(Connection connection, String sql, int queryTimeoutSeconds) throws Exception {

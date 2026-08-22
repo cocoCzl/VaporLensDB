@@ -76,6 +76,17 @@ pub trait DatabaseDriver: Send + Sync {
     }
     async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError>;
     async fn cancel_query(&self, query_id: &str) -> Result<(), AppError>;
+    /// Transaction control is intentionally expressed by the driver so a Console
+    /// can keep one physical session without leaking SQL dialect details to UI.
+    async fn begin_transaction(&self) -> Result<(), AppError> {
+        self.execute_query("BEGIN", None).await.map(|_| ())
+    }
+    async fn commit_transaction(&self) -> Result<(), AppError> {
+        self.execute_query("COMMIT", None).await.map(|_| ())
+    }
+    async fn rollback_transaction(&self) -> Result<(), AppError> {
+        self.execute_query("ROLLBACK", None).await.map(|_| ())
+    }
     async fn cancel_all_queries(&self) -> Result<(), AppError> {
         Ok(())
     }

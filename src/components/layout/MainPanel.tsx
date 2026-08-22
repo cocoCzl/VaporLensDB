@@ -28,7 +28,7 @@ import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
 import { isSystemSchema } from '@/lib/systemObjects'
 import { normalizeAppError } from '@/ipc/client'
-import { analyzeSqlRisk, type SqlRiskAnalysis, type SqlRiskReason } from '@/ipc/query'
+import { analyzeSqlRisk, commitConsoleTransaction, rollbackConsoleTransaction, setConsoleTransactionMode, type SqlRiskAnalysis, type SqlRiskReason } from '@/ipc/query'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
@@ -758,6 +758,30 @@ export function MainPanel() {
         onCancel={cancel}
         onExplain={explain}
         onFormat={formatSql}
+        transactionMode={activeTab.transactionMode ?? 'auto'}
+        transactionPhase={activeTab.transactionPhase ?? 'idle'}
+        transactionDisabled={!connectionIsConnected}
+        onTransactionModeChange={(mode) => {
+          if (!connectionId || !connectionIsConnected) return
+          void (async () => {
+            try {
+              if (mode === 'auto' && activeTab.transactionPhase !== 'idle') {
+                useUiStore.getState().notify({ kind: 'warning', title: 'Commit or rollback the active transaction first' })
+                return
+              }
+              const next = await setConsoleTransactionMode(connectionId, activeTab.id, mode)
+              useEditorStore.getState().setTabTransactionState(activeTab.id, next.mode, next.phase)
+            } catch (error) { useUiStore.getState().notifyError(normalizeAppError(error), 'Unable to change transaction mode') }
+          })()
+        }}
+        onCommit={() => {
+          if (!connectionId || !connectionIsConnected) return
+          void commitConsoleTransaction(connectionId, activeTab.id).then((next) => useEditorStore.getState().setTabTransactionState(activeTab.id, next.mode, next.phase)).catch((error) => useUiStore.getState().notifyError(normalizeAppError(error), 'Commit failed'))
+        }}
+        onRollback={() => {
+          if (!connectionId || !connectionIsConnected) return
+          void rollbackConsoleTransaction(connectionId, activeTab.id).then((next) => useEditorStore.getState().setTabTransactionState(activeTab.id, next.mode, next.phase)).catch((error) => useUiStore.getState().notifyError(normalizeAppError(error), 'Rollback failed'))
+        }}
         />
 
         <div className="ide-editor-surface min-h-0 flex-1">

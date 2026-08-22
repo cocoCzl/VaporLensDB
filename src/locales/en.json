@@ -458,6 +458,14 @@
     "explainUnsupported": "The current driver does not support Explain",
     "rowLimit": "Row limit",
     "moreActions": "More SQL actions",
+    "transactionMode": "Transaction mode",
+    "transactionAuto": "Tx: Auto",
+    "transactionManual": "Tx: Manual",
+    "commit": "Commit transaction",
+    "rollback": "Rollback transaction",
+    "transactionActive": "Uncommitted",
+    "transactionFailed": "Rollback required",
+    "transactionConnectRequired": "Connect the data source to manage transactions",
     "databaseSelectHint": "PostgreSQL queries still run against the database configured on the connection. Reconnect to change databases."
   },
   "metadata": {

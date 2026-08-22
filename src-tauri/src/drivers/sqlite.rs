@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use async_trait::async_trait;
 use rusqlite::{types::ValueRef, Connection, OpenFlags};
@@ -22,7 +27,7 @@ use crate::{
 const SQLITE_SCHEMA_MAIN: &str = "main";
 
 pub struct SqliteDriver {
-    path: Arc<String>,
+    connection: Arc<Mutex<Connection>>,
     database_name: String,
 }
 
@@ -37,7 +42,7 @@ impl SqliteDriver {
 
         let normalized = path.to_string();
         let path_for_open = normalized.clone();
-        task::spawn_blocking(move || open_sqlite_connection(&path_for_open))
+        let connection = task::spawn_blocking(move || open_sqlite_connection(&path_for_open))
             .await
             .map_err(|error| {
                 AppError::IoError(format!("failed to join SQLite connect task: {error}"))
@@ -45,7 +50,7 @@ impl SqliteDriver {
 
         Ok(Self {
             database_name: sqlite_database_name(path),
-            path: Arc::new(normalized),
+            connection: Arc::new(Mutex::new(connection)),
         })
     }
 
@@ -58,9 +63,11 @@ impl SqliteDriver {
         T: Send + 'static,
         F: FnOnce(&Connection) -> Result<T, AppError> + Send + 'static,
     {
-        let path = Arc::clone(&self.path);
+        let connection = Arc::clone(&self.connection);
         task::spawn_blocking(move || {
-            let connection = open_sqlite_connection(path.as_str())?;
+            let connection = connection.lock().map_err(|_| {
+                AppError::ConfigError("SQLite connection lock poisoned".to_string())
+            })?;
             task_fn(&connection)
         })
         .await
@@ -656,7 +663,10 @@ fn encode_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_hex, sqlite_database_name, sqlite_value_to_json, stream_sqlite_query};
+    use super::{
+        encode_hex, sqlite_database_name, sqlite_value_to_json, stream_sqlite_query, SqliteDriver,
+    };
+    use crate::drivers::trait_def::DatabaseDriver;
     use rusqlite::types::ValueRef;
     use tokio::sync::mpsc;
 
@@ -671,6 +681,26 @@ mod tests {
         let value = sqlite_value_to_json(ValueRef::Blob(&[0xde, 0xad, 0xbe, 0xef]));
         assert_eq!(value, serde_json::json!("deadbeef"));
         assert_eq!(encode_hex(&[0x0a, 0x1b]), "0a1b");
+    }
+
+    #[tokio::test]
+    async fn keeps_transaction_state_on_the_same_sqlite_session() {
+        let driver = SqliteDriver::connect(":memory:").await.unwrap();
+        driver
+            .execute_query("CREATE TABLE sample(value INTEGER)", None)
+            .await
+            .unwrap();
+        driver.begin_transaction().await.unwrap();
+        driver
+            .execute_query("INSERT INTO sample VALUES (1)", None)
+            .await
+            .unwrap();
+        driver.rollback_transaction().await.unwrap();
+        let result = driver
+            .execute_query("SELECT value FROM sample", None)
+            .await
+            .unwrap();
+        assert_eq!(result.row_count, 0);
     }
 
     #[tokio::test]

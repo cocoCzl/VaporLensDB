@@ -1,4 +1,4 @@
-import { Check, ChartNoAxesCombined, ChevronDown, Database, Play, Search, Square, Wand2 } from 'lucide-react'
+import { Check, ChartNoAxesCombined, ChevronDown, Database, GitBranch, ListFilter, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,7 @@ import { AppSelect } from '@/components/ui/app-select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { ConnectionConfig, DataSourceGroup } from '@/types/connection'
 import type { DatabaseInfo, SchemaInfo } from '@/types/metadata'
+import type { TransactionMode, TransactionPhase } from '@/types/query'
 
 interface EditorToolbarProps {
   connections: ConnectionConfig[]
@@ -34,6 +35,12 @@ interface EditorToolbarProps {
   onCancel: () => void
   onExplain: () => void
   onFormat: () => void
+  transactionMode?: TransactionMode
+  transactionPhase?: TransactionPhase
+  transactionDisabled?: boolean
+  onTransactionModeChange?: (mode: TransactionMode) => void
+  onCommit?: () => void
+  onRollback?: () => void
 }
 
 export function EditorToolbar({
@@ -60,6 +67,7 @@ export function EditorToolbar({
   onCancel,
   onExplain,
   onFormat,
+  transactionMode = 'auto', transactionPhase = 'idle', transactionDisabled = false, onTransactionModeChange, onCommit, onRollback,
 }: EditorToolbarProps) {
   const { t } = useTranslation()
   const explainTitle = canExplain ? t('editor.explain') : (explainUnsupportedReason ?? t('editor.explainUnsupported'))
@@ -94,19 +102,24 @@ export function EditorToolbar({
           onValueChange={(value) => onSchemaChange?.(value || null)}
           options={[...(!schema ? [{ value: '', label: 'Schema' }] : []), ...schemas.map((item) => ({ value: item.name, label: item.name }))]}
         />
-        <label className="flex shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 text-[11px] text-muted-foreground hover:border-border">
-          <span className="hidden lg:inline">{t('editor.rowLimit')}</span>
-          <AppSelect
-            className="h-7 max-w-18 border-0 bg-transparent font-mono"
-            aria-label={t('editor.rowLimit')}
-            value={String(maxRows)}
-            onValueChange={(value) => onMaxRowsChange(Number(value))}
-            options={[100, 500, 1000, 5000, 10000, 50000].map((value) => ({ value: String(value), label: value.toLocaleString() }))}
-          />
-        </label>
+        <RowLimitMenu maxRows={maxRows} onChange={onMaxRowsChange} label={t('editor.rowLimit')} />
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        <TransactionModeMenu
+          mode={transactionMode}
+          phase={transactionPhase}
+          disabled={transactionDisabled || running}
+          disabledLabel={t('editor.transactionConnectRequired')}
+          label={t('editor.transactionMode')}
+          autoLabel={t('editor.transactionAuto')}
+          manualLabel={t('editor.transactionManual')}
+          activeLabel={t('editor.transactionActive')}
+          failedLabel={t('editor.transactionFailed')}
+          onChange={onTransactionModeChange}
+        />
+        <IconTooltipButton label={t('editor.commit')} variant="ghost" disabled={transactionDisabled || running || transactionMode !== 'manual' || transactionPhase !== 'active'} onClick={() => onCommit?.()}><Check /></IconTooltipButton>
+        <IconTooltipButton label={t('editor.rollback')} variant="ghost" disabled={transactionDisabled || running || transactionMode !== 'manual' || !['active', 'failed'].includes(transactionPhase)} onClick={() => onRollback?.()}><Undo2 /></IconTooltipButton>
         {running && canCancel ? (
           <IconTooltipButton label={t('editor.cancel')} variant="destructive" onClick={onCancel}>
             <Square />
@@ -151,6 +164,55 @@ export function EditorToolbar({
         </Button>
       </div>
     </div>
+  )
+}
+
+function RowLimitMenu({ maxRows, onChange, label }: { maxRows: number; onChange: (value: number) => void; label: string }) {
+  const [open, setOpen] = useState(false)
+  const options = [100, 500, 1000, 5000, 10000, 50000]
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={label} title={label}><ListFilter /></Button>} />
+      <PopoverContent align="start" className="w-36 p-1.5">
+        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+        <div className="grid grid-cols-2 gap-0.5">
+          {options.map((value) => {
+            const selected = value === maxRows
+            return <button key={value} type="button" className={['flex h-7 items-center justify-between rounded px-2 font-mono text-[11px] transition-colors', selected ? 'bg-primary/12 text-primary' : 'text-foreground hover:bg-accent'].join(' ')} onClick={() => { onChange(value); setOpen(false) }}><span>{value >= 1000 ? `${value / 1000}k` : value}</span>{selected ? <Check className="size-3" /> : null}</button>
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function TransactionModeMenu({ mode, phase, disabled, disabledLabel, label, autoLabel, manualLabel, activeLabel, failedLabel, onChange }: {
+  mode: TransactionMode
+  phase: TransactionPhase
+  disabled: boolean
+  disabledLabel: string
+  label: string
+  autoLabel: string
+  manualLabel: string
+  activeLabel: string
+  failedLabel: string
+  onChange?: (mode: TransactionMode) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const stateLabel = phase === 'failed' ? failedLabel : phase === 'active' ? activeLabel : mode === 'manual' ? manualLabel : autoLabel
+  const statusClass = phase === 'failed' ? 'bg-destructive' : phase === 'active' ? 'bg-amber-500' : mode === 'manual' ? 'bg-primary' : 'bg-muted-foreground/45'
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={label} title={disabled ? disabledLabel : `${label} · ${stateLabel}`} disabled={disabled} className="relative"><GitBranch /><span className={['absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background', statusClass].join(' ')} /></Button>} />
+      <PopoverContent align="end" className="w-44 p-1.5">
+        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+        {(['auto', 'manual'] as const).map((value) => {
+          const selected = value === mode
+          const optionLabel = value === 'auto' ? autoLabel : manualLabel
+          return <button key={value} type="button" className={['flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs transition-colors', selected ? 'bg-primary/12 text-primary' : 'hover:bg-accent'].join(' ')} onClick={() => { onChange?.(value); setOpen(false) }}><GitBranch className="size-3.5" /><span className="min-w-0 flex-1">{optionLabel}</span>{selected ? <Check className="size-3.5" /> : null}</button>
+        })}
+      </PopoverContent>
+    </Popover>
   )
 }
 

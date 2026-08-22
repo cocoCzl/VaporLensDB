@@ -572,6 +572,7 @@ enum JdbcBridgeCommand {
         max_rows: Option<u64>,
     },
     Metadata(String),
+    Transaction(&'static str),
 }
 
 impl JdbcBridgeCommand {
@@ -611,6 +612,7 @@ impl JdbcBridgeCommand {
             Self::Metadata(payload) => {
                 format!("METADATA\t{request_id}\t{}\n", BASE64.encode(payload))
             }
+            Self::Transaction(action) => format!("TRANSACTION\t{request_id}\t{action}\n"),
         }
     }
 
@@ -621,6 +623,7 @@ impl JdbcBridgeCommand {
             Self::Query(_) => "query",
             Self::QueryStream { .. } => "query stream",
             Self::Metadata(_) => "metadata",
+            Self::Transaction(_) => "transaction",
         }
     }
 
@@ -631,6 +634,7 @@ impl JdbcBridgeCommand {
             Self::Query(_) => Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
             Self::QueryStream { .. } => Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
             Self::Metadata(_) => Duration::from_secs(JDBC_METADATA_TIMEOUT_SECS as u64),
+            Self::Transaction(_) => Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
         }
     }
 }
@@ -664,6 +668,27 @@ impl DatabaseDriver for JdbcDriver {
 
     async fn ping(&self) -> Result<(), AppError> {
         self.run_bridge("ping", None).await.map(|_| ())
+    }
+
+    async fn begin_transaction(&self) -> Result<(), AppError> {
+        self.sidecar
+            .request(JdbcBridgeCommand::Transaction("BEGIN"))
+            .await
+            .map(|_| ())
+    }
+
+    async fn commit_transaction(&self) -> Result<(), AppError> {
+        self.sidecar
+            .request(JdbcBridgeCommand::Transaction("COMMIT"))
+            .await
+            .map(|_| ())
+    }
+
+    async fn rollback_transaction(&self) -> Result<(), AppError> {
+        self.sidecar
+            .request(JdbcBridgeCommand::Transaction("ROLLBACK"))
+            .await
+            .map(|_| ())
     }
 
     async fn execute_query(

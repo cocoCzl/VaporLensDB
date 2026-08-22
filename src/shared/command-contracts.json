@@ -350,6 +350,34 @@
     "status": "active"
   },
   {
+    "name": "console_transaction_state",
+    "namespace": "query",
+    "args": "{ input: { connectionId: string; consoleId: string } }",
+    "response": "ConsoleTransactionState",
+    "status": "active"
+  },
+  {
+    "name": "set_console_transaction_mode",
+    "namespace": "query",
+    "args": "{ input: { connectionId: string; consoleId: string; mode: 'auto' | 'manual' } }",
+    "response": "ConsoleTransactionState",
+    "status": "active"
+  },
+  {
+    "name": "commit_console_transaction",
+    "namespace": "query",
+    "args": "{ input: { connectionId: string; consoleId: string } }",
+    "response": "ConsoleTransactionState",
+    "status": "active"
+  },
+  {
+    "name": "rollback_console_transaction",
+    "namespace": "query",
+    "args": "{ input: { connectionId: string; consoleId: string } }",
+    "response": "ConsoleTransactionState",
+    "status": "active"
+  },
+  {
     "name": "add_query_history",
     "namespace": "history",
     "args": "{ input: CreateQueryHistoryInput }",

@@ -24,6 +24,15 @@ export interface ExecuteQueryResponse {
   results: QueryResult[]
 }
 
+export type TransactionMode = 'auto' | 'manual'
+export type TransactionPhase = 'idle' | 'active' | 'failed'
+export interface ConsoleTransactionState {
+  connectionId: string
+  consoleId: string
+  mode: TransactionMode
+  phase: TransactionPhase
+}
+
 export interface QueryResultChunk {
   queryId: string
   columns: ColumnMeta[]

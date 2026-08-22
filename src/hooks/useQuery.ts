@@ -46,6 +46,7 @@ export function useQuery() {
             queryId,
             chunkSize: 1_000,
             maxRows: options.maxRows ?? useUiStore.getState().queryMaxRows,
+            consoleId: useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual' ? tabId : undefined,
           })
         } finally {
           streamState.unlisteners.forEach((unlisten) => unlisten())
@@ -64,10 +65,13 @@ export function useQuery() {
           return false
         }
       } else {
-        const response = await executeQuery({ connectionId, sql, queryId })
+        const response = await executeQuery({ connectionId, sql, queryId, consoleId: useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual' ? tabId : undefined })
         setResults(queryId, response.results)
       }
       setResultSource(queryId, connectionId, options)
+      if (useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual') {
+        useEditorStore.getState().setTabTransactionState(tabId, 'manual', 'active')
+      }
       if (containsLikelyDdl(sql)) {
         notify({
           kind: 'info',
@@ -90,6 +94,9 @@ export function useQuery() {
         errorMessage: appError.message,
       })
       setTabQueryState(tabId, queryId, formatLocalError(appError))
+      if (useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual') {
+        useEditorStore.getState().setTabTransactionState(tabId, 'manual', 'failed')
+      }
       notify({ kind: 'error', title: i18n.t('notifications.queryFailed') })
       return false
     }
