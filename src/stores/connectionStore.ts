@@ -183,6 +183,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({ loading: true, error: null })
     try {
       const saved = input.id ? await updateConnection(input) : await createConnection(input)
+      set((state) => ({
+        connections: upsertConnection(state.connections, saved),
+        loading: false,
+      }))
       await get().loadConnections()
       return saved
     } catch (error) {
@@ -322,6 +326,14 @@ function clearConnectionBusy(current: Record<string, true>, id: string): Record<
   return Object.fromEntries(
     Object.entries(current).filter(([connectionId]) => connectionId !== id),
   )
+}
+
+function upsertConnection(connections: ConnectionConfig[], saved: ConnectionConfig) {
+  const existingIndex = connections.findIndex((connection) => connection.id === saved.id)
+  if (existingIndex === -1) {
+    return [...connections, saved]
+  }
+  return connections.map((connection, index) => index === existingIndex ? saved : connection)
 }
 
 function readStoredRecentDataSourceIds() {
