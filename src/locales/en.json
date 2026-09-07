@@ -448,8 +448,7 @@
     "completionConnectHint": "Connect to load completion metadata",
     "completionUnsupportedHint": "The current driver does not support metadata completion",
     "completionSchemaHint": "Select a Schema to enable object completion",
-    "explainSummary": "Explain · {{elapsedMs}} ms",
-    "fitResults": "Fit result height"
+    "explainSummary": "Explain · {{elapsedMs}} ms"
   },
   "editor": {
     "dataSource": "Data Source",
@@ -557,6 +556,7 @@
     "emptyText": "New SQL tabs will appear here.",
     "running": "Running",
     "history": "Query History",
+    "resizeHistory": "Resize query history",
     "historyCleared": "Query history cleared",
     "draftsCleared": "SQL drafts cleared",
     "clearHistory": "Clear query history",

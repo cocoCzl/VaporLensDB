@@ -1,4 +1,4 @@
-import { Check, ChartNoAxesCombined, ChevronDown, Database, GitBranch, ListFilter, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
+import { Check, ChartNoAxesCombined, ChevronDown, Database, GitBranch, History, ListFilter, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -27,6 +27,7 @@ interface EditorToolbarProps {
   explainUnsupportedReason?: string
   disabled?: boolean
   formatDisabled?: boolean
+  historyOpen?: boolean
   onConnectionChange: (connectionId: string | null) => void
   onDatabaseChange?: (database: string | null) => void
   onSchemaChange?: (schema: string | null) => void
@@ -35,6 +36,7 @@ interface EditorToolbarProps {
   onCancel: () => void
   onExplain: () => void
   onFormat: () => void
+  onHistoryToggle?: () => void
   transactionMode?: TransactionMode
   transactionPhase?: TransactionPhase
   transactionDisabled?: boolean
@@ -67,6 +69,8 @@ export function EditorToolbar({
   onCancel,
   onExplain,
   onFormat,
+  historyOpen = false,
+  onHistoryToggle,
   transactionMode = 'auto', transactionPhase = 'idle', transactionDisabled = false, onTransactionModeChange, onCommit, onRollback,
 }: EditorToolbarProps) {
   const { t } = useTranslation()
@@ -160,6 +164,15 @@ export function EditorToolbar({
           onClick={() => onFormat()}
         >
           <Wand2 />
+        </IconTooltipButton>
+        <span className="ide-toolbar-separator" aria-hidden="true" />
+        <IconTooltipButton
+          label={t('sql.history')}
+          variant={historyOpen ? 'secondary' : 'ghost'}
+          aria-pressed={historyOpen}
+          onClick={onHistoryToggle}
+        >
+          <History />
         </IconTooltipButton>
       </div>
     </div>

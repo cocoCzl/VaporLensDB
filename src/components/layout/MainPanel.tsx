@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, History, Loader2, LockKeyhole, PanelBottomClose, PanelBottomOpen, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, Loader2, LockKeyhole, PanelBottomClose, PanelBottomOpen, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
@@ -134,6 +134,7 @@ export function MainPanel() {
   const [editorLoaded, setEditorLoaded] = useState(false)
   const [editorShouldFocus, setEditorShouldFocus] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyPanelWidth, setHistoryPanelWidth] = useState(380)
   const [resultPanelHeight, setResultPanelHeightLocal] = useState(bottomPanelHeight)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
   const draftSaveTimer = useRef<number | null>(null)
@@ -157,6 +158,26 @@ export function MainPanel() {
     const stopResize = () => {
       document.body.style.cursor = previousCursor
       setBottomPanelHeight(nextHeight)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', stopResize)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', stopResize, { once: true })
+  }
+
+  function startHistoryResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = historyPanelWidth
+    const previousCursor = document.body.style.cursor
+    document.body.style.cursor = 'col-resize'
+
+    const onMove = (moveEvent: PointerEvent) => {
+      setHistoryPanelWidth(Math.min(520, Math.max(280, startWidth + startX - moveEvent.clientX)))
+    }
+    const stopResize = () => {
+      document.body.style.cursor = previousCursor
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', stopResize)
     }
@@ -806,6 +827,8 @@ export function MainPanel() {
         onCancel={cancel}
         onExplain={explain}
         onFormat={formatSql}
+        historyOpen={historyOpen}
+        onHistoryToggle={() => setHistoryOpen((open) => !open)}
         transactionMode={activeTab.transactionMode ?? 'auto'}
         transactionPhase={activeTab.transactionPhase ?? 'idle'}
         transactionDisabled={!connectionIsConnected}
@@ -832,6 +855,8 @@ export function MainPanel() {
         }}
         />
 
+        <div className="relative min-h-0 flex-1">
+        <div className="flex h-full min-w-0 flex-col overflow-hidden">
         <div className="ide-editor-surface min-h-0 flex-1">
         {editorLoaded ? (
           <Suspense
@@ -971,28 +996,6 @@ export function MainPanel() {
           <div className="flex items-center gap-2">
             <IconTooltipButton
               size="icon-xs"
-              label={t('sql.history')}
-              variant={historyOpen ? 'secondary' : 'ghost'}
-              onClick={() => setHistoryOpen((open) => !open)}
-            >
-              <History className="size-3.5" />
-            </IconTooltipButton>
-            <IconTooltipButton
-              size="icon-xs"
-              label={t('workbench.fitResults')}
-              variant="ghost"
-              disabled={!activeResult}
-              onClick={() => {
-                const nextHeight = resultHeightForRows(activeResult?.rows.length ?? 0)
-                setResultPanelHeightLocal(nextHeight)
-                setBottomPanelHeight(nextHeight)
-                setBottomPanelCollapsed(false)
-              }}
-            >
-              <PanelBottomOpen className="size-3.5" />
-            </IconTooltipButton>
-            <IconTooltipButton
-              size="icon-xs"
               label={bottomPanelCollapsed ? t('explorer.expand') : t('explorer.collapse')}
               variant="ghost"
               onClick={() => setBottomPanelCollapsed(!bottomPanelCollapsed)}
@@ -1061,25 +1064,31 @@ export function MainPanel() {
                 </div>
               )}
             </div>
-            {historyOpen && (
-              <SqlHistoryPanel
-                connections={connections}
-                activeConnectionId={connectionId}
-                onReuse={(entry) => {
-                  addTab({
-                    id: crypto.randomUUID(),
-                    kind: 'sql',
-                    title: `${entry.connectionNameSnapshot} history`,
-                    sql: entry.sql,
-                    connectionId: entry.connectionId,
-                  })
-                  setActiveConnection(entry.connectionId)
-                }}
-              />
-            )}
           </div>
         </div>}
         </section>
+        </div>
+        {historyOpen && (
+          <SqlHistoryPanel
+            width={historyPanelWidth}
+            connections={connections}
+            activeConnectionId={connectionId}
+            onClose={() => setHistoryOpen(false)}
+            onResizeStart={startHistoryResize}
+            onResizeBy={(delta) => setHistoryPanelWidth((current) => Math.min(520, Math.max(280, current + delta)))}
+            onReuse={(entry) => {
+              addTab({
+                id: crypto.randomUUID(),
+                kind: 'sql',
+                title: `${entry.connectionNameSnapshot} history`,
+                sql: entry.sql,
+                connectionId: entry.connectionId,
+              })
+              setActiveConnection(entry.connectionId)
+            }}
+          />
+        )}
+        </div>
       </div>
       <ObjectInspectorPanel />
     </main>
@@ -1296,12 +1305,20 @@ function WorkbenchHome() {
 }
 
 function SqlHistoryPanel({
+  width,
   connections,
   activeConnectionId,
+  onClose,
+  onResizeStart,
+  onResizeBy,
   onReuse,
 }: {
+  width: number
   connections: ConnectionConfig[]
   activeConnectionId: string | null
+  onClose: () => void
+  onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void
+  onResizeBy: (delta: number) => void
   onReuse: (entry: QueryHistoryEntry) => void
 }) {
   const { t } = useTranslation()
@@ -1344,22 +1361,42 @@ function SqlHistoryPanel({
   }
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l bg-card">
+    <aside className="absolute inset-y-0 right-0 z-30 flex flex-col border-l bg-card shadow-[-18px_0_38px_-28px_hsl(var(--overlay)/0.7)]" style={{ width }} aria-label={t('sql.history')}>
+      <div
+        role="separator"
+        tabIndex={0}
+        aria-orientation="vertical"
+        aria-label={t('sql.resizeHistory')}
+        aria-valuemin={280}
+        aria-valuemax={520}
+        aria-valuenow={Math.round(width)}
+        className="absolute inset-y-0 -left-0.5 z-10 w-1 cursor-col-resize touch-none bg-transparent hover:bg-primary/45 focus-visible:bg-primary/55 focus-visible:outline-none"
+        onPointerDown={onResizeStart}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          onResizeBy(event.key === 'ArrowLeft' ? 16 : -16)
+        }}
+      />
       <div className="flex h-9 items-center justify-between border-b px-3 text-xs">
         <div className="flex min-w-0 items-center gap-2 font-semibold">
           <Clock3 className="size-3.5 text-muted-foreground" />
           <span>{t('sql.history')}</span>
         </div>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant={confirmClear ? 'destructive' : 'ghost'}
-          disabled={history.length === 0 || loading}
-          title={confirmClear ? t('common.confirmClear') : t('common.clear')}
-          onClick={() => void handleClear()}
-        >
-          <Trash2 className="size-3.5" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <IconTooltipButton
+            size="icon-xs"
+            label={confirmClear ? t('common.confirmClear') : t('common.clear')}
+            variant={confirmClear ? 'destructive' : 'ghost'}
+            disabled={history.length === 0 || loading}
+            onClick={() => void handleClear()}
+          >
+            <Trash2 className="size-3.5" />
+          </IconTooltipButton>
+          <IconTooltipButton size="icon-xs" label={t('common.close')} variant="ghost" onClick={onClose}>
+            <X className="size-3.5" />
+          </IconTooltipButton>
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2 border-b p-2">
         <AppSelect

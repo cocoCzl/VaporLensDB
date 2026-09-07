@@ -448,8 +448,7 @@
     "completionConnectHint": "连接后加载补全元数据",
     "completionUnsupportedHint": "当前驱动暂不支持元数据补全",
     "completionSchemaHint": "选择 Schema 后启用对象补全",
-    "explainSummary": "执行计划 · {{elapsedMs}} ms",
-    "fitResults": "适应结果高度"
+    "explainSummary": "执行计划 · {{elapsedMs}} ms"
   },
   "editor": {
     "dataSource": "数据源",
@@ -557,6 +556,7 @@
     "emptyText": "新建 SQL 后会显示在这里。",
     "running": "正在执行",
     "history": "查询历史",
+    "resizeHistory": "调整查询历史宽度",
     "historyCleared": "查询历史已清空",
     "draftsCleared": "SQL 草稿已清空",
     "clearHistory": "清空查询历史",
