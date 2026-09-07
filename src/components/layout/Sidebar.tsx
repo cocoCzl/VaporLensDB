@@ -433,8 +433,8 @@ function CompactDataSourceTree() {
                       aria-selected={selected}
                       aria-expanded={expanded}
                       className={[
-                        'group flex h-6 cursor-pointer items-center gap-1.5 px-2 pl-4 text-xs outline-none hover:bg-accent/75',
-                        selected ? 'bg-accent text-accent-foreground' : '',
+                        'group flex h-6 cursor-pointer items-center gap-1.5 border-l-2 border-transparent px-2 pl-3.5 text-xs outline-none hover:bg-accent/75',
+                        selected ? 'border-primary bg-accent text-accent-foreground' : '',
                       ].join(' ')}
                       onClick={() => setActiveConnection(connection.id)}
                       onDoubleClick={() => openBoundSql(connection)}
@@ -448,7 +448,7 @@ function CompactDataSourceTree() {
                           setActiveConnection(connection.id)
                         }
                       }}
-                      title={`${connection.name} · ${connection.driverType}`}
+                      title={`${connection.name} · ${connection.driverType} · ${runtimeStatusLabel(status, t)}${statuses[connection.id]?.message ? ` · ${statuses[connection.id]?.message}` : ''}`}
                     >
                       <button
                         type="button"
@@ -460,8 +460,9 @@ function CompactDataSourceTree() {
                         {busy ? <Loader2 className="size-3 animate-spin" /> : expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
                       </button>
                       <DatabaseVendorIcon driverType={connection.driverType} className="size-3.5 shrink-0" />
-                      <span className={runtimeStatusDotClass(status)} aria-label={status} />
+                      <span className={runtimeStatusDotClass(status)} aria-label={runtimeStatusLabel(status, t)} title={runtimeStatusLabel(status, t)} />
                       <span className="min-w-0 flex-1 truncate">{highlightDataSourceMatch(connection.name, query)}</span>
+                      {selected && <span className="rounded bg-primary/12 px-1 py-px text-[9px] font-medium text-primary">{t('connection.browsing')}</span>}
                       {favoriteDataSourceIds.includes(connection.id) && <Star className="size-3 shrink-0 fill-current text-amber-500" />}
                       <button
                         type="button"

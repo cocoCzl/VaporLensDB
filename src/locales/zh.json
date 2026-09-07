@@ -43,6 +43,7 @@
     "connecting": "连接中",
     "failed": "连接失败",
     "disconnected": "未连接",
+    "browsing": "浏览中",
     "select": "选择连接",
     "searchDataSources": "搜索数据源",
     "noMatches": "没有匹配的数据源",
@@ -447,9 +448,11 @@
     "completionConnectHint": "连接后加载补全元数据",
     "completionUnsupportedHint": "当前驱动暂不支持元数据补全",
     "completionSchemaHint": "选择 Schema 后启用对象补全",
-    "explainSummary": "执行计划 · {{elapsedMs}} ms"
+    "explainSummary": "执行计划 · {{elapsedMs}} ms",
+    "fitResults": "适应结果高度"
   },
   "editor": {
+    "dataSource": "数据源",
     "run": "执行",
     "format": "格式化",
     "cancel": "取消",

@@ -12,14 +12,14 @@
     --card-foreground: 222 30% 12%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 30% 12%;
-    --border: 218 13% 84%;
-    --input: 218 13% 81%;
+    --border: 218 13% 80%;
+    --input: 218 13% 78%;
     --primary: 216 88% 57%;
     --primary-foreground: 0 0% 100%;
     --secondary: 218 15% 92.5%;
     --secondary-foreground: 221 26% 19%;
     --muted: 218 14% 94%;
-    --muted-foreground: 218 9% 42%;
+    --muted-foreground: 218 12% 36%;
     --accent: 215 53% 91%;
     --accent-foreground: 221 36% 23%;
     --destructive: 0 70% 50%;
@@ -35,7 +35,7 @@
     --toolbar: 220 15% 96.2%;
     --panel: 218 15% 95.5%;
     --panel-raised: 0 0% 100%;
-    --separator: 218 12% 81%;
+    --separator: 218 12% 77%;
     --selection: 215 76% 91%;
     --selection-strong: 216 83% 55%;
     --hover: 218 17% 90%;

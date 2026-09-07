@@ -1,5 +1,5 @@
 import { Check, ChartNoAxesCombined, ChevronDown, Database, GitBranch, ListFilter, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
@@ -76,7 +76,10 @@ export function EditorToolbar({
   return (
     <div className="ide-toolbar flex h-9 items-center gap-2 overflow-hidden border-b px-2" role="toolbar" aria-label={t('editor.run')}>
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
-        <Database className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <span className="hidden shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground lg:inline">
+          {t('editor.dataSource')}
+        </span>
+        <Database className="size-4 shrink-0 text-muted-foreground lg:hidden" aria-hidden="true" />
         <ExecutionDataSourcePicker
           connections={connections}
           groups={dataSourceGroups}
@@ -85,8 +88,9 @@ export function EditorToolbar({
           disabled={running}
           onChange={onConnectionChange}
         />
+        <ContextSelect label={t('metadata.database')}>
         <AppSelect
-          className="hidden min-w-28 max-w-40 shrink-0 sm:flex"
+          className="min-w-28 max-w-40 shrink-0"
           aria-label={t('metadata.database')}
           value={database ?? ''}
           disabled={!connectionId || databases.length === 0}
@@ -94,14 +98,17 @@ export function EditorToolbar({
           onValueChange={(value) => onDatabaseChange?.(value || null)}
           options={[...(!database ? [{ value: '', label: t('metadata.database') }] : []), ...databases.map((item) => ({ value: item.name, label: item.name }))]}
         />
+        </ContextSelect>
+        <ContextSelect label={t('metadata.schema')} className="hidden md:flex">
         <AppSelect
-          className="hidden min-w-24 max-w-36 shrink-0 md:flex"
+          className="min-w-24 max-w-36 shrink-0"
           aria-label={t('metadata.schema')}
           value={schema ?? ''}
           disabled={!connectionId || schemas.length === 0}
           onValueChange={(value) => onSchemaChange?.(value || null)}
           options={[...(!schema ? [{ value: '', label: 'Schema' }] : []), ...schemas.map((item) => ({ value: item.name, label: item.name }))]}
         />
+        </ContextSelect>
         <RowLimitMenu maxRows={maxRows} onChange={onMaxRowsChange} label={t('editor.rowLimit')} />
       </div>
 
@@ -130,40 +137,40 @@ export function EditorToolbar({
             <Play />
           </IconTooltipButton>
         ) : (
-          <Button
-            type="button"
-            size="icon-sm"
-            aria-label={`${t('editor.run')} (${runShortcut})`}
-            title={`${t('editor.run')} (${runShortcut})`}
+          <IconTooltipButton
+            label={`${t('editor.run')} (${runShortcut})`}
             disabled={disabled}
             onClick={() => onRun()}
           >
             <Play />
-          </Button>
+          </IconTooltipButton>
         )}
-        <Button
-          type="button"
-          size="icon-sm"
+        <IconTooltipButton
+          label={explainTitle}
           variant="ghost"
-          aria-label={explainTitle}
-          title={explainTitle}
           disabled={disabled || running || !canExplain}
           onClick={() => onExplain()}
         >
           <ChartNoAxesCombined />
-        </Button>
-        <Button
-          type="button"
-          size="icon-sm"
+        </IconTooltipButton>
+        <IconTooltipButton
+          label={t('editor.format')}
           variant="ghost"
-          aria-label={t('editor.format')}
-          title={t('editor.format')}
           disabled={formatDisabled || running}
           onClick={() => onFormat()}
         >
           <Wand2 />
-        </Button>
+        </IconTooltipButton>
       </div>
+    </div>
+  )
+}
+
+function ContextSelect({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={['min-w-0 items-center gap-1.5', className ?? 'flex'].join(' ')}>
+      <span className="hidden shrink-0 text-[10px] font-medium text-muted-foreground xl:inline">{label}</span>
+      {children}
     </div>
   )
 }

@@ -43,6 +43,7 @@
     "connecting": "Connecting",
     "failed": "Connection failed",
     "disconnected": "Disconnected",
+    "browsing": "Browsing",
     "select": "Select connection",
     "searchDataSources": "Search Data Sources",
     "noMatches": "No matching Data Sources",
@@ -447,9 +448,11 @@
     "completionConnectHint": "Connect to load completion metadata",
     "completionUnsupportedHint": "The current driver does not support metadata completion",
     "completionSchemaHint": "Select a Schema to enable object completion",
-    "explainSummary": "Explain · {{elapsedMs}} ms"
+    "explainSummary": "Explain · {{elapsedMs}} ms",
+    "fitResults": "Fit result height"
   },
   "editor": {
+    "dataSource": "Data Source",
     "run": "Run",
     "format": "Format",
     "cancel": "Cancel",

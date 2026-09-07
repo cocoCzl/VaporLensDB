@@ -102,12 +102,12 @@ export function DataGrid({
             <div className="border-b border-r border-border/60 px-2 py-1 text-right font-medium text-muted-foreground">
               #
             </div>
-            {result.columns.map((column, columnIndex) => (
+            {result.columns.map((column) => (
               <div key={column.name} className="group relative min-w-0 border-b border-r border-border/60 px-2 py-1 font-semibold">
                 <div className="flex min-w-0 items-center justify-between gap-3">
-                  <span className="min-w-0 truncate">{column.name}</span>
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
-                    {column.dataType}
+                  <span className="min-w-0 truncate" title={column.name}>{column.name}</span>
+                  <span className="shrink-0 rounded bg-muted/70 px-1 py-px font-mono text-[9px] font-medium text-muted-foreground" title={column.dataType}>
+                    {displayDataType(column.dataType)}
                   </span>
                 </div>
                 <ColumnResizeHandle
@@ -121,11 +121,6 @@ export function DataGrid({
                       return next
                     })
                   }
-                />
-                <button
-                  type="button"
-                  className="absolute inset-0 -z-10"
-                  aria-label={`select column ${columnIndex + 1}`}
                 />
               </div>
             ))}
@@ -346,7 +341,10 @@ function ColumnResizeHandle({
     <span
       role="separator"
       aria-label={`resize ${columnName}`}
-      className="absolute right-0 top-0 h-full w-1 cursor-col-resize opacity-0 hover:bg-primary/50 group-hover:opacity-100"
+      aria-orientation="vertical"
+      tabIndex={0}
+      title={`Drag to resize ${columnName}; double-click to reset`}
+      className="absolute right-0 top-0 h-full w-1 cursor-col-resize opacity-0 hover:bg-primary/50 group-hover:opacity-100 focus-visible:w-1.5 focus-visible:bg-primary/70 focus-visible:opacity-100"
       onMouseDown={(event) => {
         event.preventDefault()
         const startX = event.clientX
@@ -364,6 +362,12 @@ function ColumnResizeHandle({
         document.body.style.cursor = 'col-resize'
         document.addEventListener('mousemove', move)
         document.addEventListener('mouseup', up)
+      }}
+      onDoubleClick={() => onResize(COLUMN_MIN_WIDTH)}
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        event.preventDefault()
+        onResize(clampWidth(currentWidth + (event.key === 'ArrowRight' ? 16 : -16)))
       }}
     />
   )
@@ -556,4 +560,31 @@ function cellAlignment(dataType: string) {
     return 'justify-end text-right tabular-nums'
   }
   return 'text-left'
+}
+
+/** Keep driver-internal JDBC/MySQL names out of the primary table hierarchy. */
+function displayDataType(dataType: string) {
+  const normalized = dataType.trim().toUpperCase()
+  const aliases: Record<string, string> = {
+    MYSQL_TYPE_BIT: 'BIT',
+    MYSQL_TYPE_TINY: 'TINYINT',
+    MYSQL_TYPE_SHORT: 'SMALLINT',
+    MYSQL_TYPE_LONG: 'INT',
+    MYSQL_TYPE_LONGLONG: 'BIGINT',
+    MYSQL_TYPE_INT24: 'MEDIUMINT',
+    MYSQL_TYPE_FLOAT: 'FLOAT',
+    MYSQL_TYPE_DOUBLE: 'DOUBLE',
+    MYSQL_TYPE_NEWDECIMAL: 'DECIMAL',
+    MYSQL_TYPE_DATE: 'DATE',
+    MYSQL_TYPE_TIME: 'TIME',
+    MYSQL_TYPE_DATETIME: 'DATETIME',
+    MYSQL_TYPE_TIMESTAMP: 'TIMESTAMP',
+    MYSQL_TYPE_YEAR: 'YEAR',
+    MYSQL_TYPE_VAR_STRING: 'VARCHAR',
+    MYSQL_TYPE_STRING: 'CHAR',
+    MYSQL_TYPE_VARCHAR: 'VARCHAR',
+    MYSQL_TYPE_BLOB: 'BLOB',
+    MYSQL_TYPE_JSON: 'JSON',
+  }
+  return aliases[normalized] ?? dataType
 }

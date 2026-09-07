@@ -138,6 +138,7 @@ export function MainPanel() {
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
   const draftSaveTimer = useRef<number | null>(null)
   const handledHistoryRequest = useRef(0)
+  const autoFittedResultIds = useRef(new Set<string>())
 
   function startResultResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (bottomPanelCollapsed) return
@@ -222,6 +223,22 @@ export function MainPanel() {
     queryCapabilities.canComplete,
     selectedSchema,
   )
+
+  // A short result should not leave a large blank panel below the editor. Each
+  // execution gets a compact, still user-resizable height the first time it lands.
+  useEffect(() => {
+    if (!activeQueryId || !activeResult || autoFittedResultIds.current.has(activeQueryId)) return
+    if (bottomPanelCollapsed) return
+    const rowCount = activeResult.rows.length
+    const timer = window.setTimeout(() => {
+      if (autoFittedResultIds.current.has(activeQueryId)) return
+      autoFittedResultIds.current.add(activeQueryId)
+      const nextHeight = resultHeightForRows(rowCount)
+      setResultPanelHeightLocal(nextHeight)
+      setBottomPanelHeight(nextHeight)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeQueryId, activeResult, bottomPanelCollapsed, setBottomPanelHeight])
 
   useEffect(() => {
     if (
@@ -959,6 +976,20 @@ export function MainPanel() {
               onClick={() => setHistoryOpen((open) => !open)}
             >
               <History className="size-3.5" />
+            </IconTooltipButton>
+            <IconTooltipButton
+              size="icon-xs"
+              label={t('workbench.fitResults')}
+              variant="ghost"
+              disabled={!activeResult}
+              onClick={() => {
+                const nextHeight = resultHeightForRows(activeResult?.rows.length ?? 0)
+                setResultPanelHeightLocal(nextHeight)
+                setBottomPanelHeight(nextHeight)
+                setBottomPanelCollapsed(false)
+              }}
+            >
+              <PanelBottomOpen className="size-3.5" />
             </IconTooltipButton>
             <IconTooltipButton
               size="icon-xs"
@@ -2494,6 +2525,11 @@ function formatSqlRiskReason(reason: SqlRiskReason) {
     case 'updateWithoutWhere':
       return i18n.t('workbench.riskUpdateWithoutWhere')
   }
+}
+
+function resultHeightForRows(rowCount: number) {
+  // Header, column labels, cell inspector, then up to ten visible compact rows.
+  return Math.max(160, Math.min(360, 108 + Math.min(rowCount, 10) * 26))
 }
 
 function resultSummary(result: QueryResult) {
