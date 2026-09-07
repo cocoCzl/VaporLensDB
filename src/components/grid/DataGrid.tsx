@@ -230,6 +230,58 @@ export function DataGrid({
   )
 }
 
+/**
+ * Result-set metadata comes from the driver's query response, so opening this
+ * view never needs a second SQL request or assumes a single source table.
+ */
+export function ResultMetadataGrid({ result }: DataGridProps) {
+  const { t } = useTranslation()
+
+  if (!result || result.columns.length === 0) {
+    return (
+      <div className="grid h-full place-items-center bg-card text-xs text-muted-foreground">
+        {t('result.metadataEmpty')}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-card text-xs">
+      <div className="min-h-0 flex-1 overflow-auto">
+        <table className="w-full min-w-[34rem] border-collapse text-left" data-testid="result-metadata-grid">
+          <thead className="ide-toolbar sticky top-0 z-10 text-[11px] text-muted-foreground">
+            <tr>
+              <th scope="col" className="w-14 border-b border-r border-border/60 px-3 py-1.5 text-right font-medium">#</th>
+              <th scope="col" className="border-b border-r border-border/60 px-3 py-1.5 font-medium">{t('result.metadataName')}</th>
+              <th scope="col" className="border-b border-r border-border/60 px-3 py-1.5 font-medium">{t('result.metadataLabel')}</th>
+              <th scope="col" className="border-b border-border/60 px-3 py-1.5 font-medium">{t('result.metadataType')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {result.columns.map((column, index) => (
+              <tr key={`${index}-${column.name}`} className="hover:bg-[hsl(var(--hover)/0.62)]">
+                <td className="border-b border-r border-border/45 bg-muted/25 px-3 py-1.5 text-right font-mono text-[11px] text-muted-foreground">{index + 1}</td>
+                <td className="max-w-0 border-b border-r border-border/45 px-3 py-1.5 font-mono font-medium" title={column.name}>
+                  <span className="block truncate">{column.name}</span>
+                </td>
+                <td className="max-w-0 border-b border-r border-border/45 px-3 py-1.5 text-muted-foreground" title={column.name}>
+                  <span className="block truncate">{column.name}</span>
+                </td>
+                <td className="border-b border-border/45 px-3 py-1.5" title={column.dataType}>
+                  <span className="inline-flex rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground">{displayDataType(column.dataType)}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex h-9 shrink-0 items-center border-t px-3 text-[11px] text-muted-foreground">
+        {t('result.metadataHint', { count: result.columns.length })}
+      </div>
+    </div>
+  )
+}
+
 function CellInspector({
   result,
   selection,
@@ -272,9 +324,10 @@ function CellInspector({
         <input
           type="checkbox"
           checked={includeHeaders}
+          aria-label={t('result.copyHeaders')}
           onChange={(event) => onIncludeHeadersChange(event.target.checked)}
         />
-        Headers
+        {t('result.copyHeaders')}
       </label>
       <Button type="button" size="xs" variant="ghost" onClick={() => copyToClipboard(value)}>
         <Copy className="size-3.5" />

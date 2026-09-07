@@ -9,7 +9,7 @@ import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
 import { ConnectionList } from '@/components/connection/ConnectionList'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
-import { DataGrid } from '@/components/grid/DataGrid'
+import { DataGrid, ResultMetadataGrid } from '@/components/grid/DataGrid'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -135,6 +135,7 @@ export function MainPanel() {
   const [editorShouldFocus, setEditorShouldFocus] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyPanelWidth, setHistoryPanelWidth] = useState(380)
+  const [resultView, setResultView] = useState<'data' | 'metadata'>('data')
   const [resultPanelHeight, setResultPanelHeightLocal] = useState(bottomPanelHeight)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
   const draftSaveTimer = useRef<number | null>(null)
@@ -1058,8 +1059,11 @@ export function MainPanel() {
                       }
                     />
                   )}
+                  {activeResult?.columns.length ? (
+                    <ResultViewTabs value={resultView} onChange={setResultView} />
+                  ) : null}
                   <div className="min-h-0 flex-1">
-                    <DataGrid result={activeResult} />
+                    {resultView === 'metadata' ? <ResultMetadataGrid result={activeResult} /> : <DataGrid result={activeResult} />}
                   </div>
                 </div>
               )}
@@ -2444,6 +2448,40 @@ function ResultSetTabs({
           >
             <span className="font-medium">{t('workbench.resultLabel', { index: index + 1 })}</span>
             <span className="ml-2 text-muted-foreground">{compactResultSummary(result)}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function ResultViewTabs({
+  value,
+  onChange,
+}: {
+  value: 'data' | 'metadata'
+  onChange: (value: 'data' | 'metadata') => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex h-8 shrink-0 items-end gap-1 border-b bg-muted/15 px-2" role="tablist" aria-label={t('result.viewTabs')}>
+      {(['data', 'metadata'] as const).map((view) => {
+        const selected = value === view
+        return (
+          <button
+            key={view}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            className={[
+              'h-7 rounded-t-md border-x border-t px-2.5 text-xs transition-colors',
+              selected
+                ? 'border-border bg-card font-medium text-foreground'
+                : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+            ].join(' ')}
+            onClick={() => onChange(view)}
+          >
+            {view === 'data' ? t('result.data') : t('result.metadata')}
           </button>
         )
       })}

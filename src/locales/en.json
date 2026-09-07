@@ -483,9 +483,18 @@
     "maxRowsSuffix": " of {{count}} rows",
     "pendingChange": "Pending change",
     "selectCellHint": "Select a cell to inspect the full value",
+    "copyHeaders": "Include headers when copying",
     "cell": "Cell",
     "row": "Row",
-    "noRows": "0 rows"
+    "noRows": "0 rows",
+    "viewTabs": "Result set view",
+    "data": "Data",
+    "metadata": "Field Metadata",
+    "metadataName": "Name",
+    "metadataLabel": "Label",
+    "metadataType": "Type",
+    "metadataHint": "{{count}} fields in this result set; metadata comes from this query's driver response.",
+    "metadataEmpty": "No result-set field metadata is available"
   },
   "settings": {
     "title": "Settings",

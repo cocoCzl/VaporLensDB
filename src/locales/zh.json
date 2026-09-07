@@ -483,9 +483,18 @@
     "maxRowsSuffix": " {{count}} 行",
     "pendingChange": "待提交变更",
     "selectCellHint": "选择一个单元格可查看完整值",
+    "copyHeaders": "复制时包含列名",
     "cell": "单元格",
     "row": "行",
-    "noRows": "0 行"
+    "noRows": "0 行",
+    "viewTabs": "结果集视图",
+    "data": "数据",
+    "metadata": "字段元数据",
+    "metadataName": "字段",
+    "metadataLabel": "显示名",
+    "metadataType": "类型",
+    "metadataHint": "此结果集包含 {{count}} 个字段；元数据来自本次查询的驱动响应。",
+    "metadataEmpty": "暂无可显示的结果集字段元数据"
   },
   "settings": {
     "title": "设置",
