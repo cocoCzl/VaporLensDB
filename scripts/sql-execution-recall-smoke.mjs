@@ -12,7 +12,7 @@ assert(!panel.includes('connectionIsConnected &&\n      queryCapabilities.canQue
 assert(panel.includes('initialConnectionFilter={activeTab.recordsConnectionFilter ?? null}'), 'history workspace must receive its requested data-source scope')
 
 const toolbar = read('src/components/editor/EditorToolbar.tsx')
-assert(toolbar.includes('title={`${t(\'editor.run\')} (${runShortcut})`}'), 'run button must be a direct native button with a visible hint')
+assert(toolbar.includes('label={`${t(\'editor.run\')} (${runShortcut})`}'), 'run button must expose its shortcut through an accessible hint')
 assert(toolbar.includes('onClick={() => onRun()}'), 'run button must not pass its MouseEvent as the SQL override')
 assert(toolbar.includes('onClick={() => onExplain()}'), 'explain button must not receive a browser event argument')
 assert(toolbar.includes('onClick={() => onFormat()}'), 'format button must not receive a browser event argument')

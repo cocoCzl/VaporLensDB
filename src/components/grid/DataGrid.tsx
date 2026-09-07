@@ -396,7 +396,7 @@ function ColumnResizeHandle({
       aria-label={`resize ${columnName}`}
       aria-orientation="vertical"
       tabIndex={0}
-      title={`Drag to resize ${columnName}; double-click to reset`}
+      title={`Drag to resize ${columnName}`}
       className="absolute right-0 top-0 h-full w-1 cursor-col-resize opacity-0 hover:bg-primary/50 group-hover:opacity-100 focus-visible:w-1.5 focus-visible:bg-primary/70 focus-visible:opacity-100"
       onMouseDown={(event) => {
         event.preventDefault()
@@ -416,7 +416,6 @@ function ColumnResizeHandle({
         document.addEventListener('mousemove', move)
         document.addEventListener('mouseup', up)
       }}
-      onDoubleClick={() => onResize(COLUMN_MIN_WIDTH)}
       onKeyDown={(event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
         event.preventDefault()
