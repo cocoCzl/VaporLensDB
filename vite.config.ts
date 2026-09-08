@@ -3,14 +3,14 @@ import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
 import path from 'path'
 
-const monacoVsDir = path.resolve(__dirname, 'node_modules/monaco-editor/min/vs')
+const monacoVsDir = path.resolve(import.meta.dirname, 'node_modules/monaco-editor/min/vs')
 const monacoLanguageIds = ['sql', 'pgsql']
 
 export default defineConfig({
   plugins: [react(), monacoStaticAssetsPlugin()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   server: {
@@ -30,7 +30,7 @@ export default defineConfig({
 })
 
 function monacoStaticAssetsPlugin(): Plugin {
-  let outDir = path.resolve(__dirname, 'dist')
+  let outDir = path.resolve(import.meta.dirname, 'dist')
 
   return {
     name: 'monaco-static-assets',
