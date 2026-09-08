@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -29,6 +28,7 @@ export function ConnectionDialog({
 }: ConnectionDialogProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [headerDriverType, setHeaderDriverType] = useState(connection?.driverType ?? 'postgres')
   const { saveConnection, testConnectionInput, connectConnection, loading } = useConnectionStore()
   const { drivers, loadDrivers } = useDriverStore()
 
@@ -50,7 +50,13 @@ export function ConnectionDialog({
   )
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) setHeaderDriverType(connection?.driverType ?? 'postgres')
+        setOpen(nextOpen)
+      }}
+    >
       <DialogTrigger
         nativeButton={false}
         render={
@@ -64,15 +70,12 @@ export function ConnectionDialog({
         <DialogHeader className="ide-toolbar flex h-10 shrink-0 flex-row items-center justify-between gap-3 border-b px-3">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid size-7 shrink-0 place-items-center rounded bg-primary/15 text-primary">
-                  <DatabaseVendorIcon driverType={connection?.driverType ?? 'postgres'} className="size-4" />
+                  <DatabaseVendorIcon driverType={headerDriverType} className="size-4" />
                 </div>
                 <div className="min-w-0">
                   <DialogTitle>
                     {connection ? t('connection.editTitle') : t('connection.newTitle')}
                   </DialogTitle>
-                  <DialogDescription className="truncate text-xs">
-                    {t('connection.dialogSubtitle')}
-                  </DialogDescription>
                 </div>
               </div>
               <Button
@@ -91,6 +94,7 @@ export function ConnectionDialog({
                 connection={connection}
                 driverDefinitions={drivers}
                 loading={loading}
+                onDriverTypeChange={setHeaderDriverType}
                 onCancel={() => setOpen(false)}
                 onTest={testConnectionInput}
                 onSaveOnly={async (input) => {

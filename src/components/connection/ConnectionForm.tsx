@@ -33,6 +33,7 @@ interface ConnectionFormProps {
   onCancel: () => void
   layout?: 'dialog' | 'panel'
   onDirtyChange?: (dirty: boolean) => void
+  onDriverTypeChange?: (driverType: DriverType) => void
 }
 
 export function ConnectionForm({
@@ -45,6 +46,7 @@ export function ConnectionForm({
   onCancel,
   layout = 'dialog',
   onDirtyChange,
+  onDriverTypeChange,
 }: ConnectionFormProps) {
   const { t } = useTranslation()
   const dataSourceGroups = useConnectionStore((state) => state.dataSourceGroups)
@@ -159,6 +161,7 @@ export function ConnectionForm({
     const driverType = definition?.driverType ?? (driverDefinitionId as DriverType)
     const profile = profileForDriver(driverType, definition)
     const nextVariant = profile.connectionVariants[0].id
+    onDriverTypeChange?.(driverType)
     setConnectionVariant(nextVariant)
     setForm((current) => ({
       ...current,

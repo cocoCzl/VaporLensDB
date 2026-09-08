@@ -44,7 +44,6 @@ export function ConnectionEditorPanel({ connection, isNew = false, onNew, onCanc
       <header className="flex h-12 shrink-0 items-center border-b px-4">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold">{isNew ? t('connection.newTitle') : t('connection.editTitle')}</h2>
-          <p className="truncate text-[11px] text-muted-foreground">{t('connection.dialogSubtitle')}</p>
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-hidden">

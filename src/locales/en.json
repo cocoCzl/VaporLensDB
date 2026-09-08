@@ -63,7 +63,6 @@
     "moveToGroup": "Move to group",
     "selectedCount": "{{count}} selected",
     "notReady": "Not ready",
-    "dialogSubtitle": "Configure a PostgreSQL, MySQL, Oracle, or custom-driver data source.",
     "driverHelp": "PostgreSQL and MySQL use built-in drivers. Oracle requires a local ojdbc JAR and supports connection, query execution, object browsing, DDL/source, and completion."
   },
   "databaseCreate": {

@@ -63,7 +63,6 @@
     "moveToGroup": "移动到分组",
     "selectedCount": "已选择 {{count}} 项",
     "notReady": "未就绪",
-    "dialogSubtitle": "配置 PostgreSQL、MySQL、Oracle 或自定义驱动的数据源。",
     "driverHelp": "PostgreSQL 和 MySQL 使用内置驱动；Oracle 需要本地 ojdbc，连接、查询、对象浏览、DDL/source 和补全可用。"
   },
   "databaseCreate": {

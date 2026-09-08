@@ -84,7 +84,8 @@ const dialog = read('src/components/connection/ConnectionDialog.tsx')
 includesAll(
   dialog,
   [
-    "t('connection.dialogSubtitle')",
+    'headerDriverType',
+    'onDriverTypeChange={setHeaderDriverType}',
     'onSaveOnly={async (input) =>',
     'onSaveAndConnect={async (input) =>',
     'await connectConnection(saved.id, { password: input.savePassword ? null : input.password })',
@@ -113,8 +114,8 @@ includesAll(
 
 const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
-includesAll(zh, ['配置 PostgreSQL、MySQL、Oracle', '需要本地 ojdbc', '"oracleRequirement"', '"saveAndConnect": "保存并连接"'], 'Chinese connection dialog copy')
-includesAll(en, ['PostgreSQL, MySQL, Oracle', 'requires a local ojdbc', '"oracleRequirement"', '"saveAndConnect": "Save and connect"'], 'English connection dialog copy')
+includesAll(zh, ['PostgreSQL 和 MySQL 使用内置驱动', '需要本地 ojdbc', '"oracleRequirement"', '"saveAndConnect": "保存并连接"'], 'Chinese driver help copy')
+includesAll(en, ['PostgreSQL and MySQL use built-in drivers', 'requires a local ojdbc', '"oracleRequirement"', '"saveAndConnect": "Save and connect"'], 'English driver help copy')
 
 const store = read('src/stores/connectionStore.ts')
 includesAll(
