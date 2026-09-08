@@ -17,6 +17,8 @@ import { useConnectionStore } from './stores/connectionStore'
 import { useMetadataStore } from './stores/metadataStore'
 import i18n from './i18n'
 
+const MIN_SPLASH_DURATION_MS = 250
+
 export default function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
   const [showSplash, setShowSplash] = useState(true)
@@ -30,6 +32,8 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
+    let splashTimer: number | undefined
+    const splashStartedAt = performance.now()
 
     setApplicationMenuLanguage(normalizedApplicationMenuLanguage(i18n.language)).catch(() => {
       // The app can still run in browser preview or if the native menu is unavailable.
@@ -50,15 +54,20 @@ export default function App() {
         }
       })
       .finally(() => {
-        window.setTimeout(() => {
+        const elapsed = performance.now() - splashStartedAt
+        const remaining = Math.max(0, MIN_SPLASH_DURATION_MS - elapsed)
+        splashTimer = window.setTimeout(() => {
           if (!cancelled) {
             setShowSplash(false)
           }
-        }, 650)
+        }, remaining)
       })
 
     return () => {
       cancelled = true
+      if (splashTimer !== undefined) {
+        window.clearTimeout(splashTimer)
+      }
     }
   }, [idleReclaimMinutes, maxLiveSessions])
 
