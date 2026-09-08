@@ -11,8 +11,8 @@ use std::process::Command;
 use std::process::Stdio;
 
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Key,
+    aead::{Aead, AeadCore, Generate, KeyInit},
+    Aes256Gcm, Key, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
@@ -50,7 +50,7 @@ pub fn key_backend_label() -> &'static str {
 
 pub fn encrypt_password(config_dir: &Path, plaintext: &str) -> Result<String, AppError> {
     let cipher = cipher(config_dir)?;
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let nonce = Nonce::<<Aes256Gcm as AeadCore>::NonceSize>::generate();
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|error| AppError::AuthError(format!("encrypt password failed: {error}")))?;
@@ -74,8 +74,10 @@ pub fn decrypt_password(config_dir: &Path, encrypted: &str) -> Result<String, Ap
     })?;
 
     let cipher = cipher(config_dir)?;
+    let nonce = Nonce::<<Aes256Gcm as AeadCore>::NonceSize>::try_from(nonce.as_slice())
+        .map_err(|_| AppError::AuthError("invalid encrypted password nonce".to_string()))?;
     let plaintext = cipher
-        .decrypt(nonce.as_slice().into(), ciphertext.as_ref())
+        .decrypt(&nonce, ciphertext.as_ref())
         .map_err(|error| AppError::AuthError(format!("decrypt password failed: {error}")))?;
 
     String::from_utf8(plaintext)
@@ -84,7 +86,7 @@ pub fn decrypt_password(config_dir: &Path, encrypted: &str) -> Result<String, Ap
 
 fn cipher(config_dir: &Path) -> Result<Aes256Gcm, AppError> {
     let key = load_or_create_key(config_dir)?;
-    Ok(Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key)))
+    Ok(Aes256Gcm::new(&Key::<Aes256Gcm>::from(key)))
 }
 
 fn load_or_create_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
@@ -388,7 +390,7 @@ fn load_or_create_dev_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
         return decode_key(encoded.trim(), "development key");
     }
 
-    let key = Aes256Gcm::generate_key(&mut OsRng);
+    let key = Key::<Aes256Gcm>::generate();
     write_dev_key(&path, &STANDARD.encode(key.as_slice()))?;
 
     let mut key_bytes = [0_u8; 32];
@@ -401,7 +403,7 @@ fn migrated_or_new_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
     if legacy.exists() {
         return decode_key(fs::read_to_string(legacy)?.trim(), "legacy development key");
     }
-    let key = Aes256Gcm::generate_key(&mut OsRng);
+    let key = Key::<Aes256Gcm>::generate();
     let mut bytes = [0_u8; 32];
     bytes.copy_from_slice(key.as_slice());
     Ok(bytes)
