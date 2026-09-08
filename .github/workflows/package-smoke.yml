@@ -61,7 +61,7 @@ jobs:
         run: ./build.sh linux
 
       - name: Upload temporary Linux packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: VaporLensDB-linux-x86_64
           path: artifacts/linux/x86_64/
@@ -108,7 +108,7 @@ jobs:
         run: ./build.sh windows
 
       - name: Upload temporary Windows packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: VaporLensDB-windows-x86_64
           path: artifacts/windows/x86_64/
