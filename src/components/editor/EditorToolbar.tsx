@@ -94,7 +94,7 @@ export function EditorToolbar({
         />
         <ContextSelect label={t('metadata.database')}>
         <AppSelect
-          className="min-w-28 max-w-40 shrink-0"
+          className="w-40 shrink-0"
           aria-label={t('metadata.database')}
           value={database ?? ''}
           disabled={!connectionId || databases.length === 0}
@@ -105,7 +105,7 @@ export function EditorToolbar({
         </ContextSelect>
         <ContextSelect label={t('metadata.schema')} className="hidden md:flex">
         <AppSelect
-          className="min-w-24 max-w-36 shrink-0"
+          className="w-36 shrink-0"
           aria-label={t('metadata.schema')}
           value={schema ?? ''}
           disabled={!connectionId || schemas.length === 0}
@@ -181,7 +181,7 @@ export function EditorToolbar({
 
 function ContextSelect({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
   return (
-    <div className={['min-w-0 items-center gap-1.5', className ?? 'flex'].join(' ')}>
+    <div className={['min-w-0 shrink-0 items-center gap-1.5', className ?? 'flex'].join(' ')}>
       <span className="hidden shrink-0 text-[10px] font-medium text-muted-foreground xl:inline">{label}</span>
       {children}
     </div>
