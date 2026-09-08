@@ -2,6 +2,17 @@
 
 All notable changes to VaporLensDB are documented in this file.
 
+## [0.8.5]
+
+### Fixed
+
+- Synced the connection-dialog header icon with the selected database driver.
+
+### Changed
+
+- Reduced the startup splash delay after the backend becomes ready.
+- Removed redundant generic guidance from data-source editing headers.
+
 ## [0.8.4]
 
 ### Added
