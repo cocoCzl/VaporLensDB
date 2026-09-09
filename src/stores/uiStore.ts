@@ -23,6 +23,8 @@ const DEFAULT_DATA_PREVIEW_ROWS = 200
 const DEFAULT_EDITOR_FONT_SIZE = 13
 const DEFAULT_MAX_LIVE_SESSIONS = 5
 const DEFAULT_IDLE_RECLAIM_MINUTES = 30
+const DEFAULT_RESULT_PANEL_HEIGHT = 400
+const RESULT_PANEL_LAYOUT_VERSION = 2
 
 interface UserSettings {
   queryMaxRows: number
@@ -33,6 +35,7 @@ interface UserSettings {
   sidebarCollapsed: boolean
   bottomPanelHeight: number
   bottomPanelCollapsed: boolean
+  resultPanelLayoutVersion: number
   exportDirectory: string | null
   maxLiveSessions: number
   idleReclaimMinutes: number | null
@@ -45,6 +48,7 @@ interface UiState {
   sidebarCollapsed: boolean
   bottomPanelHeight: number
   bottomPanelCollapsed: boolean
+  resultPanelLayoutVersion: number
   queryMaxRows: number
   dataPreviewDefaultRows: number
   editorFontSize: number
@@ -102,7 +106,8 @@ export const useUiStore = create<UiState>((set) => ({
     set((state) => {
       const next = {
         ...settingsFromState(state),
-        bottomPanelHeight: clampNumber(bottomPanelHeight, 160, 800, 260),
+        bottomPanelHeight: clampNumber(bottomPanelHeight, 160, 800, DEFAULT_RESULT_PANEL_HEIGHT),
+        resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,
       }
       writeStoredSettings(next)
       return { bottomPanelHeight: next.bottomPanelHeight }
@@ -209,8 +214,9 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: false,
       sidebarWidth: 288,
       sidebarCollapsed: false,
-      bottomPanelHeight: 260,
+      bottomPanelHeight: DEFAULT_RESULT_PANEL_HEIGHT,
       bottomPanelCollapsed: false,
+      resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,
       exportDirectory: null,
       maxLiveSessions: DEFAULT_MAX_LIVE_SESSIONS,
       idleReclaimMinutes: DEFAULT_IDLE_RECLAIM_MINUTES,
@@ -232,8 +238,13 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: parsed.showSystemObjects === true,
       sidebarWidth: clampNumber(parsed.sidebarWidth, 232, 460, 288),
       sidebarCollapsed: parsed.sidebarCollapsed === true,
-      bottomPanelHeight: clampNumber(parsed.bottomPanelHeight, 160, 800, 260),
+      // Versions before 2 auto-fitted every result, shrinking one-row queries
+      // to 160px and overwriting the user's preferred layout in local storage.
+      bottomPanelHeight: parsed.resultPanelLayoutVersion === RESULT_PANEL_LAYOUT_VERSION
+        ? clampNumber(parsed.bottomPanelHeight, 160, 800, DEFAULT_RESULT_PANEL_HEIGHT)
+        : DEFAULT_RESULT_PANEL_HEIGHT,
       bottomPanelCollapsed: parsed.bottomPanelCollapsed === true,
+      resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,
       exportDirectory: typeof parsed.exportDirectory === 'string' && parsed.exportDirectory.trim()
         ? parsed.exportDirectory
         : null,
@@ -248,8 +259,9 @@ function readStoredSettings(): UserSettings {
       showSystemObjects: false,
       sidebarWidth: 288,
       sidebarCollapsed: false,
-      bottomPanelHeight: 260,
+      bottomPanelHeight: DEFAULT_RESULT_PANEL_HEIGHT,
       bottomPanelCollapsed: false,
+      resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,
       exportDirectory: null,
       maxLiveSessions: DEFAULT_MAX_LIVE_SESSIONS,
       idleReclaimMinutes: DEFAULT_IDLE_RECLAIM_MINUTES,
@@ -257,7 +269,7 @@ function readStoredSettings(): UserSettings {
   }
 }
 
-function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed' | 'bottomPanelHeight' | 'bottomPanelCollapsed' | 'exportDirectory' | 'maxLiveSessions' | 'idleReclaimMinutes'>): UserSettings {
+function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDefaultRows' | 'editorFontSize' | 'showSystemObjects' | 'sidebarWidth' | 'sidebarCollapsed' | 'bottomPanelHeight' | 'bottomPanelCollapsed' | 'resultPanelLayoutVersion' | 'exportDirectory' | 'maxLiveSessions' | 'idleReclaimMinutes'>): UserSettings {
   return {
     queryMaxRows: state.queryMaxRows,
     dataPreviewDefaultRows: state.dataPreviewDefaultRows,
@@ -267,6 +279,7 @@ function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDef
     sidebarCollapsed: state.sidebarCollapsed,
     bottomPanelHeight: state.bottomPanelHeight,
     bottomPanelCollapsed: state.bottomPanelCollapsed,
+    resultPanelLayoutVersion: state.resultPanelLayoutVersion,
     exportDirectory: state.exportDirectory,
     maxLiveSessions: state.maxLiveSessions,
     idleReclaimMinutes: state.idleReclaimMinutes,

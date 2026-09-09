@@ -11,6 +11,7 @@ describe('UI workspace persistence', () => {
     const stored = JSON.parse(window.localStorage.getItem('vaporlensdb.settings') ?? '{}')
     expect(stored.bottomPanelHeight).toBe(412)
     expect(stored.bottomPanelCollapsed).toBe(true)
+    expect(stored.resultPanelLayoutVersion).toBe(2)
     expect(stored.queryMaxRows).toBeGreaterThanOrEqual(100)
   })
 
