@@ -1,18 +1,21 @@
-import { FormEvent, useRef, useState, type ReactNode } from 'react'
+import { FormEvent, useState, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, CheckCircle2, Database, Download, PlugZap } from 'lucide-react'
+import { ChevronRight, Database, Download, Eye, EyeOff, MoreHorizontal, Network, PlugZap, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AppSelect } from '@/components/ui/app-select'
 import { normalizeAppError } from '@/ipc/client'
 import { openExternalUrl } from '@/lib/openExternalUrl'
+import { normalizeConnectionEndpoint } from '@/lib/connectionEndpoint'
 import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
 import type { DriverDefinition } from '@/types/driver'
+import type { AppError } from '@/types/error'
 
 type ConnectionVariant = 'hostPort' | 'urlOnly' | 'oracleService' | 'oracleSid' | 'file'
 
@@ -86,10 +89,8 @@ export function ConnectionForm({
         },
   })
   const [message, setMessage] = useState<string | null>(null)
-  const [activeSection, setActiveSection] = useState<'general' | 'sshSsl' | 'advanced'>('general')
-  const generalSectionRef = useRef<HTMLDivElement | null>(null)
-  const sshSslSectionRef = useRef<HTMLElement | null>(null)
-  const advancedSectionRef = useRef<HTMLDivElement | null>(null)
+  const [messageDetail, setMessageDetail] = useState<string | null>(null)
+  const [passwordVisible, setPasswordVisible] = useState(false)
   const [groupSelection, setGroupSelection] = useState(connection?.groupId ?? '')
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
     defaultConnectionVariant(connection?.driverType ?? 'postgres'),
@@ -105,8 +106,10 @@ export function ConnectionForm({
     driverDefinitions.find((driver) => driver.id === form.driverDefinitionId) ??
     driverDefinitions.find((driver) => driver.driverType === form.driverType)
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
-  const driverStatus = selectedDriver?.status ?? driverProfile.status
   const readinessIssue = connectionReadinessIssue(form, driverProfile, selectedDriver, t)
+  const databaseTypes = databaseTypeOptions(selectableDrivers, t)
+  const activeDatabaseType = databaseTypes.find((option) => option.driverType === form.driverType)
+  const driverVariants = activeDatabaseType?.drivers ?? []
 
   const activeConnectionVariant = driverProfile.connectionVariants.some(
     (variant) => variant.id === connectionVariant,
@@ -185,6 +188,13 @@ export function ConnectionForm({
     group: selectedGroup.trim() || null,
   }, activeConnectionVariant, driverProfile, selectedDriver)
 
+  const normalizeHostAndPort = () => {
+    const endpoint = normalizeConnectionEndpoint(form.host, form.port)
+    if (endpoint.host === form.host && endpoint.port === form.port) return
+    onDirtyChange?.(true)
+    setForm((current) => ({ ...current, host: endpoint.host, port: endpoint.port }))
+  }
+
   const validate = (requireExternalDriver: boolean) => {
     return validateRequiredFields(form, activeConnectionVariant, {
       requireExternalDriver,
@@ -202,6 +212,7 @@ export function ConnectionForm({
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setMessage(null)
+    setMessageDetail(null)
     const validationError = validate(true)
     if (validationError) {
       setMessage(validationError)
@@ -213,6 +224,7 @@ export function ConnectionForm({
 
   const saveOnly = async () => {
     setMessage(null)
+    setMessageDetail(null)
     const validationError = validate(false)
     if (validationError) {
       setMessage(validationError)
@@ -224,427 +236,210 @@ export function ConnectionForm({
 
   const test = async () => {
     setMessage(null)
+    setMessageDetail(null)
     const validationError = validate(true)
     if (validationError) {
       setMessage(validationError)
       return
     }
 
+    const input = normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver)
     try {
-      await onTest(normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver))
-      setMessage(driverProfile.externalDriver ? t('connectionForm.localDriverValidated') : t('connectionForm.connectionTestSucceeded'))
+      await onTest(input)
+      setMessage(t('connectionForm.connectionTestSucceeded'))
     } catch (error) {
       const appError = normalizeAppError(error)
-      setMessage(appError.detail ? `${appError.message}\n${appError.detail}` : appError.message)
+      setMessage(appError.message)
+      setMessageDetail(formatConnectionErrorDetail(appError, input, t))
     }
   }
 
   return (
     <form
-      className={layout === 'panel'
-        ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
-        : 'grid h-full min-h-0 grid-cols-[240px_minmax(0,1fr)] overflow-hidden rounded-md border'}
+      className="connection-form flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       autoComplete="off"
       onSubmit={submit}
     >
-      {layout === 'dialog' && <aside className="border-r bg-muted/35">
-        <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
-          {t('connectionForm.projectDataSources')}
-        </div>
-        <div className="m-2 flex h-9 w-[calc(100%-1rem)] items-center gap-2 rounded-md bg-primary/15 px-2 text-left text-sm text-primary ring-1 ring-primary/30">
-          <DatabaseVendorIcon driverType={form.driverType} className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{form.name || driverProfile.defaultName}</span>
-        </div>
-      </aside>}
-
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="grid min-h-11 grid-cols-[72px_minmax(0,1fr)] items-center gap-2 border-b px-4 py-2">
-          <Label htmlFor="connection-name" className="text-right text-sm">
-            {t('connectionForm.name')}
-          </Label>
-          <Input
-            id="connection-name"
-            value={form.name}
-            disableTextAssistance
-            onChange={(event) => update('name', event.target.value)}
-            required
-          />
-        </div>
-
-        <nav className="flex h-9 shrink-0 items-end gap-1 border-b bg-muted/15 px-4" aria-label={t('connection.editTitle')}>
-          {([
-            ['general', t('settings.general')],
-            ['sshSsl', 'SSH / SSL'],
-            ['advanced', t('connectionForm.advanced')],
-          ] as const).map(([section, label]) => (
-            <button
-              key={section}
-              type="button"
-              className={[
-                'relative h-9 px-3 text-xs transition-colors',
-                activeSection === section ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-              ].join(' ')}
-              aria-current={activeSection === section ? 'page' : undefined}
-              onClick={() => {
-                setActiveSection(section)
-                const target = section === 'general' ? generalSectionRef.current : section === 'sshSsl' ? sshSslSectionRef.current : advancedSectionRef.current
-                target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
+        <div className="mx-auto grid w-full max-w-[46rem] gap-4 p-7">
+          <section className="grid gap-2.5">
+            <SectionLabel>{t('connectionForm.databaseType')}</SectionLabel>
+            <DatabaseTypeSelector
+              options={databaseTypes}
+              selectedDriverType={form.driverType}
+              onChange={(driverType) => {
+                const option = databaseTypes.find((item) => item.driverType === driverType)
+                if (option) changeDriver(option.defaultDriver.id)
               }}
-            >
-              {label}
-              {activeSection === section && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" />}
-            </button>
-          ))}
-        </nav>
+              t={t}
+            />
+          </section>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 [scrollbar-gutter:stable]">
-          <div ref={generalSectionRef} className="mx-auto grid max-w-4xl scroll-mt-4 gap-3">
-            <>
-                <FormRow label={t('connectionForm.driver')}>
-                  <div className="grid gap-2">
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                    <AppSelect
-                      id="driver-type"
-                      value={selectedDriver?.id ?? form.driverType}
-                      onValueChange={changeDriver}
-                      options={selectableDrivers.map((driver) => ({ value: driver.id, disabled: driver.status === 'planned', label: `${driver.name}${!driver.builtIn ? ` (${t('connectionForm.custom')})` : ''}${driver.status === 'planned' ? ` (${t('connectionForm.planned')})` : ''}` }))}
-                    />
-                    <span className="inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs text-muted-foreground">
-                      {driverStatusLabel(driverStatus, t)}
-                    </span>
+          <section className="grid gap-3.5 pt-0.5">
+            <div className="grid gap-1.5">
+              <SectionLabel htmlFor="connection-name">{t('connectionForm.name')}</SectionLabel>
+              <Input id="connection-name" value={form.name} disableTextAssistance onChange={(event) => update('name', event.target.value)} required />
+            </div>
+
+            {activeConnectionVariant === 'file' ? (
+              <div className="grid gap-1.5">
+                <SectionLabel htmlFor="connection-url">{t('connectionForm.connectionUrl')}</SectionLabel>
+                <Input id="connection-url" value={form.connectionUrl ?? ''} placeholder={driverProfile.urlPlaceholder} disableTextAssistance onChange={(event) => updateConnectionUrl(event.target.value)} required />
+              </div>
+            ) : (
+              <>
+                {isUrlOnly ? (
+                  <div className="grid gap-1.5">
+                    <SectionLabel htmlFor="connection-url">{t('connectionForm.connectionUrl')}</SectionLabel>
+                    <Input id="connection-url" value={form.connectionUrl ?? ''} placeholder={driverProfile.urlPlaceholder} disableTextAssistance onChange={(event) => updateConnectionUrl(event.target.value)} required />
+                    <p className="text-[11px] text-muted-foreground">{t('connectionForm.urlCredentialsWarning')}</p>
                   </div>
-                  <DriverSupportSummary
-                    driver={selectedDriver}
-                    profile={driverProfile}
-                    input={form}
-                    readinessIssue={readinessIssue}
-                    t={t}
-                  />
-                  </div>
-                </FormRow>
-
-                <FormRow label={t('connectionForm.connectionType')}>
-                  <SegmentedControl
-                    options={driverProfile.connectionVariants}
-                    value={activeConnectionVariant}
-                    onChange={(value) => {
-                      onDirtyChange?.(true)
-                      setConnectionVariant(value)
-                    }}
-                  />
-                </FormRow>
-
-                {isUrlOnly && (
-                  <FormRow label={t('connectionForm.connectionUrl')}>
-                    <div className="grid gap-2">
-                      <Input
-                        id="connection-url"
-                        value={form.connectionUrl ?? ''}
-                        placeholder={driverProfile.urlPlaceholder}
-                        disableTextAssistance
-                        onChange={(event) => updateConnectionUrl(event.target.value)}
-                        required
-                      />
-                      <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                        {t('connectionForm.urlCredentialsWarning')}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {t('connectionForm.urlOnlySshUnsupported')}
-                      </p>
+                ) : (
+                  <div className="grid grid-cols-[minmax(0,1fr)_7.5rem] gap-4">
+                    <div className="grid gap-1.5">
+                      <SectionLabel htmlFor="connection-host">{t('connectionForm.host')}</SectionLabel>
+                      <Input id="connection-host" value={form.host ?? ''} disableTextAssistance onChange={(event) => update('host', event.target.value)} onBlur={normalizeHostAndPort} required />
                     </div>
-                  </FormRow>
-                )}
-
-                {!isUrlOnly && activeConnectionVariant !== 'file' && (
-                  <FormRow label={t('connectionForm.host')}>
-                    <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
-                      <Input
-                        id="connection-host"
-                        value={form.host ?? ''}
-                        disableTextAssistance
-                        onChange={(event) => update('host', event.target.value)}
-                        required
-                      />
-                      <Label htmlFor="connection-port" className="self-center text-right text-sm">
-                        {t('connectionForm.port')}
-                      </Label>
-                      <Input
-                        id="connection-port"
-                        type="number"
-                        value={form.port ?? 5432}
-                        disableTextAssistance
-                        onChange={(event) => update('port', Number(event.target.value))}
-                        required
-                      />
+                    <div className="grid gap-1.5">
+                      <SectionLabel htmlFor="connection-port">{t('connectionForm.port')}</SectionLabel>
+                      <Input id="connection-port" type="number" value={form.port ?? 5432} disableTextAssistance onChange={(event) => update('port', Number(event.target.value))} required />
                     </div>
-                  </FormRow>
-                )}
-
-                {activeConnectionVariant !== 'file' && (
-                  <>
-                    <FormRow label={t('connectionForm.authentication')}>
-                      <AppSelect value="userPassword" disabled onValueChange={() => undefined} options={[{ value: 'userPassword', label: t('connectionForm.userPassword') }]} />
-                    </FormRow>
-
-                    <FormRow label={t('connectionForm.user')}>
-                      <Input
-                        id="connection-username"
-                        value={form.username ?? ''}
-                        disableTextAssistance
-                        onChange={(event) => update('username', event.target.value)}
-                        required
-                      />
-                    </FormRow>
-
-                    <FormRow
-                      label={t('connectionForm.password')}
-                      align="start"
-                      labelClassName="pt-1.5"
-                    >
-                      <div className="grid gap-2">
-                        <Input
-                          id="connection-password"
-                          type="password"
-                          value={form.password ?? ''}
-                          placeholder={connection ? t('common.hidden') : ''}
-                          disableTextAssistance
-                          onChange={(event) => update('password', event.target.value)}
-                        />
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            role="switch"
-                            className="h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted p-0.5 transition-colors checked:bg-primary before:block before:size-3 before:rounded-full before:bg-card before:transition-transform checked:before:translate-x-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                            checked={form.savePassword ?? true}
-                            onChange={(event) => update('savePassword', event.target.checked)}
-                          />
-                          <span>{t('connectionForm.savePassword')}</span>
-                        </label>
-                        <p className="text-[11px] text-muted-foreground">{t('connectionForm.savePasswordHint')}</p>
-                      </div>
-                    </FormRow>
-                  </>
-                )}
-
-                {activeConnectionVariant !== 'urlOnly' && activeConnectionVariant !== 'file' && (
-                  <FormRow label={databaseFieldLabel(activeConnectionVariant, t)}>
-                    <Input
-                      id="connection-database"
-                      value={form.database ?? ''}
-                      disableTextAssistance
-                      onChange={(event) => update('database', event.target.value)}
-                      required
-                    />
-                  </FormRow>
-                )}
-
-                {!isUrlOnly && driverProfile.usesUrl && (
-                  <FormRow label={t('connectionForm.connectionUrl')}>
-                    <Input
-                      id="connection-url"
-                      value={
-                        activeConnectionVariant === 'file'
-                          ? (form.connectionUrl ?? '')
-                          : driverProfile.defaultUrl(form, activeConnectionVariant)
-                      }
-                      placeholder={driverProfile.urlPlaceholder}
-                      disableTextAssistance
-                      readOnly={activeConnectionVariant !== 'file'}
-                      onChange={(event) => updateConnectionUrl(event.target.value)}
-                    />
-                  </FormRow>
-                )}
-
-                <div ref={advancedSectionRef} className="scroll-mt-4" />
-                {driverProfile.externalDriver && (
-                  <>
-                    <FormRow label={t('connectionForm.driverClass')}>
-                      <Input
-                        id="driver-class"
-                        value={form.driverClass ?? ''}
-                        placeholder={driverProfile.driverClass}
-                        disableTextAssistance
-                        onChange={(event) => update('driverClass', event.target.value)}
-                      />
-                    </FormRow>
-                    <FormRow label={t('connectionForm.driverFiles')}>
-                      <Input
-                        id="driver-paths"
-                        value={form.driverPaths?.join('\n') ?? ''}
-                        placeholder={driverArtifactPathPlaceholder(selectedDriver?.driverArtifact)}
-                        disableTextAssistance
-                        onChange={(event) =>
-                          update(
-                            'driverPaths',
-                            event.target.value
-                              .split(/\r?\n|,/)
-                              .map((value) => value.trim())
-                              .filter(Boolean),
-                          )
-                        }
-                      />
-                    </FormRow>
-                  </>
-                )}
-
-                <FormRow label={t('connectionForm.group')}>
-                  <div className="grid gap-2">
-                    <AppSelect
-                      id="connection-group"
-                      value={groupSelection}
-                      onValueChange={selectGroup}
-                      options={[{ value: '', label: t('connectionForm.ungrouped') }, ...dataSourceGroups.map((group) => ({ value: group.id, label: group.name }))]}
-                    />
                   </div>
-                </FormRow>
+                )}
 
-                <section ref={sshSslSectionRef} className="scroll-mt-4 rounded border bg-muted/15 p-3">
-                  <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-foreground">
-                    <span className="h-4 w-0.5 rounded-full bg-primary" />
-                    SSH / SSL
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <SectionLabel htmlFor="connection-username">{t('connectionForm.user')}</SectionLabel>
+                    <Input id="connection-username" value={form.username ?? ''} disableTextAssistance onChange={(event) => update('username', event.target.value)} required={requiresUsername(form.driverType)} />
                   </div>
-                  <div className="grid gap-3">
-                    <FormRow label={t('connectionForm.sslMode')}>
-                      <AppSelect
-                        value={form.sslMode ?? ''}
-                        onValueChange={(value) => update('sslMode', value || null)}
-                        options={['', 'disable', 'prefer', 'require', 'verify-ca', 'verify-full'].map((value) => ({ value, label: value || t('common.default') }))}
-                      />
-                    </FormRow>
-
-                    {!isUrlOnly && <FormRow label={t('connectionForm.sshTunnel')}>
-                      <label className="inline-flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(form.sshTunnel?.enabled)}
-                          onChange={(event) => updateSshTunnel('enabled', event.target.checked)}
-                        />
-                        <span>{t('connectionForm.enableSshTunnel')}</span>
-                      </label>
-                    </FormRow>}
-
-                    {!isUrlOnly && form.sshTunnel?.enabled && (
-                      <>
-                        <FormRow label={t('connectionForm.sshHost')}>
-                          <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
-                            <Input
-                              value={form.sshTunnel.host}
-                              disableTextAssistance
-                              onChange={(event) => updateSshTunnel('host', event.target.value)}
-                              required
-                            />
-                            <Label className="self-center text-right text-sm">{t('connectionForm.port')}</Label>
-                            <Input
-                              type="number"
-                              value={form.sshTunnel.port}
-                              disableTextAssistance
-                              onChange={(event) => updateSshTunnel('port', Number(event.target.value))}
-                              required
-                            />
-                          </div>
-                        </FormRow>
-                        <FormRow label={t('connectionForm.sshUser')}>
-                          <Input
-                            value={form.sshTunnel.username}
-                            disableTextAssistance
-                            onChange={(event) => updateSshTunnel('username', event.target.value)}
-                            required
-                          />
-                        </FormRow>
-                        <FormRow label={t('connectionForm.sshAuth')}>
-                          <AppSelect
-                            value={form.sshTunnel.authMethod}
-                            onValueChange={(value) => updateSshTunnel('authMethod', value)}
-                            options={[{ value: 'privateKey', label: 'Private key' }, { value: 'password', label: 'Password' }]}
-                          />
-                        </FormRow>
-                        {form.sshTunnel.authMethod === 'password' ? (
-                          <FormRow label={t('connectionForm.sshPassword')}>
-                            <Input
-                              type="password"
-                              value={form.sshTunnel.password ?? ''}
-                              placeholder={connection?.sshTunnel ? t('common.hidden') : ''}
-                              disableTextAssistance
-                              onChange={(event) => updateSshTunnel('password', event.target.value)}
-                            />
-                          </FormRow>
-                        ) : (
-                          <>
-                            <FormRow label={t('connectionForm.privateKeyPath')}>
-                              <Input
-                                value={form.sshTunnel.privateKeyPath ?? ''}
-                                placeholder="/Users/me/.ssh/id_ed25519"
-                                disableTextAssistance
-                                onChange={(event) => updateSshTunnel('privateKeyPath', event.target.value)}
-                                required
-                              />
-                            </FormRow>
-                            <FormRow label={t('connectionForm.privateKeyPassphrase')}>
-                              <Input
-                                type="password"
-                                value={form.sshTunnel.privateKeyPassphrase ?? ''}
-                                placeholder={connection?.sshTunnel ? t('common.hidden') : ''}
-                                disableTextAssistance
-                                onChange={(event) => updateSshTunnel('privateKeyPassphrase', event.target.value)}
-                              />
-                            </FormRow>
-                          </>
-                        )}
-                        <FormRow label={t('connectionForm.remoteAddress')}>
-                          <div className="grid grid-cols-[minmax(0,1fr)_64px_128px] gap-2">
-                            <Input
-                              value={form.sshTunnel.remoteHost ?? ''}
-                              placeholder={form.host ?? t('connectionForm.databaseHost')}
-                              disableTextAssistance
-                              onChange={(event) => updateSshTunnel('remoteHost', event.target.value)}
-                            />
-                            <Label className="self-center text-right text-sm">{t('connectionForm.port')}</Label>
-                            <Input
-                              type="number"
-                              value={form.sshTunnel.remotePort ?? ''}
-                              placeholder={String(form.port ?? '')}
-                              disableTextAssistance
-                              onChange={(event) =>
-                                updateSshTunnel(
-                                  'remotePort',
-                                  event.target.value ? Number(event.target.value) : null,
-                                )
-                              }
-                            />
-                          </div>
-                        </FormRow>
-                      </>
-                    )}
+                  <div className="grid gap-1.5">
+                    <SectionLabel htmlFor="connection-password">{t('connectionForm.password')}</SectionLabel>
+                    <div className="relative">
+                      <Input id="connection-password" type={passwordVisible ? 'text' : 'password'} value={form.password ?? ''} placeholder={connection ? t('common.hidden') : ''} className="pr-8" disableTextAssistance onChange={(event) => update('password', event.target.value)} />
+                      <Button type="button" size="icon-xs" variant="ghost" className="absolute inset-y-1 right-1" aria-label={passwordVisible ? t('connectionForm.hidePassword') : t('connectionForm.showPassword')} onClick={() => setPasswordVisible((visible) => !visible)}>
+                        {passwordVisible ? <EyeOff /> : <Eye />}
+                      </Button>
+                    </div>
+                    <label className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                      <input type="checkbox" role="switch" className="h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted p-0.5 transition-colors checked:bg-primary before:block before:size-3 before:rounded-full before:bg-card before:transition-transform checked:before:translate-x-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50" checked={form.savePassword ?? true} onChange={(event) => update('savePassword', event.target.checked)} />
+                      <span>{t('connectionForm.savePassword')}</span>
+                      <span className="text-[11px]">{t('connectionForm.storedSecurely')}</span>
+                    </label>
                   </div>
-                </section>
+                </div>
+
+                {!isUrlOnly && (
+                  <div className="grid gap-1.5">
+                    <SectionLabel htmlFor="connection-database">{databaseFieldLabel(activeConnectionVariant, t)}</SectionLabel>
+                    <Input id="connection-database" value={form.database ?? ''} disableTextAssistance onChange={(event) => update('database', event.target.value)} required={requiresDatabase(form.driverType)} />
+                  </div>
+                )}
               </>
-          </div>
-        </div>
+            )}
+          </section>
 
-        <div className="ide-toolbar flex min-h-11 items-center justify-between gap-2 border-t px-3 py-2">
-          <div className="min-w-0 whitespace-pre-line text-xs text-muted-foreground">
-            {message ?? readinessIssue ?? ' '}
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={test} disabled={loading}>
-              <PlugZap />
-              {t('connectionForm.testConnection')}
-            </Button>
-            <Button type="button" variant="ghost" onClick={onCancel}>
-              {t('common.cancel')}
-            </Button>
-            <Button type="button" variant="secondary" disabled={loading} onClick={saveOnly}>
-              {t('connectionForm.saveOnly')}
-            </Button>
-            <Button type="submit" disabled={loading || Boolean(readinessIssue)}>
-              <Database />
-              {t('connectionForm.saveAndConnect')}
-            </Button>
-          </div>
+          {!isUrlOnly && activeConnectionVariant !== 'file' && (
+            <DisclosureSection title={t('connectionForm.sshTunnelSection')} icon={<Network />} defaultOpen={Boolean(form.sshTunnel?.enabled)}>
+              <div className="grid gap-3 pt-3">
+                <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" role="switch" className="h-4 w-7 cursor-pointer appearance-none rounded-full bg-muted p-0.5 transition-colors checked:bg-primary before:block before:size-3 before:rounded-full before:bg-card before:transition-transform checked:before:translate-x-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50" checked={Boolean(form.sshTunnel?.enabled)} onChange={(event) => updateSshTunnel('enabled', event.target.checked)} />
+                  {t('connectionForm.enableSshTunnel')}
+                </label>
+                {form.sshTunnel?.enabled && <SshTunnelFields form={form} connection={connection} updateSshTunnel={updateSshTunnel} t={t} />}
+              </div>
+            </DisclosureSection>
+          )}
+
+          {activeConnectionVariant !== 'file' && (
+            <DisclosureSection title={t('connectionForm.sslSection')} icon={<ShieldCheck />} defaultOpen={Boolean(form.sslMode)}>
+              <div className="pt-3">
+                <FormRow label={t('connectionForm.sslMode')}>
+                  <AppSelect value={form.sslMode ?? ''} onValueChange={(value) => update('sslMode', value || null)} options={['', 'disable', 'prefer', 'require', 'verify-ca', 'verify-full'].map((value) => ({ value, label: value || t('common.default') }))} />
+                </FormRow>
+              </div>
+            </DisclosureSection>
+          )}
+
+          <DisclosureSection title={t('connectionForm.advanced')} icon={<SlidersHorizontal />}>
+            <div className="grid gap-3 pt-3">
+              {driverVariants.length > 1 && (
+                <FormRow label={t('connectionForm.driver')}>
+                  <AppSelect
+                    id="driver-profile"
+                    value={selectedDriver?.id ?? form.driverType}
+                    onValueChange={changeDriver}
+                    options={driverVariants.map((driver) => ({
+                      value: driver.id,
+                      label: driverProfileOptionLabel(driver, t),
+                    }))}
+                  />
+                </FormRow>
+              )}
+              {driverProfile.connectionVariants.length > 1 && (
+                <FormRow label={t('connectionForm.connectionType')}>
+                  <SegmentedControl options={driverProfile.connectionVariants} value={activeConnectionVariant} onChange={(value) => { onDirtyChange?.(true); setConnectionVariant(value) }} />
+                </FormRow>
+              )}
+              <FormRow label={t('connectionForm.group')}>
+                <AppSelect id="connection-group" value={groupSelection} onValueChange={selectGroup} options={[{ value: '', label: t('connectionForm.ungrouped') }, ...dataSourceGroups.map((group) => ({ value: group.id, label: group.name }))]} />
+              </FormRow>
+              {!isUrlOnly && driverProfile.usesUrl && activeConnectionVariant !== 'file' && (
+                <FormRow label={t('connectionForm.connectionUrl')}>
+                  <Input id="generated-connection-url" value={driverProfile.defaultUrl(form, activeConnectionVariant)} placeholder={driverProfile.urlPlaceholder} disableTextAssistance readOnly />
+                </FormRow>
+              )}
+              {driverProfile.externalDriver && (
+                <>
+                  <FormRow label={t('connectionForm.driverClass')}>
+                    <Input id="driver-class" value={form.driverClass ?? ''} placeholder={driverProfile.driverClass} disableTextAssistance onChange={(event) => update('driverClass', event.target.value)} />
+                  </FormRow>
+                  <FormRow label={t('connectionForm.driverFiles')}>
+                    <Input id="driver-paths" value={form.driverPaths?.join('\n') ?? ''} placeholder={driverArtifactPathPlaceholder(selectedDriver?.driverArtifact)} disableTextAssistance onChange={(event) => update('driverPaths', event.target.value.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean))} />
+                  </FormRow>
+                </>
+              )}
+              <DriverSupportSummary driver={selectedDriver} profile={driverProfile} input={form} readinessIssue={readinessIssue} t={t} />
+            </div>
+          </DisclosureSection>
+        </div>
+      </div>
+
+      <div className="flex min-h-14 items-center justify-between gap-3 border-t border-border/75 bg-surface px-6 py-2">
+        <div className="min-w-0 text-xs text-muted-foreground" role={message ? 'status' : undefined}>
+          <span className={message ? 'text-foreground' : undefined}>{message ?? readinessIssue ?? ' '}</span>
+          {messageDetail && <details className="mt-1 text-[11px]"><summary className="cursor-pointer">{t('connectionForm.errorDetails')}</summary><pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap font-sans">{messageDetail}</pre></details>}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" variant="outline" className="h-9 px-3" onClick={test} disabled={loading}><PlugZap />{t('connectionForm.testConnection')}</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button type="button" size="icon" variant="ghost" aria-label={t('common.moreActions')}><MoreHorizontal /></Button>} />
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={saveOnly} disabled={loading}>{t('connectionForm.saveOnly')}</DropdownMenuItem>
+              {layout === 'panel' && <DropdownMenuItem onClick={onCancel}>{t('common.cancel')}</DropdownMenuItem>}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button type="submit" className="h-9 px-3" title={t('connectionForm.saveAndConnect')} disabled={loading || Boolean(readinessIssue)}><Database />{t('connection.connect')}</Button>
         </div>
       </div>
     </form>
   )
+}
+
+function formatConnectionErrorDetail(error: AppError, input: ConnectionInput, t: TFunction) {
+  const lines = error.detail?.split(/\r?\n|;\s*/).filter(Boolean) ?? []
+  if (input.host?.trim()) {
+    const endpoint = input.port ? `${input.host.trim()}:${input.port}` : input.host.trim()
+    const driverIndex = lines.findIndex((line) => line.startsWith('driver='))
+    lines.splice(driverIndex >= 0 ? driverIndex + 1 : 0, 0, `endpoint=${endpoint}`)
+  }
+
+  if (/no route to host/i.test(error.message)) {
+    if (!lines.includes('phase=tcp_connect')) lines.push('phase=tcp_connect')
+    if (!lines.includes('cause=no_route_to_host')) lines.push('cause=no_route_to_host')
+    lines.push('', t('connectionForm.noRouteToHostHint'))
+  }
+
+  return lines.length ? lines.join('\n') : null
 }
 
 function FormRow({
@@ -662,6 +457,199 @@ function FormRow({
     <div className={`grid grid-cols-[104px_minmax(0,1fr)] gap-3 ${align === 'start' ? 'items-start' : 'items-center'}`}>
       <Label className={`text-right text-xs ${labelClassName ?? ''}`}>{label}</Label>
       <div className="min-w-0">{children}</div>
+    </div>
+  )
+}
+
+function SectionLabel({
+  children,
+  htmlFor,
+}: {
+  children: ReactNode
+  htmlFor?: string
+}) {
+  return <Label htmlFor={htmlFor} className="text-xs font-medium text-foreground">{children}</Label>
+}
+
+function DatabaseTypeSelector({
+  options,
+  selectedDriverType,
+  onChange,
+  t,
+}: {
+  options: DatabaseTypeOption[]
+  selectedDriverType: DriverType
+  onChange: (driverType: DriverType) => void
+  t: TFunction
+}) {
+  const primaryOptions = options.filter((option) => option.driverType !== 'jdbc')
+  const secondaryOption = options.find((option) => option.driverType === 'jdbc')
+
+  return (
+    <div role="radiogroup" aria-label={t('connectionForm.databaseType')}>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {primaryOptions.map((option) => <DatabaseTypeOptionButton key={option.driverType} option={option} selected={option.driverType === selectedDriverType} onChange={onChange} />)}
+      </div>
+      {secondaryOption && (
+        <div className="mt-2 flex">
+          <DatabaseTypeOptionButton option={secondaryOption} selected={secondaryOption.driverType === selectedDriverType} onChange={onChange} secondary />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DatabaseTypeOptionButton({
+  option,
+  selected,
+  onChange,
+  secondary = false,
+}: {
+  option: DatabaseTypeOption
+  selected: boolean
+  onChange: (driverType: DriverType) => void
+  secondary?: boolean
+}) {
+  const unavailable = option.defaultDriver.status === 'planned'
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      disabled={unavailable}
+      className={[
+        'flex min-w-0 items-center gap-2 rounded-lg border text-left text-xs transition-[background-color,border-color,color,box-shadow]',
+        secondary ? 'h-9 px-3 text-muted-foreground' : 'h-11 px-3.5',
+        selected ? 'border-primary/55 bg-primary/[0.08] text-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.08)]' : 'border-border/85 bg-surface text-muted-foreground hover:border-border-strong hover:bg-surface-secondary hover:text-foreground',
+        unavailable ? 'cursor-not-allowed opacity-45' : '',
+      ].join(' ')}
+      onClick={() => onChange(option.driverType)}
+    >
+      <DatabaseVendorIcon driverType={option.driverType} className={`${secondary ? 'size-4' : 'size-5'} shrink-0`} />
+      <span className="min-w-0 truncate font-medium">{option.label}</span>
+    </button>
+  )
+}
+
+type DriverChoice = Pick<DriverDefinition, 'id' | 'driverType' | 'driverDialect' | 'name' | 'backend' | 'status' | 'builtIn' | 'userDriverRequired'>
+
+type DatabaseTypeOption = {
+  driverType: DriverType
+  label: string
+  defaultDriver: DriverChoice
+  drivers: DriverChoice[]
+}
+
+function databaseTypeOptions(drivers: DriverChoice[], t: TFunction): DatabaseTypeOption[] {
+  const byType = new Map<DriverType, DriverChoice[]>()
+  for (const driver of drivers) {
+    const current = byType.get(driver.driverType) ?? []
+    current.push(driver)
+    byType.set(driver.driverType, current)
+  }
+
+  return [...byType.entries()]
+    .map(([driverType, profiles]) => {
+      const defaultDriver = profiles.find((driver) => driver.backend === 'nativeRust' && driver.status === 'ready')
+        ?? profiles.find((driver) => driver.status === 'ready')
+        ?? profiles.find((driver) => driver.builtIn && !driver.userDriverRequired)
+        ?? profiles[0]
+      return {
+        driverType,
+        label: driverType === 'jdbc' ? t('connectionForm.other') : databaseProductName(defaultDriver.name),
+        defaultDriver,
+        drivers: profiles,
+      }
+    })
+    .sort((left, right) => (PRIMARY_DRIVER_ORDER.get(left.driverType) ?? 99) - (PRIMARY_DRIVER_ORDER.get(right.driverType) ?? 99))
+}
+
+function databaseProductName(name: string) {
+  return name
+    .replace(/\s*[（(].*?[）)]/g, '')
+    .replace(/\s+JDBC\b.*/i, '')
+    .trim()
+}
+
+function driverProfileOptionLabel(driver: DriverChoice, t: TFunction) {
+  const implementation = driver.backend === 'nativeRust' ? t('connectionForm.nativeDriver') : t('connectionForm.jdbcDriver')
+  return driver.backend === 'nativeRust' && driver.status === 'ready'
+    ? `${implementation} · ${t('connectionForm.recommended')}`
+    : implementation
+}
+
+function DisclosureSection({
+  title,
+  icon,
+  defaultOpen = false,
+  children,
+}: {
+  title: string
+  icon: ReactNode
+  defaultOpen?: boolean
+  children: ReactNode
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen)
+
+  return (
+    <details className="group rounded-lg border border-transparent bg-surface transition-colors hover:border-border/70 hover:bg-surface-secondary/60" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="flex h-12 cursor-pointer list-none items-center justify-between px-3.5 text-[13px] font-medium text-foreground [&::-webkit-details-marker]:hidden">
+        <span className="flex items-center gap-2.5"><span className="grid size-6 place-items-center rounded-md bg-primary/[0.065] text-primary [&_svg]:size-[15px]">{icon}</span>{title}</span>
+        <ChevronRight className="size-4 text-muted-foreground transition-transform group-open:rotate-90" />
+      </summary>
+      <div className="border-t border-border/60 px-3.5 pb-3.5">{children}</div>
+    </details>
+  )
+}
+
+function SshTunnelFields({
+  form,
+  connection,
+  updateSshTunnel,
+  t,
+}: {
+  form: ConnectionInput
+  connection?: ConnectionConfig | null
+  updateSshTunnel: (key: string, value: string | number | boolean | null) => void
+  t: TFunction
+}) {
+  const tunnel = form.sshTunnel
+  if (!tunnel) return null
+
+  return (
+    <div className="grid gap-3">
+      <FormRow label={t('connectionForm.sshHost')}>
+        <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-2">
+          <Input value={tunnel.host} disableTextAssistance onChange={(event) => updateSshTunnel('host', event.target.value)} required />
+          <Input type="number" value={tunnel.port} disableTextAssistance onChange={(event) => updateSshTunnel('port', Number(event.target.value))} required aria-label={t('connectionForm.port')} />
+        </div>
+      </FormRow>
+      <FormRow label={t('connectionForm.sshUser')}>
+        <Input value={tunnel.username} disableTextAssistance onChange={(event) => updateSshTunnel('username', event.target.value)} required />
+      </FormRow>
+      <FormRow label={t('connectionForm.sshAuth')}>
+        <AppSelect value={tunnel.authMethod} onValueChange={(value) => updateSshTunnel('authMethod', value)} options={[{ value: 'privateKey', label: t('connectionForm.privateKey') }, { value: 'password', label: t('connectionForm.password') }]} />
+      </FormRow>
+      {tunnel.authMethod === 'password' ? (
+        <FormRow label={t('connectionForm.sshPassword')}>
+          <Input type="password" value={tunnel.password ?? ''} placeholder={connection?.sshTunnel ? t('common.hidden') : ''} disableTextAssistance onChange={(event) => updateSshTunnel('password', event.target.value)} />
+        </FormRow>
+      ) : (
+        <>
+          <FormRow label={t('connectionForm.privateKeyPath')}>
+            <Input value={tunnel.privateKeyPath ?? ''} placeholder="/Users/me/.ssh/id_ed25519" disableTextAssistance onChange={(event) => updateSshTunnel('privateKeyPath', event.target.value)} required />
+          </FormRow>
+          <FormRow label={t('connectionForm.privateKeyPassphrase')}>
+            <Input type="password" value={tunnel.privateKeyPassphrase ?? ''} placeholder={connection?.sshTunnel ? t('common.hidden') : ''} disableTextAssistance onChange={(event) => updateSshTunnel('privateKeyPassphrase', event.target.value)} />
+          </FormRow>
+        </>
+      )}
+      <FormRow label={t('connectionForm.remoteAddress')}>
+        <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-2">
+          <Input value={tunnel.remoteHost ?? ''} placeholder={form.host ?? t('connectionForm.databaseHost')} disableTextAssistance onChange={(event) => updateSshTunnel('remoteHost', event.target.value)} />
+          <Input type="number" value={tunnel.remotePort ?? ''} placeholder={String(form.port ?? '')} disableTextAssistance onChange={(event) => updateSshTunnel('remotePort', event.target.value ? Number(event.target.value) : null)} aria-label={t('connectionForm.port')} />
+        </div>
+      </FormRow>
     </div>
   )
 }
@@ -712,6 +700,7 @@ function DriverSupportSummary({
   const missing = externalDriverMissingItems(input, profile, driver, t)
   const ready = !readinessIssue && missing.length === 0 && profile.status !== 'planned'
   const requiresLocalJar = profile.externalDriver || Boolean(driver?.userDriverRequired)
+  const status = driverStatusLabel(driver?.status ?? profile.status, t)
   const downloadUrl = driver?.downloadUrl ?? (input.driverType === 'oracle' ? ORACLE_JDBC_DOWNLOAD_URL : null)
   const title = requiresLocalJar ? t('connectionForm.localDriverRequired') : driverBackendLabel(driver?.backend ?? profileBackend(profile))
   const detail = requiresLocalJar
@@ -721,58 +710,46 @@ function DriverSupportSummary({
     : t('connectionForm.nativeDriverReady')
 
   return (
-    <div className="rounded-md border bg-background/70 px-3 py-2 text-xs">
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-medium text-foreground">{title}</span>
-            <span className={ready ? supportBadgeClass('ready') : supportBadgeClass('blocked')}>
-              {ready ? t('connectionForm.connectable') : driverSupportStateLabel(profile.status, missing, t)}
-            </span>
-            <span className="text-[11px] text-muted-foreground">{detail}</span>
-          </div>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {driverCapabilityBadges(capabilities, t).map((item) => (
-              <span key={item.label} className={item.enabled ? capabilityOnClass : capabilityOffClass}>
-                {item.label}
-              </span>
-            ))}
-            {requiresLocalJar && downloadUrl && (
-              <Button
-                type="button"
-                size="xs"
-                variant="link"
-                className="h-5 px-0 text-[11px]"
-                onClick={() => {
-                  void openExternalUrl(downloadUrl)
-                }}
-              >
-                <Download className="size-3" />
-                {t('connectionForm.openDownloadPage')}
-              </Button>
-            )}
-          </div>
-        </div>
-        {ready ? (
-          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-        ) : (
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-        )}
+    <div className="border-t pt-3 text-xs">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="font-medium text-foreground">{t('connectionForm.driver')}</span>
+        <span>{title}</span>
+        <span className="text-muted-foreground">{status}</span>
+        <span className="text-muted-foreground">· {ready ? t('connectionForm.connectable') : driverSupportStateLabel(profile.status, missing, t)}</span>
       </div>
+      {!ready && <p className="mt-1 text-[11px] text-muted-foreground">{detail}</p>}
+      {requiresLocalJar && downloadUrl && (
+        <Button
+          type="button"
+          size="xs"
+          variant="link"
+          className="mt-1 h-5 px-0 text-[11px]"
+          onClick={() => {
+            void openExternalUrl(downloadUrl)
+          }}
+        >
+          <Download className="size-3" />
+          {t('connectionForm.openDownloadPage')}
+        </Button>
+      )}
+      <details className="mt-2 text-[11px] text-muted-foreground">
+        <summary className="cursor-pointer">{t('connectionForm.viewCapabilities')}</summary>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {driverCapabilityBadges(capabilities, t).map((item) => (
+            <span key={item.label} className={item.enabled ? capabilityOnClass : capabilityOffClass}>
+              {item.label}
+            </span>
+          ))}
+        </div>
+      </details>
     </div>
   )
 }
 
 const capabilityOnClass =
-  'rounded-md border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-800'
+  'rounded-sm border border-border bg-surface-secondary px-1.5 py-0.5 text-[11px] text-foreground'
 const capabilityOffClass =
-  'rounded-md border bg-muted/45 px-1.5 py-0.5 text-[11px] text-muted-foreground'
-
-function supportBadgeClass(state: 'ready' | 'blocked') {
-  return state === 'ready'
-    ? 'rounded-md border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-800'
-    : 'rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800'
-}
+  'rounded-sm border border-border bg-muted/45 px-1.5 py-0.5 text-[11px] text-muted-foreground'
 
 function driverSupportStateLabel(status: DriverDefinition['status'], missing: string[], t: TFunction) {
   if (status === 'planned') return t('connectionForm.statusPlanned')
@@ -845,11 +822,13 @@ function normalizeInput(
   definition?: DriverDefinition,
 ): ConnectionInput {
   const isUrlOnly = variant === 'urlOnly'
+  const endpoint = normalizeConnectionEndpoint(input.host, input.port)
   return {
     ...input,
     driverDefinitionId: input.driverDefinitionId ?? input.driverType,
     driverDialect: definition?.driverDialect ?? input.driverDialect ?? input.driverType,
-    host: emptyToNull(input.host),
+    host: emptyToNull(endpoint.host),
+    port: endpoint.port,
     database: emptyToNull(input.database),
     connectionUrl:
       profile.usesUrl && variant !== 'urlOnly'
@@ -965,7 +944,10 @@ function connectionReadinessIssue(
 }
 
 function requiresDatabase(driverType: DriverType) {
-  return driverType === 'postgres' || driverType === 'mysql' || driverType === 'mssql'
+  // MySQL accepts a server-level connection (for example
+  // `jdbc:mysql://host:3306/`) and lets the user choose a database later.
+  // Requiring a default database here rejected valid MySQL connection URLs.
+  return driverType === 'postgres' || driverType === 'mssql'
 }
 
 function requiresUsername(driverType: DriverType) {
@@ -1180,15 +1162,16 @@ function databaseFieldLabel(variant: ConnectionVariant, t: TFunction) {
 
 const PRIMARY_DRIVER_IDS: DriverType[] = ['postgres', 'mysql', 'oracle', 'sqlite', 'mssql']
 const PRIMARY_DRIVER_ORDER = new Map<DriverType, number>(
-  ['postgres', 'mysql', 'oracle', 'sqlite', 'mssql'].map((driver, index) => [driver as DriverType, index]),
+  ['postgres', 'mysql', 'sqlite', 'mssql', 'oracle'].map((driver, index) => [driver as DriverType, index]),
 )
 
-const FALLBACK_DRIVER_OPTIONS: Array<Pick<DriverDefinition, 'id' | 'driverType' | 'name' | 'status' | 'builtIn'>> = [
-  { id: 'postgres', driverType: 'postgres', name: 'PostgreSQL', status: 'ready', builtIn: true },
-  { id: 'mysql', driverType: 'mysql', name: 'MySQL', status: 'ready', builtIn: true },
-  { id: 'oracle', driverType: 'oracle', name: 'Oracle (local ojdbc required)', status: 'configurable', builtIn: true },
-  { id: 'sqlite', driverType: 'sqlite', name: 'SQLite', status: 'ready', builtIn: true },
-  { id: 'mssql', driverType: 'mssql', name: 'SQL Server', status: 'ready', builtIn: true },
+const FALLBACK_DRIVER_OPTIONS: DriverChoice[] = [
+  { id: 'postgres', driverType: 'postgres', driverDialect: 'postgresql', name: 'PostgreSQL', backend: 'nativeRust', status: 'ready', builtIn: true, userDriverRequired: false },
+  { id: 'mysql', driverType: 'mysql', driverDialect: 'mysql', name: 'MySQL', backend: 'nativeRust', status: 'ready', builtIn: true, userDriverRequired: false },
+  { id: 'sqlite', driverType: 'sqlite', driverDialect: 'sqlite', name: 'SQLite', backend: 'nativeRust', status: 'ready', builtIn: true, userDriverRequired: false },
+  { id: 'mssql', driverType: 'mssql', driverDialect: 'mssql', name: 'SQL Server', backend: 'nativeRust', status: 'ready', builtIn: true, userDriverRequired: false },
+  { id: 'oracle', driverType: 'oracle', driverDialect: 'oracle', name: 'Oracle', backend: 'jdbc', status: 'configurable', builtIn: true, userDriverRequired: true },
+  { id: 'jdbc', driverType: 'jdbc', driverDialect: 'genericJdbc', name: 'Custom JDBC', backend: 'jdbc', status: 'configurable', builtIn: false, userDriverRequired: true },
 ]
 
 function compareDriverChoices(

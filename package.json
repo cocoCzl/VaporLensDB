@@ -24,6 +24,7 @@
     "test:data-tab-pagination": "node scripts/data-tab-pagination-smoke.mjs",
     "test:sql-tab-large-result": "node scripts/sql-tab-large-result-smoke.mjs",
     "test:sql-editor-shortcut": "node scripts/sql-editor-shortcut-smoke.mjs",
+    "test:sql-workspace": "node scripts/sql-workspace-smoke.mjs",
     "test:sql-execution-recall": "node scripts/sql-execution-recall-smoke.mjs",
     "test:sql-records-connection-editor": "node scripts/sql-records-connection-editor-smoke.mjs",
     "test:explain-result": "node scripts/explain-result-smoke.mjs",

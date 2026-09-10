@@ -1,4 +1,4 @@
-import { Check, Database, FileCode2, History, List, Network, Pin, Plus, Search, Settings2, Table2, X } from 'lucide-react'
+import { Check, Database, FileCode2, List, Network, Pin, Settings2, Table2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -11,20 +11,17 @@ import type { EditorTab } from '@/stores/editorStore'
 
 export function TabBar() {
   const { t } = useTranslation()
-  const { tabs, activeTabId, setActiveTab, addTab, closeTab, renameTab, setTabDraft, setRecordsConnectionFilter, toggleTabPinned } = useEditorStore(useShallow((state) => ({
+  const { tabs, activeTabId, setActiveTab, closeTab, renameTab, setTabDraft, toggleTabPinned } = useEditorStore(useShallow((state) => ({
     tabs: state.tabs,
     activeTabId: state.activeTabId,
     setActiveTab: state.setActiveTab,
-    addTab: state.addTab,
     closeTab: state.closeTab,
     renameTab: state.renameTab,
     setTabDraft: state.setTabDraft,
-    setRecordsConnectionFilter: state.setRecordsConnectionFilter,
     toggleTabPinned: state.toggleTabPinned,
   })))
   const connections = useConnectionStore((state) => state.connections)
   const statuses = useConnectionStore((state) => state.statuses)
-  const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
   const saveTabDraft = useSqlDraftStore((state) => state.saveTabDraft)
   const markDraftClosed = useSqlDraftStore((state) => state.markClosed)
@@ -34,38 +31,6 @@ export function TabBar() {
   const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const tabListMenuRef = useRef<HTMLDivElement | null>(null)
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
-
-  function createTab() {
-    const connection = connections.find((item) => item.id === activeConnectionId)
-    addTab({
-      id: crypto.randomUUID(),
-      kind: 'sql',
-      title: connection ? `${connection.name} SQL` : `SQL ${nextSqlIndex(tabs.map((tab) => tab.title))}`,
-      sql: '',
-      connectionId: activeConnectionId,
-    })
-  }
-
-  function openRecordsWorkspace(kind: 'sqlScripts' | 'queryHistory') {
-    const activeTab = tabs.find((tab) => tab.id === activeTabId)
-    const connectionId = kind === 'queryHistory'
-      ? activeTab?.connectionId ?? activeConnectionId
-      : null
-    const existing = tabs.find((tab) => tab.kind === kind)
-    if (existing) {
-      setRecordsConnectionFilter(existing.id, connectionId)
-      setActiveTab(existing.id)
-      return
-    }
-    addTab({
-      id: crypto.randomUUID(),
-      kind,
-      title: kind === 'sqlScripts' ? t('sql.drafts') : t('sql.history'),
-      sql: '',
-      connectionId: null,
-      recordsConnectionFilter: connectionId,
-    })
-  }
 
   function commitRename(tabId: string) {
     renameTab(tabId, editingTitle)
@@ -131,13 +96,17 @@ export function TabBar() {
     }
   }, [tabContextMenu, tabListOpen])
 
+  // Home is the intentional zero-tab workspace. Rendering the strip in that
+  // state creates chrome with neither navigation nor an available tab action.
+  if (tabs.length === 0) return null
+
   function closeTabs(candidates: EditorTab[]) {
     candidates.forEach((tab) => closeEditorTab(tab))
     setTabContextMenu(null)
   }
 
   return (
-    <div className="ide-tab-strip flex h-8 items-center border-b">
+    <div className="ide-tab-strip flex h-9 items-center border-b">
       <div className="flex min-w-0 flex-1 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId
@@ -156,9 +125,9 @@ export function TabBar() {
               }}
               type="button"
               className={[
-                'group flex h-8 max-w-56 items-center gap-1.5 border-r border-border/55 px-2.5 text-xs transition-colors',
+                'group flex h-9 max-w-56 items-center gap-1.5 border-r border-border/45 px-3 text-xs transition-colors',
                 active
-                  ? 'bg-background text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary)),inset_0_1px_0_hsl(var(--foreground)/0.04)]'
+                  ? 'bg-surface text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary)),inset_0_1px_0_hsl(var(--foreground)/0.035)]'
                   : 'text-muted-foreground hover:bg-[hsl(var(--hover))] hover:text-foreground',
               ].join(' ')}
               onClick={() => {
@@ -289,23 +258,6 @@ export function TabBar() {
           </div>
         )}
       </div>
-      <IconTooltipButton label={t('sql.new')} variant="ghost" onClick={createTab}>
-        <Plus />
-      </IconTooltipButton>
-      <IconTooltipButton label={t('sql.drafts')} variant="ghost" onClick={() => openRecordsWorkspace('sqlScripts')}>
-        <FileCode2 />
-      </IconTooltipButton>
-      <IconTooltipButton label={t('sql.history')} variant="ghost" onClick={() => openRecordsWorkspace('queryHistory')}>
-        <History />
-      </IconTooltipButton>
-      <span className="ide-toolbar-separator" aria-hidden="true" />
-      <IconTooltipButton
-        label={t('commandPalette.title')}
-        variant="ghost"
-        onClick={() => window.dispatchEvent(new Event('vaporlensdb:open-command-palette'))}
-      >
-        <Search />
-      </IconTooltipButton>
       {tabContextMenu && (() => {
         const tab = tabs.find((candidate) => candidate.id === tabContextMenu.tabId)
         if (!tab) return null
@@ -387,11 +339,4 @@ function connectionStatusLabel(status: string, t: ReturnType<typeof useTranslati
   if (status === 'connecting') return t('connection.connecting')
   if (status === 'failed') return t('connection.failed')
   return t('connection.disconnected')
-}
-
-function nextSqlIndex(titles: string[]) {
-  let index = 1
-  const existing = new Set(titles)
-  while (existing.has(`SQL ${index}`)) index += 1
-  return index
 }

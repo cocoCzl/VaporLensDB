@@ -27,13 +27,16 @@ function excludesAll(source, values, label) {
 }
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ["view: 'explorer'", "kind: 'settings'", '<CompactDataSourceTree />', '<DatabaseTree connectionId='], 'left rail')
+const dataSourcesSidebar = read('src/components/sidebar/DataSourcesSidebar.tsx')
+const settings = read('src/components/settings/SettingsWorkspacePanel.tsx')
+includesAll(sidebar, ["view: 'explorer'", "kind: 'settings'", '<DataSourcesSidebar />'], 'left rail')
+includesAll(dataSourcesSidebar, ['<DatabaseTree connectionId={connection.id} compact />'], 'left rail data source tree')
 excludesAll(
   sidebar,
   ["view: 'dataSources'", "view: 'sql'", "view: 'sessions'", "sidebarView === 'settings'", "sidebarView === 'sql'", "sidebarView === 'sessions'", "view: 'structure'", 'StructurePanel', 'ObjectDetails'],
   'left rail',
 )
-includesAll(sidebar, ["t('sql.history')", 'handleClearHistory', 'clearHistory'], 'settings history clear')
+includesAll(settings, ["t('sql.history')", 'handleClearHistory', 'clearHistory'], 'settings history clear')
 
 const uiStore = read('src/stores/uiStore.ts')
 assert(
@@ -45,14 +48,14 @@ const editorStore = read('src/stores/editorStore.ts')
 assert(editorStore.includes("| 'settings'"), 'Editor tabs should expose Settings as a workspace tab')
 
 const connectionForm = read('src/components/connection/ConnectionForm.tsx')
-excludesAll(connectionForm, ['SSH/SSL', '架构', 'Options', '选项', '问题 <span'], 'connection dialog tabs')
+excludesAll(connectionForm, ['SSH/SSL', '架构', '问题 <span'], 'connection dialog tabs')
 includesAll(
   connectionForm,
   ["{ id: 'postgres'", "{ id: 'mysql'", "{ id: 'oracle'", "{ id: 'sqlite'", "{ id: 'mssql'"],
   'primary database choices',
 )
 assert(
-  connectionForm.includes("disabled: driver.status === 'planned'"),
+  connectionForm.includes("const unavailable = option.defaultDriver.status === 'planned'") && connectionForm.includes('disabled={unavailable}'),
   'planned database choices should be disabled',
 )
 includesAll(connectionForm, ["t('connectionForm.validation.oracleJarRequired')"], 'Oracle local validation')

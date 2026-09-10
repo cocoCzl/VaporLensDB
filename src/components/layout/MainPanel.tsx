@@ -3,14 +3,17 @@ import { useShallow } from 'zustand/react/shallow'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, Loader2, LockKeyhole, PanelBottomClose, PanelBottomOpen, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, Loader2, LockKeyhole, Maximize2, PanelBottomClose, PanelBottomOpen, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
 import { ConnectionList } from '@/components/connection/ConnectionList'
-import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
+import { WorkbenchHome } from '@/components/home/WorkbenchHome'
 import { DataGrid, ResultMetadataGrid } from '@/components/grid/DataGrid'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
+import { EmptyState } from '@/components/ui/empty-state'
+import { ResultPanel } from '@/components/workspace/ResultPanel'
+import { SqlWorkspace, type SqlWorkspaceView } from '@/components/workspace/SqlWorkspace'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AppSelect } from '@/components/ui/app-select'
@@ -91,6 +94,7 @@ export function MainPanel() {
     updateTabSql,
     updateDataTabContext,
     updateTabConnection,
+    updateSqlTabContext,
     setTabDraft,
     setTabQueryState,
   } = useEditorStore(useShallow((state) => ({
@@ -100,12 +104,12 @@ export function MainPanel() {
     updateTabSql: state.updateTabSql,
     updateDataTabContext: state.updateDataTabContext,
     updateTabConnection: state.updateTabConnection,
+    updateSqlTabContext: state.updateSqlTabContext,
     setTabDraft: state.setTabDraft,
     setTabQueryState: state.setTabQueryState,
   })))
   const metadataDatabases = useMetadataStore((state) => state.databases)
   const metadataSchemas = useMetadataStore((state) => state.schemas)
-  const catalogSchemaPaths = useMetadataStore((state) => state.catalogSchemaPaths)
   const setCatalogSchemaPath = useMetadataStore((state) => state.setCatalogSchemaPath)
   const inspectTable = useObjectInspectorStore((state) => state.inspectTable)
   const loadDatabases = useMetadataStore((state) => state.loadDatabases)
@@ -137,7 +141,9 @@ export function MainPanel() {
   const [historyPanelWidth, setHistoryPanelWidth] = useState(380)
   const [resultView, setResultView] = useState<'data' | 'metadata'>('data')
   const [resultPanelHeight, setResultPanelHeightLocal] = useState(bottomPanelHeight)
+  const [resultResizing, setResultResizing] = useState(false)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
+  const [workspaceView, setWorkspaceView] = useState<SqlWorkspaceView>('split')
   const draftSaveTimer = useRef<number | null>(null)
   const handledHistoryRequest = useRef(0)
 
@@ -149,6 +155,7 @@ export function MainPanel() {
     let nextHeight = startHeight
     const previousCursor = document.body.style.cursor
     document.body.style.cursor = 'row-resize'
+    setResultResizing(true)
 
     const onMove = (moveEvent: PointerEvent) => {
       const maxHeight = Math.max(160, window.innerHeight - 260)
@@ -157,6 +164,7 @@ export function MainPanel() {
     }
     const stopResize = () => {
       document.body.style.cursor = previousCursor
+      setResultResizing(false)
       setBottomPanelHeight(nextHeight)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', stopResize)
@@ -194,17 +202,14 @@ export function MainPanel() {
   const connectionId = activeTab?.connectionId ?? null
   const activeConnection = connections.find((connection) => connection.id === connectionId)
   const activeDriverType = activeConnection?.driverType ?? 'postgres'
-  const catalogSchemaPath = connectionId ? catalogSchemaPaths[connectionId] : null
   const queryCapabilities = activeConnection
     ? driverQueryCapabilities(activeConnection.driverType)
     : emptyQueryCapabilities()
   const selectedDatabase =
     connectionId != null
-      ? activeDriverType === 'postgres'
-        ? activeConnection?.database ?? null
-        : catalogSchemaPath?.database ?? activeConnection?.database ?? null
+      ? activeTab?.database ?? activeConnection?.database ?? null
       : null
-  const selectedSchema = connectionId != null ? catalogSchemaPath?.schema ?? null : null
+  const selectedSchema = connectionId != null ? activeTab?.schema ?? null : null
   const connectionIsConnected = Boolean(
     connectionId && statuses[connectionId]?.status === 'connected',
   )
@@ -239,11 +244,6 @@ export function MainPanel() {
           showSystemObjects,
         )
       : []
-  const completionHint = completionMetadataHint(
-    connectionIsConnected,
-    queryCapabilities.canComplete,
-    selectedSchema,
-  )
 
   useEffect(() => {
     if (
@@ -271,11 +271,10 @@ export function MainPanel() {
           if (!tab.dirty) continue
           if (!tab.sql.trim()) continue
           const connection = connections.find((item) => item.id === tab.connectionId) ?? null
-          const schemaPath = tab.connectionId ? catalogSchemaPaths[tab.connectionId] : null
           const draft = await saveTabDraft(tab, {
             connection,
-            database: schemaPath?.database ?? connection?.database ?? null,
-            schema: schemaPath?.schema ?? null,
+            database: tab.database ?? connection?.database ?? null,
+            schema: tab.schema ?? null,
           })
           if (draft) setTabDraft(tab.id, draft.id)
         }
@@ -288,14 +287,15 @@ export function MainPanel() {
         window.clearTimeout(draftSaveTimer.current)
       }
     }
-  }, [catalogSchemaPaths, connections, saveTabDraft, setTabDraft, tabs])
+  }, [connections, saveTabDraft, setTabDraft, tabs])
 
   function sqlToRun() {
     return activeTab ? sqlForToolbarExecution(activeTab, selectedSql).trim() : ''
   }
 
   useEffect(() => {
-    if (!connectionId || !connectionIsConnected || !queryCapabilities.canReadMetadata) {
+    const tabId = activeTab?.id
+    if (!tabId || !connectionId || !connectionIsConnected || !queryCapabilities.canReadMetadata) {
       return
     }
 
@@ -311,6 +311,10 @@ export function MainPanel() {
           const preferredSchema =
             visibleSchemas.find((item) => item.name === 'public') ?? visibleSchemas[0]
           if (preferredSchema) {
+            updateSqlTabContext(tabId, {
+              database: selectedDatabase,
+              schema: preferredSchema.name,
+            })
             setCatalogSchemaPath({
               connectionId,
               database: selectedDatabase,
@@ -331,6 +335,7 @@ export function MainPanel() {
     }
   }, [
     connectionId,
+    activeTab?.id,
     connectionIsConnected,
     activeDriverType,
     queryCapabilities.canReadMetadata,
@@ -340,6 +345,7 @@ export function MainPanel() {
     loadDatabases,
     loadSchemas,
     setCatalogSchemaPath,
+    updateSqlTabContext,
     notifyError,
     t,
   ])
@@ -411,6 +417,7 @@ export function MainPanel() {
       database: selectedDatabase,
       schema: selectedSchema,
       maxRows: queryMaxRows,
+      connectionName: activeConnection?.name,
     })
   }
 
@@ -745,7 +752,7 @@ export function MainPanel() {
 
   return (
     <main className="flex flex-1 overflow-hidden bg-background">
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <SqlWorkspace view={workspaceView}>
         <EditorToolbar
         connections={connections}
         dataSourceGroups={dataSourceGroups}
@@ -769,20 +776,28 @@ export function MainPanel() {
           void (async () => {
             // Prepare the target first. A failed on-demand connection must not
             // alter this tab's SQL, result, or previous execution target.
-            if (id && statuses[id]?.status !== 'connected') {
+            if (id) {
               try {
+                // `connected` is a cached UI status. The backend validates an
+                // existing driver before reuse, replacing a stale JDBC/native
+                // session before this tab adopts the new execution context.
                 await connectConnection(id, { selectForBrowsing: false })
               } catch {
                 return
               }
             }
-            updateTabConnection(activeTab.id, id)
+            const nextConnection = id
+              ? connections.find((connection) => connection.id === id)
+              : null
+            updateTabConnection(activeTab.id, id, {
+              database: nextConnection?.database ?? null,
+              schema: null,
+            })
           if (id) {
-            const nextConnection = connections.find((connection) => connection.id === id)
             setCatalogSchemaPath({
               connectionId: id,
-              database: catalogSchemaPaths[id]?.database ?? nextConnection?.database ?? null,
-              schema: catalogSchemaPaths[id]?.schema ?? null,
+              database: nextConnection?.database ?? null,
+              schema: null,
               schemaListAvailable: true,
             })
           }
@@ -790,6 +805,7 @@ export function MainPanel() {
         }}
         onDatabaseChange={(database) => {
           if (!connectionId) return
+          updateSqlTabContext(activeTab.id, { database, schema: null })
           setCatalogSchemaPath({
             connectionId,
             database,
@@ -799,6 +815,7 @@ export function MainPanel() {
         }}
         onSchemaChange={(schema) => {
           if (!connectionId) return
+          updateSqlTabContext(activeTab.id, { schema })
           setCatalogSchemaPath({
             connectionId,
             database: selectedDatabase,
@@ -837,11 +854,13 @@ export function MainPanel() {
           if (!connectionId || !connectionIsConnected) return
           void rollbackConsoleTransaction(connectionId, activeTab.id).then((next) => useEditorStore.getState().setTabTransactionState(activeTab.id, next.mode, next.phase)).catch((error) => useUiStore.getState().notifyError(normalizeAppError(error), 'Rollback failed'))
         }}
+        workspaceView={workspaceView}
+        onWorkspaceViewChange={setWorkspaceView}
         />
 
         <div className="relative min-h-0 flex-1">
         <div className="flex h-full min-w-0 flex-col overflow-hidden">
-        <div className="ide-editor-surface min-h-0 flex-1">
+        <div className={workspaceView === 'results' ? 'hidden' : 'ide-editor-surface min-h-0 flex-1'}>
         {editorLoaded ? (
           <Suspense
             fallback={
@@ -864,25 +883,6 @@ export function MainPanel() {
           </Suspense>
         ) : (
           <div className="flex h-full flex-col bg-card">
-            <div className="flex h-9 items-center justify-between border-b px-3 text-xs text-muted-foreground">
-              <span className="min-w-0 truncate">
-                {t('workbench.lightSqlInput')}{completionHint ? ` · ${completionHint}` : ''}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-7"
-                onFocus={loadSqlEditor}
-                onClick={() => {
-                  setEditorShouldFocus(true)
-                  setEditorLoaded(true)
-                }}
-                onPointerEnter={loadSqlEditor}
-              >
-                {t('workbench.loadAdvancedEditor')}
-              </Button>
-            </div>
             <textarea
               className="min-h-0 flex-1 resize-none bg-card p-3 font-mono text-[13px] leading-5 text-foreground outline-none"
               style={{ fontSize: editorFontSize, lineHeight: `${Math.max(18, editorFontSize + 7)}px` }}
@@ -912,9 +912,9 @@ export function MainPanel() {
         )}
         </div>
 
-        {!bottomPanelCollapsed && (
+        {!bottomPanelCollapsed && workspaceView === 'split' && (
           <div
-            className="ide-splitter"
+            className={resultResizing ? 'ide-splitter ide-splitter--dragging' : 'ide-splitter'}
             role="separator"
             tabIndex={0}
             aria-orientation="horizontal"
@@ -933,51 +933,20 @@ export function MainPanel() {
             }}
           />
         )}
-        <section
-          className="flex shrink-0 flex-col bg-background"
-          style={{ height: bottomPanelCollapsed ? 32 : resultPanelHeight }}
-        >
-        <div className="ide-panel-header justify-between px-3">
-          <div className="flex items-center gap-3">
-            <span className="font-medium">{t('workbench.results')}</span>
-            {activeTab.running && (
-              <span className="inline-flex items-center gap-1.5 text-muted-foreground" aria-live="polite">
-                <Loader2 className="size-3 animate-spin" />
-                {activeTab.cancelling ? t('workbench.cancelRequested') : t('workbench.queryRunning')}
-              </span>
-            )}
-            {activeResult && !activeExplain && !activeTab.running && (
-              <span
-                className={activeResult.truncated ? 'text-amber-600' : 'text-muted-foreground'}
-                title={
-                  activeResult.truncated
-                    ? largeResultNotice(activeResult)
-                    : undefined
-                }
-              >
-                {activeResult.truncated ? largeResultNotice(activeResult) : resultSummary(activeResult)}
-              </span>
-            )}
-            {activeResultSource && (
-              <span
-                className={activeResultSource.connectionId === connectionId ? 'text-muted-foreground' : 'text-amber-600'}
-                title={activeResultSource.executedAt}
-              >
-                {activeResultConnection?.name ?? t('connection.disconnected')}
-                {(activeResultSource.database || activeResultSource.schema) && ` · ${[activeResultSource.database, activeResultSource.schema].filter(Boolean).join(' / ')}`}
-                {activeResultSource.connectionId === connectionId ? '' : ` · ${t('workbench.previousResult')}`}
-              </span>
-            )}
-            {activeResults && !activeExplain && activeResults.length > 1 && (
-              <span className="text-muted-foreground">{t('workbench.resultSets', { count: activeResults.length })}</span>
-            )}
-            {activeExplain && (
-              <span className="text-muted-foreground">
-                {t('workbench.explainSummary', { elapsedMs: activeExplain.elapsedMs })}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
+        {workspaceView !== 'editor' && <ResultPanel
+          title={t('workbench.results')}
+          collapsed={bottomPanelCollapsed}
+          fillAvailableSpace={workspaceView === 'results'}
+          height={resultPanelHeight}
+          status={activeTab.running ? (
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground" aria-live="polite"><Loader2 className="size-3 animate-spin" />{activeTab.cancelling ? t('workbench.cancelRequested') : t('workbench.queryRunning')}</span>
+          ) : activeTab.error ? (
+            <span className="inline-flex min-w-0 items-center gap-1 text-destructive"><AlertCircle className="size-3.5 shrink-0" />{t('workbench.queryFailed')}</span>
+          ) : undefined}
+          summary={activeResult && !activeExplain && !activeTab.running ? (activeResult.truncated ? largeResultNotice(activeResult) : resultHeaderSummary(activeResult)) : activeExplain ? t('workbench.explainSummary', { elapsedMs: activeExplain.elapsedMs }) : undefined}
+          source={activeResultSource ? `${activeResultConnection?.name ?? t('connection.disconnected')}${(activeResultSource.database || activeResultSource.schema) ? ` · ${[activeResultSource.database, activeResultSource.schema].filter(Boolean).join(' / ')}` : ''}${activeResultSource.connectionId === connectionId ? '' : ` · ${t('workbench.previousResult')}`}` : undefined}
+          actions={<>
+            {activeResult?.columns.length ? <ResultViewTabs value={resultView} onChange={setResultView} /> : null}
             <IconTooltipButton
               size="icon-xs"
               label={bottomPanelCollapsed ? t('explorer.expand') : t('explorer.collapse')}
@@ -1008,18 +977,15 @@ export function MainPanel() {
             >
               <Download className="size-3.5" />
             </IconTooltipButton>
-          {activeTab.error && (
-            <div className="flex min-w-0 items-center gap-1 text-destructive">
-              <AlertCircle className="size-3.5 shrink-0" />
-              <span className="truncate">{t('workbench.queryFailed')}</span>
-            </div>
-          )}
-          </div>
-        </div>
+            <IconTooltipButton size="icon-xs" label={workspaceView === 'results' ? t('editor.restoreSplit') : t('editor.maximizeResults')} variant="ghost" onClick={() => setWorkspaceView((view) => view === 'results' ? 'split' : 'results')}>
+              <Maximize2 className="size-3.5" />
+            </IconTooltipButton>
+          </>}
+        >
 
-        {!bottomPanelCollapsed && <div className="min-h-0 flex-1">
-          <div className="flex h-full min-h-0">
-            <div className="min-w-0 flex-1">
+        {!bottomPanelCollapsed && <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="flex h-full min-h-0 min-w-0 flex-1">
+            <div className="min-h-0 min-w-0 flex-1">
               {activeTab.error ? (
                 <ErrorDetails message={activeTab.error} sql={activeTab.sql} onRetry={() => void execute()} />
               ) : activeExplain ? (
@@ -1030,7 +996,7 @@ export function MainPanel() {
                     {JSON.stringify(activeExplain.plan, null, 2)}
                   </pre>
                 )
-              ) : (
+              ) : activeResult ? (
                 <div className="flex h-full min-h-0 flex-col">
                   {activeQueryId && activeResults && activeResults.length > 1 && (
                     <ResultSetTabs
@@ -1042,18 +1008,17 @@ export function MainPanel() {
                       }
                     />
                   )}
-                  {activeResult?.columns.length ? (
-                    <ResultViewTabs value={resultView} onChange={setResultView} />
-                  ) : null}
                   <div className="min-h-0 flex-1">
                     {resultView === 'metadata' ? <ResultMetadataGrid result={activeResult} /> : <DataGrid result={activeResult} />}
                   </div>
                 </div>
+              ) : (
+                <EmptyState className="h-full" title={t('workbench.noResultsYet')} description={t('workbench.runQueryToSeeResults')} />
               )}
             </div>
           </div>
         </div>}
-        </section>
+        </ResultPanel>}
         </div>
         {historyOpen && (
           <SqlHistoryPanel
@@ -1076,7 +1041,7 @@ export function MainPanel() {
           />
         )}
         </div>
-      </div>
+      </SqlWorkspace>
       <ObjectInspectorPanel />
     </main>
   )
@@ -1254,38 +1219,6 @@ function DataSourcesManagementPanel() {
             {editorContent}
           </SheetContent>
         </Sheet>}
-      </div>
-    </section>
-  )
-}
-
-function WorkbenchHome() {
-  const { t } = useTranslation()
-  const addTab = useEditorStore((state) => state.addTab)
-  const activeConnectionId = useConnectionStore((state) => state.activeConnectionId)
-  return (
-    <section className="ide-workspace flex min-h-0 flex-1 items-center justify-center overflow-hidden">
-      <div className="-mt-10 grid max-w-sm justify-items-center gap-3 text-center text-sm text-muted-foreground">
-        <div className="grid size-12 place-items-center rounded-xl border bg-card text-primary shadow-sm">
-          <DatabaseIcon className="size-6 stroke-[1.6]" />
-        </div>
-        <div>
-          <p className="font-medium text-foreground">{t('workbench.emptyEditorHint')}</p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground/80">{t('workbench.emptyEditorDetail')}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => addTab({ id: crypto.randomUUID(), kind: 'sql', title: 'SQL', sql: '', connectionId: activeConnectionId })}
-          >
-            <FileCode2 />
-            {t('sql.new')}
-          </Button>
-          <ConnectionDialog
-            trigger={<Button type="button" size="sm" variant="outline"><DatabaseIcon />{t('connection.new')}</Button>}
-          />
-        </div>
       </div>
     </section>
   )
@@ -2447,7 +2380,7 @@ function ResultViewTabs({
 }) {
   const { t } = useTranslation()
   return (
-    <div className="flex h-8 shrink-0 items-end gap-1 border-b bg-muted/15 px-2" role="tablist" aria-label={t('result.viewTabs')}>
+    <div className="result-view-tabs" role="tablist" aria-label={t('result.viewTabs')}>
       {(['data', 'metadata'] as const).map((view) => {
         const selected = value === view
         return (
@@ -2457,10 +2390,10 @@ function ResultViewTabs({
             role="tab"
             aria-selected={selected}
             className={[
-              'h-7 rounded-t-md border-x border-t px-2.5 text-xs transition-colors',
+              'relative h-full px-2.5 text-[11px] transition-colors after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:bg-primary after:opacity-0 after:transition-opacity',
               selected
-                ? 'border-border bg-card font-medium text-foreground'
-                : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                ? 'font-semibold text-foreground after:opacity-100'
+                : 'text-muted-foreground hover:text-foreground',
             ].join(' ')}
             onClick={() => onChange(view)}
           >
@@ -2609,6 +2542,17 @@ function resultSummary(result: QueryResult) {
     })}`
 }
 
+/** The result header favors the three numbers users scan first. */
+function resultHeaderSummary(result: QueryResult) {
+  if (result.columns.length === 0) return resultSummary(result)
+  const rows = i18n.t('workbench.rowSummary', {
+    count: result.rowCount.toLocaleString(),
+    truncated: result.truncated ? i18n.t('workbench.truncatedSuffix') : '',
+    elapsedMs: result.elapsedMs,
+  })
+  return result.receivedBytes == null ? rows : `${rows} · ${formatByteCount(result.receivedBytes)}`
+}
+
 function formatByteCount(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -2688,17 +2632,6 @@ function compactResultSummary(result: QueryResult) {
       : `${result.affectedRows.toLocaleString()} affected`
   }
   return `${result.rowCount.toLocaleString()} rows`
-}
-
-function completionMetadataHint(
-  connected: boolean,
-  canComplete: boolean,
-  selectedSchema: string | null,
-) {
-  if (!connected) return i18n.t('workbench.completionConnectHint')
-  if (!canComplete) return i18n.t('workbench.completionUnsupportedHint')
-  if (!selectedSchema) return i18n.t('workbench.completionSchemaHint')
-  return null
 }
 
 async function exportCurrentResult(

@@ -12,12 +12,14 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -186,7 +188,7 @@ public final class JdbcBridge {
                     }
                     default -> throw new IllegalArgumentException("unsupported command: " + command);
                 }
-            } catch (Exception error) {
+            } catch (Exception | LinkageError error) {
                 respondErr(requestId, error.getMessage() == null ? error.toString() : error.getMessage());
             }
         }
@@ -255,7 +257,7 @@ public final class JdbcBridge {
                         if (index > 1) {
                             output.append(',');
                         }
-                        appendJsonValue(output, resultValue(resultSet, index));
+                        appendJsonValue(output, resultValue(resultSet, metaData, index));
                     }
                     output.append(']');
                     rowCount += 1;
@@ -285,7 +287,14 @@ public final class JdbcBridge {
                 throw new java.sql.SQLException("query cancelled");
             }
             statement.setQueryTimeout(queryTimeoutSeconds);
-            statement.setFetchSize(request.chunkSize());
+            // Oracle's thin driver may attempt to prefetch a LONG value before
+            // the result cursor can advance. A single-row JDBC fetch keeps the
+            // legacy stream cursor valid; we still batch rows into protocol
+            // chunks below, so this affects only Oracle driver retrieval.
+            boolean oracle = connection.getMetaData().getDatabaseProductName()
+                    .toLowerCase(Locale.ROOT)
+                    .contains("oracle");
+            statement.setFetchSize(oracle ? 1 : request.chunkSize());
             // Ask for one extra row so the final frame reports truncation
             // truthfully, while still bounding the driver-side result window.
             if (request.maxRows() != null && request.maxRows() < Integer.MAX_VALUE) {
@@ -313,7 +322,7 @@ public final class JdbcBridge {
                     StringBuilder row = new StringBuilder("[");
                     for (int index = 1; index <= columnCount; index += 1) {
                         if (index > 1) row.append(',');
-                        appendJsonValue(row, resultValue(resultSet, index));
+                        appendJsonValue(row, resultValue(resultSet, metaData, index));
                     }
                     row.append(']');
                     rows.add(row.toString());
@@ -340,7 +349,7 @@ public final class JdbcBridge {
         Thread worker = new Thread(() -> {
             try {
                 request.run();
-            } catch (Exception error) {
+            } catch (Exception | LinkageError error) {
                 respondErr(requestId, error.getMessage() == null ? error.toString() : error.getMessage());
             }
         }, "vaporlensdb-jdbc-query-" + requestId);
@@ -731,7 +740,25 @@ public final class JdbcBridge {
         }
     }
 
-    private static Object resultValue(ResultSet resultSet, int index) throws Exception {
+    private static Object resultValue(ResultSet resultSet, ResultSetMetaData metaData, int index) throws Exception {
+        int jdbcType = metaData.getColumnType(index);
+        String jdbcTypeName = metaData.getColumnTypeName(index);
+        // Oracle LONG values are legacy, forward-only streams. The thin
+        // driver can either close them while materializing (ORA-17027) or
+        // block the whole result stream. Do not dereference a LONG in the
+        // interactive grid; preserve the row and expose an explicit marker
+        // rather than letting one legacy column stall every other value.
+        if (jdbcType == Types.LONGVARCHAR || jdbcType == Types.LONGNVARCHAR) {
+            return "LONG value (preview unavailable)";
+        }
+        // XMLTYPE is exposed by Oracle through oracle.xdb.XMLType. The XDB
+        // extension is optional and is not bundled with ojdbc, so getObject()
+        // can throw NoClassDefFoundError even though the query itself is valid.
+        // Keep the rest of the row browsable without pretending that this
+        // database-specific value was read.
+        if (jdbcTypeName != null && jdbcTypeName.toUpperCase(Locale.ROOT).contains("XMLTYPE")) {
+            return "XMLTYPE value (preview unavailable)";
+        }
         Object value = resultSet.getObject(index);
         if (value instanceof Number || value instanceof Boolean || value == null) {
             return value;
@@ -761,7 +788,14 @@ public final class JdbcBridge {
     }
 
     private static String readClob(Clob clob) throws Exception {
-        try (Reader reader = clob.getCharacterStream()) {
+        return readCharacterStream(clob.getCharacterStream());
+    }
+
+    private static String readCharacterStream(Reader reader) throws Exception {
+        if (reader == null) {
+            return null;
+        }
+        try (reader) {
             StringBuilder value = new StringBuilder();
             char[] buffer = new char[8192];
             int read;

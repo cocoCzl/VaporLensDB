@@ -26,19 +26,18 @@ includesAll(
 )
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
+const statusBar = read('src/components/layout/StatusBar.tsx')
 includesAll(
-  sidebar,
+  statusBar,
   [
-    'SessionManagementPanel',
+    'function TaskSessionStatus()',
     'runtimeSessions',
     'runningQueryCount',
     'cancelRunningQuery(tab.id, connection.id, tab.runningQueryId)',
-    'disconnectConnection(connectionId)',
     'driverCanCancel',
     "return driverType === 'postgres'",
-    "t('sessions.runningQueriesUnavailable')",
     "t('sessions.cancelUnsupported')",
-    "t('sessions.emptyTitle')",
+    "t('status.noActiveSessions')",
   ],
   'session management panel',
 )

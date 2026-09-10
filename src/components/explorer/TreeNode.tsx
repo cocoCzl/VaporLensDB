@@ -140,8 +140,8 @@ export function TreeNode({
   return (
     <div
       className={[
-        'group flex h-6 items-center gap-1 rounded px-1 text-xs text-foreground/90 hover:bg-accent/75',
-        selected ? 'bg-accent text-accent-foreground' : '',
+        'group flex h-7 items-center gap-1 rounded-sm px-1 text-xs text-foreground/90 hover:bg-accent-hover/70',
+        selected ? 'bg-accent-selected text-accent-foreground' : '',
       ].join(' ')}
       data-muted={node.muted ? 'true' : undefined}
       data-selected={selected ? 'true' : undefined}
@@ -205,7 +205,7 @@ export function TreeNode({
         <span
           className={[
             'inline-flex shrink-0 items-center gap-1 truncate text-[11px]',
-            warning ? 'text-amber-600' : 'text-muted-foreground',
+            warning ? 'text-warning' : 'text-muted-foreground',
           ].join(' ')}
         >
           {warning && <TriangleAlert className="size-3" />}
@@ -263,15 +263,11 @@ export function TreeNode({
 
 function nodeIconTone(kind: DatabaseTreeNodeKind, muted?: boolean) {
   if (muted) return 'text-muted-foreground/50'
-  if (kind === 'database') return 'text-sky-600'
-  if (kind === 'schema') return 'text-emerald-600'
+  if (kind === 'database') return 'text-primary/80'
+  if (kind === 'schema') return 'text-foreground/70'
   if (CATEGORY_KINDS.has(kind)) return 'text-muted-foreground/75'
-  if (kind === 'table') return 'text-blue-600'
-  if (kind === 'view') return 'text-cyan-600'
-  if (kind === 'materializedView') return 'text-indigo-600'
-  if (KEY_KINDS.has(kind)) return 'text-amber-600'
-  if (CODE_KINDS.has(kind)) return 'text-violet-600'
-  return 'text-primary/80'
+  if (KEY_KINDS.has(kind) || CODE_KINDS.has(kind)) return 'text-muted-foreground/80'
+  return 'text-muted-foreground'
 }
 
 function isDatabaseObjectKind(

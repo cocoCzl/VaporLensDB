@@ -29,7 +29,12 @@ export function useQuery() {
     tabId: string,
     connectionId: string,
     sql: string,
-    options: { maxRows?: number; database?: string | null; schema?: string | null } = {},
+    options: {
+      maxRows?: number
+      database?: string | null
+      schema?: string | null
+      connectionName?: string
+    } = {},
   ) {
     const queryId = crypto.randomUUID()
     const startedAt = new Date().toISOString()
@@ -47,6 +52,10 @@ export function useQuery() {
             chunkSize: 1_000,
             maxRows: options.maxRows ?? useUiStore.getState().queryMaxRows,
             consoleId: useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual' ? tabId : undefined,
+            tabId,
+            connectionName: options.connectionName,
+            database: options.database,
+            schema: options.schema,
           })
         } finally {
           streamState.unlisteners.forEach((unlisten) => unlisten())
@@ -65,7 +74,16 @@ export function useQuery() {
           return false
         }
       } else {
-        const response = await executeQuery({ connectionId, sql, queryId, consoleId: useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual' ? tabId : undefined })
+        const response = await executeQuery({
+          connectionId,
+          sql,
+          queryId,
+          consoleId: useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual' ? tabId : undefined,
+          tabId,
+          connectionName: options.connectionName,
+          database: options.database,
+          schema: options.schema,
+        })
         setResults(queryId, response.results)
       }
       setResultSource(queryId, connectionId, options)

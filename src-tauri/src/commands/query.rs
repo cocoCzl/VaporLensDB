@@ -21,6 +21,10 @@ pub struct ExecuteQueryInput {
     pub sql: String,
     pub query_id: Option<String>,
     pub console_id: Option<String>,
+    pub tab_id: Option<String>,
+    pub connection_name: Option<String>,
+    pub database: Option<String>,
+    pub schema: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +36,10 @@ pub struct ExecuteQueryStreamInput {
     pub chunk_size: Option<usize>,
     pub max_rows: Option<u64>,
     pub console_id: Option<String>,
+    pub tab_id: Option<String>,
+    pub connection_name: Option<String>,
+    pub database: Option<String>,
+    pub schema: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,18 +126,29 @@ pub async fn execute_query(
             operation
         }
     };
+    log_execute_context(
+        input.tab_id.as_deref(),
+        input.connection_id,
+        input.connection_name.as_deref(),
+        input.database.as_deref(),
+        input.schema.as_deref(),
+        operation.driver.driver_name(),
+        operation.generation,
+    );
     emit_query_queue_state(&app, &input.query_id, input.connection_id, "running");
-    let result = state
+    let execution = state
         .query_engine
         .execute_query(operation.driver, &input.sql, input.query_id)
-        .await
-        .map_err(Into::into);
+        .await;
+    if execution.as_ref().is_err_and(should_retire_stale_connection) {
+        retire_stale_connection(&state, input.connection_id, "query detected a closed runtime session").await;
+    }
     state
         .connection_manager
         .lock()
         .await
         .release_operation(input.connection_id);
-    result
+    execution.map_err(Into::into)
 }
 
 #[tauri::command]
@@ -209,6 +228,15 @@ pub async fn execute_query_stream(
             operation
         }
     };
+    log_execute_context(
+        input.tab_id.as_deref(),
+        input.connection_id,
+        input.connection_name.as_deref(),
+        input.database.as_deref(),
+        input.schema.as_deref(),
+        operation.driver.driver_name(),
+        operation.generation,
+    );
     emit_query_queue_state(
         &app,
         &Some(input.query_id.clone()),
@@ -228,12 +256,75 @@ pub async fn execute_query_stream(
             },
         )
         .await;
+    if result.as_ref().is_err_and(|error| should_retire_stale_connection_message(error)) {
+        retire_stale_connection(&state, input.connection_id, "query stream detected a closed runtime session").await;
+    }
     state
         .connection_manager
         .lock()
         .await
         .release_operation(input.connection_id);
     result
+}
+
+fn log_execute_context(
+    tab_id: Option<&str>,
+    connection_id: Uuid,
+    connection_name: Option<&str>,
+    database: Option<&str>,
+    schema: Option<&str>,
+    driver: &str,
+    generation: u64,
+) {
+    log::debug!(
+        "Execute SQL: tab={} connectionId={} connectionName={} driver={} database={} schema={} poolGeneration={}",
+        tab_id.unwrap_or("<none>"),
+        connection_id,
+        connection_name.unwrap_or("<unknown>"),
+        driver,
+        database.unwrap_or("<none>"),
+        schema.unwrap_or("<none>"),
+        generation,
+    );
+}
+
+fn should_retire_stale_connection(error: &crate::models::error::AppError) -> bool {
+    should_retire_stale_connection_message(&error.to_string())
+}
+
+fn should_retire_stale_connection_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "pool is closed",
+        "pool has been closed",
+        "pool 已被关闭",
+        "connection is closed",
+        "closed connection",
+        "jdbc bridge sidecar is not running",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+async fn retire_stale_connection(state: &State<'_, AppState>, connection_id: Uuid, reason: &str) {
+    log::debug!("retiring stale execution session: connectionId={} reason={}", connection_id, reason);
+    state
+        .connection_manager
+        .lock()
+        .await
+        .invalidate_connection(connection_id, reason);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_retire_stale_connection_message;
+
+    #[test]
+    fn detects_closed_pool_errors_without_retiring_sql_errors() {
+        assert!(should_retire_stale_connection_message("Connection failed (jdbc): pool has been closed"));
+        assert!(should_retire_stale_connection_message("pool 已被关闭"));
+        assert!(!should_retire_stale_connection_message("ORA-00942: table or view does not exist"));
+    }
 }
 
 #[tauri::command]

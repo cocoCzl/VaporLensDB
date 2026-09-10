@@ -70,7 +70,7 @@ pub fn create_connection(
 }
 
 #[tauri::command]
-pub fn update_connection(
+pub async fn update_connection(
     state: State<'_, AppState>,
     mut input: ConnectionInput,
 ) -> Result<ConnectionConfig, String> {
@@ -81,10 +81,22 @@ pub fn update_connection(
     let password = input.password.clone();
     let save_password = input.save_password;
     let config = input_to_config(input, id);
-    state
+    let updated = state
         .config_store
         .update_connection(config, password, save_password)
-        .map_err(Into::into)
+        .map_err(String::from)?;
+
+    // Saved configuration and live drivers must never diverge. Dropping only
+    // the runtime session preserves every SQL tab's stable connection ID; its
+    // next execution reconnects against this newly saved configuration.
+    state
+        .connection_manager
+        .lock()
+        .await
+        .invalidate_connection(id, "connection configuration changed");
+    state.metadata_service.clear_connection(id).await;
+    state.metadata_index.clear_connection(id).await;
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -157,6 +169,37 @@ pub async fn connect(
     let mut runtime_config = config.clone();
     runtime_config.ssh_tunnel = ssh_tunnel;
 
+    // A status of Connected only means the runtime entry exists. JDBC and
+    // native drivers can lose their underlying session independently. Verify
+    // an existing entry before reusing it; a failed health check is retired so
+    // the normal connection path below creates a fresh driver/session.
+    let existing_driver = {
+        state
+            .connection_manager
+            .lock()
+            .await
+            .driver(id)
+            .ok()
+    };
+    if let Some(driver) = existing_driver {
+        match driver.ping().await {
+            Ok(()) => return Ok(state.connection_manager.lock().await.status(id)),
+            Err(error) => {
+                log::debug!(
+                    "retiring stale connection before reconnect: connectionId={} driver={} reason={}",
+                    id,
+                    driver.driver_name(),
+                    error
+                );
+                state
+                    .connection_manager
+                    .lock()
+                    .await
+                    .invalidate_connection(id, "stale driver session was replaced");
+            }
+        }
+    }
+
     {
         let mut manager = state.connection_manager.lock().await;
         if let Some(status) = manager.begin_connect(id).map_err(String::from)? {
@@ -225,14 +268,15 @@ pub async fn set_connection_session_policy(
 
 fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
     let now = Utc::now();
+    let (host, port) = normalize_host_port(input.host, input.port);
     ConnectionConfig {
         id,
         name: input.name,
         driver_definition_id: input.driver_definition_id,
         driver_type: input.driver_type,
         driver_dialect: input.driver_dialect,
-        host: input.host,
-        port: input.port,
+        host,
+        port,
         database: input.database,
         connection_url: input.connection_url,
         username: input.username,
@@ -248,6 +292,30 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
         created_at: now,
         updated_at: now,
     }
+}
+
+/// Host and port are separate native-driver fields. Normalize the common
+/// `host:port` paste form before a native resolver can treat it as a hostname.
+fn normalize_host_port(host: Option<String>, port: Option<u16>) -> (Option<String>, Option<u16>) {
+    let Some(host) = host.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) else {
+        return (None, port);
+    };
+    let Some((candidate_host, candidate_port)) = host.rsplit_once(':') else {
+        return (Some(host), port);
+    };
+
+    // IPv6 literals have more than one colon and must stay intact.
+    if candidate_host.is_empty() || candidate_host.contains(':') {
+        return (Some(host), port);
+    }
+    let Ok(embedded_port) = candidate_port.parse::<u16>() else {
+        return (Some(host), port);
+    };
+    if embedded_port == 0 {
+        return (Some(host), port);
+    }
+
+    (Some(candidate_host.to_string()), Some(embedded_port))
 }
 
 fn default_save_password() -> bool {
@@ -437,5 +505,17 @@ mod tests {
         );
         assert_eq!(input.username.as_deref(), Some("alice"));
         assert_eq!(input.password.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn splits_a_pasted_host_port_before_native_connection_resolution() {
+        assert_eq!(
+            normalize_host_port(Some("192.168.0.20:3306".to_string()), Some(3306)),
+            (Some("192.168.0.20".to_string()), Some(3306))
+        );
+        assert_eq!(
+            normalize_host_port(Some("2001:db8::1".to_string()), Some(3306)),
+            (Some("2001:db8::1".to_string()), Some(3306))
+        );
     }
 }

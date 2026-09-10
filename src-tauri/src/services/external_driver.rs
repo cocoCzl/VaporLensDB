@@ -74,10 +74,24 @@ pub fn resolve_jdbc_bridge_jar() -> Result<PathBuf, AppError> {
     }
 
     let current_dir = std::env::current_dir()?;
+    #[cfg(not(debug_assertions))]
     let source_candidates = [
         current_dir.join("tools/jdbc-bridge/target/jdbc-bridge.jar"),
         current_dir.join("../tools/jdbc-bridge/target/jdbc-bridge.jar"),
         current_dir.join("../../tools/jdbc-bridge/target/jdbc-bridge.jar"),
+    ];
+
+    // LaunchServices starts a macOS .app with a system-selected working
+    // directory, so relative source-tree lookup is not reliable in dev mode.
+    // Keep the compile-time manifest fallback debug-only to avoid embedding a
+    // developer machine path as a release-runtime dependency.
+    #[cfg(debug_assertions)]
+    let source_candidates = [
+        current_dir.join("tools/jdbc-bridge/target/jdbc-bridge.jar"),
+        current_dir.join("../tools/jdbc-bridge/target/jdbc-bridge.jar"),
+        current_dir.join("../../tools/jdbc-bridge/target/jdbc-bridge.jar"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../tools/jdbc-bridge/target/jdbc-bridge.jar"),
     ];
 
     source_candidates

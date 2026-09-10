@@ -55,7 +55,8 @@ includesAll(
 )
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
-includesAll(sidebar, ['setActiveConnection(connection.id)'], 'left connection selection')
+const dataSourcesSidebar = read('src/components/sidebar/DataSourcesSidebar.tsx')
+includesAll(dataSourcesSidebar, ['setActiveConnection(connection.id)'], 'left connection selection')
 excludesAll(
   sidebar,
   ['updateTabConnection', 'ensureTab'],

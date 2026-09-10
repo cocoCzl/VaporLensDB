@@ -3,6 +3,8 @@ import { Sidebar } from './components/layout/Sidebar'
 import { MainPanel } from './components/layout/MainPanel'
 import { StatusBar } from './components/layout/StatusBar'
 import { TabBar } from './components/layout/TabBar'
+import { AppTopBar } from './components/layout/AppTopBar'
+import { VaporLensMark } from './components/layout/VaporLensMark'
 import { healthCheck } from './ipc/health'
 import { NotificationBridge } from './components/common/NotificationBridge'
 import { WorkspaceCommandPalette } from './components/common/WorkspaceCommandPalette'
@@ -178,9 +180,10 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <div className="flex flex-1 overflow-hidden">
+      <AppTopBar />
+      <div className="ide-app-body flex min-h-0 flex-1 overflow-hidden">
         <Sidebar />
-        <div className="flex flex-col flex-1 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <TabBar />
           <MainPanel />
         </div>
@@ -215,17 +218,5 @@ function SplashScreen() {
         <div className="w-1.5 bg-primary" />
       </div>
     </div>
-  )
-}
-
-function VaporLensMark() {
-  return (
-    <svg viewBox="0 0 40 40" className="size-10 shrink-0" aria-hidden="true">
-      <rect width="40" height="40" rx="9" fill="hsl(var(--primary))" />
-      <ellipse cx="20" cy="11" rx="10" ry="4" fill="none" stroke="white" strokeWidth="2.2" />
-      <path d="M10 11v16c0 2.2 4.5 4 10 4s10-1.8 10-4V11M10 19c0 2.2 4.5 4 10 4s10-1.8 10-4" fill="none" stroke="white" strokeWidth="2.2" />
-      <circle cx="28.5" cy="28.5" r="5.5" fill="hsl(var(--card))" stroke="hsl(var(--primary))" strokeWidth="2" />
-      <path d="m32.5 32.5 3 3" stroke="hsl(var(--primary))" strokeWidth="2.2" strokeLinecap="round" />
-    </svg>
   )
 }

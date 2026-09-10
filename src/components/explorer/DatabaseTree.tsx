@@ -1096,11 +1096,11 @@ export function DatabaseTree({
         : 'flex min-h-0 flex-1 flex-col border-t ide-surface'}
       title={compact ? t('explorer.resizeObjectTree') : undefined}
     >
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <Server className="size-4 shrink-0 text-muted-foreground" />
+      <div className="flex h-8 items-center gap-1.5 border-b border-border/60 px-2">
+        <Server className="size-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">{t('explorer.title')}</div>
-          <div className="truncate text-xs text-muted-foreground">
+          <div className="truncate text-[11px] font-semibold">{t('explorer.title')}</div>
+          <div className="truncate text-[10px] text-muted-foreground">
             {activeConnection
               ? `${activeConnection.name} · ${connectionStatusSummary(activeRuntimeStatus, t, activeStatus?.message)}`
               : t('explorer.noConnectionStatus')}
@@ -1108,7 +1108,7 @@ export function DatabaseTree({
         </div>
         <Button
           type="button"
-          size="icon-sm"
+          size="icon-xs"
           variant="ghost"
           title={t('explorer.refreshObjects')}
           disabled={!isConnected || !objectBrowsingSupported}
@@ -1118,7 +1118,7 @@ export function DatabaseTree({
         </Button>
         <Button
           type="button"
-          size="icon-sm"
+          size="icon-xs"
           variant={showSystemObjects ? 'secondary' : 'ghost'}
           title={showSystemObjects ? t('explorer.hideSystemObjects') : t('explorer.showSystemObjects')}
           onClick={() => setShowSystemObjects(!showSystemObjects)}
@@ -1127,7 +1127,7 @@ export function DatabaseTree({
         </Button>
         <Button
           type="button"
-          size="icon-sm"
+          size="icon-xs"
           variant="ghost"
           title={t('explorer.indexCurrentConnection')}
           disabled={!isConnected || !objectBrowsingSupported || indexLoading}
@@ -1137,7 +1137,7 @@ export function DatabaseTree({
         </Button>
       </div>
 
-      <div className="flex h-10 items-center gap-1 border-b px-2">
+      <div className="flex h-9 items-center gap-1 border-b border-border/60 px-2">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input

@@ -44,6 +44,10 @@ pub struct JdbcDriver {
 struct JdbcBridgeSidecar {
     process: Mutex<Option<Arc<JdbcBridgeProcess>>>,
     active_stream: Mutex<Option<ActiveJdbcStream>>,
+    // The bridge has one stdout protocol stream. A query stream emits several
+    // frames, so metadata and completion requests must wait until it finishes
+    // rather than reading one another's responses.
+    request_lock: Mutex<()>,
 }
 
 struct JdbcBridgeProcess {
@@ -315,6 +319,7 @@ impl JdbcBridgeSidecar {
                 next_request_id: AtomicU64::new(0),
             }))),
             active_stream: Mutex::new(None),
+            request_lock: Mutex::new(()),
         };
 
         sidecar
@@ -329,6 +334,7 @@ impl JdbcBridgeSidecar {
     }
 
     async fn request(&self, command: JdbcBridgeCommand) -> Result<String, AppError> {
+        let _request_guard = self.request_lock.lock().await;
         let process = self.process().await?;
         let request_id = process.next_request_id.fetch_add(1, Ordering::Relaxed);
         let timeout_window = command.timeout();
@@ -366,6 +372,7 @@ impl JdbcBridgeSidecar {
         max_rows: Option<u64>,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<JdbcStreamDoneOutput, AppError> {
+        let _request_guard = self.request_lock.lock().await;
         let process = self.process().await?;
         let request_id = process.next_request_id.fetch_add(1, Ordering::Relaxed);
         let request = JdbcBridgeCommand::QueryStream {
@@ -396,7 +403,7 @@ impl JdbcBridgeSidecar {
 
     async fn request_stream_frames(
         &self,
-        process: &JdbcBridgeProcess,
+        process: &Arc<JdbcBridgeProcess>,
         request: &str,
         request_id: u64,
         query_id: &str,
@@ -413,10 +420,30 @@ impl JdbcBridgeSidecar {
         let mut stdout = process.stdout.lock().await;
         loop {
             let mut response = String::new();
-            if stdout.read_line(&mut response).await.map_err(|error| {
-                broken_sidecar(&format!("failed to read JDBC stream response: {error}"))
-            })? == 0
+            let bytes_read = match timeout(
+                Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
+                stdout.read_line(&mut response),
+            )
+            .await
             {
+                Ok(result) => result.map_err(|error| {
+                    broken_sidecar(&format!("failed to read JDBC stream response: {error}"))
+                })?,
+                Err(_) => {
+                    // A JDBC stream that stops producing protocol frames cannot
+                    // recover safely: its worker may still own the shared
+                    // stdout stream. Dispose of the sidecar so the next query
+                    // starts with a clean process instead of leaving the UI in
+                    // an indefinite "receiving results" state.
+                    drop(stdout);
+                    self.abort_process(process).await;
+                    return Err(AppError::Timeout {
+                        operation: "jdbc query stream".to_string(),
+                        elapsed_ms: (JDBC_QUERY_TIMEOUT_SECS as u64) * 1_000,
+                    });
+                }
+            };
+            if bytes_read == 0 {
                 return Err(process.take_exit_error().await);
             }
             let (status, payload) = parse_sidecar_frame(&response, request_id)?;
@@ -479,6 +506,11 @@ impl JdbcBridgeSidecar {
         {
             *current = None;
         }
+    }
+
+    async fn abort_process(&self, process: &Arc<JdbcBridgeProcess>) {
+        self.clear_process(process).await;
+        let _ = process.child.lock().await.start_kill();
     }
 
     async fn write_request(
@@ -732,9 +764,12 @@ impl DatabaseDriver for JdbcDriver {
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
         let start = Instant::now();
+        // JDBC statements do not accept the editor's optional trailing
+        // delimiter. Keep streamed execution consistent with execute_query.
+        let sql = normalize_jdbc_sql(sql);
         let done = self
             .sidecar
-            .request_stream(sql, query_id, chunk_size.max(1), max_rows, chunks)
+            .request_stream(&sql, query_id, chunk_size.max(1), max_rows, chunks)
             .await?;
 
         Ok(QueryStreamSummary {

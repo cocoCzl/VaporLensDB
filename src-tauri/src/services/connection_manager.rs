@@ -29,6 +29,7 @@ pub struct ConnectionManager {
     connections: HashMap<Uuid, ActiveConnection>,
     statuses: HashMap<Uuid, ConnectionStatus>,
     pending_connections: HashSet<Uuid>,
+    next_generation: u64,
     max_live_sessions: usize,
     idle_reclaim_after: Option<Duration>,
 }
@@ -41,6 +42,7 @@ pub(crate) struct ActiveConnection {
     serial_query_gate: Arc<Semaphore>,
     queued_queries: HashMap<String, CancellationToken>,
     console_sessions: HashMap<String, ConsoleSession>,
+    generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -70,6 +72,7 @@ pub struct ConsoleTransactionState {
 /// Concurrent drivers intentionally leave this empty.
 pub struct QueryOperation {
     pub driver: Arc<dyn DatabaseDriver>,
+    pub generation: u64,
     _serial_permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -78,6 +81,7 @@ pub struct QueryOperation {
 /// cancellation, disconnect protection, or queries against other Data Sources.
 pub struct QueuedQueryOperation {
     driver: Arc<dyn DatabaseDriver>,
+    generation: u64,
     serial_query_gate: Arc<Semaphore>,
     cancellation: CancellationToken,
 }
@@ -98,6 +102,7 @@ impl QueuedQueryOperation {
         };
         Ok(QueryOperation {
             driver: self.driver,
+            generation: self.generation,
             _serial_permit: Some(permit),
         })
     }
@@ -112,6 +117,7 @@ impl ConnectionManager {
             connections: HashMap::new(),
             statuses: HashMap::new(),
             pending_connections: HashSet::new(),
+            next_generation: 1,
             max_live_sessions: DEFAULT_MAX_LIVE_SESSIONS,
             idle_reclaim_after: Some(DEFAULT_IDLE_RECLAIM_AFTER),
         }
@@ -157,7 +163,9 @@ impl ConnectionManager {
             ));
         }
         match result {
-            Ok(active) => {
+            Ok(mut active) => {
+                active.generation = self.next_generation;
+                self.next_generation = self.next_generation.saturating_add(1);
                 self.connections.insert(connection_id, active);
                 Ok(self.set_status(connection_id, ConnectionRuntimeStatus::Connected, None))
             }
@@ -201,6 +209,19 @@ impl ConnectionManager {
         self.connections.remove(&connection_id);
         self.pending_connections.remove(&connection_id);
         Ok(self.set_status(connection_id, ConnectionRuntimeStatus::Disconnected, None))
+    }
+
+    /// Retire a runtime driver that has become unusable (for example, a JDBC
+    /// sidecar whose underlying connection was closed). The saved Data Source
+    /// remains intact; the next connect creates a fresh runtime session.
+    pub fn invalidate_connection(&mut self, connection_id: Uuid, reason: &str) {
+        self.connections.remove(&connection_id);
+        self.pending_connections.remove(&connection_id);
+        self.set_status(
+            connection_id,
+            ConnectionRuntimeStatus::Disconnected,
+            Some(reason.to_string()),
+        );
     }
 
     pub async fn shutdown_all(&mut self) {
@@ -489,6 +510,7 @@ impl ConnectionManager {
             connection.in_flight_operations += 1;
             return Ok(QueryOperationStart::Ready(QueryOperation {
                 driver: connection.driver.clone(),
+                generation: connection.generation,
                 _serial_permit: None,
             }));
         }
@@ -504,12 +526,14 @@ impl ConnectionManager {
                 connection.in_flight_operations += 1;
                 Ok(QueryOperationStart::Ready(QueryOperation {
                     driver,
+                    generation: connection.generation,
                     _serial_permit: Some(permit),
                 }))
             }
             Err(TryAcquireError::NoPermits) => {
                 Ok(QueryOperationStart::Queued(QueuedQueryOperation {
                     driver,
+                    generation: connection.generation,
                     serial_query_gate,
                     cancellation,
                 }))
@@ -640,6 +664,7 @@ pub(crate) async fn create_active_connection(
         serial_query_gate: Arc::new(Semaphore::new(1)),
         queued_queries: HashMap::new(),
         console_sessions: HashMap::new(),
+        generation: 0,
     })
 }
 
@@ -706,7 +731,10 @@ async fn create_driver(
             } else {
                 let host = required(config.host.as_deref(), "host")?;
                 let port = config.port.unwrap_or(3306);
-                let database = required(config.database.as_deref(), "database")?;
+                // A MySQL server-level connection intentionally has no default
+                // database. It is valid for database browsing and lets the
+                // workspace select a database after connecting.
+                let database = config.database.as_deref().unwrap_or("");
                 let username = required(config.username.as_deref(), "username")?;
                 let password = password.unwrap_or("");
                 MysqlDriver::connect_with_params(host, port, database, username, password).await?
@@ -787,6 +815,7 @@ mod tests {
             serial_query_gate: Arc::new(Semaphore::new(1)),
             queued_queries: HashMap::new(),
             console_sessions: HashMap::new(),
+            generation: 0,
         }
     }
 
@@ -802,6 +831,29 @@ mod tests {
             manager.status(connection_id).status,
             ConnectionRuntimeStatus::Disconnected
         ));
+    }
+
+    #[tokio::test]
+    async fn invalidating_a_stale_connection_allows_a_fresh_connect() {
+        let mut manager = ConnectionManager::new();
+        let connection_id = Uuid::new_v4();
+        manager
+            .begin_connect(connection_id)
+            .expect("connection attempt starts");
+        manager
+            .finish_connect(connection_id, Ok(sqlite_connection(Instant::now(), 0).await))
+            .expect("connection installs");
+
+        manager.invalidate_connection(connection_id, "driver session became unusable");
+
+        assert!(matches!(
+            manager.status(connection_id).status,
+            ConnectionRuntimeStatus::Disconnected
+        ));
+        assert!(manager
+            .begin_connect(connection_id)
+            .expect("fresh connection attempt starts")
+            .is_none());
     }
 
     #[tokio::test]

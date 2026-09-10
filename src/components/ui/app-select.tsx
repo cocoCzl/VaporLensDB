@@ -45,12 +45,12 @@ export function AppSelect({
       <SelectTrigger
         id={id}
         className={cn(
-          'w-full min-w-0 text-xs shadow-none transition-[border-color,background-color,box-shadow] focus-visible:ring-2 focus-visible:ring-primary/15',
+          'w-full min-w-0 text-xs shadow-none transition-[border-color,background-color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring/20',
           useIdeSkin
-            ? `ide-combobox-trigger ${variant === 'ide' ? 'h-7' : 'h-[30px]'} rounded border px-2.5 text-foreground focus-visible:border-[hsl(var(--ide-combo-focus))] focus-visible:ring-[hsl(var(--ide-combo-focus)/0.16)]`
+            ? `ide-combobox-trigger ${variant === 'ide' ? 'h-7' : 'h-8'} rounded-md border px-2.5 text-foreground focus-visible:border-[hsl(var(--ide-combo-focus))] focus-visible:ring-[hsl(var(--ide-combo-focus)/0.16)]`
             : variant === 'toolbar'
             ? 'h-7 rounded border border-transparent bg-transparent px-2 hover:border-border hover:bg-card aria-expanded:border-border aria-expanded:bg-card focus-visible:border-primary/60'
-            : 'border-border/80 bg-card hover:border-foreground/25 hover:bg-muted/35 focus-visible:border-primary/60',
+            : 'border-border bg-surface hover:border-border-strong hover:bg-surface-secondary focus-visible:border-ring',
           className,
         )}
         {...props}
@@ -59,8 +59,8 @@ export function AppSelect({
       </SelectTrigger>
       <SelectContent
         className={cn(
-          'max-w-[min(28rem,var(--available-width))] border-border/80 bg-popover p-1 shadow-[0_14px_30px_-18px_hsl(var(--foreground)/0.5)]',
-          variant === 'ide' ? 'ide-combobox-content max-h-56 min-w-[7rem] rounded-md border p-1' : useIdeSkin ? 'ide-combobox-content max-h-56 min-w-0 rounded-md border p-1' : 'max-h-52 rounded-[2px] border-border bg-card p-0.5 shadow-[0_6px_16px_-10px_hsl(var(--overlay)/0.75)]',
+          'max-w-[min(28rem,var(--available-width))] border-border bg-popover p-1 shadow-[0_14px_30px_-18px_hsl(var(--shadow-floating)/0.58)]',
+          variant === 'ide' ? 'ide-combobox-content max-h-56 min-w-[7rem] rounded-md border p-1' : useIdeSkin ? 'ide-combobox-content max-h-56 min-w-0 rounded-md border p-1' : 'max-h-52 rounded-md border-border bg-popover p-0.5 shadow-[0_10px_22px_-16px_hsl(var(--shadow-floating)/0.58)]',
           contentClassName,
         )}
         align="start"
@@ -70,7 +70,7 @@ export function AppSelect({
         alignItemWithTrigger={false}
       >
         {options.map((option) => (
-          <SelectItem key={option.value} value={option.value} disabled={option.disabled} title={option.label} className={cn('min-h-7 px-2 py-1 text-xs data-highlighted:bg-primary/10 data-highlighted:text-foreground [&_[data-slot=select-item-text]]:truncate', useIdeSkin ? 'ide-combobox-item rounded-[4px] px-2.5' : 'rounded-[1px]')}>
+          <SelectItem key={option.value} value={option.value} disabled={option.disabled} title={option.label} className={cn('min-h-7 px-2 py-1 text-xs data-highlighted:bg-accent-hover data-highlighted:text-foreground [&_[data-slot=select-item-text]]:truncate', useIdeSkin ? 'ide-combobox-item rounded-sm px-2.5' : 'rounded-sm')}>
             {option.label}
           </SelectItem>
         ))}

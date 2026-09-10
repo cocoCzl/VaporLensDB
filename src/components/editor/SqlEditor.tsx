@@ -109,7 +109,9 @@ export function SqlEditor({
         fontSize: editorFontSize,
         fontFamily: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
         lineHeight: 20,
-        padding: { top: 8, bottom: 8 },
+        // Give SQL a composed writing surface while keeping the result panel
+        // as the primary work area below it.
+        padding: { top: 12, bottom: 12 },
         scrollBeyondLastLine: false,
         automaticLayout: true,
         wordWrap: 'on',
@@ -124,53 +126,111 @@ export function SqlEditor({
 }
 
 const defineVaporLensThemes: BeforeMount = (monaco) => {
+  const light = monacoPalette(false)
+  const dark = monacoPalette(true)
   monaco.editor.defineTheme('vaporlens-dark', {
     base: 'vs-dark',
     inherit: true,
     rules: [
-      { token: 'keyword', foreground: '6EA8FE', fontStyle: 'bold' },
-      { token: 'string', foreground: 'A6D189' },
-      { token: 'number', foreground: 'E5A96B' },
-      { token: 'comment', foreground: '727982', fontStyle: 'italic' },
-      { token: 'identifier', foreground: 'D8DEE7' },
-      { token: 'delimiter', foreground: 'AAB2BD' },
+      { token: 'keyword', foreground: dark.primary, fontStyle: 'bold' },
+      { token: 'string', foreground: dark.success },
+      { token: 'number', foreground: dark.warning },
+      { token: 'comment', foreground: dark.muted, fontStyle: 'italic' },
+      { token: 'identifier', foreground: dark.foreground },
+      { token: 'delimiter', foreground: dark.muted },
     ],
     colors: {
-      'editor.background': '#202225',
-      'editor.foreground': '#D8DEE7',
-      'editorLineNumber.foreground': '#666D76',
-      'editorLineNumber.activeForeground': '#B9C1CC',
-      'editor.selectionBackground': '#31568A',
-      'editor.inactiveSelectionBackground': '#2A405C',
-      'editor.lineHighlightBackground': '#25282C',
-      'editorCursor.foreground': '#79AFFF',
-      'editorIndentGuide.background1': '#30343A',
-      'editorIndentGuide.activeBackground1': '#4A515B',
+      'editor.background': dark.editor,
+      'editor.foreground': dark.foreground,
+      'editorLineNumber.foreground': dark.muted,
+      'editorLineNumber.activeForeground': dark.foreground,
+      'editor.selectionBackground': dark.selected,
+      'editor.inactiveSelectionBackground': dark.hover,
+      'editor.lineHighlightBackground': dark.hover,
+      'editorCursor.foreground': dark.primary,
+      'editorIndentGuide.background1': dark.border,
+      'editorIndentGuide.activeBackground1': dark.borderStrong,
     },
   })
   monaco.editor.defineTheme('vaporlens-light', {
     base: 'vs',
     inherit: true,
     rules: [
-      { token: 'keyword', foreground: '2764C5', fontStyle: 'bold' },
-      { token: 'string', foreground: '2F7D4B' },
-      { token: 'number', foreground: 'A45A14' },
-      { token: 'comment', foreground: '7A838F', fontStyle: 'italic' },
-      { token: 'identifier', foreground: '20242A' },
+      { token: 'keyword', foreground: light.primary, fontStyle: 'bold' },
+      { token: 'string', foreground: light.success },
+      { token: 'number', foreground: light.warning },
+      { token: 'comment', foreground: light.muted, fontStyle: 'italic' },
+      { token: 'identifier', foreground: light.foreground },
     ],
     colors: {
-      'editor.background': '#FFFFFF',
-      'editor.foreground': '#20242A',
-      'editorLineNumber.foreground': '#9AA1AA',
-      'editorLineNumber.activeForeground': '#515862',
-      'editor.selectionBackground': '#C9DDFD',
-      'editor.inactiveSelectionBackground': '#DDE8F8',
-      'editor.lineHighlightBackground': '#F5F7FA',
-      'editorCursor.foreground': '#337AE8',
-      'editorIndentGuide.background1': '#E4E7EB',
-      'editorIndentGuide.activeBackground1': '#B8BEC7',
+      'editor.background': light.editor,
+      'editor.foreground': light.foreground,
+      'editorLineNumber.foreground': light.muted,
+      'editorLineNumber.activeForeground': light.foreground,
+      'editor.selectionBackground': light.selected,
+      'editor.inactiveSelectionBackground': light.hover,
+      'editor.lineHighlightBackground': light.hover,
+      'editorCursor.foreground': light.primary,
+      'editorIndentGuide.background1': light.border,
+      'editorIndentGuide.activeBackground1': light.borderStrong,
     },
   })
+}
+
+/**
+ * Monaco accepts hex rather than HSL design tokens. Read both semantic token
+ * sets once at editor bootstrap so the editor remains visually in step with
+ * the application without introducing a separate, hand-maintained palette.
+ */
+function monacoPalette(dark: boolean) {
+  const fallback = dark
+    ? {
+        editor: '#202225', foreground: '#D8DEE7', muted: '#727982', primary: '#79AFFF', success: '#84B98C', warning: '#E5A96B', selected: '#31568A', hover: '#25282C', border: '#30343A', borderStrong: '#4A515B',
+      }
+    : {
+        editor: '#FFFFFF', foreground: '#20242A', muted: '#7A838F', primary: '#337AE8', success: '#2F7D4B', warning: '#A45A14', selected: '#C9DDFD', hover: '#F5F7FA', border: '#E4E7EB', borderStrong: '#B8BEC7',
+      }
+  if (typeof document === 'undefined') return fallback
+
+  const probe = document.createElement('span')
+  if (dark) probe.className = 'dark'
+  probe.style.display = 'none'
+  document.body.append(probe)
+  const styles = window.getComputedStyle(probe)
+  const read = (token: string, fallbackColor: string) => hslTokenToHex(styles.getPropertyValue(token), fallbackColor)
+  const palette = {
+    editor: read('--editor', fallback.editor),
+    foreground: read('--foreground', fallback.foreground),
+    muted: read('--muted-foreground', fallback.muted),
+    primary: read('--primary', fallback.primary),
+    success: read('--success', fallback.success),
+    warning: read('--warning', fallback.warning),
+    selected: read('--grid-selected', fallback.selected),
+    hover: read('--grid-hover', fallback.hover),
+    border: read('--border', fallback.border),
+    borderStrong: read('--border-strong', fallback.borderStrong),
+  }
+  probe.remove()
+  return palette
+}
+
+function hslTokenToHex(value: string, fallback: string) {
+  const match = value.trim().match(/^([\d.]+)\s+([\d.]+)%\s+([\d.]+)%$/)
+  if (!match) return fallback
+  const hue = Number(match[1]) / 360
+  const saturation = Number(match[2]) / 100
+  const lightness = Number(match[3]) / 100
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
+  const segment = hue * 6
+  const secondary = chroma * (1 - Math.abs((segment % 2) - 1))
+  const matchChannel = lightness - chroma / 2
+  const [red, green, blue] = segment < 1 ? [chroma, secondary, 0]
+    : segment < 2 ? [secondary, chroma, 0]
+      : segment < 3 ? [0, chroma, secondary]
+        : segment < 4 ? [0, secondary, chroma]
+          : segment < 5 ? [secondary, 0, chroma]
+            : [chroma, 0, secondary]
+  return `#${[red, green, blue].map((channel) => Math.round((channel + matchChannel) * 255).toString(16).padStart(2, '0')).join('')}`
 }
 
 function selectedText(instance: editor.IStandaloneCodeEditor) {

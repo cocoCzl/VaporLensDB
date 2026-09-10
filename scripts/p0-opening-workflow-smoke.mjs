@@ -30,12 +30,16 @@ function excludesAll(source, values, label) {
 }
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
+const dataSourcesSidebar = read('src/components/sidebar/DataSourcesSidebar.tsx')
+const workbenchHome = read('src/components/home/WorkbenchHome.tsx')
+const app = read('src/App.tsx')
 assert(mockedDataSources.length >= 20, 'P0 smoke should mock at least 20 saved Data Sources')
 includesAll(
   sidebar,
-  ['const RAIL_ITEMS = [', "{ view: 'explorer'", 'function openSettings()', "kind: 'settings'", '<CompactDataSourceTree />', '<DatabaseTree connectionId='],
+  ['const RAIL_ITEMS = [', "{ view: 'explorer'", 'function openSettings()', "kind: 'settings'", '<DataSourcesSidebar />'],
   'Explorer-first left rail',
 )
+includesAll(dataSourcesSidebar, ['<DatabaseTree connectionId={connection.id} compact />'], 'Explorer Data Source composition')
 excludesAll(
   sidebar.slice(sidebar.indexOf('const RAIL_ITEMS = ['), sidebar.indexOf('export function Sidebar')),
   ["view: 'sql'", "view: 'sessions'", "view: 'history'"],
@@ -53,8 +57,6 @@ includesAll(
     'useQueryHistoryStore',
     'useSqlDraftStore',
     'saveTabDraft',
-    "t('workbench.emptyEditorHint')",
-    "t('workbench.emptyEditorDetail')",
     'setStatusFilter',
     'setConnectionFilter',
     "t('workbench.reuseSql')",
@@ -63,6 +65,7 @@ includesAll(
   ],
   'main workspace opening workflow',
 )
+includesAll(workbenchHome, ["t('home.welcomeTitle')", '<HomeQuickActions', '<RecentConnections', '<RecentQueries'], 'home opening workflow')
 assert(
   !mainPanel.includes('ensureTab(activeConnectionId)'),
   'main workspace should not auto-create a SQL tab and hide home state',
@@ -74,25 +77,18 @@ const tabBar = read('src/components/layout/TabBar.tsx')
 includesAll(
   tabBar,
   [
-    'connection ? `${connection.name} SQL` :',
     'renameTab',
     'saveTabDraft',
     'markDraftClosed',
     'closeEditorTab',
     'onDoubleClick',
     'setEditingTabId',
-    'connectionId: activeConnectionId',
-    'nextSqlIndex',
-    "openRecordsWorkspace('sqlScripts')",
   ],
   'SQL tab context and naming',
 )
+includesAll(app, ["case 'new-sql'", 'connection ? `SQL · ${connection.name}` : \'SQL\'', 'connectionId', "case 'query-history'"], 'application SQL creation and history commands')
 
 assert(!tabBar.includes('CreateDatabaseDialog'), 'tab bar must not expose database creation')
-assert(
-  tabBar.includes("openRecordsWorkspace('sqlScripts')"),
-  'SQL drafts should open in the records workspace',
-)
 assert(
   mainPanel.includes("t('sql.clearRecentScripts')"),
   'SQL scripts workspace should expose draft clearing',

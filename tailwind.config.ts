@@ -52,9 +52,28 @@ const config: Config = {
           DEFAULT: 'hsl(var(--accent))',
           foreground: 'hsl(var(--accent-foreground))',
         },
+        'accent-hover': 'hsl(var(--accent-hover))',
+        'accent-selected': 'hsl(var(--accent-selected))',
+        'border-strong': 'hsl(var(--border-strong))',
         destructive: {
           DEFAULT: 'hsl(var(--destructive))',
           foreground: 'hsl(var(--destructive-foreground))',
+        },
+        surface: {
+          DEFAULT: 'hsl(var(--surface))',
+          secondary: 'hsl(var(--surface-secondary))',
+          elevated: 'hsl(var(--surface-elevated))',
+        },
+        sidebar: 'hsl(var(--sidebar))',
+        editor: 'hsl(var(--editor))',
+        success: 'hsl(var(--success))',
+        warning: 'hsl(var(--warning))',
+        danger: 'hsl(var(--danger))',
+        grid: {
+          header: 'hsl(var(--grid-header))',
+          hover: 'hsl(var(--grid-hover))',
+          selected: 'hsl(var(--grid-selected))',
+          border: 'hsl(var(--grid-border))',
         },
         card: {
           DEFAULT: 'hsl(var(--card))',
@@ -66,9 +85,9 @@ const config: Config = {
         },
       },
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        lg: 'var(--radius-lg)',
+        md: 'var(--radius)',
+        sm: 'var(--radius-sm)',
       },
       fontFamily: {
         sans: [

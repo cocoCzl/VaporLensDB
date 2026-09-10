@@ -58,7 +58,8 @@ includesAll(
   dialog,
   [
     'void loadDrivers()',
-    "h-[min(43rem,calc(100vh-3rem))]",
+    "h-[min(50rem,calc(100vh-3rem))]",
+    'max-w-[50rem]',
     'data-open:animate-none',
     'data-closed:animate-none',
     'min-h-0 flex-1 overflow-hidden',
@@ -66,7 +67,19 @@ includesAll(
   'connection dialog stable opening layout',
 )
 includesAll(form, ['overflow-y-auto overflow-x-hidden', '[scrollbar-gutter:stable]'], 'connection dialog single stable scroll region')
-includesAll(form, ["'general' | 'sshSsl' | 'advanced'", 'generalSectionRef', 'sshSslSectionRef', 'advancedSectionRef'], 'connection dialog section navigation')
+includesAll(form, ['DatabaseTypeSelector', 'DisclosureSection', "t('connectionForm.sshTunnelSection')", "t('connectionForm.sslSection')", "t('connectionForm.advanced')"], 'connection dialog progressive disclosure')
+assert(!form.includes("t('connectionForm.projectDataSources')"), 'connection dialog should not render a project data sources sidebar')
+includesAll(
+  form,
+  [
+    'databaseTypeOptions',
+    "driver.backend === 'nativeRust' && driver.status === 'ready'",
+    'driverVariants.length > 1',
+    'id="driver-profile"',
+    "t('connectionForm.viewCapabilities')",
+  ],
+  'database type and driver profile progressive disclosure',
+)
 includesAll(
   form,
   [
@@ -74,12 +87,11 @@ includesAll(
     "label={t('connectionForm.connectionUrl')}",
     "updateConnectionUrl(event.target.value)",
     "t('connectionForm.urlCredentialsWarning')",
-    "t('connectionForm.urlOnlySshUnsupported')",
     "username: variant === 'file' ? null : emptyToNull(input.username)",
     "password: variant === 'file' ? null : emptyToNull(input.password)",
     "savePassword: variant === 'file' ? false : input.savePassword",
     "sshTunnel: isUrlOnly || variant === 'file' ? null : normalizeSshTunnel(input)",
-    'align="start"',
+    "activeConnectionVariant === 'file'",
   ],
   'URL-only connection form behavior',
 )

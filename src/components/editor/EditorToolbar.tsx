@@ -1,4 +1,4 @@
-import { Check, ChartNoAxesCombined, ChevronDown, Database, GitBranch, History, ListFilter, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
+import { Check, ChartNoAxesCombined, ChevronDown, GitBranch, History, ListFilter, Maximize2, Minimize2, MoreHorizontal, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,7 @@ import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { Input } from '@/components/ui/input'
 import { AppSelect } from '@/components/ui/app-select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import type { SqlWorkspaceView } from '@/components/workspace/SqlWorkspace'
 import type { ConnectionConfig, DataSourceGroup } from '@/types/connection'
 import type { DatabaseInfo, SchemaInfo } from '@/types/metadata'
 import type { TransactionMode, TransactionPhase } from '@/types/query'
@@ -43,6 +44,8 @@ interface EditorToolbarProps {
   onTransactionModeChange?: (mode: TransactionMode) => void
   onCommit?: () => void
   onRollback?: () => void
+  workspaceView?: SqlWorkspaceView
+  onWorkspaceViewChange?: (view: SqlWorkspaceView) => void
 }
 
 export function EditorToolbar({
@@ -72,18 +75,15 @@ export function EditorToolbar({
   historyOpen = false,
   onHistoryToggle,
   transactionMode = 'auto', transactionPhase = 'idle', transactionDisabled = false, onTransactionModeChange, onCommit, onRollback,
+  workspaceView = 'split', onWorkspaceViewChange,
 }: EditorToolbarProps) {
   const { t } = useTranslation()
   const explainTitle = canExplain ? t('editor.explain') : (explainUnsupportedReason ?? t('editor.explainUnsupported'))
   const runShortcut = isMacPlatform() ? '⌘↵' : 'Ctrl+Enter'
 
   return (
-    <div className="ide-toolbar flex h-9 items-center gap-2 overflow-hidden border-b px-2" role="toolbar" aria-label={t('editor.run')}>
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
-        <span className="hidden shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground lg:inline">
-          {t('editor.dataSource')}
-        </span>
-        <Database className="size-4 shrink-0 text-muted-foreground lg:hidden" aria-hidden="true" />
+    <div className="workspace-context-bar" role="toolbar" aria-label={t('editor.run')}>
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none]">
         <ExecutionDataSourcePicker
           connections={connections}
           groups={dataSourceGroups}
@@ -92,9 +92,10 @@ export function EditorToolbar({
           disabled={running}
           onChange={onConnectionChange}
         />
+        <span className="ide-toolbar-separator" aria-hidden="true" />
         <ContextSelect label={t('metadata.database')}>
         <AppSelect
-          className="w-40 shrink-0"
+          className="workspace-context-select h-8 w-36 shrink-0"
           aria-label={t('metadata.database')}
           value={database ?? ''}
           disabled={!connectionId || databases.length === 0}
@@ -103,9 +104,10 @@ export function EditorToolbar({
           options={[...(!database ? [{ value: '', label: t('metadata.database') }] : []), ...databases.map((item) => ({ value: item.name, label: item.name }))]}
         />
         </ContextSelect>
+        <span className="ide-toolbar-separator hidden md:block" aria-hidden="true" />
         <ContextSelect label={t('metadata.schema')} className="hidden md:flex">
         <AppSelect
-          className="w-36 shrink-0"
+          className="workspace-context-select h-8 w-32 shrink-0"
           aria-label={t('metadata.schema')}
           value={schema ?? ''}
           disabled={!connectionId || schemas.length === 0}
@@ -113,67 +115,35 @@ export function EditorToolbar({
           options={[...(!schema ? [{ value: '', label: 'Schema' }] : []), ...schemas.map((item) => ({ value: item.name, label: item.name }))]}
         />
         </ContextSelect>
-        <RowLimitMenu maxRows={maxRows} onChange={onMaxRowsChange} label={t('editor.rowLimit')} />
       </div>
 
-      <div className="ide-toolbar-group shrink-0">
-        <TransactionModeMenu
-          mode={transactionMode}
-          phase={transactionPhase}
-          disabled={transactionDisabled || running}
-          disabledLabel={t('editor.transactionConnectRequired')}
-          label={t('editor.transactionMode')}
-          autoLabel={t('editor.transactionAuto')}
-          manualLabel={t('editor.transactionManual')}
-          activeLabel={t('editor.transactionActive')}
-          failedLabel={t('editor.transactionFailed')}
-          onChange={onTransactionModeChange}
-        />
-        <IconTooltipButton label={t('editor.commit')} variant="ghost" disabled={transactionDisabled || running || transactionMode !== 'manual' || transactionPhase !== 'active'} onClick={() => onCommit?.()}><Check /></IconTooltipButton>
-        <IconTooltipButton label={t('editor.rollback')} variant="ghost" disabled={transactionDisabled || running || transactionMode !== 'manual' || !['active', 'failed'].includes(transactionPhase)} onClick={() => onRollback?.()}><Undo2 /></IconTooltipButton>
-        <span className="ide-toolbar-separator" aria-hidden="true" />
+      <div className="flex shrink-0 items-center gap-1.5">
         {running && canCancel ? (
-          <IconTooltipButton label={t('editor.cancel')} variant="destructive" onClick={onCancel}>
-            <Square />
-          </IconTooltipButton>
+          <Button type="button" size="sm" variant="destructive" className="workspace-run-action" onClick={onCancel}><Square />{t('editor.cancel')}</Button>
         ) : running ? (
-          <IconTooltipButton label={t('editor.running')} variant="secondary" disabled>
-            <Play />
-          </IconTooltipButton>
+          <Button type="button" size="sm" variant="secondary" className="workspace-run-action" disabled><Play />{t('editor.running')}</Button>
         ) : (
-          <IconTooltipButton
-            label={`${t('editor.run')} (${runShortcut})`}
-            disabled={disabled}
-            onClick={() => onRun()}
-          >
-            <Play />
-          </IconTooltipButton>
+          <Button type="button" size="sm" disabled={disabled} className="workspace-run-action" onClick={() => onRun()} title={`${t('editor.run')} (${runShortcut})`}><Play className="size-3.5" />{t('editor.run')}<kbd className="hidden font-mono text-[10px] opacity-75 lg:inline">{runShortcut}</kbd></Button>
         )}
-        <IconTooltipButton
-          label={explainTitle}
-          variant="ghost"
-          disabled={disabled || running || !canExplain}
-          onClick={() => onExplain()}
-        >
-          <ChartNoAxesCombined />
-        </IconTooltipButton>
-        <IconTooltipButton
-          label={t('editor.format')}
-          variant="ghost"
-          disabled={formatDisabled || running}
-          onClick={() => onFormat()}
-        >
-          <Wand2 />
-        </IconTooltipButton>
-        <span className="ide-toolbar-separator" aria-hidden="true" />
-        <IconTooltipButton
-          label={t('sql.history')}
-          variant={historyOpen ? 'secondary' : 'ghost'}
-          aria-pressed={historyOpen}
-          onClick={onHistoryToggle}
-        >
-          <History />
-        </IconTooltipButton>
+        <SqlMoreActions
+          maxRows={maxRows}
+          onMaxRowsChange={onMaxRowsChange}
+          explainTitle={explainTitle}
+          explainDisabled={disabled || running || !canExplain}
+          onExplain={onExplain}
+          formatDisabled={formatDisabled || running}
+          onFormat={onFormat}
+          historyOpen={historyOpen}
+          onHistoryToggle={onHistoryToggle}
+          transactionMode={transactionMode}
+          transactionPhase={transactionPhase}
+          transactionDisabled={transactionDisabled || running}
+          onTransactionModeChange={onTransactionModeChange}
+          onCommit={onCommit}
+          onRollback={onRollback}
+          workspaceView={workspaceView}
+          onWorkspaceViewChange={onWorkspaceViewChange}
+        />
       </div>
     </div>
   )
@@ -182,11 +152,87 @@ export function EditorToolbar({
 function ContextSelect({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
   return (
     <div className={['min-w-0 shrink-0 items-center gap-1.5', className ?? 'flex'].join(' ')}>
-      <span className="hidden shrink-0 text-[10px] font-medium text-muted-foreground xl:inline">{label}</span>
+      <span className="workspace-context-label hidden shrink-0 min-[900px]:inline">{label}</span>
       {children}
     </div>
   )
 }
+
+function SqlMoreActions({
+  maxRows,
+  onMaxRowsChange,
+  explainTitle,
+  explainDisabled,
+  onExplain,
+  formatDisabled,
+  onFormat,
+  historyOpen,
+  onHistoryToggle,
+  transactionMode,
+  transactionPhase,
+  transactionDisabled,
+  onTransactionModeChange,
+  onCommit,
+  onRollback,
+  workspaceView,
+  onWorkspaceViewChange,
+}: {
+  maxRows: number
+  onMaxRowsChange: (maxRows: number) => void
+  explainTitle: string
+  explainDisabled: boolean
+  onExplain: () => void
+  formatDisabled: boolean
+  onFormat: () => void
+  historyOpen: boolean
+  onHistoryToggle?: () => void
+  transactionMode: TransactionMode
+  transactionPhase: TransactionPhase
+  transactionDisabled: boolean
+  onTransactionModeChange?: (mode: TransactionMode) => void
+  onCommit?: () => void
+  onRollback?: () => void
+  workspaceView: SqlWorkspaceView
+  onWorkspaceViewChange?: (view: SqlWorkspaceView) => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const itemClass = 'flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-45'
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={<IconTooltipButton label={t('editor.moreActions')} variant={open ? 'secondary' : 'ghost'}><MoreHorizontal /></IconTooltipButton>} />
+      <PopoverContent align="end" className="w-56 p-1.5">
+        <div className="grid gap-0.5">
+          <button type="button" className={itemClass} disabled={explainDisabled} onClick={() => onExplain()}><ChartNoAxesCombined className="size-3.5" />{explainTitle}</button>
+          <button type="button" className={itemClass} disabled={formatDisabled} onClick={() => onFormat()}><Wand2 className="size-3.5" />{t('editor.format')}</button>
+          <button type="button" className={itemClass} aria-pressed={historyOpen} onClick={() => { onHistoryToggle?.(); setOpen(false) }}><History className="size-3.5" />{t('sql.history')}</button>
+        </div>
+        <div className="my-1 border-t" />
+        <div className="flex items-center justify-between px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {t('editor.rowLimit')}
+          <RowLimitMenu maxRows={maxRows} onChange={onMaxRowsChange} label={t('editor.rowLimit')} />
+        </div>
+        <div className="my-1 border-t" />
+        <div className="flex items-center justify-between gap-2 px-2 py-1">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{t('editor.transactionMode')}</span>
+          <div className="flex items-center gap-0.5">
+            <TransactionModeMenu mode={transactionMode} phase={transactionPhase} disabled={transactionDisabled} disabledLabel={t('editor.transactionConnectRequired')} label={t('editor.transactionMode')} autoLabel={t('editor.transactionAuto')} manualLabel={t('editor.transactionManual')} activeLabel={t('editor.transactionActive')} failedLabel={t('editor.transactionFailed')} onChange={onTransactionModeChange} />
+            <IconTooltipButton label={t('editor.commit')} size="icon-xs" variant="ghost" disabled={transactionDisabled || transactionMode !== 'manual' || transactionPhase !== 'active'} onClick={() => onCommit?.()}><Check /></IconTooltipButton>
+            <IconTooltipButton label={t('editor.rollback')} size="icon-xs" variant="ghost" disabled={transactionDisabled || transactionMode !== 'manual' || !['active', 'failed'].includes(transactionPhase)} onClick={() => onRollback?.()}><Undo2 /></IconTooltipButton>
+          </div>
+        </div>
+        <div className="my-1 border-t" />
+        <div className="grid gap-0.5">
+          {workspaceView !== 'results' && <button type="button" className={itemClass} onClick={() => { onWorkspaceViewChange?.('results'); setOpen(false) }}><Maximize2 className="size-3.5" />{t('editor.maximizeResults')}</button>}
+          {workspaceView !== 'editor' && <button type="button" className={itemClass} onClick={() => { onWorkspaceViewChange?.('editor'); setOpen(false) }}><Maximize2 className="size-3.5" />{t('editor.maximizeEditor')}</button>}
+          {workspaceView !== 'split' && <button type="button" className={itemClass} onClick={() => { onWorkspaceViewChange?.('split'); setOpen(false) }}><Minimize2 className="size-3.5" />{t('editor.restoreSplit')}</button>}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 
 function RowLimitMenu({ maxRows, onChange, label }: { maxRows: number; onChange: (value: number) => void; label: string }) {
   const [open, setOpen] = useState(false)
@@ -280,7 +326,7 @@ function ExecutionDataSourcePicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        render={<Button type="button" size="sm" variant="outline" disabled={disabled} className="h-8 min-w-44 max-w-64 justify-between gap-2 px-2 text-xs" aria-label={t('connection.select')} />}
+        render={<Button type="button" size="sm" variant="outline" disabled={disabled} className="workspace-connection-trigger h-8 min-w-44 max-w-64 justify-between gap-2 px-2.5 text-xs" aria-label={t('connection.select')} />}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <DatabaseVendorIcon driverType={current?.driverType} className="size-3.5 shrink-0" />

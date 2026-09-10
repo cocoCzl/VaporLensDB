@@ -4,6 +4,7 @@
 
 use chrono::Utc;
 use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 use vapor_lens_db_lib::{
     drivers::{jdbc::JdbcDriver, trait_def::DatabaseDriver},
@@ -75,6 +76,29 @@ async fn connects_and_queries_oracle_with_jdbc_bridge() {
 }
 
 #[tokio::test]
+#[ignore = "requires TEST_ORACLE_SQL plus the Oracle JDBC integration environment"]
+async fn executes_a_real_oracle_workspace_query() {
+    let sql = std::env::var("TEST_ORACLE_SQL")
+        .expect("TEST_ORACLE_SQL must contain a safe read-only Oracle query");
+    let (config, password) = test_oracle_config()
+        .expect("TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH must be set");
+    let definition = driver_definitions()
+        .into_iter()
+        .find(|definition| definition.id == "oracle")
+        .expect("oracle driver definition");
+    let driver = JdbcDriver::connect(&config, Some(&password), Some(&definition))
+        .await
+        .expect("connect oracle jdbc");
+
+    let result = driver
+        .execute_query(&sql, None)
+        .await
+        .expect("execute configured Oracle workspace query");
+
+    assert!(!result.columns.is_empty(), "the workspace query should return its column metadata");
+}
+
+#[tokio::test]
 #[ignore = "requires TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH"]
 async fn streams_oracle_jdbc_rows_with_an_exact_limit() {
     let (config, password) = test_oracle_config()
@@ -108,6 +132,38 @@ async fn streams_oracle_jdbc_rows_with_an_exact_limit() {
     assert!(summary.truncated);
     assert_eq!(summary.max_rows, Some(2));
     assert_eq!(row_count, 2);
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_ORACLE_JDBC_URL, TEST_ORACLE_JDBC_DRIVER_PATH, and TEST_ORACLE_LONG_SQL"]
+async fn streams_oracle_long_columns_without_hanging() {
+    let sql = std::env::var("TEST_ORACLE_LONG_SQL")
+        .expect("TEST_ORACLE_LONG_SQL must select a table containing an Oracle LONG column");
+    let (config, password) = test_oracle_config()
+        .expect("TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH must be set");
+    let definition = driver_definitions()
+        .into_iter()
+        .find(|definition| definition.id == "oracle")
+        .expect("oracle driver definition");
+    let driver = JdbcDriver::connect(&config, Some(&password), Some(&definition))
+        .await
+        .expect("connect oracle jdbc");
+    let (chunk_tx, mut chunk_rx) = mpsc::channel(4);
+
+    let summary = timeout(
+        Duration::from_secs(25),
+        driver.execute_query_stream(&sql, "oracle-long-integration-test", 100, Some(100), chunk_tx),
+    )
+    .await
+    .expect("Oracle LONG query must not leave the stream open indefinitely")
+    .expect("stream Oracle LONG query");
+
+    let mut received_rows = 0;
+    while let Some(chunk) = chunk_rx.recv().await {
+        received_rows += chunk.expect("stream chunk").rows.len() as u64;
+    }
+
+    assert_eq!(summary.row_count, received_rows);
 }
 
 #[tokio::test]

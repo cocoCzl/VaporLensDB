@@ -25,12 +25,13 @@ function excludesAll(source, values, label) {
 }
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
+const dataSourcesSidebar = read('src/components/sidebar/DataSourcesSidebar.tsx')
+const connectionRow = read('src/components/sidebar/ConnectionRow.tsx')
 
 includesAll(
-  sidebar,
+  dataSourcesSidebar,
   [
-    'function CompactDataSourceTree()',
-    '<CompactDataSourceTree />',
+    'export function DataSourcesSidebar()',
     'toggleDataSourceNode(connection: ConnectionConfig)',
     'if (!opening) return',
     'await connectConnection(connection.id, { selectForBrowsing: false })',
@@ -38,12 +39,9 @@ includesAll(
     'expandedDataSourceIds',
     '<DatabaseTree connectionId={connection.id} compact />',
     'id="data-source-tree-search-input"',
-    'const filteredGroups = useMemo(() => groups',
+    'const filteredGroups = useMemo(() => {',
     'highlightDataSourceMatch(group.name, query)',
-    'highlightDataSourceMatch(connection.name, query)',
-    'onDoubleClick={() => openBoundSql(connection)}',
-    'onContextMenu={(event) => {',
-    'function contextActions(connection: ConnectionConfig)',
+    '<ConnectionContextMenu',
     'dataSourceGroups',
     'browsingConnectionId',
     'orderGroupConnections(',
@@ -53,12 +51,20 @@ includesAll(
     'disconnectConnection(connection.id)',
     'toggleFavoriteDataSource(connection.id)',
     '<ConnectionDialog',
-    "sidebarView === 'dataSources'",
-    '<DataSourcesSelectorPanel />',
-    'function openDataSourceManagement()',
-    "kind: 'dataSources'",
   ],
   'grouped Data Source explorer workflow',
+)
+
+includesAll(
+  connectionRow,
+  ['highlightDataSourceMatch(connection.name, query)', 'onDoubleClick={onOpen}', 'onContextMenu={(event) => {'],
+  'Data Source connection row interactions',
+)
+
+includesAll(
+  sidebar,
+  ['<DataSourcesSidebar />'],
+  'App shell Data Source composition',
 )
 
 excludesAll(
@@ -84,12 +90,12 @@ const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
 includesAll(
   zh,
-  ['"connected": "已连接"', '"connecting": "连接中"', '"failed": "连接失败"', '"searchDataSources": "搜索数据源"', '"noMatches": "没有匹配的数据源"', '"recent": "最近"', '"favorites": "收藏"', '"favorite": "加入收藏"', '"unfavorite": "取消收藏"', '"allDataSources": "全部数据源"', '"manageDataSources": "管理数据源"'],
+  ['"connected": "已连接"', '"connecting": "连接中"', '"failed": "连接失败"', '"searchDataSources": "搜索数据源…"', '"noMatches": "没有匹配的数据源"', '"recent": "最近"', '"favorites": "收藏"', '"favorite": "加入收藏"', '"unfavorite": "取消收藏"', '"allDataSources": "全部数据源"', '"manageDataSources": "管理数据源"'],
   'Chinese Data Source switcher locale',
 )
 includesAll(
   en,
-  ['"connected": "Connected"', '"connecting": "Connecting"', '"failed": "Connection failed"', '"searchDataSources": "Search Data Sources"', '"noMatches": "No matching Data Sources"', '"recent": "Recent"', '"favorites": "Favorites"', '"favorite": "Add to favorites"', '"unfavorite": "Remove from favorites"', '"allDataSources": "All Data Sources"', '"manageDataSources": "Manage Data Sources"'],
+  ['"connected": "Connected"', '"connecting": "Connecting"', '"failed": "Connection failed"', '"searchDataSources": "Search data sources…"', '"noMatches": "No matching Data Sources"', '"recent": "Recent"', '"favorites": "Favorites"', '"favorite": "Add to favorites"', '"unfavorite": "Remove from favorites"', '"allDataSources": "All Data Sources"', '"manageDataSources": "Manage Data Sources"'],
   'English Data Source switcher locale',
 )
 

@@ -64,12 +64,17 @@ impl MysqlDriver {
         username: &str,
         password: &str,
     ) -> Result<Self, AppError> {
-        let opts = OptsBuilder::default()
+        let mut opts = OptsBuilder::default()
             .ip_or_hostname(host)
             .tcp_port(port)
-            .db_name(Some(database))
             .user(Some(username))
             .pass(Some(password));
+        // Do not pass an empty schema as a database name. MySQL accepts a
+        // connection without a default database and exposes the server's
+        // database list after authentication.
+        if !database.trim().is_empty() {
+            opts = opts.db_name(Some(database));
+        }
         let conn = Conn::new(opts).await.map_err(map_mysql_connection_error)?;
         Ok(Self {
             conn: Mutex::new(conn),

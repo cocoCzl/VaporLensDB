@@ -19,7 +19,13 @@ export interface EditorTab {
     | 'objectSummary'
   title: string
   sql: string
+  /**
+   * Execution context belongs to the SQL tab. It must never be inferred from
+   * the sidebar's browsing connection or its global metadata path.
+   */
   connectionId: string | null
+  database?: string | null
+  schema?: string | null
   dataContext?: DataTabContext | null
   structureContext?: StructureTabContext | null
   definitionContext?: DefinitionTabContext | null
@@ -105,7 +111,12 @@ interface EditorState {
   updateTabSql: (id: string, sql: string) => void
   updateDataTabLimit: (id: string, limit: number, sql: string) => void
   updateDataTabContext: (id: string, dataContext: DataTabContext, sql: string) => void
-  updateTabConnection: (id: string, connectionId: string | null) => void
+  updateTabConnection: (
+    id: string,
+    connectionId: string | null,
+    context?: { database?: string | null; schema?: string | null },
+  ) => void
+  updateSqlTabContext: (id: string, context: { database?: string | null; schema?: string | null }) => void
   setTabDraft: (id: string, draftId: string | null) => void
   setRecordsConnectionFilter: (id: string, connectionId: string | null) => void
   toggleTabPinned: (id: string) => void
@@ -171,13 +182,31 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql, dataContext } : t)),
     })),
-  updateTabConnection: (id, connectionId) =>
+  updateTabConnection: (id, connectionId, context = {}) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === id
-          ? { ...t, connectionId, unavailableConnectionName: null, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty }
+          ? {
+              ...t,
+              connectionId,
+              // A data source switch is atomic: old database/schema values
+              // are incompatible until the target connection resolves them.
+              database: context.database ?? null,
+              schema: context.schema ?? null,
+              // Console sessions are connection-scoped. Retaining manual mode
+              // would make the new Data Source look selected while execution
+              // still asks for the old connection's transaction session.
+              transactionMode: 'auto',
+              transactionPhase: 'idle',
+              unavailableConnectionName: null,
+              dirty: t.kind === 'sql' || !t.kind ? true : t.dirty,
+            }
           : t,
       ),
+    })),
+  updateSqlTabContext: (id, context) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) => t.id === id ? { ...t, ...context } : t),
     })),
   setTabDraft: (id, draftId) =>
     set((s) => ({
@@ -253,6 +282,8 @@ export function persistSqlWorkspace(tabs: EditorTab[], activeTabId: string | nul
       title: tab.title,
       sql: tab.sql,
       connectionId: tab.connectionId,
+      database: tab.database ?? null,
+      schema: tab.schema ?? null,
       draftId: tab.draftId ?? null,
       dirty: tab.dirty ?? false,
       pinned: tab.pinned ?? false,
@@ -268,7 +299,7 @@ export function persistSqlWorkspace(tabs: EditorTab[], activeTabId: string | nul
   }
 }
 
-function readStoredSqlWorkspace(): Pick<EditorState, 'tabs' | 'activeTabId'> {
+export function readStoredSqlWorkspace(): Pick<EditorState, 'tabs' | 'activeTabId'> {
   if (typeof window === 'undefined') return { tabs: [], activeTabId: null }
   try {
     const parsed = JSON.parse(window.localStorage.getItem(SQL_WORKSPACE_STORAGE_KEY) ?? '{}')
@@ -282,6 +313,8 @@ function readStoredSqlWorkspace(): Pick<EditorState, 'tabs' | 'activeTabId'> {
           title: tab.title as string,
           sql: tab.sql as string,
           connectionId: typeof tab.connectionId === 'string' ? tab.connectionId : null,
+          database: typeof tab.database === 'string' ? tab.database : null,
+          schema: typeof tab.schema === 'string' ? tab.schema : null,
           draftId: typeof tab.draftId === 'string' ? tab.draftId : null,
           dirty: tab.dirty === true,
           pinned: tab.pinned === true,

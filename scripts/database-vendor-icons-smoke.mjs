@@ -12,7 +12,7 @@ for (const driverType of ['postgres', 'mysql', 'oracle', 'sqlite', 'mssql']) {
 assert(icon.includes('default:\n      return <Database'), 'custom and unknown drivers must retain the generic database fallback')
 
 for (const file of [
-  'src/components/layout/Sidebar.tsx',
+  'src/components/sidebar/ConnectionRow.tsx',
   'src/components/connection/ConnectionList.tsx',
   'src/components/editor/EditorToolbar.tsx',
   'src/components/layout/StatusBar.tsx',

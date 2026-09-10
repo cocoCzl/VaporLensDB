@@ -23,7 +23,9 @@ const DEFAULT_DATA_PREVIEW_ROWS = 200
 const DEFAULT_EDITOR_FONT_SIZE = 13
 const DEFAULT_MAX_LIVE_SESSIONS = 5
 const DEFAULT_IDLE_RECLAIM_MINUTES = 30
-const DEFAULT_RESULT_PANEL_HEIGHT = 400
+// New workspaces give results the larger share of a typical desktop viewport.
+// Existing persisted layouts remain valid and are deliberately not migrated.
+const DEFAULT_RESULT_PANEL_HEIGHT = 520
 const RESULT_PANEL_LAYOUT_VERSION = 2
 
 interface UserSettings {

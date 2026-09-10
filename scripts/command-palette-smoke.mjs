@@ -15,15 +15,20 @@ for (const value of [
   'event.metaKey || event.ctrlKey',
   'CommandDialog',
   "kind: 'sql'",
-  "openTab('dataSources')",
-  "openTab('settings')",
   "openTab('queryHistory')",
+  "openTab('settings')",
   'setActiveConnection(connection.id)',
   "setTheme(theme === 'dark' ? 'light' : 'dark')",
-  'sqlPreview(draft.sql)',
-  'draft.connectionNameSnapshot',
-  'formatDraftTime(draft.updatedAt)',
-  'function draftLocation(',
+  'collectCachedObjects(',
+  'rankPaletteItems(',
+  "@/lib/commandPaletteRanking",
+  'loadHistory(100)',
+  'ConnectionDialog open={connectionDialogOpen}',
+  'CommandGroup',
+  'DatabaseVendorIcon',
+  'driverType: connection.driverType',
+  'connectionId: connection ? entry.connectionId : null',
+  'CommandItem value={item.id}',
 ]) {
   assert(palette.includes(value), `command palette missing: ${value}`)
 }
@@ -32,14 +37,17 @@ const app = readFileSync(resolve(root, 'src/App.tsx'), 'utf8')
 assert(app.includes('<WorkspaceCommandPalette />'), 'command palette must be mounted globally')
 
 for (const value of [
-  '<Command>{children}</Command>',
+  '<Command shouldFilter={false}>{children}</Command>',
   '<DialogHeader className="sr-only">',
-  'max-h-[calc(100vh-4rem)]',
+  'top-1/2 max-h-[calc(100dvh-2rem)] -translate-y-1/2',
   'data-slot="input-group-control"',
   '[color-scheme:light] dark:[color-scheme:dark]',
   'focus-visible:!outline-none',
   'has-[[data-slot=input-group-control]:focus-visible]:ring-1',
-  'max-h-[min(26rem,calc(100vh-12rem))]',
+  'max-h-[min(27rem,calc(100dvh-13rem))]',
+  'overscroll-contain',
+  'grid size-6 place-items-center',
+  'data-selected:bg-accent-selected',
 ]) {
   assert(commandUi.includes(value), `command dialog structure missing: ${value}`)
 }

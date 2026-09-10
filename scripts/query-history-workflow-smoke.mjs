@@ -18,18 +18,16 @@ function includesAll(source, values, label) {
   }
 }
 
-const sidebar = read('src/components/layout/Sidebar.tsx')
+const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
-  sidebar,
+  mainPanel,
   [
-    'historyStatusFilter',
-    'historyConnectionFilter',
-    'filteredHistory',
-    'historyFilteredEmpty',
+    'const [statusFilter, setStatusFilter]',
+    'const [connectionFilter, setConnectionFilter]',
+    'const filtered = history.filter',
+    "t('workbench.historyNoMatches')",
     'uniqueHistoryConnections',
-    'expandedHistoryId',
-    'historySqlPreview',
-    'historyErrorPreview',
+    'sqlPreview(entry.sql)',
     'connectionNameSnapshot',
   ],
   'query history workflow UI',
@@ -80,7 +78,6 @@ includesAll(
   'query history Chinese locale',
 )
 
-const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
   [
@@ -109,7 +106,7 @@ includesAll(
     '<SelectValue placeholder={placeholder}>{selectedLabel}</SelectValue>',
     "'ide-combobox-content max-h-56 min-w-0 rounded-md border p-1'",
     "variant === 'ide' ? 'ide-combobox-content max-h-56 min-w-[7rem] rounded-md border p-1'",
-    "'ide-combobox-item rounded-[4px] px-2.5'",
+    "'ide-combobox-item rounded-sm px-2.5'",
     'const useIdeSkin = variant !== \'toolbar\'',
     'alignItemWithTrigger={false}',
   ],

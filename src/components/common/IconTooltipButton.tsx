@@ -5,9 +5,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 interface IconTooltipButtonProps extends Omit<ComponentProps<typeof Button>, 'children'> {
   label: string
   children: ReactNode
+  shortcut?: ReactNode
 }
 
-export function IconTooltipButton({ label, children, size = 'icon-sm', ...props }: IconTooltipButtonProps) {
+export function IconTooltipButton({ label, shortcut, children, size = 'icon-sm', ...props }: IconTooltipButtonProps) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -17,7 +18,10 @@ export function IconTooltipButton({ label, children, size = 'icon-sm', ...props 
           </Button>
         }
       />
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>
+        <span>{label}</span>
+        {shortcut ? <kbd data-slot="kbd">{shortcut}</kbd> : null}
+      </TooltipContent>
     </Tooltip>
   )
 }

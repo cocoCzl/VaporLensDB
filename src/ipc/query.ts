@@ -16,6 +16,10 @@ export interface ExecuteQueryInput {
   sql: string
   queryId?: string
   consoleId?: string
+  tabId?: string
+  connectionName?: string
+  database?: string | null
+  schema?: string | null
 }
 
 export interface ExecuteQueryStreamInput {
@@ -25,6 +29,10 @@ export interface ExecuteQueryStreamInput {
   chunkSize?: number
   maxRows?: number
   consoleId?: string
+  tabId?: string
+  connectionName?: string
+  database?: string | null
+  schema?: string | null
 }
 
 export type SqlRiskReason =

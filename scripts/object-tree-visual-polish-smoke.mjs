@@ -58,7 +58,7 @@ includesAll(
   databaseTree,
   [
     'Server',
-    '<Server className="size-4 shrink-0 text-muted-foreground" />',
+    '<Server className="size-3.5 shrink-0 text-muted-foreground" />',
     "detail: status && status !== 'VALID' ? status : undefined",
     'muted: isSystemSchema',
     'isSystemDatabase',

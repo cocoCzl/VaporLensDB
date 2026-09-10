@@ -5,90 +5,140 @@
   :root {
     /* Keep native controls aligned with the selected app theme, not the OS theme. */
     color-scheme: light;
-    --background: 220 18% 97.5%;
-    --foreground: 222 27% 12%;
-    --card: 0 0% 100%;
-    --card-foreground: 222 30% 12%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 30% 12%;
-    --border: 218 13% 80%;
-    --input: 218 13% 78%;
-    --primary: 216 88% 57%;
+    /* Application */
+    --background: 218 30% 97.1%;
+    --foreground: 222 28% 13%;
+
+    /* Surface */
+    --surface: 0 0% 100%;
+    --surface-secondary: 218 28% 96.15%;
+    --surface-elevated: 0 0% 100%;
+    --card: var(--surface);
+    --card-foreground: var(--foreground);
+    --popover: var(--surface-elevated);
+    --popover-foreground: var(--foreground);
+
+    /* Border */
+    --border: 218 20% 86.5%;
+    --border-strong: 218 16% 76%;
+    --input: var(--border-strong);
+
+    /* Text */
+    --muted: 218 20% 94%;
+    --muted-foreground: 218 13% 43%;
+
+    /* Accent and state */
+    --primary: 215 87% 55%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 218 15% 92.5%;
+    --secondary: var(--surface-secondary);
     --secondary-foreground: 221 26% 19%;
-    --muted: 218 14% 94%;
-    --muted-foreground: 218 12% 36%;
-    --accent: 215 53% 91%;
-    --accent-foreground: 221 36% 23%;
-    --destructive: 0 70% 50%;
+    --accent: 215 68% 95%;
+    --accent-hover: 215 63% 92%;
+    --accent-selected: 215 70% 89%;
+    --accent-foreground: 220 37% 25%;
+    --success: 157 57% 36%;
+    --warning: 37 86% 43%;
+    --danger: 0 68% 49%;
+    --destructive: var(--danger);
     --destructive-foreground: 0 0% 100%;
-    --ring: 218 78% 53%;
-    --success: 158 63% 34%;
-    --warning: 37 90% 43%;
-    --radius: 0.3rem;
-    --radius-md: 0.375rem;
-    --workspace: 220 18% 97.5%;
-    --workspace-raised: 0 0% 100%;
-    --chrome: 218 15% 94.5%;
-    --toolbar: 220 15% 96.2%;
-    --panel: 218 15% 95.5%;
-    --panel-raised: 0 0% 100%;
-    --separator: 218 12% 77%;
-    --selection: 215 76% 91%;
-    --selection-strong: 216 83% 55%;
-    --hover: 218 17% 90%;
+    --ring: 215 84% 52%;
+
+    /* Workspace */
+    --sidebar: 218 28% 96.4%;
+    --editor: var(--surface);
+
+    /* Data grid */
+    --grid-header: 220 28% 97.1%;
+    --grid-hover: 216 72% 96%;
+    --grid-selected: 215 74% 91%;
+    --grid-border: 218 21% 89.25%;
+
+    /* Control metrics and elevation */
+    --control-height-xs: 1.5rem;
+    --control-height-sm: 1.75rem;
+    --control-height: 2rem;
+    --control-height-lg: 2.25rem;
+    --radius-sm: 0.25rem;
+    --radius: 0.5rem;
+    --radius-lg: 0.625rem;
+    --shadow-floating: 222 30% 18%;
+
+    /* Legacy aliases: migrate existing IDE components incrementally. */
+    --workspace: var(--background);
+    --workspace-raised: var(--surface);
+    --chrome: var(--sidebar);
+    --toolbar: var(--surface-secondary);
+    --panel: var(--surface-secondary);
+    --panel-raised: var(--surface-elevated);
+    --separator: var(--border-strong);
+    --selection: var(--grid-selected);
+    --selection-strong: var(--primary);
+    --hover: var(--accent-hover);
     --overlay: 222 36% 12%;
-    --ide-combo-surface: 0 0% 100%;
-    --ide-combo-hover: 220 22% 96%;
-    --ide-combo-border: 220 14% 82%;
-    --ide-combo-focus: 218 76% 55%;
-    --ide-combo-menu: 0 0% 100%;
-    --ide-combo-selected: 218 60% 45%;
-    --ide-combo-selected-foreground: 0 0% 100%;
+    --ide-combo-surface: var(--surface);
+    --ide-combo-hover: var(--surface-secondary);
+    --ide-combo-border: var(--border);
+    --ide-combo-focus: var(--ring);
+    --ide-combo-menu: var(--surface-elevated);
+    --ide-combo-selected: var(--accent-selected);
+    --ide-combo-selected-foreground: var(--accent-foreground);
   }
 
   .dark {
     color-scheme: dark;
-    --background: 220 9% 10.5%;
+    --background: 220 10% 10.5%;
     --foreground: 216 18% 91%;
-    --card: 220 8% 12.5%;
-    --card-foreground: 216 18% 91%;
-    --popover: 220 8% 14%;
-    --popover-foreground: 216 18% 91%;
-    --border: 218 8% 22.5%;
-    --input: 218 8% 25%;
+    --surface: 220 9% 12.5%;
+    --surface-secondary: 220 9% 15%;
+    --surface-elevated: 220 9% 16.5%;
+    --card: var(--surface);
+    --card-foreground: var(--foreground);
+    --popover: var(--surface-elevated);
+    --popover-foreground: var(--foreground);
+    --border: 218 9% 24%;
+    --border-strong: 218 9% 31%;
+    --input: var(--border-strong);
     --primary: 215 91% 66%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 218 8% 18%;
+    --secondary: var(--surface-secondary);
     --secondary-foreground: 216 15% 88%;
-    --muted: 218 8% 15.5%;
+    --muted: 218 8% 16.5%;
     --muted-foreground: 216 10% 62%;
-    --accent: 217 47% 26%;
+    --accent: 216 38% 25%;
+    --accent-hover: 216 32% 29%;
+    --accent-selected: 216 46% 32%;
     --accent-foreground: 216 22% 94%;
-    --destructive: 0 71% 61%;
-    --destructive-foreground: 0 0% 100%;
-    --ring: 216 90% 67%;
     --success: 158 57% 48%;
     --warning: 38 92% 57%;
-    --workspace: 220 9% 10.5%;
-    --workspace-raised: 220 8% 12.5%;
-    --chrome: 220 8% 12%;
-    --toolbar: 220 8% 13.5%;
-    --panel: 220 8% 12%;
-    --panel-raised: 220 8% 14.5%;
-    --separator: 218 8% 25%;
-    --selection: 216 40% 25%;
-    --selection-strong: 215 87% 68%;
-    --hover: 218 8% 18%;
+    --danger: 0 71% 61%;
+    --destructive: var(--danger);
+    --destructive-foreground: 0 0% 100%;
+    --ring: 216 90% 67%;
+    --sidebar: 220 9% 12%;
+    --editor: var(--surface);
+    --grid-header: 220 9% 15.5%;
+    --grid-hover: 216 28% 19%;
+    --grid-selected: 216 42% 27%;
+    --grid-border: 218 9% 25%;
+    --shadow-floating: 222 38% 4%;
+    --workspace: var(--background);
+    --workspace-raised: var(--surface);
+    --chrome: var(--sidebar);
+    --toolbar: var(--surface-secondary);
+    --panel: var(--surface-secondary);
+    --panel-raised: var(--surface-elevated);
+    --separator: var(--border-strong);
+    --selection: var(--grid-selected);
+    --selection-strong: var(--primary);
+    --hover: var(--accent-hover);
     --overlay: 222 38% 4%;
-    --ide-combo-surface: 222 13% 15%;
-    --ide-combo-hover: 222 12% 20%;
-    --ide-combo-border: 220 11% 29%;
-    --ide-combo-focus: 216 86% 68%;
-    --ide-combo-menu: 222 14% 16%;
-    --ide-combo-selected: 219 49% 40%;
-    --ide-combo-selected-foreground: 0 0% 100%;
+    --ide-combo-surface: var(--surface);
+    --ide-combo-hover: var(--accent-hover);
+    --ide-combo-border: var(--border-strong);
+    --ide-combo-focus: var(--ring);
+    --ide-combo-menu: var(--surface-elevated);
+    --ide-combo-selected: var(--accent-selected);
+    --ide-combo-selected-foreground: var(--accent-foreground);
   }
 }
 
@@ -109,6 +159,7 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     font-size: 13px;
+    line-height: 1.45;
   }
 
   code,
@@ -127,31 +178,66 @@
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
   }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border) / 0.72) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+    background-color: hsl(var(--border) / 0.72);
+  }
+
+  *:hover::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border-strong) / 0.9);
+  }
 }
 
 @layer components {
   .ide-workspace {
-    background-color: hsl(var(--workspace));
+    background-color: hsl(var(--background));
   }
 
   .ide-surface {
-    background-color: hsl(var(--workspace-raised));
+    background-color: hsl(var(--surface));
   }
 
   .ide-panel {
-    background-color: hsl(var(--panel));
+    background-color: hsl(var(--surface-secondary));
   }
 
   .ide-panel-raised {
-    background-color: hsl(var(--panel-raised));
+    background-color: hsl(var(--surface-elevated));
   }
 
   .ide-toolbar {
-    background-color: hsl(var(--toolbar));
+    background-color: hsl(var(--surface-secondary));
   }
 
   .ide-chrome {
-    background-color: hsl(var(--chrome));
+    background-color: hsl(var(--sidebar));
+  }
+
+  .ide-top-bar {
+    background-color: hsl(var(--surface));
+    border-color: hsl(var(--border) / 0.72);
+    box-shadow: 0 1px 0 hsl(var(--foreground) / 0.015);
+  }
+
+  .ide-app-body {
+    background-color: hsl(var(--editor));
   }
 
   .ide-settings-nav {
@@ -162,22 +248,218 @@
     min-height: 2rem;
   }
 
-  /* The tab strip starts the work surface; unlike a tool bar it should not
-     create another visible band below the native system title bar. */
+  /* The tab strip is deliberately quieter than the top-level app chrome. */
   .ide-tab-strip {
-    background-color: hsl(var(--chrome));
-    border-color: hsl(var(--border) / 0.54);
-    box-shadow: inset 0 -1px 0 hsl(var(--separator) / 0.42);
+    background-color: hsl(var(--surface-secondary) / 0.58);
+    border-color: hsl(var(--border) / 0.5);
+  }
+
+  .ide-status-bar {
+    background-color: hsl(var(--surface-secondary) / 0.72);
+    border-color: hsl(var(--border) / 0.58);
   }
 
   .ide-editor-surface {
-    background-color: hsl(var(--card));
+    background-color: hsl(var(--editor));
   }
 
   .ide-panel-header {
-    @apply flex h-8 shrink-0 items-center border-b px-2 text-xs font-medium;
+    @apply flex h-9 shrink-0 items-center border-b px-2 text-xs font-medium;
     background-color: hsl(var(--toolbar));
-    border-color: hsl(var(--separator) / 0.72);
+    border-color: hsl(var(--border) / 0.8);
+  }
+
+  /* SQL workbench: the context path stays compact and quiet so data, rather
+     than chrome, owns the workspace's visual center of gravity. */
+  .workspace-context-bar {
+    display: flex;
+    height: 2.75rem;
+    align-items: center;
+    gap: 0.5rem;
+    overflow: hidden;
+    padding: 0 0.875rem;
+    background-color: hsl(var(--surface-secondary) / 0.62);
+    border-bottom: 1px solid hsl(var(--border) / 0.64);
+  }
+
+  .workspace-context-label {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  .workspace-context-select {
+    border-color: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .workspace-context-select:hover,
+  .workspace-context-select[aria-expanded='true'] {
+    background-color: hsl(var(--surface) / 0.8) !important;
+  }
+
+  .workspace-connection-trigger {
+    border-color: hsl(var(--border) / 0.82);
+    background-color: hsl(var(--surface) / 0.86);
+    box-shadow: 0 1px 1px hsl(var(--foreground) / 0.025);
+    font-weight: 600;
+  }
+
+  .workspace-connection-trigger:hover,
+  .workspace-connection-trigger[aria-expanded='true'] {
+    border-color: hsl(var(--border-strong));
+    background-color: hsl(var(--surface));
+  }
+
+  .workspace-run-action {
+    height: 2.125rem;
+    gap: 0.375rem;
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+    font-weight: 600;
+    box-shadow: 0 1px 1px hsl(var(--primary) / 0.2);
+  }
+
+  .workspace-results-panel {
+    background-color: hsl(var(--surface));
+  }
+
+  .result-panel-header {
+    display: flex;
+    height: 2.75rem;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0 0.875rem;
+    background-color: hsl(var(--surface-secondary) / 0.72);
+    border-bottom: 1px solid hsl(var(--border) / 0.64);
+    font-size: 0.75rem;
+  }
+
+  .result-panel-summary {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .result-view-tabs {
+    display: flex;
+    height: 100%;
+    align-items: stretch;
+    gap: 0.125rem;
+    margin-right: 0.375rem;
+  }
+
+  .data-grid-shell {
+    position: relative;
+    background-color: hsl(var(--surface));
+  }
+
+  .data-grid-header {
+    background-color: hsl(var(--grid-header));
+    box-shadow: inset 0 -1px 0 hsl(var(--grid-border) / 0.72);
+  }
+
+  .data-grid-row {
+    transition: background-color 120ms ease;
+  }
+
+  .data-grid-row:hover .data-grid-index {
+    color: hsl(var(--foreground) / 0.72);
+  }
+
+  .data-grid-cell[data-grid-cell-state='selected'] {
+    background-color: hsl(var(--grid-selected) / 0.78);
+  }
+
+  .data-grid-cell[data-grid-cell-state='focus'] {
+    background-color: hsl(var(--grid-selected));
+  }
+
+  .data-grid-footer {
+    background-color: hsl(var(--surface-secondary) / 0.46);
+  }
+
+  .row-inspector {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex: 0 0 22.5rem;
+    width: 22.5rem;
+    min-width: 20rem;
+    flex-direction: column;
+    overflow: hidden;
+    border-left: 1px solid hsl(var(--border) / 0.78);
+    background-color: hsl(var(--surface-secondary) / 0.54);
+    box-shadow: -8px 0 18px -18px hsl(var(--shadow-floating) / 0.46);
+  }
+
+  .row-inspector-header {
+    display: flex;
+    flex: none;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.64);
+    padding: 0.375rem 0.625rem 0.375rem 0.875rem;
+    background-color: hsl(var(--surface) / 0.68);
+  }
+
+  .row-inspector-fields {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-block: 0.375rem;
+  }
+
+  .row-inspector-field {
+    position: relative;
+    padding: 0.75rem 0.875rem 0.8125rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.48);
+    transition: background-color 120ms ease;
+  }
+
+  .row-inspector-field:hover {
+    background-color: hsl(var(--surface) / 0.5);
+  }
+
+  .row-inspector-field--active {
+    background-color: hsl(var(--accent) / 0.68);
+    box-shadow: inset 2px 0 0 hsl(var(--primary) / 0.72);
+  }
+
+  .row-inspector-value {
+    max-height: 9.3rem;
+    overflow: hidden;
+    color: hsl(var(--foreground) / 0.9);
+  }
+
+  .row-inspector-copy {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .row-inspector-field:hover .row-inspector-copy,
+  .row-inspector-copy:focus-visible {
+    opacity: 1;
+  }
+
+  /* With the explorer visible, a 360px inspector would otherwise leave the
+     result grid too narrow to remain a useful data surface. */
+  @media (max-width: 1100px) {
+    .row-inspector {
+      position: absolute;
+      height: auto;
+      z-index: 35;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      box-shadow: -12px 0 24px -16px hsl(var(--shadow-floating) / 0.7);
+    }
   }
 
   .ide-toolbar-group {
@@ -190,16 +472,16 @@
   }
 
   .ide-overlay {
-    @apply border bg-popover text-popover-foreground shadow-[0_18px_42px_-22px_hsl(var(--overlay)/0.78)];
-    border-color: hsl(var(--separator));
+    @apply border bg-popover text-popover-foreground shadow-[0_18px_42px_-24px_hsl(var(--shadow-floating)/0.58)];
+    border-color: hsl(var(--border-strong));
   }
 
   .ide-landing-card {
-    @apply rounded-md border bg-card text-card-foreground shadow-none;
+    @apply rounded-lg border bg-card text-card-foreground shadow-[0_1px_2px_hsl(var(--foreground)/0.025)];
   }
 
   .ide-icon-button {
-    @apply size-7 rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50;
+    @apply size-7 rounded text-muted-foreground transition-colors hover:bg-accent-hover hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/35;
   }
 
   .ide-combobox-trigger {
@@ -235,7 +517,14 @@
   }
 
   .ide-input {
-    @apply h-[30px] rounded border border-input bg-card px-2 text-[13px] outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20;
+    @apply h-8 rounded-md border border-input bg-card px-2.5 text-[13px] outline-none transition-colors hover:border-border-strong focus:border-ring focus:ring-2 focus:ring-ring/20;
+  }
+
+  /* Connection setup is a dedicated form surface: its 36px controls make the
+     default path legible without changing compact controls elsewhere. */
+  .connection-form [data-slot='input'],
+  .connection-form [data-slot='select-trigger'] {
+    height: var(--control-height-lg);
   }
 
   .ide-status-success {
@@ -247,11 +536,11 @@
   }
 
   .ide-status-danger {
-    @apply text-destructive;
+    color: hsl(var(--danger));
   }
 
   .ide-divider {
-    border-color: hsl(var(--separator) / 0.8);
+    border-color: hsl(var(--border) / 0.9);
   }
 
   .ide-splitter {
@@ -261,17 +550,98 @@
   .ide-splitter::after {
     content: '';
     @apply absolute inset-x-0 top-1/2 h-px -translate-y-1/2;
-    background-color: hsl(var(--separator));
+    background-color: hsl(var(--border));
   }
 
   .ide-splitter:hover::after,
   .ide-splitter:focus-visible::after {
+    @apply h-0.5;
+    background-color: hsl(var(--border-strong));
+  }
+
+  .ide-splitter--dragging::after {
     @apply h-0.5;
     background-color: hsl(var(--primary) / 0.8);
   }
 
   .ide-status-dot {
     @apply size-1.5 shrink-0 rounded-full ring-1 ring-background/70;
+  }
+
+  .sidebar-status-dot {
+    @apply size-1.5 shrink-0 rounded-full ring-1 ring-surface/80;
+  }
+
+  .ui-page-title {
+    font-size: 1.5rem;
+    font-weight: 650;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+  }
+
+  .ui-section-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  .ui-secondary-text {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
+  .ui-caption,
+  .ui-data-type {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.6875rem;
+    line-height: 1.35;
+  }
+
+  .ui-data-type {
+    font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+
+  .ui-empty-state,
+  .ide-empty-state {
+    display: grid;
+    min-height: 10rem;
+    place-items: center;
+    padding: 1.5rem;
+    color: hsl(var(--muted-foreground));
+    text-align: center;
+  }
+
+  .ui-empty-state__content {
+    display: grid;
+    max-width: 22rem;
+    justify-items: center;
+    gap: 0.5rem;
+  }
+
+  .ui-empty-state__icon {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius-lg);
+    background: hsl(var(--surface-secondary));
+    color: hsl(var(--muted-foreground));
+  }
+
+  .ui-empty-state__title {
+    color: hsl(var(--foreground));
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .ui-empty-state__description {
+    font-size: 0.75rem;
+    line-height: 1.5;
   }
 
   .app-splash-grid {
