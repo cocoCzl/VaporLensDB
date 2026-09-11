@@ -136,7 +136,7 @@ export function CreateDatabaseDialog() {
           )}
         </div>
         {confirming && supported && (
-          <div className="mx-5 mb-3 rounded border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+          <div className="mx-5 mb-3 rounded border border-warning/30 bg-warning-bg p-3 text-xs text-warning-foreground">
             <div className="font-semibold">{t('databaseCreate.confirmTitle')}</div>
             <p className="mt-1 text-muted-foreground">{t('databaseCreate.confirmHint', { name: connection?.name ?? '' })}</p>
           </div>

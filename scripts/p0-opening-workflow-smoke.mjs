@@ -52,7 +52,9 @@ includesAll(
   [
     '<WorkbenchHome',
     'const connectionId = activeTab?.connectionId ?? null',
-    'updateTabConnection(activeTab.id, id)',
+    'updateTabConnection(activeTab.id, id, {',
+    'database: nextConnection?.database ?? null',
+    'schema: null',
     '<SqlHistoryPanel',
     'useQueryHistoryStore',
     'useSqlDraftStore',

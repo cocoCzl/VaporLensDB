@@ -36,7 +36,7 @@ export function TableNode({ data }: NodeProps) {
             title={`${column.name} · ${column.dataType}`}
           >
             {column.isPrimaryKey ? (
-              <KeyRound className="size-3 shrink-0 text-amber-600" />
+              <KeyRound className="size-3 shrink-0 text-warning" />
             ) : (
               <span className="size-3 shrink-0 rounded-sm border border-muted-foreground/35" />
             )}

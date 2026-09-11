@@ -8,37 +8,49 @@
     /* Application */
     --background: 218 30% 97.1%;
     --foreground: 222 28% 13%;
+    --foreground-muted: 218 13% 43%;
 
     /* Surface */
     --surface: 0 0% 100%;
     --surface-secondary: 218 28% 96.15%;
     --surface-elevated: 0 0% 100%;
+    --surface-sunken: 218 24% 94.2%;
     --card: var(--surface);
     --card-foreground: var(--foreground);
     --popover: var(--surface-elevated);
     --popover-foreground: var(--foreground);
 
     /* Border */
+    --border-subtle: 218 22% 90.5%;
     --border: 218 20% 86.5%;
     --border-strong: 218 16% 76%;
     --input: var(--border-strong);
 
     /* Text */
     --muted: 218 20% 94%;
-    --muted-foreground: 218 13% 43%;
+    --muted-foreground: var(--foreground-muted);
 
     /* Accent and state */
     --primary: 215 87% 55%;
     --primary-foreground: 0 0% 100%;
     --secondary: var(--surface-secondary);
     --secondary-foreground: 221 26% 19%;
-    --accent: 215 68% 95%;
+    --accent: 215 76% 96%;
     --accent-hover: 215 63% 92%;
-    --accent-selected: 215 70% 89%;
+    --accent-selected: 215 85% 94%;
     --accent-foreground: 220 37% 25%;
     --success: 157 57% 36%;
+    --success-bg: 157 48% 93%;
+    --success-foreground: 157 62% 25%;
     --warning: 37 86% 43%;
+    --warning-bg: 38 78% 93%;
+    --warning-foreground: 32 76% 30%;
     --danger: 0 68% 49%;
+    --danger-bg: 0 72% 95%;
+    --danger-foreground: 0 64% 37%;
+    --info: 215 80% 48%;
+    --info-bg: 215 76% 94%;
+    --info-foreground: 215 66% 35%;
     --destructive: var(--danger);
     --destructive-foreground: 0 0% 100%;
     --ring: 215 84% 52%;
@@ -50,7 +62,8 @@
     /* Data grid */
     --grid-header: 220 28% 97.1%;
     --grid-hover: 216 72% 96%;
-    --grid-selected: 215 74% 91%;
+    --grid-selected: 215 85% 94%;
+    --grid-focus: 215 76% 90%;
     --grid-border: 218 21% 89.25%;
 
     /* Control metrics and elevation */
@@ -62,6 +75,9 @@
     --radius: 0.5rem;
     --radius-lg: 0.625rem;
     --shadow-floating: 222 30% 18%;
+    --scrollbar: 218 18% 77%;
+    --scrollbar-hover: 218 16% 61%;
+    --vendor-oracle: 7 58% 49%;
 
     /* Legacy aliases: migrate existing IDE components incrementally. */
     --workspace: var(--background);
@@ -86,41 +102,57 @@
 
   .dark {
     color-scheme: dark;
-    --background: 220 10% 10.5%;
-    --foreground: 216 18% 91%;
-    --surface: 220 9% 12.5%;
-    --surface-secondary: 220 9% 15%;
-    --surface-elevated: 220 9% 16.5%;
+    --background: 222 16% 9%;
+    --foreground: 218 20% 92%;
+    --foreground-muted: 218 10% 64%;
+    --surface: 222 15% 11.5%;
+    --surface-secondary: 222 14% 13.5%;
+    --surface-elevated: 222 13% 16%;
+    --surface-sunken: 222 15% 8%;
     --card: var(--surface);
     --card-foreground: var(--foreground);
     --popover: var(--surface-elevated);
     --popover-foreground: var(--foreground);
-    --border: 218 9% 24%;
-    --border-strong: 218 9% 31%;
+    --border-subtle: 222 12% 19%;
+    --border: 222 12% 25%;
+    --border-strong: 222 13% 33%;
     --input: var(--border-strong);
-    --primary: 215 91% 66%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 215 86% 64%;
+    --primary-foreground: 222 30% 12%;
     --secondary: var(--surface-secondary);
     --secondary-foreground: 216 15% 88%;
-    --muted: 218 8% 16.5%;
-    --muted-foreground: 216 10% 62%;
-    --accent: 216 38% 25%;
-    --accent-hover: 216 32% 29%;
-    --accent-selected: 216 46% 32%;
+    --muted: 222 11% 16%;
+    --muted-foreground: var(--foreground-muted);
+    --accent: 216 30% 17%;
+    --accent-hover: 216 33% 20%;
+    --accent-selected: 216 38% 23%;
     --accent-foreground: 216 22% 94%;
-    --success: 158 57% 48%;
-    --warning: 38 92% 57%;
-    --danger: 0 71% 61%;
+    --success: 158 57% 52%;
+    --success-bg: 157 30% 17%;
+    --success-foreground: 157 64% 70%;
+    --warning: 38 90% 60%;
+    --warning-bg: 36 36% 18%;
+    --warning-foreground: 39 90% 74%;
+    --danger: 0 72% 65%;
+    --danger-bg: 0 34% 18%;
+    --danger-foreground: 0 78% 75%;
+    --info: 215 86% 68%;
+    --info-bg: 216 32% 18%;
+    --info-foreground: 215 86% 76%;
     --destructive: var(--danger);
     --destructive-foreground: 0 0% 100%;
     --ring: 216 90% 67%;
-    --sidebar: 220 9% 12%;
+    --sidebar: 222 16% 10.5%;
     --editor: var(--surface);
-    --grid-header: 220 9% 15.5%;
-    --grid-hover: 216 28% 19%;
-    --grid-selected: 216 42% 27%;
-    --grid-border: 218 9% 25%;
-    --shadow-floating: 222 38% 4%;
+    --grid-header: 222 14% 14.5%;
+    --grid-hover: 216 24% 16.5%;
+    --grid-selected: 216 40% 24%;
+    --grid-focus: 216 44% 28%;
+    --grid-border: 222 12% 24%;
+    --shadow-floating: 222 30% 4%;
+    --scrollbar: 222 11% 29%;
+    --scrollbar-hover: 222 12% 41%;
+    --vendor-oracle: 7 65% 62%;
     --workspace: var(--background);
     --workspace-raised: var(--surface);
     --chrome: var(--sidebar);
@@ -181,7 +213,7 @@
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--border) / 0.72) transparent;
+    scrollbar-color: hsl(var(--scrollbar)) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -197,11 +229,11 @@
     border: 2px solid transparent;
     border-radius: 999px;
     background-clip: padding-box;
-    background-color: hsl(var(--border) / 0.72);
+    background-color: hsl(var(--scrollbar));
   }
 
   *:hover::-webkit-scrollbar-thumb {
-    background-color: hsl(var(--border-strong) / 0.9);
+    background-color: hsl(var(--scrollbar-hover));
   }
 }
 
@@ -375,7 +407,7 @@
   }
 
   .data-grid-cell[data-grid-cell-state='focus'] {
-    background-color: hsl(var(--grid-selected));
+    background-color: hsl(var(--grid-focus));
   }
 
   .data-grid-footer {

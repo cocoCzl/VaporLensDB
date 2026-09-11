@@ -242,11 +242,11 @@ export function SettingsWorkspacePanel() {
             />
           </nav>
 
-          <div className="min-w-0 p-4 md:p-5">
+          <div className="min-w-0 p-4 md:px-6 md:py-5">
             {activeSection === 'general' && (
-              <div className="mx-auto grid max-w-5xl gap-4">
-                <div className="ide-toolbar flex min-h-9 items-center justify-between gap-3 rounded-md border px-3 py-1.5 text-xs">
-                  <span className={hasSettingsChanges ? 'text-amber-600' : 'text-muted-foreground'}>
+              <div className="mx-auto grid max-w-[54rem] gap-5">
+                <div className="flex min-h-9 items-center justify-between gap-3 border-b border-border/70 px-1 pb-3 text-xs">
+                  <span className={hasSettingsChanges ? 'text-warning' : 'text-muted-foreground'}>
                     {hasSettingsChanges ? t('settings.unsavedChanges') : t('settings.noUnsavedChanges')}
                   </span>
                   <div className="flex shrink-0 items-center gap-2">
@@ -283,14 +283,14 @@ export function SettingsWorkspacePanel() {
                   </div>
                 </div>
                 <SettingsCard title={t('settings.theme.label')} icon={Settings}>
-                  <div className="grid grid-cols-3 gap-0.5 rounded-md border bg-muted/35 p-0.5 shadow-inner shadow-black/[0.025]">
+                  <div className="grid grid-cols-3 gap-0.5 rounded-md border border-border/80 bg-surface-secondary/60 p-0.5">
                     <ThemeButton active={draft.theme === 'system'} label={t('settings.theme.system')} icon={Settings} onClick={() => updateDraft({ theme: 'system' })} />
                     <ThemeButton active={draft.theme === 'dark'} label={t('settings.theme.dark')} icon={Moon} onClick={() => updateDraft({ theme: 'dark' })} />
                     <ThemeButton active={draft.theme === 'light'} label={t('settings.theme.light')} icon={Sun} onClick={() => updateDraft({ theme: 'light' })} />
                   </div>
                   <div className="grid gap-1 text-xs">
                     <span className="font-semibold text-foreground">{t('settings.language.label')}</span>
-                    <div className="grid grid-cols-2 gap-0.5 rounded-md border bg-muted/35 p-0.5 shadow-inner shadow-black/[0.025]">
+                    <div className="grid grid-cols-2 gap-0.5 rounded-md border border-border/80 bg-surface-secondary/60 p-0.5">
                       <SegmentButton
                         active={draft.language === 'zh'}
                         label={t('settings.language.zh')}
@@ -344,13 +344,13 @@ export function SettingsWorkspacePanel() {
                 <SettingsCard title={t('settings.connectionSessions.title')} icon={Database}>
                   <div className="grid gap-2">
                     <NumberSetting label={t('settings.connectionSessions.max')} value={draft.maxLiveSessions} min={1} max={20} step={1} defaultValue={5} presets={[1, 3, 5, 10, 20]} onChange={(value) => updateDraft({ maxLiveSessions: value })} />
-                    <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 p-3 text-xs"><div><div className="font-semibold">{t('settings.connectionSessions.idle')}</div><p className="mt-1 text-muted-foreground">{t('settings.connectionSessions.hint')}</p></div><Button type="button" size="sm" variant={draft.idleReclaimMinutes === null ? 'secondary' : 'outline'} onClick={() => updateDraft({ idleReclaimMinutes: draft.idleReclaimMinutes === null ? 30 : null })}>{draft.idleReclaimMinutes === null ? t('settings.connectionSessions.enable') : t('settings.connectionSessions.disable')}</Button></div>
+                    <div className="flex items-center justify-between gap-3 border-b border-border-subtle/75 py-3 text-xs"><div><div className="font-semibold">{t('settings.connectionSessions.idle')}</div><p className="mt-1 text-muted-foreground">{t('settings.connectionSessions.hint')}</p></div><Button type="button" size="sm" variant={draft.idleReclaimMinutes === null ? 'secondary' : 'outline'} onClick={() => updateDraft({ idleReclaimMinutes: draft.idleReclaimMinutes === null ? 30 : null })}>{draft.idleReclaimMinutes === null ? t('settings.connectionSessions.enable') : t('settings.connectionSessions.disable')}</Button></div>
                     {draft.idleReclaimMinutes !== null && <NumberSetting label={t('settings.connectionSessions.minutes')} value={draft.idleReclaimMinutes} min={5} max={120} step={5} defaultValue={30} presets={[5, 15, 30, 60, 120]} onChange={(value) => updateDraft({ idleReclaimMinutes: value })} />}
                   </div>
                 </SettingsCard>
 
                 <SettingsCard title={t('settings.exportDirectory.title')} icon={Download}>
-                  <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 p-3 text-xs">
+                  <div className="flex items-center justify-between gap-3 py-3 text-xs">
                     <div className="min-w-0">
                       <div className="font-semibold text-foreground">{t('settings.exportDirectory.label')}</div>
                       <p className="mt-1 truncate font-mono text-muted-foreground" title={draft.exportDirectory ?? t('settings.exportDirectory.systemDefault')}>
@@ -369,7 +369,7 @@ export function SettingsWorkspacePanel() {
                 </SettingsCard>
 
                 <SettingsCard title={t('sql.history')} icon={Trash2}>
-                  <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 p-3 text-xs">
+                  <div className="flex items-center justify-between gap-3 py-3 text-xs">
                     <div className="min-w-0">
                       <div className="font-semibold text-foreground">{t('sql.history')}</div>
                       <p className="mt-1 text-muted-foreground">
@@ -650,7 +650,7 @@ function DriverDefinitionsSettings() {
                   className={[
                     'grid min-h-32 min-w-0 content-between gap-3 rounded-md border p-3 text-left text-xs transition-colors',
                     editing?.id === driver.id
-                      ? 'border-primary bg-primary/10'
+                      ? 'border-primary bg-accent-selected text-accent-foreground'
                       : 'border-border/70 bg-background/70 hover:border-primary/45 hover:bg-muted/45',
                   ].join(' ')}
                   onClick={() => {
@@ -675,12 +675,12 @@ function DriverDefinitionsSettings() {
                       {driverOriginLabel(driver, t)}
                     </span>
                     {driver.capabilities.canQuery && (
-                      <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600">
+                      <span className="rounded border border-success/30 bg-success-bg px-1.5 py-0.5 text-[10px] text-success-foreground">
                         Query
                       </span>
                     )}
                     {driver.capabilities.canReadMetadata && (
-                      <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600">
+                      <span className="rounded border border-info/30 bg-info-bg px-1.5 py-0.5 text-[10px] text-info-foreground">
                         Metadata
                       </span>
                     )}
@@ -1132,8 +1132,8 @@ function DbeaverImportSettings({
                   <span
                     className={
                       template.status === 'supported'
-                        ? 'shrink-0 text-[10px] text-emerald-600'
-                        : 'shrink-0 text-[10px] text-amber-600'
+                        ? 'shrink-0 text-[10px] text-success'
+                        : 'shrink-0 text-[10px] text-warning'
                     }
                   >
                     {template.mappedDriverDefinitionId ?? 'unsupported'}
@@ -1146,7 +1146,7 @@ function DbeaverImportSettings({
           {preview.skipped.length > 0 && (
             <PreviewList title="Import report">
               {preview.skipped.slice(0, 6).map((skipped) => (
-                <div key={`${skipped.name}:${skipped.sourceDriver}`} className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700">
+                <div key={`${skipped.name}:${skipped.sourceDriver}`} className="rounded border border-warning/30 bg-warning-bg px-2 py-1.5 text-xs text-warning-foreground">
                   <div className="truncate font-medium">{skipped.name}</div>
                   <div className="truncate text-[11px]">
                     {skipped.reason} · {skipped.sourceDriver ?? 'unknown'}
@@ -1187,7 +1187,7 @@ function SettingsNavButton({
       className={[
         'ide-settings-nav-item mb-0.5 grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded px-2 py-1 text-left text-xs transition-colors',
         active
-          ? 'bg-primary/12 text-primary shadow-[inset_2px_0_0_hsl(var(--primary))]'
+          ? 'bg-accent-selected text-accent-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]'
           : 'text-muted-foreground hover:bg-background/75 hover:text-foreground',
       ].join(' ')}
       title={detail}
@@ -1201,7 +1201,7 @@ function SettingsNavButton({
 
 function SettingsCard({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: ReactNode }) {
   return (
-    <section className="ide-surface grid gap-3 rounded border p-3">
+    <section className="grid gap-3 border-t border-border/65 pt-5">
       <div className="flex items-center gap-2">
         <Icon className="size-4 text-primary" />
         <h2 className="text-sm font-semibold">{title}</h2>
@@ -1226,9 +1226,9 @@ function ThemeButton({
     <button
       type="button"
       className={[
-        'flex h-8 items-center justify-center gap-1.5 rounded border text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+        'flex h-8 items-center justify-center gap-1.5 rounded border text-xs font-medium transition-[color,background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
         active
-          ? 'border-primary/35 bg-primary/15 text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12)]'
+          ? 'border-primary/35 bg-accent-selected text-accent-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12)]'
           : 'border-transparent text-muted-foreground hover:bg-background/75 hover:text-foreground',
       ].join(' ')}
       onClick={onClick}
@@ -1253,9 +1253,9 @@ function SegmentButton({
       type="button"
       aria-pressed={active}
       className={[
-        'h-8 rounded border text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+        'h-8 rounded border text-xs font-medium transition-[color,background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
         active
-          ? 'border-primary/35 bg-primary/15 text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12)]'
+          ? 'border-primary/35 bg-accent-selected text-accent-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12)]'
           : 'border-transparent text-muted-foreground hover:bg-background/75 hover:text-foreground',
       ].join(' ')}
       onClick={onClick}
@@ -1308,7 +1308,7 @@ function NumberSetting({
   }
 
   return (
-    <div className="grid gap-3 rounded border bg-background/65 px-3 py-2 text-xs transition-colors hover:border-border/80 hover:bg-background/85 lg:grid-cols-[minmax(150px,0.7fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-center">
+    <div className="grid gap-3 border-b border-border-subtle/75 py-3 text-xs last:border-b-0 lg:grid-cols-[minmax(150px,0.7fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-center">
       <div className="min-w-0">
         <label className="block truncate font-semibold text-foreground" htmlFor={`setting-${label}`}>
           {label}
@@ -1326,8 +1326,8 @@ function NumberSetting({
             className={[
               'h-7 min-w-14 rounded-md border px-2 font-mono text-[11px] transition-colors',
               value === preset
-                ? 'border-primary/55 bg-primary/15 text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.18)]'
-                : 'bg-card/70 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground',
+                ? 'border-primary/55 bg-accent-selected text-accent-foreground'
+                : 'bg-surface text-muted-foreground hover:border-border hover:bg-surface-secondary hover:text-foreground',
             ].join(' ')}
             onClick={() => changeValue(preset)}
           >
@@ -1476,12 +1476,12 @@ function driverStateLabel(driver: DriverDefinition, t: ReturnType<typeof useTran
 
 function driverStateBadgeClass(driver: DriverDefinition) {
   if (driver.userDriverRequired && driver.driverArtifacts.length === 0) {
-    return 'shrink-0 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600'
+    return 'shrink-0 rounded border border-warning/35 bg-warning-bg px-1.5 py-0.5 text-[10px] text-warning-foreground'
   }
   if (driver.capabilities.canReadMetadata && driver.driverArtifacts.length > 0) {
-    return 'shrink-0 rounded border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600'
+    return 'shrink-0 rounded border border-success/35 bg-success-bg px-1.5 py-0.5 text-[10px] text-success-foreground'
   }
-  return 'shrink-0 rounded border border-sky-500/35 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600'
+  return 'shrink-0 rounded border border-info/35 bg-info-bg px-1.5 py-0.5 text-[10px] text-info-foreground'
 }
 
 function normalizeDriverDefinition(driver: DriverDefinition): DriverDefinition {

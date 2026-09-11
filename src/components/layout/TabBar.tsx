@@ -114,45 +114,21 @@ export function TabBar() {
           const editing = editingTabId === tab.id
           const managementTab = tab.kind === 'dataSources' || tab.kind === 'settings'
           return (
-            <button
+            <div
               key={tab.id}
-              ref={(element) => {
-                if (element) {
-                  tabRefs.current.set(tab.id, element)
-                } else {
-                  tabRefs.current.delete(tab.id)
-                }
-              }}
-              type="button"
               className={[
-                'group flex h-9 max-w-56 items-center gap-1.5 border-r border-border/45 px-3 text-xs transition-colors',
+                'group flex h-9 max-w-56 items-center border-r border-border/45 text-xs transition-colors',
                 active
                   ? 'bg-surface text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary)),inset_0_1px_0_hsl(var(--foreground)/0.035)]'
-                  : 'text-muted-foreground hover:bg-[hsl(var(--hover))] hover:text-foreground',
+                  : 'text-muted-foreground hover:bg-accent-hover hover:text-foreground',
               ].join(' ')}
-              onClick={() => {
-                setActiveTab(tab.id)
-                if (tab.connectionId) {
-                  setActiveConnection(tab.connectionId)
-                }
-              }}
-              onDoubleClick={() => {
-                setEditingTabId(tab.id)
-                setEditingTitle(tab.title)
-              }}
-              onAuxClick={(event) => {
-                if (event.button === 1 && !tab.pinned) {
-                  event.preventDefault()
-                  closeEditorTab(tab)
-                }
-              }}
               onContextMenu={(event) => {
                 event.preventDefault()
                 setTabContextMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
               }}
             >
               {editing ? (
-                <span className="flex min-w-32 items-center gap-1" onClick={(event) => event.stopPropagation()}>
+                <div className="flex min-w-32 flex-1 items-center gap-1 px-3">
                   <input
                     className="h-6 min-w-0 flex-1 rounded border bg-background px-1.5 text-xs outline-none"
                     value={editingTitle}
@@ -172,9 +148,35 @@ export function TabBar() {
                     }}
                   />
                   <Check className="size-3" />
-                </span>
+                </div>
               ) : (
-                <>
+                <button
+                  ref={(element) => {
+                    if (element) {
+                      tabRefs.current.set(tab.id, element)
+                    } else {
+                      tabRefs.current.delete(tab.id)
+                    }
+                  }}
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 px-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35"
+                  onClick={() => {
+                    setActiveTab(tab.id)
+                    if (tab.connectionId) {
+                      setActiveConnection(tab.connectionId)
+                    }
+                  }}
+                  onDoubleClick={() => {
+                    setEditingTabId(tab.id)
+                    setEditingTitle(tab.title)
+                  }}
+                  onAuxClick={(event) => {
+                    if (event.button === 1 && !tab.pinned) {
+                      event.preventDefault()
+                      closeEditorTab(tab)
+                    }
+                  }}
+                >
                   <TabKindGlyph kind={tab.kind} />
                   {!managementTab && (
                     <span
@@ -194,26 +196,18 @@ export function TabBar() {
                     />
                   )}
                   {tab.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" />}
-                </>
+                </button>
               )}
-              <span
-                role="button"
-                tabIndex={0}
-                className="grid size-5 shrink-0 place-items-center rounded opacity-0 hover:bg-accent group-hover:opacity-100 group-focus-within:opacity-100"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  closeEditorTab(tab)
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    closeEditorTab(tab)
-                  }
-                }}
+              <button
+                type="button"
+                aria-label={t('sql.closeTab')}
+                title={t('sql.closeTab')}
+                className="mr-1 grid size-5 shrink-0 place-items-center rounded-sm opacity-0 transition-colors hover:bg-accent-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100"
+                onClick={() => closeEditorTab(tab)}
               >
                 <X className="size-3" />
-              </span>
-            </button>
+              </button>
+            </div>
           )
         })}
       </div>
@@ -328,8 +322,8 @@ function TabKindGlyph({ kind }: { kind: EditorTab['kind'] }) {
 }
 
 function connectionStatusClass(status: string) {
-  if (status === 'connected') return 'bg-emerald-500'
-  if (status === 'connecting') return 'bg-amber-500'
+  if (status === 'connected') return 'bg-success'
+  if (status === 'connecting') return 'bg-warning'
   if (status === 'failed') return 'bg-destructive'
   return 'bg-muted-foreground/40'
 }

@@ -140,8 +140,16 @@ pub async fn execute_query(
         .query_engine
         .execute_query(operation.driver, &input.sql, input.query_id)
         .await;
-    if execution.as_ref().is_err_and(should_retire_stale_connection) {
-        retire_stale_connection(&state, input.connection_id, "query detected a closed runtime session").await;
+    if execution
+        .as_ref()
+        .is_err_and(should_retire_stale_connection)
+    {
+        retire_stale_connection(
+            &state,
+            input.connection_id,
+            "query detected a closed runtime session",
+        )
+        .await;
     }
     state
         .connection_manager
@@ -256,8 +264,16 @@ pub async fn execute_query_stream(
             },
         )
         .await;
-    if result.as_ref().is_err_and(|error| should_retire_stale_connection_message(error)) {
-        retire_stale_connection(&state, input.connection_id, "query stream detected a closed runtime session").await;
+    if result
+        .as_ref()
+        .is_err_and(|error| should_retire_stale_connection_message(error))
+    {
+        retire_stale_connection(
+            &state,
+            input.connection_id,
+            "query stream detected a closed runtime session",
+        )
+        .await;
     }
     state
         .connection_manager
@@ -307,7 +323,11 @@ fn should_retire_stale_connection_message(message: &str) -> bool {
 }
 
 async fn retire_stale_connection(state: &State<'_, AppState>, connection_id: Uuid, reason: &str) {
-    log::debug!("retiring stale execution session: connectionId={} reason={}", connection_id, reason);
+    log::debug!(
+        "retiring stale execution session: connectionId={} reason={}",
+        connection_id,
+        reason
+    );
     state
         .connection_manager
         .lock()
@@ -321,9 +341,13 @@ mod tests {
 
     #[test]
     fn detects_closed_pool_errors_without_retiring_sql_errors() {
-        assert!(should_retire_stale_connection_message("Connection failed (jdbc): pool has been closed"));
+        assert!(should_retire_stale_connection_message(
+            "Connection failed (jdbc): pool has been closed"
+        ));
         assert!(should_retire_stale_connection_message("pool 已被关闭"));
-        assert!(!should_retire_stale_connection_message("ORA-00942: table or view does not exist"));
+        assert!(!should_retire_stale_connection_message(
+            "ORA-00942: table or view does not exist"
+        ));
     }
 }
 

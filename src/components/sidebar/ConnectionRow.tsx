@@ -64,8 +64,8 @@ export function ConnectionRow({
       className={[
         'group relative mx-2 flex min-h-11 cursor-pointer items-center rounded-md px-2 outline-none transition-colors',
         selected
-          ? 'bg-primary/[0.09] text-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.05)]'
-          : 'text-foreground hover:bg-primary/[0.045]',
+          ? 'bg-accent-selected text-accent-foreground'
+          : 'text-foreground hover:bg-accent-hover',
       ].join(' ')}
       onClick={onSelect}
       onDoubleClick={onOpen}

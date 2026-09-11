@@ -189,7 +189,7 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {truncated && (
-            <span className="text-[11px] text-amber-600">
+            <span className="text-[11px] text-warning">
               Large diagram limit: first {MAX_SCHEMA_TABLES} tables
             </span>
           )}

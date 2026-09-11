@@ -84,7 +84,7 @@ export function DataGrid({
         <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-auto">
         <div className="relative" style={{ minWidth: minGridWidth }}>
           {result.truncated && (
-            <div className="sticky top-0 z-30 border-b border-amber-300/60 bg-amber-50 px-3 py-1.5 text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300">
+            <div className="sticky top-0 z-30 border-b border-warning/35 bg-warning-bg px-3 py-1.5 text-warning-foreground">
               {t('result.truncated', {
                 // The backend reports the total rows it streamed, while a large
                 // result may retain only the bounded visual window in memory.
@@ -567,6 +567,7 @@ function ValueViewer({
   value: { title: string; value: string } | null
   onOpenChange: (open: boolean) => void
 }) {
+  const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [formatted, setFormatted] = useState(false)
   const raw = value?.value ?? ''
@@ -582,19 +583,19 @@ function ValueViewer({
         showCloseButton
       >
         <DialogHeader className="shrink-0 border-b border-border/70 px-5 py-4 pr-11">
-          <DialogTitle>{value?.title ?? 'Value'}</DialogTitle>
+          <DialogTitle>{value?.title ?? t('result.value')}</DialogTitle>
         </DialogHeader>
         <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-border/65 px-5 py-2">
           <input
             className="ide-input h-8 min-w-0 flex-1 text-xs"
-            placeholder="Search value"
+            placeholder={t('result.searchValue')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground min-[560px]:inline">{matchCount} matches</span>
+          <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground min-[560px]:inline">{t('result.matchCount', { count: matchCount })}</span>
           <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-[11px]" onClick={() => navigator.clipboard?.writeText(raw)}>
             <Copy className="size-3.5" />
-            Copy
+            {t('common.copy')}
           </Button>
           <Button
             type="button"

@@ -154,8 +154,8 @@ function RailButton({
       className={[
         'grid size-7 place-items-center rounded-md text-muted-foreground transition-colors',
         active
-          ? 'bg-primary/10 text-primary'
-          : 'hover:bg-primary/[0.045] hover:text-accent-foreground',
+          ? 'bg-accent-selected text-accent-foreground'
+          : 'hover:bg-accent-hover hover:text-accent-foreground',
       ].join(' ')}
       title={label}
       aria-label={label}

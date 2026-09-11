@@ -21,7 +21,7 @@ assert(toolbar.includes('formatDisabled={formatDisabled || running}'), 'format m
 const tabBar = read('src/components/layout/TabBar.tsx')
 assert(tabBar.includes('<FileCode2 className={iconClass} />'), 'tab bar must expose SQL scripts with the shared workspace icon')
 assert(!tabBar.includes('recentOpen'), 'tab bar must not retain the duplicate recent SQL popup')
-assert(tabBar.includes("return 'bg-emerald-500'"), 'connected tabs must be green')
+assert(tabBar.includes("return 'bg-success'"), 'connected tabs must use the semantic success token')
 assert(tabBar.includes("return 'bg-muted-foreground/40'"), 'disconnected tabs must be gray')
 
 if (failures.length) {

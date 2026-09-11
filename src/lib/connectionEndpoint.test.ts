@@ -3,8 +3,8 @@ import { normalizeConnectionEndpoint } from '@/lib/connectionEndpoint'
 
 describe('normalizeConnectionEndpoint', () => {
   it('splits a pasted IPv4 endpoint into the native host and port fields', () => {
-    expect(normalizeConnectionEndpoint('192.168.0.20:3306', 3306)).toEqual({
-      host: '192.168.0.20',
+    expect(normalizeConnectionEndpoint('192.0.2.20:3306', 3306)).toEqual({
+      host: '192.0.2.20',
       port: 3306,
     })
   })

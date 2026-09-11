@@ -31,7 +31,12 @@ const useQuery = read('src/hooks/useQuery.ts')
 includesAll(
   useQuery,
   [
-    'options: { maxRows?: number; database?: string | null; schema?: string | null } = {}',
+    'options: {',
+    'maxRows?: number',
+    'database?: string | null',
+    'schema?: string | null',
+    'connectionName?: string',
+    '} = {},',
     'executeQueryStream({',
     'connectionId,',
     'sql,',

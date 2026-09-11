@@ -901,19 +901,33 @@ fn run_config_migrations(conn: &Connection) -> Result<(), AppError> {
             continue;
         }
 
-        (migration.apply)(conn).map_err(|error| {
-            AppError::ConfigError(format!(
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let migration_result = (migration.apply)(conn).and_then(|()| {
+            conn.execute(
+                "
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, datetime('now'))
+                ",
+                params![migration.version],
+            )?;
+            Ok(())
+        });
+
+        if let Err(error) = migration_result {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(AppError::ConfigError(format!(
                 "failed to apply config migration {} ({}): {}",
                 migration.version, migration.name, error
-            ))
-        })?;
-        conn.execute(
-            "
-            INSERT INTO schema_migrations (version, applied_at)
-            VALUES (?1, datetime('now'))
-            ",
-            params![migration.version],
-        )?;
+            )));
+        }
+
+        if let Err(error) = conn.execute_batch("COMMIT") {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(AppError::ConfigError(format!(
+                "failed to commit config migration {} ({}): {}",
+                migration.version, migration.name, error
+            )));
+        }
     }
 
     Ok(())
@@ -1222,9 +1236,77 @@ fn rebuild_driver_template_model(conn: &Connection) -> Result<(), AppError> {
     ensure_column(conn, "driver_definitions", "driver_dialect", "TEXT")?;
     ensure_column(conn, "driver_definitions", "download_url", "TEXT")?;
 
-    conn.execute("DELETE FROM connections", [])?;
-    conn.execute("DELETE FROM driver_definitions", [])?;
-    conn.execute("DELETE FROM query_history", [])?;
+    backfill_driver_dialect(conn, "connections")?;
+    backfill_driver_dialect(conn, "driver_definitions")?;
+    validate_connection_driver_references(conn)?;
+    Ok(())
+}
+
+/// Version 9 introduced dialect/template metadata. It must enrich the existing
+/// driver model in place: connection IDs are also referenced by query history
+/// and encrypted credentials remain stored on the connection row.
+fn backfill_driver_dialect(conn: &Connection, table: &str) -> Result<(), AppError> {
+    let query = format!(
+        "
+        UPDATE {table}
+        SET driver_dialect = CASE driver_type
+            WHEN 'postgres' THEN 'postgresql'
+            WHEN 'mysql' THEN 'mysql'
+            WHEN 'oracle' THEN 'oracle'
+            WHEN 'sqlite' THEN 'sqlite'
+            WHEN 'mssql' THEN 'mssql'
+            WHEN 'jdbc' THEN 'genericJdbc'
+            ELSE driver_type
+        END
+        WHERE driver_dialect IS NULL
+           OR trim(driver_dialect) = ''
+        "
+    );
+    conn.execute(&query, [])?;
+    Ok(())
+}
+
+/// Connections created before the template model may reference a built-in
+/// definition that is seeded immediately after migrations. Custom references,
+/// however, must already have a row; otherwise continuing would make a legacy
+/// user connection unusable. Fail atomically instead of dropping or remapping it.
+fn validate_connection_driver_references(conn: &Connection) -> Result<(), AppError> {
+    let builtin_ids = driver_catalog::driver_definitions()
+        .into_iter()
+        .map(|definition| definition.id)
+        .collect::<Vec<_>>();
+    let mut statement = conn.prepare(
+        "
+        SELECT DISTINCT trim(driver_definition_id)
+        FROM connections
+        WHERE driver_definition_id IS NOT NULL
+          AND trim(driver_definition_id) <> ''
+        ",
+    )?;
+    let driver_ids = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for driver_id in driver_ids {
+        let exists = conn
+            .query_row(
+                "SELECT 1 FROM driver_definitions WHERE id = ?1",
+                params![driver_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !exists
+            && !builtin_ids
+                .iter()
+                .any(|builtin_id| builtin_id == &driver_id)
+        {
+            return Err(AppError::ConfigError(format!(
+                "connection references missing custom driver definition: {driver_id}"
+            )));
+        }
+    }
+
     Ok(())
 }
 
@@ -1623,7 +1705,129 @@ mod tests {
     };
     use chrono::Utc;
     use rusqlite::{params, Connection};
+    use std::path::Path;
     use uuid::Uuid;
+
+    fn create_v8_config_database(config_dir: &Path) -> Connection {
+        std::fs::create_dir_all(config_dir).expect("create temp config directory");
+        let conn = Connection::open(config_dir.join("config.db")).expect("open v8 config db");
+        conn.execute_batch(
+            "
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_migrations (version, applied_at) VALUES
+                (1, datetime('now')), (2, datetime('now')), (3, datetime('now')),
+                (4, datetime('now')), (5, datetime('now')), (6, datetime('now')),
+                (7, datetime('now')), (8, datetime('now'));
+
+            CREATE TABLE connections (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                driver_type TEXT NOT NULL,
+                host TEXT,
+                port INTEGER,
+                database_name TEXT,
+                username TEXT,
+                password_encrypted TEXT,
+                ssl_mode TEXT,
+                group_name TEXT,
+                color_tag TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                connection_url TEXT,
+                driver_class TEXT,
+                driver_paths TEXT,
+                driver_definition_id TEXT,
+                driver_artifacts_json TEXT,
+                ssh_tunnel_json TEXT,
+                ssh_password_encrypted TEXT,
+                ssh_private_key_passphrase_encrypted TEXT
+            );
+
+            CREATE TABLE driver_definitions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                backend TEXT NOT NULL,
+                status TEXT NOT NULL,
+                default_port INTEGER,
+                default_username TEXT,
+                default_database TEXT,
+                jdbc_driver_class TEXT,
+                url_template TEXT,
+                driver_artifact TEXT,
+                driver_artifacts_json TEXT NOT NULL DEFAULT '[]',
+                odbc_driver_name TEXT,
+                user_driver_required INTEGER NOT NULL DEFAULT 0,
+                built_in INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                connection_variants_json TEXT NOT NULL,
+                metadata_dialect_sql TEXT,
+                capabilities_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                driver_type TEXT
+            );
+
+            CREATE TABLE query_history (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL,
+                connection_name_snapshot TEXT NOT NULL,
+                driver_type TEXT NOT NULL,
+                database_name TEXT,
+                schema_name TEXT,
+                sql TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                elapsed_ms INTEGER,
+                row_count INTEGER,
+                affected_rows INTEGER,
+                error_code TEXT,
+                error_message TEXT
+            );
+            ",
+        )
+        .expect("create v8 schema");
+        conn
+    }
+
+    struct V8DriverDefinition<'a> {
+        id: &'a str,
+        name: &'a str,
+        driver_type: &'a str,
+        built_in: bool,
+        jdbc_driver_class: Option<&'a str>,
+        url_template: Option<&'a str>,
+        driver_artifacts_json: &'a str,
+    }
+
+    fn insert_v8_driver_definition(conn: &Connection, definition: V8DriverDefinition<'_>) {
+        conn.execute(
+            "
+            INSERT INTO driver_definitions (
+                id, name, backend, status, default_port, default_username, default_database,
+                jdbc_driver_class, url_template, driver_artifact, driver_artifacts_json,
+                user_driver_required, built_in, notes, connection_variants_json,
+                metadata_dialect_sql, capabilities_json, updated_at, driver_type
+            )
+            VALUES (?1, ?2, 'jdbc', 'configurable', NULL, NULL, NULL, ?3, ?4, NULL, ?5,
+                    1, ?6, NULL, ?7, NULL, ?8, ?9, ?10)
+            ",
+            params![
+                definition.id,
+                definition.name,
+                definition.jdbc_driver_class,
+                definition.url_template,
+                definition.driver_artifacts_json,
+                definition.built_in as i64,
+                r#"[{"id":"urlOnly","label":"URL only","requiredFields":["connectionUrl"]}]"#,
+                r#"{"canConnect":true,"canQuery":true,"canStream":false,"canReadMetadata":true,"canCancel":true,"canGenerateDdl":false}"#,
+                "2026-01-01T00:00:00+00:00",
+                definition.driver_type,
+            ],
+        )
+        .expect("insert v8 driver definition");
+    }
 
     #[test]
     fn fresh_database_runs_all_config_migrations_in_order() {
@@ -1730,15 +1934,398 @@ mod tests {
         assert!(table_exists(&conn, "driver_definitions").expect("driver definitions table exists"));
         assert!(table_exists(&conn, "data_source_groups").expect("data source groups table exists"));
         assert!(columns.iter().any(|column| column == "group_id"));
-        assert!(store
+        let migrated = store
             .get_connection(old_connection_id)
             .expect("legacy connection lookup after model rebuild")
-            .is_none());
+            .expect("legacy connection is preserved");
+        assert_eq!(migrated.name, "Legacy PG");
+        assert_eq!(migrated.host.as_deref(), Some("localhost"));
+        assert_eq!(migrated.driver_definition_id.as_deref(), Some("postgres"));
+        assert_eq!(migrated.driver_dialect.as_deref(), Some("postgresql"));
         assert!(store
             .list_driver_definitions()
             .expect("list seeded driver definitions")
             .iter()
             .any(|driver| driver.id == "postgres" && driver.built_in));
+    }
+
+    #[test]
+    fn v8_upgrade_preserves_connections_drivers_and_query_history() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-v8-preservation-migration-test-{}",
+            Uuid::new_v4()
+        ));
+        let oracle_connection_id = Uuid::new_v4();
+        let mysql_connection_id = Uuid::new_v4();
+        let jdbc_connection_id = Uuid::new_v4();
+        let oracle_history_id = Uuid::new_v4();
+        let mysql_history_id = Uuid::new_v4();
+        let now = "2026-01-01T00:00:00+00:00";
+        let conn = create_v8_config_database(&dir);
+
+        insert_v8_driver_definition(
+            &conn,
+            V8DriverDefinition {
+                id: "oracle",
+                name: "Oracle custom artifact",
+                driver_type: "oracle",
+                built_in: true,
+                jdbc_driver_class: Some("oracle.jdbc.OracleDriver"),
+                url_template: Some("jdbc:oracle:thin:@//{host}:{port}/{database}"),
+                driver_artifacts_json: r#"["/legacy/ojdbc11.jar"]"#,
+            },
+        );
+        insert_v8_driver_definition(
+            &conn,
+            V8DriverDefinition {
+                id: "mysql",
+                name: "MySQL",
+                driver_type: "mysql",
+                built_in: true,
+                jdbc_driver_class: None,
+                url_template: None,
+                driver_artifacts_json: "[]",
+            },
+        );
+        insert_v8_driver_definition(
+            &conn,
+            V8DriverDefinition {
+                id: "custom-reporting-jdbc",
+                name: "Reporting JDBC",
+                driver_type: "jdbc",
+                built_in: false,
+                jdbc_driver_class: Some("com.example.ReportingDriver"),
+                url_template: Some("jdbc:reporting://{host}/{database}"),
+                driver_artifacts_json: r#"["/drivers/reporting.jar"]"#,
+            },
+        );
+
+        for (id, name, driver_id, driver_type, host, port, database, username, password) in [
+            (
+                oracle_connection_id,
+                "Local Oracle",
+                "oracle",
+                "oracle",
+                Some("oracle.internal"),
+                Some(1521_i64),
+                Some("ORCLPDB1"),
+                Some("develop"),
+                Some("encrypted:oracle-secret"),
+            ),
+            (
+                mysql_connection_id,
+                "Local MySQL",
+                "mysql",
+                "mysql",
+                Some("mysql.internal"),
+                Some(3306_i64),
+                Some("app"),
+                Some("root"),
+                None,
+            ),
+            (
+                jdbc_connection_id,
+                "Reporting JDBC",
+                "custom-reporting-jdbc",
+                "jdbc",
+                None,
+                None,
+                None,
+                Some("reporting"),
+                None,
+            ),
+        ] {
+            conn.execute(
+                "
+                INSERT INTO connections (
+                    id, name, driver_definition_id, driver_type, host, port, database_name,
+                    connection_url, username, password_encrypted, driver_class, driver_paths,
+                    ssl_mode, group_name, color_tag, ssh_tunnel_json, ssh_password_encrypted,
+                    ssh_private_key_passphrase_encrypted, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, NULL, '[]', NULL,
+                        'Production', 'blue', NULL, NULL, NULL, ?10, ?10)
+                ",
+                params![
+                    id.to_string(),
+                    name,
+                    driver_id,
+                    driver_type,
+                    host,
+                    port,
+                    database,
+                    username,
+                    password,
+                    now,
+                ],
+            )
+            .expect("insert v8 connection");
+        }
+
+        for (id, connection_id, name, driver_type, database, schema, sql) in [
+            (
+                oracle_history_id,
+                oracle_connection_id,
+                "Local Oracle",
+                "oracle",
+                Some("ORCLPDB1"),
+                Some("DEVELOP"),
+                "SELECT * FROM DEVELOP.META_DATA",
+            ),
+            (
+                mysql_history_id,
+                mysql_connection_id,
+                "Local MySQL",
+                "mysql",
+                Some("app"),
+                None,
+                "SELECT * FROM users",
+            ),
+        ] {
+            conn.execute(
+                "
+                INSERT INTO query_history (
+                    id, connection_id, connection_name_snapshot, driver_type, database_name,
+                    schema_name, sql, status, started_at, elapsed_ms, row_count, affected_rows,
+                    error_code, error_message
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'success', ?8, 12, 3, NULL, NULL, NULL)
+                ",
+                params![
+                    id.to_string(),
+                    connection_id.to_string(),
+                    name,
+                    driver_type,
+                    database,
+                    schema,
+                    sql,
+                    now,
+                ],
+            )
+            .expect("insert v8 query history");
+        }
+        drop(conn);
+
+        let store = ConfigStore::new(dir.clone()).expect("upgrade v8 config store");
+        assert_eq!(store.applied_schema_version().expect("schema version"), 12);
+
+        let oracle = store
+            .get_connection(oracle_connection_id)
+            .expect("get oracle connection")
+            .expect("oracle connection survives");
+        assert_eq!(oracle.name, "Local Oracle");
+        assert_eq!(oracle.host.as_deref(), Some("oracle.internal"));
+        assert_eq!(oracle.database.as_deref(), Some("ORCLPDB1"));
+        assert_eq!(oracle.driver_definition_id.as_deref(), Some("oracle"));
+        assert_eq!(oracle.driver_dialect.as_deref(), Some("oracle"));
+        assert!(oracle.has_saved_password);
+        assert_eq!(
+            store
+                .get_connection(jdbc_connection_id)
+                .expect("get JDBC connection")
+                .expect("JDBC connection survives")
+                .driver_definition_id
+                .as_deref(),
+            Some("custom-reporting-jdbc")
+        );
+
+        let custom_driver = store
+            .get_driver_definition("custom-reporting-jdbc")
+            .expect("get custom JDBC driver")
+            .expect("custom JDBC driver survives");
+        assert!(!custom_driver.built_in);
+        assert_eq!(custom_driver.driver_dialect, "genericJdbc");
+        assert_eq!(
+            custom_driver.jdbc_driver_class.as_deref(),
+            Some("com.example.ReportingDriver")
+        );
+        assert_eq!(
+            custom_driver.driver_artifacts,
+            vec!["/drivers/reporting.jar".to_string()]
+        );
+        let oracle_driver = store
+            .get_driver_definition("oracle")
+            .expect("get migrated Oracle driver")
+            .expect("Oracle driver survives");
+        assert!(oracle_driver.built_in);
+        assert_eq!(
+            oracle_driver.driver_artifacts,
+            vec!["/legacy/ojdbc11.jar".to_string()]
+        );
+
+        let history = store.list_query_history(10).expect("list query history");
+        assert_eq!(history.len(), 2);
+        assert!(history.iter().any(|entry| {
+            entry.id == oracle_history_id
+                && entry.connection_id == oracle_connection_id
+                && entry.schema.as_deref() == Some("DEVELOP")
+                && entry.sql == "SELECT * FROM DEVELOP.META_DATA"
+        }));
+        assert!(history.iter().any(|entry| {
+            entry.id == mysql_history_id
+                && entry.connection_id == mysql_connection_id
+                && entry.database.as_deref() == Some("app")
+        }));
+
+        let raw = Connection::open(dir.join("config.db")).expect("open upgraded db");
+        let credential: Option<String> = raw
+            .query_row(
+                "SELECT password_encrypted FROM connections WHERE id = ?1",
+                params![oracle_connection_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("read preserved encrypted credential reference");
+        assert_eq!(credential.as_deref(), Some("encrypted:oracle-secret"));
+    }
+
+    #[test]
+    fn v8_upgrade_preserves_nullable_connection_and_history_context() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-v8-nullable-migration-test-{}",
+            Uuid::new_v4()
+        ));
+        let connection_id = Uuid::new_v4();
+        let history_id = Uuid::new_v4();
+        let conn = create_v8_config_database(&dir);
+        insert_v8_driver_definition(
+            &conn,
+            V8DriverDefinition {
+                id: "jdbc",
+                name: "Custom JDBC",
+                driver_type: "jdbc",
+                built_in: false,
+                jdbc_driver_class: None,
+                url_template: None,
+                driver_artifacts_json: "[]",
+            },
+        );
+        conn.execute(
+            "
+            INSERT INTO connections (
+                id, name, driver_definition_id, driver_type, host, port, database_name,
+                connection_url, username, password_encrypted, driver_class, driver_paths,
+                ssl_mode, group_name, color_tag, created_at, updated_at
+            )
+            VALUES (?1, 'Nullable JDBC', 'jdbc', 'jdbc', NULL, NULL, NULL,
+                    'jdbc:example:memory', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?2, ?2)
+            ",
+            params![connection_id.to_string(), "2026-01-01T00:00:00+00:00"],
+        )
+        .expect("insert nullable v8 connection");
+        conn.execute(
+            "
+            INSERT INTO query_history (
+                id, connection_id, connection_name_snapshot, driver_type, database_name,
+                schema_name, sql, status, started_at, elapsed_ms, row_count, affected_rows,
+                error_code, error_message
+            )
+            VALUES (?1, ?2, 'Nullable JDBC', 'jdbc', NULL, NULL, 'SELECT 1', 'failed',
+                    ?3, NULL, NULL, NULL, 'X', 'legacy failure')
+            ",
+            params![
+                history_id.to_string(),
+                connection_id.to_string(),
+                "2026-01-01T00:00:00+00:00"
+            ],
+        )
+        .expect("insert nullable v8 history");
+        drop(conn);
+
+        let store = ConfigStore::new(dir).expect("upgrade nullable v8 config");
+        let connection = store
+            .get_connection(connection_id)
+            .expect("get nullable connection")
+            .expect("nullable connection survives");
+        assert_eq!(connection.database, None);
+        assert_eq!(connection.driver_dialect.as_deref(), Some("genericJdbc"));
+        let history = store.list_query_history(10).expect("list nullable history");
+        let entry = history
+            .iter()
+            .find(|entry| entry.id == history_id)
+            .expect("nullable history survives");
+        assert_eq!(entry.database, None);
+        assert_eq!(entry.schema, None);
+        assert_eq!(entry.error_code.as_deref(), Some("X"));
+    }
+
+    #[test]
+    fn v9_migration_rolls_back_when_a_custom_driver_reference_is_missing() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-v9-rollback-migration-test-{}",
+            Uuid::new_v4()
+        ));
+        let connection_id = Uuid::new_v4();
+        let history_id = Uuid::new_v4();
+        let conn = create_v8_config_database(&dir);
+        conn.execute(
+            "
+            INSERT INTO connections (
+                id, name, driver_definition_id, driver_type, host, port, database_name,
+                connection_url, username, password_encrypted, driver_class, driver_paths,
+                ssl_mode, group_name, color_tag, created_at, updated_at
+            )
+            VALUES (?1, 'Broken custom JDBC', 'missing-custom-driver', 'jdbc', NULL, NULL,
+                    NULL, 'jdbc:example:broken', NULL, 'encrypted:preserve-me', NULL, '[]',
+                    NULL, NULL, NULL, ?2, ?2)
+            ",
+            params![connection_id.to_string(), "2026-01-01T00:00:00+00:00"],
+        )
+        .expect("insert broken v8 connection");
+        conn.execute(
+            "
+            INSERT INTO query_history (
+                id, connection_id, connection_name_snapshot, driver_type, database_name,
+                schema_name, sql, status, started_at, elapsed_ms, row_count, affected_rows,
+                error_code, error_message
+            )
+            VALUES (?1, ?2, 'Broken custom JDBC', 'jdbc', NULL, NULL, 'SELECT 1', 'success',
+                    ?3, NULL, NULL, NULL, NULL, NULL)
+            ",
+            params![
+                history_id.to_string(),
+                connection_id.to_string(),
+                "2026-01-01T00:00:00+00:00"
+            ],
+        )
+        .expect("insert broken v8 history");
+        drop(conn);
+
+        let error = ConfigStore::new(dir.clone()).expect_err("v9 migration should fail");
+        assert!(error.to_string().contains(
+            "connection references missing custom driver definition: missing-custom-driver"
+        ));
+
+        let raw = Connection::open(dir.join("config.db")).expect("open rolled back database");
+        assert_eq!(
+            raw.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("schema version after failed migration"),
+            8
+        );
+        assert!(!table_columns(&raw, "connections")
+            .expect("connection columns after rollback")
+            .iter()
+            .any(|column| column == "driver_dialect"));
+        assert!(!table_columns(&raw, "driver_definitions")
+            .expect("driver columns after rollback")
+            .iter()
+            .any(|column| column == "driver_dialect"));
+        assert_eq!(
+            raw.query_row("SELECT COUNT(*) FROM connections", [], |row| row
+                .get::<_, i64>(0))
+                .expect("preserved connection count"),
+            1
+        );
+        assert_eq!(
+            raw.query_row("SELECT COUNT(*) FROM query_history", [], |row| row
+                .get::<_, i64>(0))
+                .expect("preserved history count"),
+            1
+        );
     }
 
     #[test]

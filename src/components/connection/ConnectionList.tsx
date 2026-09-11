@@ -392,7 +392,7 @@ function ConnectionCard({
           ? 'group flex h-9 min-w-0 cursor-pointer items-center gap-2 rounded border border-transparent px-2 text-xs transition-colors hover:border-border'
           : 'content-visibility-auto group flex min-w-0 cursor-pointer items-center gap-1 rounded border-l-2 px-1.5 py-1 text-sm transition-colors',
         selected
-          ? 'border-l-primary bg-primary/15 text-foreground ring-1 ring-primary/30'
+          ? 'border-l-primary bg-accent-selected text-accent-foreground ring-1 ring-primary/30'
           : 'border-l-transparent bg-transparent hover:bg-muted/70',
       ].join(' ')}
       aria-current={selected ? 'true' : undefined}
@@ -438,9 +438,9 @@ function ConnectionCard({
             className={[
               'size-1.5 shrink-0 rounded-full',
               connected
-                ? 'bg-emerald-500'
+                ? 'bg-success'
                 : readinessIssue
-                  ? 'bg-amber-500'
+                  ? 'bg-warning'
                   : 'bg-muted-foreground/40',
             ].join(' ')}
             title={readinessIssue ?? status}
@@ -508,7 +508,7 @@ function ConnectionCard({
             onToggleFavorite()
           }}
         >
-          <Star className={favorite ? 'fill-current text-amber-500' : ''} />
+          <Star className={favorite ? 'fill-current text-warning' : ''} />
         </IconTooltipButton>
         <IconTooltipButton
           size="icon-xs"

@@ -173,14 +173,7 @@ pub async fn connect(
     // native drivers can lose their underlying session independently. Verify
     // an existing entry before reusing it; a failed health check is retired so
     // the normal connection path below creates a fresh driver/session.
-    let existing_driver = {
-        state
-            .connection_manager
-            .lock()
-            .await
-            .driver(id)
-            .ok()
-    };
+    let existing_driver = { state.connection_manager.lock().await.driver(id).ok() };
     if let Some(driver) = existing_driver {
         match driver.ping().await {
             Ok(()) => return Ok(state.connection_manager.lock().await.status(id)),
@@ -297,7 +290,10 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
 /// Host and port are separate native-driver fields. Normalize the common
 /// `host:port` paste form before a native resolver can treat it as a hostname.
 fn normalize_host_port(host: Option<String>, port: Option<u16>) -> (Option<String>, Option<u16>) {
-    let Some(host) = host.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) else {
+    let Some(host) = host
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
         return (None, port);
     };
     let Some((candidate_host, candidate_port)) = host.rsplit_once(':') else {
@@ -510,8 +506,8 @@ mod tests {
     #[test]
     fn splits_a_pasted_host_port_before_native_connection_resolution() {
         assert_eq!(
-            normalize_host_port(Some("192.168.0.20:3306".to_string()), Some(3306)),
-            (Some("192.168.0.20".to_string()), Some(3306))
+            normalize_host_port(Some("192.0.2.20:3306".to_string()), Some(3306)),
+            (Some("192.0.2.20".to_string()), Some(3306))
         );
         assert_eq!(
             normalize_host_port(Some("2001:db8::1".to_string()), Some(3306)),

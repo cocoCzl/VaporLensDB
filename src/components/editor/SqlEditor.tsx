@@ -1,4 +1,4 @@
-import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react'
+import Editor, { loader, type BeforeMount, type Monaco, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { useEffect, useRef } from 'react'
 import { registerSqlCompletionProvider } from '@/components/editor/AutoComplete'
@@ -41,14 +41,16 @@ export function SqlEditor({
   const showSystemObjectsRef = useRef(showSystemObjects)
   const onRunRef = useRef(onRun)
   const onSelectionChangeRef = useRef(onSelectionChange)
-  const appTheme = useUiStore((state) => state.theme)
+  const resolvedTheme = useUiStore((state) => state.resolvedTheme)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
-  const editorTheme =
-    appTheme === 'light'
-      ? 'vaporlens-light'
-      : appTheme === 'dark' || window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'vaporlens-dark'
-        : 'vaporlens-light'
+  const monacoRef = useRef<Monaco | null>(null)
+  const editorTheme = resolvedTheme === 'dark' ? 'vaporlens-dark' : 'vaporlens-light'
+
+  useEffect(() => {
+    if (!monacoRef.current) return
+    defineVaporLensThemes(monacoRef.current)
+    monacoRef.current.editor.setTheme(editorTheme)
+  }, [editorTheme])
 
   useEffect(() => {
     connectionIdRef.current = connectionId
@@ -75,6 +77,8 @@ export function SqlEditor({
   }, [onSelectionChange])
 
   const handleMount: OnMount = (instance, monaco) => {
+    monacoRef.current = monaco
+    defineVaporLensThemes(monaco)
     if (autoFocus) {
       instance.focus()
     }
@@ -92,7 +96,10 @@ export function SqlEditor({
     instance.onDidChangeCursorSelection(() => {
       onSelectionChangeRef.current?.(selectedText(instance))
     })
-    instance.onDidDispose(() => completionProvider.dispose())
+    instance.onDidDispose(() => {
+      completionProvider.dispose()
+      monacoRef.current = null
+    })
   }
 
   return (
@@ -196,8 +203,10 @@ function monacoPalette(dark: boolean) {
   if (dark) probe.className = 'dark'
   probe.style.display = 'none'
   document.body.append(probe)
-  const styles = window.getComputedStyle(probe)
-  const read = (token: string, fallbackColor: string) => hslTokenToHex(styles.getPropertyValue(token), fallbackColor)
+  const read = (token: string, fallbackColor: string) => {
+    probe.style.color = `hsl(var(${token}))`
+    return hslTokenToHex(window.getComputedStyle(probe).color, fallbackColor)
+  }
   const palette = {
     editor: read('--editor', fallback.editor),
     foreground: read('--foreground', fallback.foreground),
@@ -215,22 +224,8 @@ function monacoPalette(dark: boolean) {
 }
 
 function hslTokenToHex(value: string, fallback: string) {
-  const match = value.trim().match(/^([\d.]+)\s+([\d.]+)%\s+([\d.]+)%$/)
-  if (!match) return fallback
-  const hue = Number(match[1]) / 360
-  const saturation = Number(match[2]) / 100
-  const lightness = Number(match[3]) / 100
-  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
-  const segment = hue * 6
-  const secondary = chroma * (1 - Math.abs((segment % 2) - 1))
-  const matchChannel = lightness - chroma / 2
-  const [red, green, blue] = segment < 1 ? [chroma, secondary, 0]
-    : segment < 2 ? [secondary, chroma, 0]
-      : segment < 3 ? [0, chroma, secondary]
-        : segment < 4 ? [0, secondary, chroma]
-          : segment < 5 ? [secondary, 0, chroma]
-            : [chroma, 0, secondary]
-  return `#${[red, green, blue].map((channel) => Math.round((channel + matchChannel) * 255).toString(16).padStart(2, '0')).join('')}`
+  const match = value.trim().match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/)
+  return match ? `#${match.slice(1).map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}` : fallback
 }
 
 function selectedText(instance: editor.IStandaloneCodeEditor) {

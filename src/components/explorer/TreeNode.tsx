@@ -140,7 +140,7 @@ export function TreeNode({
   return (
     <div
       className={[
-        'group flex h-7 items-center gap-1 rounded-sm px-1 text-xs text-foreground/90 hover:bg-accent-hover/70',
+        'group flex h-7 items-center gap-1 rounded-sm px-1 text-xs text-foreground/90 hover:bg-accent-hover',
         selected ? 'bg-accent-selected text-accent-foreground' : '',
       ].join(' ')}
       data-muted={node.muted ? 'true' : undefined}
@@ -215,7 +215,7 @@ export function TreeNode({
       {quickActions.length > 0 && (
         <div
           className={[
-            'ml-auto flex shrink-0 items-center gap-0.5 rounded bg-background/80 px-0.5 opacity-0 shadow-sm ring-1 ring-border/60 transition-opacity',
+            'ml-auto flex shrink-0 items-center gap-0.5 px-0.5 opacity-0 transition-opacity',
             'group-hover:opacity-100 group-focus-within:opacity-100',
             selected ? 'opacity-100' : '',
           ].join(' ')}

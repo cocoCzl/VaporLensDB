@@ -24,6 +24,9 @@ export default defineConfig({
     exclude: ['monaco-editor'],
   },
   build: {
+    // Standard Rollup/Vite graph metadata consumed by the release bundle
+    // budget check. It does not alter emitted JS chunking or import behavior.
+    manifest: true,
     chunkSizeWarningLimit: 1000,
     modulePreload: false,
   },

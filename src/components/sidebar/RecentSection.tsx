@@ -28,8 +28,8 @@ export function RecentSection({ connections, activeConnectionId, onSelect, t }: 
               key={connection.id}
               type="button"
               className={[
-                'flex min-h-11 w-full items-center gap-2.5 rounded-md px-2.5 text-left transition-colors hover:bg-primary/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35',
-                selected ? 'bg-primary/[0.075] text-foreground' : '',
+                'flex min-h-11 w-full items-center gap-2.5 rounded-md px-2.5 text-left transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35',
+                selected ? 'bg-accent-selected text-accent-foreground' : '',
               ].join(' ')}
               aria-current={selected ? 'true' : undefined}
               onClick={() => onSelect(connection)}

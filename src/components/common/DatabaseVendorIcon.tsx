@@ -25,7 +25,7 @@ export function DatabaseVendorIcon({ driverType, className, ...props }: Database
     case 'mysql':
       return <svg {...sharedProps}><image href={mysqlIconUrl} width="24" height="24" /></svg>
     case 'oracle':
-      return <svg {...sharedProps}><path stroke="#C74634" strokeWidth="4.1" d="M5 12a7 7 0 1 0 14 0 7 7 0 0 0-14 0Z" /></svg>
+      return <svg {...sharedProps}><path stroke="hsl(var(--vendor-oracle))" strokeWidth="4.1" d="M5 12a7 7 0 1 0 14 0 7 7 0 0 0-14 0Z" /></svg>
     case 'sqlite':
       return <svg {...sharedProps}><image href={sqliteIconUrl} width="24" height="24" /></svg>
     case 'mssql':

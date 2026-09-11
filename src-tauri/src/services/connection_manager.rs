@@ -841,7 +841,10 @@ mod tests {
             .begin_connect(connection_id)
             .expect("connection attempt starts");
         manager
-            .finish_connect(connection_id, Ok(sqlite_connection(Instant::now(), 0).await))
+            .finish_connect(
+                connection_id,
+                Ok(sqlite_connection(Instant::now(), 0).await),
+            )
             .expect("connection installs");
 
         manager.invalidate_connection(connection_id, "driver session became unusable");

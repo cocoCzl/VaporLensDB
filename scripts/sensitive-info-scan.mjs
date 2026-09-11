@@ -7,7 +7,7 @@ import { extname, resolve } from 'node:path'
 const repositoryRoot = resolve(import.meta.dirname, '..')
 const listed = execFileSync(
   'git',
-  ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+  ['ls-files', '-z'],
   { cwd: repositoryRoot },
 )
   .toString()

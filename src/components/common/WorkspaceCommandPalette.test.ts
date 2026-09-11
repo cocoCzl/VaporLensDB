@@ -89,7 +89,7 @@ describe('WorkspaceCommandPalette ranking', () => {
   })
 
   it('keeps datasource and history matches that explicitly mention Oracle', () => {
-    const localOracle = item('Local Oracle', 'Local Oracle oracle 192.168.0.35')
+    const localOracle = item('Local Oracle', 'Local Oracle oracle 192.0.2.35')
     const history = item('SELECT * FROM DEVELOP.META_DATA', 'SELECT * FROM DEVELOP.META_DATA Local Oracle DEVELOP')
 
     expect(rankPaletteItems([history, localOracle], 'oracle', null).map((result) => result.label)).toEqual([

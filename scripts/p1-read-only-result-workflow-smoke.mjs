@@ -39,7 +39,7 @@ includesAll(
     'readColumnWidths',
     'ValueViewer',
     'formatJsonIfPossible',
-    'Search value',
+    "t('result.searchValue')",
     'Open value viewer',
   ],
   'read-only grid copy, widths, and viewer',

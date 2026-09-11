@@ -135,7 +135,7 @@ function ColumnsTable({ columns, loading }: { columns: ColumnInfo[]; loading: bo
             {column.nullable ? 'YES' : 'NO'}
           </div>
           <div className="px-2 py-1.5">
-            {column.isPrimaryKey && <KeyRound className="size-3.5 text-amber-600" />}
+            {column.isPrimaryKey && <KeyRound className="size-3.5 text-warning" />}
           </div>
         </div>
       ))}

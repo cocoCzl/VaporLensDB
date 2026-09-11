@@ -19,6 +19,7 @@ import { useQuery } from '@/hooks/useQuery'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ConnectionConfig, ConnectionRuntimeStatus } from '@/types/connection'
 
 /**
@@ -240,7 +241,7 @@ export function DataSourcesSidebar() {
                       onOpenMenu={({ x, y }) => setContextMenu({ connection, x, y })}
                     />
                     {expanded && status === 'connected' && (
-                      <div className="ml-5 border-l border-border/60 pl-1">
+                      <div className="ml-5 border-l border-border-subtle/75 pl-1">
                         <DatabaseTree connectionId={connection.id} compact />
                       </div>
                     )}
@@ -290,23 +291,29 @@ export function DataSourcesSidebar() {
         }}
       />
 
-      {disconnectPrompt && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-label={t('connection.disconnect')}>
-          <div className="w-full max-w-sm rounded-lg border bg-card p-4 shadow-xl">
-            <div className="text-sm font-semibold">{t('connection.disconnect')}</div>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">{t('sessions.runningQueriesBlockDisconnect', { name: disconnectPrompt.name })}</p>
-            <div className="mt-3 grid gap-1">
+      <Dialog open={Boolean(disconnectPrompt)} onOpenChange={(open) => !open && setDisconnectPrompt(null)}>
+        <DialogContent className="w-full max-w-sm gap-0 overflow-hidden p-0" showCloseButton>
+          <DialogHeader className="border-b border-border/70 px-4 py-3 pr-11">
+            <DialogTitle>{t('connection.disconnect')}</DialogTitle>
+            <DialogDescription className="text-xs leading-5">
+              {disconnectPrompt ? t('sessions.runningQueriesBlockDisconnect', { name: disconnectPrompt.name }) : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {disconnectPrompt && (
+            <div className="grid gap-1.5 px-4 py-3">
               {tabs.filter((tab) => tab.connectionId === disconnectPrompt.id && tab.runningQueryId).map((tab) => (
-                <div key={tab.id} className="flex items-center gap-2 rounded border px-2 py-1.5 text-xs">
+                <div key={tab.id} className="flex items-center gap-2 rounded-md bg-danger-bg/70 px-2.5 py-2 text-xs text-danger-foreground">
                   <span className="min-w-0 flex-1 truncate">{tab.title}</span>
                   <Button type="button" size="xs" variant="secondary" onClick={() => tab.runningQueryId && void cancelRunningQuery(tab.id, disconnectPrompt.id, tab.runningQueryId)}>{t('editor.cancel')}</Button>
                 </div>
               ))}
             </div>
-            <div className="mt-4 flex justify-end"><Button type="button" size="sm" variant="outline" onClick={() => setDisconnectPrompt(null)}>{t('common.close')}</Button></div>
+          )}
+          <div className="flex justify-end border-t border-border/70 bg-surface-secondary/55 px-4 py-3">
+            <Button type="button" size="sm" variant="outline" onClick={() => setDisconnectPrompt(null)}>{t('common.close')}</Button>
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }

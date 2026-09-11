@@ -30,10 +30,10 @@ const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
   [
-    'catalogSchemaPaths',
+    'activeTab?.database ?? activeConnection?.database ?? null',
+    'activeTab?.schema ?? null',
+    'updateSqlTabContext(tabId, {',
     'setCatalogSchemaPath',
-    'catalogSchemaPath?.database',
-    'catalogSchemaPath?.schema',
     'onDatabaseChange={(database) =>',
     'schema: null',
     'onSchemaChange={(schema) =>',

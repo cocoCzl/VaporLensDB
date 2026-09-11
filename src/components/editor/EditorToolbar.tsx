@@ -112,7 +112,7 @@ export function EditorToolbar({
           value={schema ?? ''}
           disabled={!connectionId || schemas.length === 0}
           onValueChange={(value) => onSchemaChange?.(value || null)}
-          options={[...(!schema ? [{ value: '', label: 'Schema' }] : []), ...schemas.map((item) => ({ value: item.name, label: item.name }))]}
+          options={[...(!schema ? [{ value: '', label: t('metadata.schema') }] : []), ...schemas.map((item) => ({ value: item.name, label: item.name }))]}
         />
         </ContextSelect>
       </div>
@@ -245,7 +245,7 @@ function RowLimitMenu({ maxRows, onChange, label }: { maxRows: number; onChange:
         <div className="grid grid-cols-2 gap-0.5">
           {options.map((value) => {
             const selected = value === maxRows
-            return <button key={value} type="button" className={['flex h-7 items-center justify-between rounded px-2 font-mono text-[11px] transition-colors', selected ? 'bg-primary/12 text-primary' : 'text-foreground hover:bg-accent'].join(' ')} onClick={() => { onChange(value); setOpen(false) }}><span>{value >= 1000 ? `${value / 1000}k` : value}</span>{selected ? <Check className="size-3" /> : null}</button>
+            return <button key={value} type="button" className={['flex h-7 items-center justify-between rounded px-2 font-mono text-[11px] transition-colors', selected ? 'bg-accent-selected text-accent-foreground' : 'text-foreground hover:bg-accent'].join(' ')} onClick={() => { onChange(value); setOpen(false) }}><span>{value >= 1000 ? `${value / 1000}k` : value}</span>{selected ? <Check className="size-3" /> : null}</button>
           })}
         </div>
       </PopoverContent>
@@ -267,7 +267,7 @@ function TransactionModeMenu({ mode, phase, disabled, disabledLabel, label, auto
 }) {
   const [open, setOpen] = useState(false)
   const stateLabel = phase === 'failed' ? failedLabel : phase === 'active' ? activeLabel : mode === 'manual' ? manualLabel : autoLabel
-  const statusClass = phase === 'failed' ? 'bg-destructive' : phase === 'active' ? 'bg-amber-500' : mode === 'manual' ? 'bg-primary' : 'bg-muted-foreground/45'
+  const statusClass = phase === 'failed' ? 'bg-destructive' : phase === 'active' ? 'bg-warning' : mode === 'manual' ? 'bg-primary' : 'bg-muted-foreground/45'
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={label} title={disabled ? disabledLabel : `${label} · ${stateLabel}`} disabled={disabled} className="relative"><GitBranch /><span className={['absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background', statusClass].join(' ')} /></Button>} />
@@ -276,7 +276,7 @@ function TransactionModeMenu({ mode, phase, disabled, disabledLabel, label, auto
         {(['auto', 'manual'] as const).map((value) => {
           const selected = value === mode
           const optionLabel = value === 'auto' ? autoLabel : manualLabel
-          return <button key={value} type="button" className={['flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs transition-colors', selected ? 'bg-primary/12 text-primary' : 'hover:bg-accent'].join(' ')} onClick={() => { onChange?.(value); setOpen(false) }}><GitBranch className="size-3.5" /><span className="min-w-0 flex-1">{optionLabel}</span>{selected ? <Check className="size-3.5" /> : null}</button>
+          return <button key={value} type="button" className={['flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs transition-colors', selected ? 'bg-accent-selected text-accent-foreground' : 'hover:bg-accent'].join(' ')} onClick={() => { onChange?.(value); setOpen(false) }}><GitBranch className="size-3.5" /><span className="min-w-0 flex-1">{optionLabel}</span>{selected ? <Check className="size-3.5" /> : null}</button>
         })}
       </PopoverContent>
     </Popover>
@@ -367,8 +367,8 @@ function ExecutionDataSourcePicker({
 }
 
 function connectionStatusClass(status: string) {
-  if (status === 'connected') return 'bg-emerald-500'
-  if (status === 'connecting') return 'bg-amber-500'
+  if (status === 'connected') return 'bg-success'
+  if (status === 'connecting') return 'bg-warning'
   if (status === 'failed') return 'bg-destructive'
   return 'bg-muted-foreground/40'
 }

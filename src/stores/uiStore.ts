@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import i18n from '@/i18n'
 import type { AppError } from '@/types/error'
 
-type Theme = 'light' | 'dark' | 'system'
+export type Theme = 'light' | 'dark' | 'system'
+export type ResolvedTheme = Exclude<Theme, 'system'>
 type SidebarView = 'explorer' | 'dataSources'
 type NotificationKind = 'success' | 'error' | 'info' | 'warning'
 
@@ -15,8 +16,8 @@ export interface AppNotification {
 
 const THEME_STORAGE_KEY = 'vaporlensdb.theme'
 const SETTINGS_STORAGE_KEY = 'vaporlensdb.settings'
-// Dark is the product baseline; light remains a complete, switchable theme.
-const DEFAULT_THEME: Theme = 'dark'
+// New installs follow the operating system; persisted user choices are retained.
+const DEFAULT_THEME: Theme = 'system'
 const DEFAULT_QUERY_MAX_ROWS = 5_000
 export const MAX_INTERACTIVE_RESULT_ROWS = 50_000
 const DEFAULT_DATA_PREVIEW_ROWS = 200
@@ -45,6 +46,8 @@ interface UserSettings {
 
 interface UiState {
   theme: Theme
+  /** The sole resolved light/dark value consumed by rendered integrations. */
+  resolvedTheme: ResolvedTheme
   sidebarView: SidebarView
   sidebarWidth: number
   sidebarCollapsed: boolean
@@ -61,6 +64,7 @@ interface UiState {
   notifications: AppNotification[]
   queryHistoryRequest: number
   setTheme: (theme: Theme) => void
+  setResolvedTheme: (theme: ResolvedTheme) => void
   setSidebarView: (view: SidebarView) => void
   setSidebarWidth: (width: number) => void
   setSidebarCollapsed: (collapsed: boolean) => void
@@ -80,14 +84,16 @@ interface UiState {
 
 export const useUiStore = create<UiState>((set) => ({
   theme: readStoredTheme(),
+  resolvedTheme: resolveTheme(readStoredTheme()),
   ...readStoredSettings(),
   sidebarView: 'explorer',
   notifications: [],
   queryHistoryRequest: 0,
   setTheme: (theme) => {
     writeStoredTheme(theme)
-    set({ theme })
+    set({ theme, resolvedTheme: resolveTheme(theme) })
   },
+  setResolvedTheme: (resolvedTheme) => set({ resolvedTheme }),
   setSidebarView: (sidebarView) => set({ sidebarView }),
   setSidebarWidth: (sidebarWidth) =>
     set((state) => {
@@ -191,13 +197,23 @@ export const useUiStore = create<UiState>((set) => ({
     })),
 }))
 
-function readStoredTheme(): Theme {
+export function resolveTheme(theme: Theme, prefersDark = systemPrefersDark()): ResolvedTheme {
+  return theme === 'system' ? (prefersDark ? 'dark' : 'light') : theme
+}
+
+export function readStoredTheme(): Theme {
   if (typeof window === 'undefined') {
     return DEFAULT_THEME
   }
 
   const value = window.localStorage.getItem(THEME_STORAGE_KEY)
   return value === 'light' || value === 'dark' || value === 'system' ? value : DEFAULT_THEME
+}
+
+function systemPrefersDark() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
 function writeStoredTheme(theme: Theme) {

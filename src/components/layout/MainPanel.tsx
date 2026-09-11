@@ -1681,7 +1681,7 @@ function DataTabPanel({
         {displayResult && <span>{resultSummary(displayResult)}</span>}
         <span>Page {page}</span>
         {hasPrimaryKeyOrder && <span>{t('workbench.primaryKeyAscending')}</span>}
-        {hasNoStableOrder && <span className="text-amber-600">{t('workbench.noPrimaryKeyUnstable')}</span>}
+        {hasNoStableOrder && <span className="text-warning">{t('workbench.noPrimaryKeyUnstable')}</span>}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex min-h-10 items-center gap-2 border-b px-3 py-1.5 text-xs">
@@ -1781,7 +1781,7 @@ function DataTabPanel({
             <span
               className={
                 importPreview.invalidRows.length > 0
-                  ? 'max-w-80 truncate text-amber-600'
+                  ? 'max-w-80 truncate text-warning'
                   : 'max-w-80 truncate text-muted-foreground'
               }
               title={importPreview.invalidRows[0]?.message}

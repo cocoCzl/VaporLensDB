@@ -102,7 +102,7 @@ includesAll(
   list,
   [
     'connectionReadinessIssue(connection)',
-    "? 'bg-amber-500'",
+    "? 'bg-warning'",
     "readinessIssue ? t('connection.notReady')",
     'disabled={busy || Boolean(readinessIssue)}',
     'Missing local JDBC JAR',

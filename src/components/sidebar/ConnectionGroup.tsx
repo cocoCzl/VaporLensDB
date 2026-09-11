@@ -16,7 +16,7 @@ export function ConnectionGroup({ id, name, count, collapsed, onToggle, children
       <button
         id={`${id}-label`}
         type="button"
-        className="flex h-8 w-full items-center gap-1.5 px-3.5 text-left text-[12px] font-semibold text-muted-foreground transition-colors hover:bg-primary/[0.035] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+        className="flex h-8 w-full items-center gap-1.5 px-3.5 text-left text-[12px] font-semibold text-muted-foreground transition-colors hover:bg-accent-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
         aria-expanded={!collapsed}
         onClick={onToggle}
       >

@@ -93,11 +93,11 @@ function CurrentDataSourceStatus() {
         className={[
           'size-1.5 shrink-0 rounded-full',
           connectionStatus === 'connected'
-            ? 'bg-emerald-500'
+            ? 'bg-success'
             : connectionStatus === 'failed'
               ? 'bg-destructive'
               : connectionStatus === 'connecting'
-                ? 'bg-amber-500'
+                ? 'bg-warning'
                 : 'bg-muted-foreground/45',
         ].join(' ')}
       />

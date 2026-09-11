@@ -95,7 +95,10 @@ async fn executes_a_real_oracle_workspace_query() {
         .await
         .expect("execute configured Oracle workspace query");
 
-    assert!(!result.columns.is_empty(), "the workspace query should return its column metadata");
+    assert!(
+        !result.columns.is_empty(),
+        "the workspace query should return its column metadata"
+    );
 }
 
 #[tokio::test]
@@ -152,7 +155,13 @@ async fn streams_oracle_long_columns_without_hanging() {
 
     let summary = timeout(
         Duration::from_secs(25),
-        driver.execute_query_stream(&sql, "oracle-long-integration-test", 100, Some(100), chunk_tx),
+        driver.execute_query_stream(
+            &sql,
+            "oracle-long-integration-test",
+            100,
+            Some(100),
+            chunk_tx,
+        ),
     )
     .await
     .expect("Oracle LONG query must not leave the stream open indefinitely")
