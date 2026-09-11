@@ -3,12 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${1:-current}"
-LIVE_TEST_ENV_LOADED=0
+if [ "$#" -gt 0 ]; then
+  shift
+fi
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./build.sh [mac|windows|linux|current|check|live-tests|jdbc-bridge]
+  ./build.sh [mac|windows|linux|current|check|live-tests|destructive-live-tests|jdbc-bridge] [selectors]
 
 Targets:
   mac      Build a macOS app bundle and DMG on macOS.
@@ -16,7 +18,8 @@ Targets:
   linux    Build Linux AppImage, DEB, and RPM packages on Linux.
   current  Build the supported installer format for the current platform.
   check    Run all local validation without creating an installer.
-  live-tests Run configured PostgreSQL, MySQL, Oracle, and JDBC integration tests.
+  live-tests Run explicitly selected non-destructive RC JDBC integration tests.
+  destructive-live-tests Run explicitly selected CREATE/DROP DATABASE integration tests.
   jdbc-bridge Build the lightweight Java JDBC bridge jar.
 
 Outputs:
@@ -56,10 +59,6 @@ ensure_dependencies() {
 }
 
 load_live_test_env() {
-  if [ "$LIVE_TEST_ENV_LOADED" -eq 1 ]; then
-    return
-  fi
-
   if [ -f "$ROOT_DIR/.env" ]; then
     log "Loading local live-test configuration from .env"
     set -a
@@ -67,28 +66,11 @@ load_live_test_env() {
     source "$ROOT_DIR/.env"
     set +a
   fi
-
-  LIVE_TEST_ENV_LOADED=1
 }
 
-env_has_any() {
-  local name
-  for name in "$@"; do
-    if [ -n "${!name:-}" ]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-require_complete_env_group() {
+require_live_env() {
   local label="$1"
   shift
-
-  if ! env_has_any "$@"; then
-    return 1
-  fi
-
   local missing=""
   local name
   for name in "$@"; do
@@ -96,75 +78,10 @@ require_complete_env_group() {
       missing="${missing}${missing:+, }${name}"
     fi
   done
-
   if [ -n "$missing" ]; then
-    printf 'Incomplete %s live-test configuration; missing: %s\n' "$label" "$missing" >&2
-    return 2
-  fi
-
-  return 0
-}
-
-validate_live_test_configuration() {
-  local status
-
-  require_complete_env_group "PostgreSQL" \
-    TEST_PG_JDBC_URL TEST_PG_USER TEST_PG_PASSWORD TEST_PG_DATABASE || status=$?
-  if [ "${status:-0}" -eq 2 ]; then
+    printf 'Incomplete %s integration configuration; missing: %s\n' "$label" "$missing" >&2
     return 1
   fi
-  status=0
-
-  require_complete_env_group "MySQL" \
-    TEST_MYSQL_JDBC_URL TEST_MYSQL_USER TEST_MYSQL_PASSWORD TEST_MYSQL_DATABASE || status=$?
-  if [ "$status" -eq 2 ]; then
-    return 1
-  fi
-  status=0
-
-  require_complete_env_group "Oracle" \
-    TEST_ORACLE_JDBC_URL TEST_ORACLE_USER TEST_ORACLE_PASSWORD TEST_ORACLE_JDBC_DRIVER_PATH || status=$?
-  if [ "$status" -eq 2 ]; then
-    return 1
-  fi
-
-  local path_name
-  for path_name in \
-    TEST_PG_JDBC_DRIVER_PATH \
-    TEST_MYSQL_JDBC_DRIVER_PATH \
-    TEST_ORACLE_JDBC_DRIVER_PATH; do
-    if [ -n "${!path_name:-}" ] && [ ! -f "${!path_name}" ]; then
-      printf '%s does not point to a readable JDBC JAR: %s\n' "$path_name" "${!path_name}" >&2
-      return 1
-    fi
-  done
-}
-
-has_live_test_configuration() {
-  env_has_any \
-    TEST_PG_JDBC_URL TEST_PG_USER TEST_PG_PASSWORD TEST_PG_DATABASE TEST_PG_JDBC_DRIVER_PATH \
-    TEST_MYSQL_JDBC_URL TEST_MYSQL_USER TEST_MYSQL_PASSWORD TEST_MYSQL_DATABASE TEST_MYSQL_JDBC_DRIVER_PATH \
-    TEST_ORACLE_JDBC_URL TEST_ORACLE_USER TEST_ORACLE_PASSWORD TEST_ORACLE_JDBC_DRIVER_PATH \
-    VAPORLENSDB_TEST_POSTGRES_URL VAPORLENSDB_TEST_MYSQL_URL
-}
-
-has_complete_live_test_configuration() {
-  [ -n "${TEST_PG_JDBC_URL:-}" ] &&
-    [ -n "${TEST_PG_USER:-}" ] &&
-    [ -n "${TEST_PG_PASSWORD:-}" ] &&
-    [ -n "${TEST_PG_DATABASE:-}" ] &&
-    [ -n "${TEST_PG_JDBC_DRIVER_PATH:-}" ] &&
-    [ -n "${TEST_MYSQL_JDBC_URL:-}" ] &&
-    [ -n "${TEST_MYSQL_USER:-}" ] &&
-    [ -n "${TEST_MYSQL_PASSWORD:-}" ] &&
-    [ -n "${TEST_MYSQL_DATABASE:-}" ] &&
-    [ -n "${TEST_MYSQL_JDBC_DRIVER_PATH:-}" ] &&
-    [ -n "${TEST_ORACLE_JDBC_URL:-}" ] &&
-    [ -n "${TEST_ORACLE_USER:-}" ] &&
-    [ -n "${TEST_ORACLE_PASSWORD:-}" ] &&
-    [ -n "${TEST_ORACLE_JDBC_DRIVER_PATH:-}" ] &&
-    [ -n "${VAPORLENSDB_TEST_POSTGRES_URL:-}" ] &&
-    [ -n "${VAPORLENSDB_TEST_MYSQL_URL:-}" ]
 }
 
 project_version() {
@@ -265,97 +182,83 @@ run_checks() {
   log "Running Rust clippy"
   (cd "$ROOT_DIR/src-tauri" && cargo clippy --all-targets -- -D warnings)
 
-  run_rust_tests
-}
-
-run_rust_tests() {
-  load_live_test_env
-  validate_live_test_configuration
-
-  if has_complete_live_test_configuration; then
-    log "Running Rust tests including all configured live database tests"
-    (cd "$ROOT_DIR/src-tauri" && cargo test -- --include-ignored)
-    return
-  fi
-
-  log "Running Rust tests"
+  log "Running deterministic Rust tests"
   (cd "$ROOT_DIR/src-tauri" && cargo test)
-
-  if has_live_test_configuration; then
-    run_configured_live_tests
-  else
-    log "Live database tests skipped (no local configuration)"
-  fi
 }
 
-run_configured_live_tests() {
+run_selected_live_tests() {
   load_live_test_env
-  validate_live_test_configuration
-
-  local ran_any=0
-
-  if [ -n "${TEST_PG_JDBC_URL:-}" ]; then
-    log "Running PostgreSQL live integration tests"
-    (cd "$ROOT_DIR/src-tauri" && cargo test --test postgres_driver -- --ignored)
-    ran_any=1
-
-    if [ -n "${TEST_PG_JDBC_DRIVER_PATH:-}" ]; then
-      log "Running PostgreSQL JDBC template integration test"
-      (cd "$ROOT_DIR/src-tauri" && cargo test --test jdbc_template_driver \
-        postgres_jdbc_template_queries_and_reads_metadata -- --ignored)
-    else
-      log "PostgreSQL JDBC template test skipped (TEST_PG_JDBC_DRIVER_PATH is not set)"
-    fi
-  else
-    log "PostgreSQL live tests skipped (configuration is not set)"
-  fi
-
-  if [ -n "${TEST_MYSQL_JDBC_URL:-}" ]; then
-    log "Running MySQL live integration tests"
-    (cd "$ROOT_DIR/src-tauri" && cargo test --test mysql_driver -- --ignored)
-    ran_any=1
-
-    if [ -n "${TEST_MYSQL_JDBC_DRIVER_PATH:-}" ]; then
-      log "Running MySQL JDBC template integration test"
-      (cd "$ROOT_DIR/src-tauri" && cargo test --test jdbc_template_driver \
-        mysql_jdbc_template_queries_and_reads_metadata -- --ignored)
-    else
-      log "MySQL JDBC template test skipped (TEST_MYSQL_JDBC_DRIVER_PATH is not set)"
-    fi
-  else
-    log "MySQL live tests skipped (configuration is not set)"
-  fi
-
-  if [ -n "${TEST_ORACLE_JDBC_URL:-}" ]; then
-    log "Running Oracle JDBC live integration tests"
-    (cd "$ROOT_DIR/src-tauri" && cargo test --test oracle_jdbc_driver -- --ignored)
-    ran_any=1
-  else
-    log "Oracle live tests skipped (configuration is not set)"
-  fi
-
-  if [ -n "${VAPORLENSDB_TEST_POSTGRES_URL:-}" ]; then
-    log "Running PostgreSQL CREATE/DROP DATABASE integration test"
-    (cd "$ROOT_DIR/src-tauri" && cargo test --test live_database_create \
-      postgres_create_database_is_visible_and_duplicate_is_rejected -- --ignored)
-    ran_any=1
-  else
-    log "PostgreSQL CREATE/DROP DATABASE test skipped (VAPORLENSDB_TEST_POSTGRES_URL is not set)"
-  fi
-
-  if [ -n "${VAPORLENSDB_TEST_MYSQL_URL:-}" ]; then
-    log "Running MySQL CREATE/DROP DATABASE integration test"
-    (cd "$ROOT_DIR/src-tauri" && cargo test --test live_database_create \
-      mysql_create_database_is_visible_and_duplicate_is_rejected -- --ignored)
-    ran_any=1
-  else
-    log "MySQL CREATE/DROP DATABASE test skipped (VAPORLENSDB_TEST_MYSQL_URL is not set)"
-  fi
-
-  if [ "$ran_any" -eq 0 ]; then
-    printf 'No complete live database configuration was found in .env or the shell.\n' >&2
+  if [ "$#" -eq 0 ]; then
+    printf 'Select at least one RC live integration target: --mysql, --oracle, or --postgresql.\n' >&2
     return 1
   fi
+
+  local target
+  for target in "$@"; do
+    case "$target" in
+      --mysql)
+        require_live_env "MySQL JDBC" \
+          TEST_MYSQL_JDBC_URL TEST_MYSQL_USER TEST_MYSQL_PASSWORD TEST_MYSQL_JDBC_DRIVER_PATH
+        log "Running MySQL JDBC metadata integration (isolated fixture schema)"
+        (cd "$ROOT_DIR/src-tauri" && cargo test --test jdbc_template_driver \
+          mysql_jdbc_template_queries_and_reads_metadata -- --ignored)
+        ;;
+      --oracle)
+        require_live_env "Oracle JDBC" \
+          TEST_ORACLE_JDBC_URL TEST_ORACLE_USER TEST_ORACLE_PASSWORD TEST_ORACLE_JDBC_DRIVER_PATH
+        log "Running Oracle JDBC query and metadata integrations"
+        (cd "$ROOT_DIR/src-tauri" && cargo test --test oracle_jdbc_driver \
+          connects_and_queries_oracle_with_jdbc_bridge -- --ignored)
+        (cd "$ROOT_DIR/src-tauri" && cargo test --test oracle_jdbc_driver \
+          reads_oracle_metadata_with_jdbc_bridge -- --ignored)
+        ;;
+      --postgresql)
+        require_live_env "PostgreSQL JDBC" \
+          TEST_PG_JDBC_URL TEST_PG_USER TEST_PG_PASSWORD TEST_PG_JDBC_DRIVER_PATH
+        log "Running PostgreSQL JDBC metadata integration (isolated fixture schema)"
+        (cd "$ROOT_DIR/src-tauri" && cargo test --test jdbc_template_driver \
+          postgres_jdbc_template_queries_and_reads_metadata -- --ignored)
+        ;;
+      *)
+        printf 'Unknown RC live integration target: %s\n' "$target" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+run_selected_destructive_live_tests() {
+  load_live_test_env
+  if [ "${VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION:-}" != "1" ]; then
+    printf 'Refusing destructive integration tests. Set VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 explicitly.\n' >&2
+    return 1
+  fi
+  if [ "$#" -eq 0 ]; then
+    printf 'Select at least one destructive target: --mysql or --postgresql.\n' >&2
+    return 1
+  fi
+
+  local target
+  for target in "$@"; do
+    case "$target" in
+      --mysql)
+        require_live_env "MySQL CREATE/DROP DATABASE" VAPORLENSDB_TEST_MYSQL_URL
+        log "Running MySQL CREATE/DROP DATABASE integration"
+        (cd "$ROOT_DIR/src-tauri" && cargo test --test live_database_create \
+          mysql_create_database_is_visible_and_duplicate_is_rejected -- --ignored)
+        ;;
+      --postgresql)
+        require_live_env "PostgreSQL CREATE/DROP DATABASE" VAPORLENSDB_TEST_POSTGRES_URL
+        log "Running PostgreSQL CREATE/DROP DATABASE integration"
+        (cd "$ROOT_DIR/src-tauri" && cargo test --test live_database_create \
+          postgres_create_database_is_visible_and_duplicate_is_rejected -- --ignored)
+        ;;
+      *)
+        printf 'Unknown destructive integration target: %s\n' "$target" >&2
+        return 1
+        ;;
+    esac
+  done
 }
 
 build_current() {
@@ -483,7 +386,11 @@ case "$TARGET" in
   live-tests)
     ensure_dependencies
     build_jdbc_bridge
-    run_configured_live_tests
+    run_selected_live_tests "$@"
+    ;;
+  destructive-live-tests)
+    ensure_dependencies
+    run_selected_destructive_live_tests "$@"
     ;;
   current)
     ensure_dependencies

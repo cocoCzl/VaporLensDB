@@ -39,13 +39,13 @@ pnpm install --frozen-lockfile
 - `./build.sh mac`: validate, then replace the local macOS App and DMG artifacts.
 - `./build.sh windows`: validate, then replace local MSI and NSIS artifacts on Windows.
 - `./build.sh linux`: validate, then replace local AppImage, DEB, and RPM artifacts on Linux.
-- `./build.sh live-tests`: run only configured real-database integration tests.
+- `./build.sh live-tests --mysql --oracle`: explicitly run selected RC JDBC integrations.
+- `VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 ./build.sh destructive-live-tests --mysql`: explicitly run CREATE/DROP DATABASE tests against a disposable environment.
 - `./build.sh jdbc-bridge`: build only the Java JDBC bridge.
 
-The validation commands load an optional Git-ignored `.env`. With no database
-configuration, live tests remain ignored. With complete database groups, the
-matching tests run and any failure stops packaging. See the
-[testing guide](TESTING.md) for configuration and database permissions.
+Validation and packaging commands are deterministic and never load `.env` or
+run external database tests. Live database coverage is selected explicitly and
+is documented in the [testing guide](TESTING.md).
 
 Every packaging target first builds VaporLensDB's own JDBC bridge and embeds it
 as an application resource. Oracle and custom JDBC vendor drivers remain local,

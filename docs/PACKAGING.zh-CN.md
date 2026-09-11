@@ -35,11 +35,12 @@ pnpm install --frozen-lockfile
 - `./build.sh mac`：校验后替换本地 macOS App 和 DMG 产物。
 - `./build.sh windows`：校验后替换 Windows 的 MSI 和 NSIS 本地产物。
 - `./build.sh linux`：校验后替换 Linux 的 AppImage、DEB 和 RPM 本地产物。
-- `./build.sh live-tests`：只运行已配置的真实数据库集成测试。
+- `./build.sh live-tests --mysql --oracle`：显式运行选定的 RC JDBC 集成测试。
+- `VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 ./build.sh destructive-live-tests --mysql`：在 disposable 环境中显式运行 CREATE/DROP DATABASE 测试。
 - `./build.sh jdbc-bridge`：只构建 Java JDBC bridge。
 
-校验命令会读取可选且已被 Git 忽略的 `.env`。没有数据库配置时，联网测试保持忽略；配置组
-完整时会运行对应测试，任何失败都会停止打包。变量和数据库权限说明见[测试文档](TESTING.md)。
+校验和打包命令具有确定性：不会读取 `.env`，也不会运行外部数据库测试。真实数据库覆盖
+必须显式选择，变量和数据库权限说明见[测试文档](TESTING.md)。
 
 每个打包命令都会先构建 VaporLensDB 自有的 JDBC bridge，并将其作为应用资源打入安装包。
 Oracle 和自定义 JDBC 的厂商驱动仍由用户从本地选择，绝不会复制进安装包。

@@ -108,26 +108,28 @@ absolute paths to readable JAR files. `VAPORLENSDB_TEST_POSTGRES_URL` and
 must be verified; those accounts need `CREATEDB` or CREATE/DROP DATABASE
 permission respectively.
 
-`build.sh` behaves as follows:
+Release builds are deterministic: `check`, `current`, `mac`, `windows`, and
+`linux` never load `.env` or run external database tests. This keeps the gate
+set stable for the same source commit, toolchain, and target platform.
 
-- no `.env` or shell configuration: ordinary checks pass and live tests remain
-  ignored;
-- complete configuration for some databases: those groups run and unavailable
-  groups are reported as skipped;
-- complete configuration for every group: `cargo test -- --include-ignored`
-  runs the whole Rust suite, including all live tests;
-- a partially filled group or unreadable JDBC JAR is a configuration error;
-- any configured live-test failure stops `check`, `current`, `mac`, `windows`, or `linux`
-  before packaging continues.
-
-Run only configured live tests:
+Run selected RC JDBC integrations explicitly:
 
 ```bash
-./build.sh live-tests
+./build.sh live-tests --mysql --oracle
+./build.sh live-tests --postgresql
 ```
 
-Run the normal validation or package flow with the same automatic live-test
-detection:
+The MySQL and PostgreSQL JDBC metadata tests use uniquely named, short-lived
+fixture schemas. Product-level CREATE/DROP DATABASE verification is a separate
+destructive suite and requires both a disposable environment and an explicit
+confirmation variable:
+
+```bash
+VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 \
+  ./build.sh destructive-live-tests --mysql --postgresql
+```
+
+Run the deterministic validation or package flow:
 
 ```bash
 ./build.sh check

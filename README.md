@@ -66,7 +66,7 @@ Run the release checks before packaging:
 
 ```bash
 ./build.sh check
-./build.sh live-tests  # Optional: run real database tests configured in .env
+./build.sh live-tests --mysql --oracle  # Explicit RC live integration selection
 ```
 
 Build on the target operating system:
@@ -82,10 +82,10 @@ and DMG; on Windows it creates MSI and NSIS installers; on Linux it creates
 AppImage, DEB, and RPM packages. Running `./build.sh` without a target is
 equivalent to `./build.sh current`.
 
-Live PostgreSQL, MySQL, Oracle, and JDBC tests are skipped when no private test
-configuration is present. Copy `.env.example` to the Git-ignored `.env` and
-fill the database groups available on your machine to run them automatically
-during checks and packaging. See the testing guide for permissions and safety.
+Live PostgreSQL, MySQL, Oracle, and JDBC tests are separate opt-in suites.
+Copy `.env.example` to the Git-ignored `.env`, then explicitly select the
+database integrations to run. Ordinary checks and packaging never load private
+database configuration. See the testing guide for permissions and safety.
 
 Detailed prerequisites, artifact locations, and the formal GitHub Release
 process are in the [packaging guide](docs/PACKAGING.md).
