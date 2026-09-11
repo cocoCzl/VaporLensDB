@@ -10,16 +10,16 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 
 ## 下载
 
-当前尚未发布正式安装包。正式版本发布后，才会在
-[GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) 提供对应系统的安装包；
-开发和测试阶段生成的安装包不会发布到 GitHub Releases。手动触发的打包验证可在
-GitHub Actions 中临时保留产物 7 天。
+VaporLensDB 0.8.5 是面向 macOS arm64 的 **Technical Preview**。它是 ad-hoc 测试产物，
+尚未 Developer ID 签名、notarize 或 stapling。Windows、Linux 与 PostgreSQL 的运行时验证仍待完成。
+安装前请阅读 [0.8.5 Technical Preview release notes](docs/RELEASE-NOTES-0.8.5.md)。开发和测试
+安装包不会作为 GitHub Release 发布；手动触发的打包检查可能会保留七天临时 GitHub Actions artifact。
 
 | 系统 | 推荐下载 | 说明 |
 | --- | --- | --- |
-| macOS | `.dmg` | 正式发布时会分别提供 Apple Silicon 和 Intel 版本（如可用）。 |
-| Windows | `.msi` | 若系统限制 MSI 安装，可使用 NSIS `.exe` 安装器。 |
-| Linux | `.AppImage` | 同时构建适用于对应发行版的 DEB 和 RPM。 |
+| macOS | `.dmg` | 0.8.5 Technical Preview 只在 Apple Silicon（arm64）上完成运行时验证。 |
+| Windows | — | 运行时验证待完成；不得将 CI 包视为 release-ready。 |
+| Linux | — | 运行时验证待完成；不得将 CI 包视为 release-ready。 |
 
 请阅读[安装与首次使用指南](docs/INSTALL.zh-CN.md)，其中包含系统安装、SHA-256
 校验以及 Oracle/JDBC 配置说明。
@@ -37,7 +37,8 @@ GitHub Actions 中临时保留产物 7 天。
 
 ## 快速开始
 
-1. 目前请从源码运行应用；正式版本发布后，再从 GitHub Releases 下载对应的安装包。
+1. 0.8.5 macOS arm64 Technical Preview：挂载提供的 DMG，再将 **VaporLensDB.app** 拖入 Applications。
+   由于 Developer ID 签名和 notarization 尚未配置，Gatekeeper 不会认可该 artifact。
 2. 打开“新建连接”，选择数据库类型并填写连接信息，然后点击“测试”和“保存并连接”。
 3. 在数据源浏览器中查看 Schema 和表，或新建 SQL 标签页执行查询。SQL 标签页会保持
    自己的执行数据源，因此浏览其他连接不会改变执行目标；可在“设置”中切换界面语言和主题。

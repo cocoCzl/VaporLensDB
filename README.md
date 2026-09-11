@@ -11,17 +11,19 @@ Current version: **0.8.5**
 
 ## Download
 
-No production installer has been released yet. Installers will be available
-from [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest)
-only after a formal release. Development and test installers are not published
-as GitHub Releases. Manually triggered packaging checks may retain temporary
+VaporLensDB 0.8.5 is a **Technical Preview** for macOS arm64. It is an
+ad-hoc test artifact: it is not Developer ID signed, notarized, or stapled.
+Runtime verification for Windows, Linux, and PostgreSQL remains pending.
+See the [0.8.5 Technical Preview release notes](docs/RELEASE-NOTES-0.8.5.md)
+before installing it. Development and test installers are not published as
+GitHub Releases. Manually triggered packaging checks may retain temporary
 GitHub Actions artifacts for seven days.
 
 | Platform | Recommended download | Notes |
 | --- | --- | --- |
-| macOS | `.dmg` | Apple Silicon and Intel builds are released separately when available in a formal release. |
-| Windows | `.msi` | Use the NSIS `.exe` installer when MSI installation is restricted. |
-| Linux | `.AppImage` | DEB and RPM packages are also built for matching distributions. |
+| macOS | `.dmg` | 0.8.5 Technical Preview is verified on Apple Silicon (arm64) only. |
+| Windows | — | Runtime verification is pending; do not treat CI packages as release-ready. |
+| Linux | — | Runtime verification is pending; do not treat CI packages as release-ready. |
 
 See the [installation and first-use guide](docs/INSTALL.md) for platform
 installation steps, SHA-256 verification, and Oracle/JDBC setup.
@@ -42,8 +44,9 @@ dangerous-SQL policy are outside the current scope.
 
 ## Quick start
 
-1. Run the app from source for now. Download a platform installer from GitHub
-   Releases only after a formal release is announced.
+1. For the 0.8.5 macOS arm64 Technical Preview, mount the supplied DMG and
+   drag **VaporLensDB.app** to Applications. Gatekeeper will not recognize the
+   artifact because Developer ID signing and notarization are pending.
 2. Open **New Connection**, choose a database type, enter the connection
    details, then select **Test** and **Save & Connect**.
 3. Browse schemas and tables in the Data Source explorer, or create a SQL tab

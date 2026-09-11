@@ -60,8 +60,8 @@ Run this on each build machine before creating installation artifacts:
 ```
 
 It builds the JDBC bridge, runs frontend lint and build, then runs Rust clippy
-with warnings denied and Rust tests. Configured live database tests are included;
-unconfigured groups are reported as skipped.
+with warnings denied and deterministic Rust tests. It never loads `.env` or runs
+external database tests; invoke the selected live profile explicitly.
 
 ## Build artifacts
 
