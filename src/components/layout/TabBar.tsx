@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
+import { isEmptySqlDraft } from '@/lib/sqlDraftPersistence'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useSqlDraftStore } from '@/stores/sqlDraftStore'
@@ -24,7 +25,6 @@ export function TabBar() {
   const statuses = useConnectionStore((state) => state.statuses)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
   const saveTabDraft = useSqlDraftStore((state) => state.saveTabDraft)
-  const markDraftClosed = useSqlDraftStore((state) => state.markClosed)
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [tabListOpen, setTabListOpen] = useState(false)
@@ -56,13 +56,13 @@ export function TabBar() {
   function closeEditorTabAfterTransaction(tab: EditorTab) {
     if (!tab.kind || tab.kind === 'sql') {
       const connection = connections.find((item) => item.id === tab.connectionId) ?? null
-      if (tab.sql.trim()) {
-        void saveTabDraft(tab, { connection }, true).then((draft) => {
-          if (draft) setTabDraft(tab.id, draft.id)
-        })
-      } else if (tab.draftId) {
-        void markDraftClosed(tab.draftId)
-      }
+      void saveTabDraft(tab, { connection }, !isEmptySqlDraft(tab.sql)).then((result) => {
+        if (result?.kind === 'saved') {
+          setTabDraft(tab.id, result.draft.id)
+        } else if (result?.kind === 'cleared') {
+          setTabDraft(tab.id, null)
+        }
+      })
     }
     closeTab(tab.id)
   }

@@ -54,8 +54,9 @@ test is:
 pnpm test:object-tree-workflow
 ```
 
-For platform packaging, artifact locations, checksums, and manual GitHub Release
-publishing, see `docs/PACKAGING.md`.
+For local QA packaging, artifact locations, and future 1.0 formal-distribution
+procedures, see `docs/PACKAGING.md`. Pre-1.0 development does not publish
+installers, checksums, tags, or GitHub Releases.
 
 ## Live Database Tests
 

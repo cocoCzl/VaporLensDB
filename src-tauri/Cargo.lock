@@ -4865,6 +4865,7 @@ dependencies = [
  "futures-util",
  "log",
  "mysql_async",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

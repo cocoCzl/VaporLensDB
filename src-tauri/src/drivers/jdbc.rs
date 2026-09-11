@@ -33,6 +33,7 @@ use crate::{
         },
     },
     services::external_driver::{resolve_jdbc_bridge_jar, validate_jdbc_prerequisites},
+    utils::error_redaction::sanitize_diagnostic_error,
 };
 
 pub struct JdbcDriver {
@@ -770,7 +771,11 @@ impl DatabaseDriver for JdbcDriver {
         let done = self
             .sidecar
             .request_stream(&sql, query_id, chunk_size.max(1), max_rows, chunks)
-            .await?;
+            .await
+            .map_err(|error| AppError::QueryFailed {
+                sql: sql.clone(),
+                message: error.to_string(),
+            })?;
 
         Ok(QueryStreamSummary {
             query_id: query_id.to_string(),
@@ -1398,42 +1403,38 @@ fn parse_sidecar_frame(
 fn normalize_jdbc_error_message(message: &str) -> String {
     let normalized = compact_jdbc_error_message(message);
     let lower = normalized.to_ascii_lowercase();
-    if lower.contains("io error: connection failed") || lower.contains("connection refused") {
-        return normalized;
-    }
-    if lower.contains("ora-01017")
-        || lower.contains("access denied")
-        || lower.contains("authentication failed")
-        || lower.contains("invalid username/password")
-    {
-        return format!("authentication failed. {normalized}");
-    }
-    if lower.contains("no suitable driver") {
-        return format!("JDBC driver class or JAR is not usable. {normalized}");
-    }
-    if lower.contains("classnotfoundexception")
-        || lower.contains("class not found")
-        || lower.contains("could not find or load main class")
-    {
-        return format!(
-            "JDBC driver class or bridge class is missing from the classpath. {normalized}"
-        );
-    }
-    if lower.contains("jdbc url")
-        || lower.contains("invalid url")
-        || lower.contains("malformed")
-        || lower.contains("invalid connection string")
-    {
-        return format!("JDBC URL is invalid for this driver. {normalized}");
-    }
-    if lower.contains("unknown host")
-        || lower.contains("ora-17820")
-        || lower.contains("network adapter could not establish the connection")
-        || lower.contains("the network adapter could not establish the connection")
-    {
-        return format!("database host is unreachable. {normalized}");
-    }
-    normalized
+    let classified =
+        if lower.contains("io error: connection failed") || lower.contains("connection refused") {
+            normalized
+        } else if lower.contains("ora-01017")
+            || lower.contains("access denied")
+            || lower.contains("authentication failed")
+            || lower.contains("invalid username/password")
+        {
+            format!("authentication failed. {normalized}")
+        } else if lower.contains("no suitable driver") {
+            format!("JDBC driver class or JAR is not usable. {normalized}")
+        } else if lower.contains("classnotfoundexception")
+            || lower.contains("class not found")
+            || lower.contains("could not find or load main class")
+        {
+            format!("JDBC driver class or bridge class is missing from the classpath. {normalized}")
+        } else if lower.contains("jdbc url")
+            || lower.contains("invalid url")
+            || lower.contains("malformed")
+            || lower.contains("invalid connection string")
+        {
+            format!("JDBC URL is invalid for this driver. {normalized}")
+        } else if lower.contains("unknown host")
+            || lower.contains("ora-17820")
+            || lower.contains("network adapter could not establish the connection")
+            || lower.contains("the network adapter could not establish the connection")
+        {
+            format!("database host is unreachable. {normalized}")
+        } else {
+            normalized
+        };
+    sanitize_diagnostic_error(&classified, None)
 }
 
 fn compact_jdbc_error_message(message: &str) -> String {
@@ -1766,6 +1767,18 @@ mod tests {
 
         let no_driver = normalize_jdbc_error_message("No suitable driver found for jdbc:unknown:x");
         assert!(no_driver.contains("JDBC driver class or JAR is not usable"));
+    }
+
+    #[test]
+    fn redacts_jdbc_bridge_exception_credentials_without_losing_context() {
+        let message = normalize_jdbc_error_message(
+            "java.sql.SQLException: connection failed jdbc:mysql://test-user:super-secret-test-value@example.invalid/db?password=super-secret-test-value; SQLState 08001",
+        );
+
+        assert!(!message.contains("super-secret-test-value"));
+        assert!(message.contains("java.sql.SQLException"));
+        assert!(message.contains("example.invalid"));
+        assert!(message.contains("SQLState 08001"));
     }
 
     #[test]

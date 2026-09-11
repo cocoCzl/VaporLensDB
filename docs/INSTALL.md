@@ -2,10 +2,28 @@
 
 [简体中文](INSTALL.zh-CN.md) · [Back to README](../README.md)
 
-## Download safely after a formal release
+## Current pre-1.0 use: build from source
 
-No production installer has been released yet. After a formal release, download
-VaporLensDB only from the project's
+VaporLensDB 0.8.5 is in **Pre-1.0 Development** and is distributed as
+**Source Build Only**. There is no official downloadable DMG, MSI, NSIS,
+AppImage, DEB, or RPM before 1.0.0. To use the current project, clone it and
+run:
+
+```bash
+pnpm install
+pnpm tauri dev
+```
+
+Source builds require Node.js 22, pnpm 10, Rust stable, JDK 21, and the
+[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the host
+operating system. Run `./build.sh check` to validate a checkout. See
+[PACKAGING.md](PACKAGING.md) for platform prerequisites and local QA packaging.
+
+## Future packaged releases and local QA packages
+
+The following installer guidance is for future formal releases or a locally
+created QA package. No production installer has been released yet. After a
+formal release, download VaporLensDB only from the project's
 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) page.
 Development and test installers are not published as GitHub Releases. A manual
 packaging check may retain temporary GitHub Actions artifacts for seven days.

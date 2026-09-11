@@ -8,9 +8,13 @@ import {
   upsertSqlDraft,
 } from '@/ipc/sqlDraft'
 import { normalizeAppError } from '@/ipc/client'
+import {
+  isEmptySqlDraft,
+  type SqlDraftPersistenceResult,
+  type SqlDraftSaveContext,
+} from '@/lib/sqlDraftPersistence'
 import { useUiStore } from '@/stores/uiStore'
 import type { EditorTab } from '@/stores/editorStore'
-import type { ConnectionConfig } from '@/types/connection'
 import type { SqlDraft } from '@/types/sqlDraft'
 
 interface SqlDraftState {
@@ -22,17 +26,13 @@ interface SqlDraftState {
     tab: EditorTab,
     context: SqlDraftSaveContext,
     closed?: boolean,
-  ) => Promise<SqlDraft | null>
+  ) => Promise<SqlDraftPersistenceResult | null>
   markClosed: (id: string) => Promise<void>
-  removeDraft: (id: string) => Promise<void>
+  removeDraft: (id: string) => Promise<boolean>
   clear: () => Promise<void>
 }
 
-export interface SqlDraftSaveContext {
-  connection?: ConnectionConfig | null
-  database?: string | null
-  schema?: string | null
-}
+export type { SqlDraftSaveContext } from '@/lib/sqlDraftPersistence'
 
 function notifyError(error: unknown, title: string) {
   useUiStore.getState().notifyError(normalizeAppError(error), title)
@@ -55,11 +55,11 @@ export const useSqlDraftStore = create<SqlDraftState>((set, get) => ({
   },
   saveTabDraft: async (tab, context, closed = false) => {
     if (tab.kind && tab.kind !== 'sql') return null
-    if (!tab.sql.trim()) {
-      if (tab.draftId) {
-        await get().removeDraft(tab.draftId)
+    if (isEmptySqlDraft(tab.sql)) {
+      if (tab.draftId && !(await get().removeDraft(tab.draftId))) {
+        return null
       }
-      return null
+      return { kind: 'cleared' }
     }
 
     try {
@@ -76,7 +76,7 @@ export const useSqlDraftStore = create<SqlDraftState>((set, get) => ({
       set((state) => ({
         drafts: [saved, ...state.drafts.filter((draft) => draft.id !== saved.id)].slice(0, 50),
       }))
-      return saved
+      return { kind: 'saved', draft: saved }
     } catch (error) {
       notifyError(error, i18n.t('notifications.saveSqlDraftFailed'))
       return null
@@ -94,8 +94,10 @@ export const useSqlDraftStore = create<SqlDraftState>((set, get) => ({
     try {
       await deleteSqlDraft(id)
       set((state) => ({ drafts: state.drafts.filter((draft) => draft.id !== id) }))
+      return true
     } catch (error) {
       notifyError(error, i18n.t('notifications.deleteSqlDraftFailed'))
+      return false
     }
   },
   clear: async () => {

@@ -66,6 +66,7 @@ describe('TabBar close control', () => {
     })
     mocks.closeTab.mockClear()
     mocks.setActiveTab.mockClear()
+    mocks.saveTabDraft.mockResolvedValue({ kind: 'cleared' })
   })
 
   it('renders a sibling close button that closes without activating the tab', () => {

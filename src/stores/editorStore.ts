@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { isEmptySqlDraft } from '@/lib/sqlDraftPersistence'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import type { DataTabSortDirection } from '@/lib/dataTabSql'
 import type { DbObjectKind } from '@/types/metadata'
@@ -307,27 +308,34 @@ export function readStoredSqlWorkspace(): Pick<EditorState, 'tabs' | 'activeTabI
     const tabs = rawTabs
         .filter((tab): tab is Record<string, unknown> => Boolean(tab) && typeof tab === 'object')
         .filter((tab) => typeof tab.id === 'string' && typeof tab.title === 'string' && typeof tab.sql === 'string')
-        .map((tab): EditorTab => ({
-          id: tab.id as string,
-          kind: 'sql',
-          title: tab.title as string,
-          sql: tab.sql as string,
-          connectionId: typeof tab.connectionId === 'string' ? tab.connectionId : null,
-          database: typeof tab.database === 'string' ? tab.database : null,
-          schema: typeof tab.schema === 'string' ? tab.schema : null,
-          draftId: typeof tab.draftId === 'string' ? tab.draftId : null,
-          dirty: tab.dirty === true,
-          pinned: tab.pinned === true,
-          unavailableConnectionName: typeof tab.unavailableConnectionName === 'string'
-            ? tab.unavailableConnectionName
-            : null,
-          // Results and live execution state are intentionally never restored.
-          lastQueryId: null,
-          runningQueryId: null,
-          running: false,
-          cancelling: false,
-          error: null,
-        }))
+        .map((tab): EditorTab => {
+          const sql = tab.sql as string
+          const draftId = typeof tab.draftId === 'string' ? tab.draftId : null
+          const clearedDraftNeedsCleanup = isEmptySqlDraft(sql) && draftId !== null
+          return {
+            id: tab.id as string,
+            kind: 'sql',
+            title: tab.title as string,
+            sql,
+            connectionId: typeof tab.connectionId === 'string' ? tab.connectionId : null,
+            database: typeof tab.database === 'string' ? tab.database : null,
+            schema: typeof tab.schema === 'string' ? tab.schema : null,
+            // An empty open tab still wins recovery. Retain an old draft ID only
+            // long enough to lazily delete its stale native record.
+            draftId,
+            dirty: clearedDraftNeedsCleanup || tab.dirty === true,
+            pinned: tab.pinned === true,
+            unavailableConnectionName: typeof tab.unavailableConnectionName === 'string'
+              ? tab.unavailableConnectionName
+              : null,
+            // Results and live execution state are intentionally never restored.
+            lastQueryId: null,
+            runningQueryId: null,
+            running: false,
+            cancelling: false,
+            error: null,
+          }
+        })
     const activeTabId = typeof parsed.activeTabId === 'string' && tabs.some((tab) => tab.id === parsed.activeTabId)
       ? parsed.activeTabId
       : tabs.at(-1)?.id ?? null

@@ -4,12 +4,20 @@
 
 VaporLensDB packages must be built on their target operating system. This
 repository does not currently automate releases, code signing, or macOS
-notarization.
+notarization. During Pre-1.0 Development, VaporLensDB is **Source Build Only**:
+a successful package build creates a local QA artifact, not an official
+downloadable release.
 
 Until a formal version is approved for release, all installers are local or
 temporary test artifacts. Do not commit installers or checksums, attach them to
 pull requests, or publish them as GitHub Releases. The manually triggered
 packaging workflow retains its Actions artifacts for seven days.
+
+## Local QA Packaging
+
+Use local packaging to validate target-platform behavior during development.
+Do not present its DMG, MSI, NSIS, AppImage, DEB, or RPM output as publicly
+available software, and do not upload it to a GitHub Release or pre-release.
 
 ## Prerequisites
 
@@ -39,7 +47,7 @@ pnpm install --frozen-lockfile
 - `./build.sh mac`: validate, then replace the local macOS App and DMG artifacts.
 - `./build.sh windows`: validate, then replace local MSI and NSIS artifacts on Windows.
 - `./build.sh linux`: validate, then replace local AppImage, DEB, and RPM artifacts on Linux.
-- `./build.sh live-tests --mysql --oracle`: explicitly run selected RC JDBC integrations.
+- `./build.sh live-tests --mysql --oracle`: explicitly run selected live JDBC integrations.
 - `VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 ./build.sh destructive-live-tests --mysql`: explicitly run CREATE/DROP DATABASE tests against a disposable environment.
 - `./build.sh jdbc-bridge`: build only the Java JDBC bridge.
 
@@ -51,7 +59,7 @@ Every packaging target first builds VaporLensDB's own JDBC bridge and embeds it
 as an application resource. Oracle and custom JDBC vendor drivers remain local,
 user-selected JARs and are never copied into an installer.
 
-## Verify before packaging
+## Verify before local QA packaging
 
 Run this on each build machine before creating installation artifacts:
 
@@ -89,7 +97,7 @@ by Tauri; it is not an installer directory and is recreated by `pnpm build`.
 Git-ignored local staging directory. Each build replaces the current
 architecture directory, so it contains only the latest App, DMG, and checksum.
 An `.app` runs directly on macOS; a `.dmg` contains the App and an Applications
-shortcut, so use the DMG for private test distribution.
+shortcut. During Pre-1.0 Development, both remain local QA artifacts.
 
 `<architecture>` is `aarch64` on Apple Silicon and `x86_64` on Intel. The build
 script validates that `package.json`, `src-tauri/tauri.conf.json`, and
@@ -154,10 +162,11 @@ steps without live database credentials, then retains fixed-name test artifacts
 for seven days. It does not create a tag or GitHub Release. Native `aarch64`
 packages still require a matching build machine.
 
-## Formal releases only: manual GitHub Release
+## Future Formal Distribution: 1.0 Release Preparation
 
-Run this section only after a formal version is approved for release. Do not
-perform its upload steps for test builds.
+Run this section only during 1.0 Release Preparation after a formal version is
+approved for release. Do not perform its tag, upload, checksum-publication, or
+GitHub Release steps for pre-1.0 development builds.
 
 1. Confirm `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`
    use the same release version.
@@ -188,3 +197,13 @@ perform its upload steps for test builds.
 
 Do not claim that an artifact is signed or notarized until that process is
 actually enabled and verified.
+
+## macOS entitlement review for future signing
+
+The current macOS packaging configuration contains hardened-runtime exceptions
+for `allow-jit`, `allow-unsigned-executable-memory`, and
+`disable-library-validation`. They are present configuration, not proof that
+they are all required by Tauri, WebKit, or JDBC. The earlier minimal-entitlement
+A/B work did not establish runtime necessity. During 1.0 Developer ID
+signing/notarization preparation, retain only exceptions justified by a
+reproducible failure without them.

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::models::error::AppError;
+use crate::{models::error::AppError, utils::error_redaction::sanitize_diagnostic_error};
 
 #[derive(Clone, Default)]
 pub struct TaskManager {
@@ -245,7 +245,7 @@ impl TaskManager {
         id: Uuid,
         error: impl Into<String>,
     ) -> Result<TaskInfo, AppError> {
-        let error = error.into();
+        let error = sanitize_diagnostic_error(&error.into(), None);
         self.finish(id, TaskStatus::Failed, Some(error.clone()), Some(error))
             .await
     }
@@ -359,5 +359,29 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, active.id);
         assert_eq!(tasks[0].status, TaskStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn failed_task_does_not_retain_external_credentials() {
+        let manager = TaskManager::new();
+        let task = manager
+            .create_task("metadata.index", "Index metadata", None)
+            .await;
+        let failed = manager
+            .finish_failed(
+                task.id,
+                "jdbc:mysql://test-user:super-secret-test-value@example.invalid/db?password=super-secret-test-value",
+            )
+            .await
+            .unwrap();
+
+        assert!(!failed
+            .error
+            .unwrap_or_default()
+            .contains("super-secret-test-value"));
+        assert!(failed
+            .logs
+            .iter()
+            .all(|log| !log.message.contains("super-secret-test-value")));
     }
 }

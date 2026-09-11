@@ -30,6 +30,8 @@ includesAll(
     'excludes_sql_result_data: true',
     'diagnostics_sql_text(&entry.sql, include_sql_text)',
     'format!("[redacted: {} chars]"',
+    'sanitize_diagnostic_error(message, None)',
+    'sanitize_diagnostic_error(message, Some(&entry.sql))',
     'list_query_history(5_000)',
     'list_tasks().await',
     'fs::write(&output_path, content)',

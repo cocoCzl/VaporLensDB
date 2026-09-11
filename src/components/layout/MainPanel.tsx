@@ -30,6 +30,7 @@ import {
 } from '@/ipc/export'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
+import { persistDirtySqlDrafts } from '@/lib/sqlDraftPersistence'
 import { isSystemSchema } from '@/lib/systemObjects'
 import { normalizeAppError } from '@/ipc/client'
 import { analyzeSqlRisk, commitConsoleTransaction, rollbackConsoleTransaction, setConsoleTransactionMode, type SqlRiskAnalysis, type SqlRiskReason } from '@/ipc/query'
@@ -265,21 +266,12 @@ export function MainPanel() {
     }
 
     draftSaveTimer.current = window.setTimeout(() => {
-      const saveDirtyDrafts = async () => {
-        for (const tab of tabs) {
-          if (tab.kind && tab.kind !== 'sql') continue
-          if (!tab.dirty) continue
-          if (!tab.sql.trim()) continue
-          const connection = connections.find((item) => item.id === tab.connectionId) ?? null
-          const draft = await saveTabDraft(tab, {
-            connection,
-            database: tab.database ?? connection?.database ?? null,
-            schema: tab.schema ?? null,
-          })
-          if (draft) setTabDraft(tab.id, draft.id)
-        }
-      }
-      void saveDirtyDrafts()
+      void persistDirtySqlDrafts({
+        tabs,
+        connections,
+        saveTabDraft,
+        completeTabPersistence: setTabDraft,
+      })
     }, 700)
 
     return () => {

@@ -22,6 +22,7 @@ use crate::{
             QueryStreamSummary,
         },
     },
+    utils::error_redaction::sanitize_diagnostic_error,
 };
 
 pub struct PostgresDriver {
@@ -42,7 +43,10 @@ impl PostgresDriver {
 
         let connection_task = tokio::spawn(async move {
             if let Err(error) = connection.await {
-                log::error!("postgres connection task failed: {error}");
+                log::error!(
+                    "postgres connection task failed: {}",
+                    sanitize_diagnostic_error(&error.to_string(), None)
+                );
             }
         });
 
@@ -81,7 +85,10 @@ impl PostgresDriver {
                 })?;
         let connection_task = tokio::spawn(async move {
             if let Err(error) = connection.await {
-                log::error!("postgres connection task failed: {error}");
+                log::error!(
+                    "postgres connection task failed: {}",
+                    sanitize_diagnostic_error(&error.to_string(), None)
+                );
             }
         });
         Ok(Self {
@@ -125,7 +132,10 @@ impl PostgresDriver {
 
         let connection_task = tokio::spawn(async move {
             if let Err(error) = connection.await {
-                log::error!("postgres connection task failed: {error}");
+                log::error!(
+                    "postgres connection task failed: {}",
+                    sanitize_diagnostic_error(&error.to_string(), None)
+                );
             }
         });
 

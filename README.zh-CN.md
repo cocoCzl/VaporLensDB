@@ -8,21 +8,40 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 
 当前版本：**0.8.5**
 
-## 下载
+## 项目状态
 
-VaporLensDB 0.8.5 是面向 macOS arm64 的 **Technical Preview**。它是 ad-hoc 测试产物，
-尚未 Developer ID 签名、notarize 或 stapling。Windows、Linux 与 PostgreSQL 的运行时验证仍待完成。
-安装前请阅读 [0.8.5 Technical Preview release notes](docs/RELEASE-NOTES-0.8.5.md)。开发和测试
-安装包不会作为 GitHub Release 发布；手动触发的打包检查可能会保留七天临时 GitHub Actions artifact。
+**Pre-1.0 Development。** VaporLensDB 当前以源码开发和验证为主。在 1.0.0 之前，
+不会提供 official downloadable binary releases、GitHub Release 或 Pre-release。本地构建的
+App 与安装包仅用于 QA，不是公开发布版本。
 
-| 系统 | 推荐下载 | 说明 |
-| --- | --- | --- |
-| macOS | `.dmg` | 0.8.5 Technical Preview 只在 Apple Silicon（arm64）上完成运行时验证。 |
-| Windows | — | 运行时验证待完成；不得将 CI 包视为 release-ready。 |
-| Linux | — | 运行时验证待完成；不得将 CI 包视为 release-ready。 |
+## 分发方式
 
-请阅读[安装与首次使用指南](docs/INSTALL.zh-CN.md)，其中包含系统安装、SHA-256
-校验以及 Oracle/JDBC 配置说明。
+**Source Build Only。** 如需体验 VaporLensDB，请 clone 本仓库并在本地运行。请阅读
+[安装指南](docs/INSTALL.zh-CN.md)，其中区分当前源码运行、本地 QA 包与未来正式安装包。
+
+## 平台验证状态
+
+VaporLensDB 的目标平台是 macOS、Windows 和 Linux；“目标支持”与“已完成运行时验证”
+必须分开理解：
+
+| 平台 | 当前验证状态 |
+| --- | --- |
+| macOS arm64 | 运行时验证最充分，包含本地 QA 打包及 MySQL / Oracle 工作流。 |
+| Windows x86_64 | 已完成打包与源码级检查；运行时验证待完成。 |
+| Linux x86_64 | 已完成打包与源码级检查；运行时验证待完成。 |
+
+## 数据库状态
+
+**Implemented 不等于 App Runtime Verified。** 当前证据按层次记录如下：
+
+| 数据库 | 实现 | 自动化 / 集成证据 | App 运行时验证 |
+| --- | --- | --- | --- |
+| MySQL | 原生驱动；可选 JDBC | 原生与 JDBC 集成覆盖，含 FK/LONGTEXT 回归 | macOS arm64 已验证 |
+| Oracle | JDBC，需用户提供 `ojdbc` JAR | JDBC 查询与元数据集成覆盖 | macOS arm64 已验证 |
+| PostgreSQL | 原生驱动；可选 JDBC | 自动化与显式 JDBC 集成覆盖 | 待完成 |
+| SQLite | 原生驱动；可选 JDBC | 本地自动化覆盖 | packaged-app 验证未完成 |
+| SQL Server | 源码中已实现原生驱动 | 源码级覆盖 | 待完成 |
+| 自定义 JDBC | 通用、可配置的用户 JAR 路径 | 基础自动化覆盖 | 不保证各厂商完整性 |
 
 ## 支持能力
 
@@ -35,30 +54,42 @@ VaporLensDB 0.8.5 是面向 macOS arm64 的 **Technical Preview**。它是 ad-ho
 
 结果网格有意保持只读。ODBC 和完整可配置的危险 SQL 策略目前不在范围内。
 
-## 快速开始
+## 源码优先快速开始
 
-1. 0.8.5 macOS arm64 Technical Preview：挂载提供的 DMG，再将 **VaporLensDB.app** 拖入 Applications。
-   由于 Developer ID 签名和 notarization 尚未配置，Gatekeeper 不会认可该 artifact。
-2. 打开“新建连接”，选择数据库类型并填写连接信息，然后点击“测试”和“保存并连接”。
-3. 在数据源浏览器中查看 Schema 和表，或新建 SQL 标签页执行查询。SQL 标签页会保持
-   自己的执行数据源，因此浏览其他连接不会改变执行目标；可在“设置”中切换界面语言和主题。
-
-Oracle 和自定义 JDBC 连接需要本地 JDBC 驱动 JAR，创建连接时应用会提示添加。
-
-## 从源码构建
-
-源码构建需要 Node.js 22、pnpm 10、Rust stable 和 JDK 21。
+前提：Node.js 22、pnpm 10、Rust stable、JDK 21，以及当前系统所需的
+[Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
+git clone https://github.com/cocoCzl/VaporLensDB.git
+cd VaporLensDB
 pnpm install
 pnpm tauri dev
 ```
 
-打包前运行发布校验：
+使用以下命令校验本地 checkout：
 
 ```bash
 ./build.sh check
-./build.sh live-tests --mysql --oracle  # 显式选择 RC 真实数据库集成测试
+```
+
+平台特定的开发与本地 QA 打包前提见[打包指南](docs/PACKAGING.zh-CN.md)。本地打包
+不代表已有 official installer 可供下载。
+
+从源码启动应用后：
+
+1. 打开“新建连接”，选择数据库类型并填写连接信息，然后点击“测试”和“保存并连接”。
+2. 在数据源浏览器中查看 Schema 和表，或新建 SQL 标签页执行查询。SQL 标签页会保持
+   自己的执行数据源，因此浏览其他连接不会改变执行目标；可在“设置”中切换界面语言和主题。
+
+Oracle 和自定义 JDBC 连接需要本地 JDBC 驱动 JAR，创建连接时应用会提示添加。
+
+## 本地校验与 QA 打包
+
+本地打包前运行确定性开发校验：
+
+```bash
+./build.sh check
+./build.sh live-tests --mysql --oracle  # 显式选择真实数据库集成测试
 ```
 
 在目标操作系统上构建：
@@ -76,8 +107,15 @@ PostgreSQL、MySQL、Oracle 与 JDBC 联网测试是独立的显式 opt-in suite
 将 `.env.example` 复制为已被 Git 忽略的 `.env`，再明确选择要执行的数据库集成测试；普通
 校验和打包不会加载私密数据库配置。所需权限和安全说明见测试文档。
 
-工具链前提、产物路径，以及正式发布时的 GitHub Release 流程，请参阅
-[打包与发布指南](docs/PACKAGING.zh-CN.md)。
+在 Pre-1.0 阶段，这些输出均为本地 QA artifact。未来正式分发流程保留在
+[打包与发布指南](docs/PACKAGING.zh-CN.md)，供 1.0 Release Preparation 使用。
+
+## Road to 1.0
+
+- 解决 persistence 与 data-safety semantics。
+- 确定 supported database matrix。
+- 完成 Windows 和 Linux runtime QA。
+- 冻结 1.0 capability scope，再进入正式签名与发布准备。
 
 ## 文档
 
@@ -88,3 +126,5 @@ PostgreSQL、MySQL、Oracle 与 JDBC 联网测试是独立的显式 opt-in suite
 - **技术参考：**[JDBC 元数据 SQL](docs/JDBC_METADATA_SQL.md)、
   [产品与架构设计](docs/VaporLensDB-Design.md)和
   [技术选型](docs/VaporLensDB-Technical-Selection.md)。
+- **开发记录：**[0.8.5 验证说明](docs/VALIDATION-NOTES-0.8.5.md)
+  （内部 QA 证据，不是 release note）。

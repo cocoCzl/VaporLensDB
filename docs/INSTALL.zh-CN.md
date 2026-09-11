@@ -2,9 +2,24 @@
 
 [English](INSTALL.md) · [返回 README](../README.zh-CN.md)
 
-## 正式发布后的安全下载
+## 当前 Pre-1.0 使用方式：从源码运行
 
-当前尚未发布正式安装包。正式版本发布后，请只从项目的
+VaporLensDB 0.8.5 处于 **Pre-1.0 Development**，当前分发方式为
+**Source Build Only**。在 1.0.0 之前，没有可供公开下载的 official DMG、MSI、NSIS、
+AppImage、DEB 或 RPM。使用当前项目请 clone 源码并运行：
+
+```bash
+pnpm install
+pnpm tauri dev
+```
+
+源码构建需要 Node.js 22、pnpm 10、Rust stable、JDK 21，以及当前系统的
+[Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。使用 `./build.sh check`
+校验 checkout。平台前提与本地 QA 打包请参阅 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。
+
+## 未来正式安装包与本地 QA 包
+
+以下安装包说明仅面向未来正式发布或本地生成的 QA 包。当前尚未发布正式安装包。正式版本发布后，请只从项目的
 [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) 页面下载 VaporLensDB。
 开发和测试阶段生成的安装包不会发布到 GitHub Releases；手动打包验证可临时保留 7 天的
 GitHub Actions 产物。每个正式 Release 都会提供 `SHA256SUMS.txt`，请在打开安装包前校验：

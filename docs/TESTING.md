@@ -1,7 +1,8 @@
 # VaporLensDB Testing
 
-This file tracks the verification commands that gate release readiness for the
-current IDE workspace.
+This file tracks deterministic development validation and explicit integration
+testing for the current IDE workspace. During Pre-1.0 Development it does not
+authorize a binary release, tag, or upload.
 
 ## Current Status
 
@@ -16,9 +17,9 @@ current IDE workspace.
 - Use `TEST_ORACLE_*` with a local `ojdbc` JAR when running Oracle live
   integration tests. The Oracle driver JAR is not committed or required by CI.
 
-## Release Gate
+## Deterministic Development Gate
 
-Run the local release gate before tagging or publishing:
+Run the local deterministic gate before local QA packaging or a source change:
 
 ```bash
 ./build.sh check
@@ -108,16 +109,21 @@ absolute paths to readable JAR files. `VAPORLENSDB_TEST_POSTGRES_URL` and
 must be verified; those accounts need `CREATEDB` or CREATE/DROP DATABASE
 permission respectively.
 
-Release builds are deterministic: `check`, `current`, `mac`, `windows`, and
-`linux` never load `.env` or run external database tests. This keeps the gate
-set stable for the same source commit, toolchain, and target platform.
+Build and local-QA packaging commands are deterministic: `check`, `current`,
+`mac`, `windows`, and `linux` never load `.env` or run external database tests.
+This keeps the gate set stable for the same source commit, toolchain, and
+target platform.
 
-Run selected RC JDBC integrations explicitly:
+## Explicit Live Integration
+
+Run selected live JDBC integrations explicitly:
 
 ```bash
 ./build.sh live-tests --mysql --oracle
 ./build.sh live-tests --postgresql
 ```
+
+## Explicit Destructive Integration
 
 The MySQL and PostgreSQL JDBC metadata tests use uniquely named, short-lived
 fixture schemas. Product-level CREATE/DROP DATABASE verification is a separate
@@ -128,6 +134,10 @@ confirmation variable:
 VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 \
   ./build.sh destructive-live-tests --mysql --postgresql
 ```
+
+Run this command only against a dedicated disposable test environment. Never
+use it against a production, business, shared, or otherwise non-disposable
+database.
 
 Run the deterministic validation or package flow:
 

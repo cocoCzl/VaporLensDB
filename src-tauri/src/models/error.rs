@@ -1,40 +1,85 @@
-use serde::{ser::SerializeStruct, Serialize, Serializer};
-use thiserror::Error;
+use std::fmt;
 
-#[derive(Debug, Error)]
+use serde::{ser::SerializeStruct, Serialize, Serializer};
+
+use crate::utils::error_redaction::sanitize_diagnostic_error;
+
+#[derive(Debug)]
 pub enum AppError {
-    #[error("Connection failed ({driver}): {message}")]
     ConnectionFailed { driver: String, message: String },
 
-    #[error("SSH tunnel failed: {message}")]
     SshTunnelError { message: String },
 
-    #[error("Query failed: {message}")]
     QueryFailed { sql: String, message: String },
 
-    #[error("Auth error: {0}")]
     AuthError(String),
 
-    #[error("IO error: {0}")]
     IoError(String),
 
-    #[error("Not found: {resource} ({id})")]
     NotFound { resource: String, id: String },
 
-    #[error("Timeout: {operation} after {elapsed_ms}ms")]
     Timeout { operation: String, elapsed_ms: u64 },
 
-    #[error("Unsupported operation: {operation} on {driver}")]
     UnsupportedOperation { driver: String, operation: String },
 
-    #[error("Serialization error: {0}")]
     SerializationError(String),
 
-    #[error("Configuration error: {0}")]
     ConfigError(String),
 }
 
 impl AppError {
+    /// Safe external text for IPC, persisted operation state, logs, and diagnostics.
+    pub fn safe_message(&self) -> String {
+        match self {
+            Self::ConnectionFailed { driver, message } => {
+                format!(
+                    "Connection failed ({driver}): {}",
+                    sanitize_diagnostic_error(message, None)
+                )
+            }
+            Self::SshTunnelError { message } => {
+                format!(
+                    "SSH tunnel failed: {}",
+                    sanitize_diagnostic_error(message, None)
+                )
+            }
+            Self::QueryFailed { sql, message } => {
+                format!(
+                    "Query failed: {}",
+                    sanitize_diagnostic_error(message, Some(sql))
+                )
+            }
+            Self::AuthError(message) => {
+                format!("Auth error: {}", sanitize_diagnostic_error(message, None))
+            }
+            Self::IoError(message) => {
+                format!("IO error: {}", sanitize_diagnostic_error(message, None))
+            }
+            Self::NotFound { resource, id } => format!("Not found: {resource} ({id})"),
+            Self::Timeout {
+                operation,
+                elapsed_ms,
+            } => {
+                format!("Timeout: {operation} after {elapsed_ms}ms")
+            }
+            Self::UnsupportedOperation { driver, operation } => {
+                format!("Unsupported operation: {operation} on {driver}")
+            }
+            Self::SerializationError(message) => {
+                format!(
+                    "Serialization error: {}",
+                    sanitize_diagnostic_error(message, None)
+                )
+            }
+            Self::ConfigError(message) => {
+                format!(
+                    "Configuration error: {}",
+                    sanitize_diagnostic_error(message, None)
+                )
+            }
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::ConnectionFailed { .. } => "CONNECTION_FAILED",
@@ -56,7 +101,9 @@ impl AppError {
                 Some(connection_failure_detail(driver, message))
             }
             Self::SshTunnelError { .. } => Some("phase=ssh_tunnel".to_string()),
-            Self::QueryFailed { sql, .. } => Some(format!("sql={sql}")),
+            Self::QueryFailed { sql, .. } => {
+                Some(format!("sql=[redacted: {} chars]", sql.chars().count()))
+            }
             Self::NotFound { resource, id } => Some(format!("resource={resource}; id={id}")),
             Self::Timeout {
                 operation,
@@ -69,6 +116,14 @@ impl AppError {
         }
     }
 }
+
+impl fmt::Display for AppError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.safe_message())
+    }
+}
+
+impl std::error::Error for AppError {}
 
 fn connection_failure_detail(driver: &str, message: &str) -> String {
     let normalized = message.to_ascii_lowercase();
@@ -106,7 +161,7 @@ impl Serialize for AppError {
     {
         let mut state = serializer.serialize_struct("AppError", 3)?;
         state.serialize_field("code", self.code())?;
-        state.serialize_field("message", &self.to_string())?;
+        state.serialize_field("message", &self.safe_message())?;
         state.serialize_field("detail", &self.detail())?;
         state.end()
     }
@@ -189,5 +244,31 @@ mod tests {
             value["detail"],
             "driver=mysql\nphase=tcp_connect\ncause=no_route_to_host\nosError=65"
         );
+    }
+
+    #[test]
+    fn serializes_external_credentials_as_redacted() {
+        let error = AppError::ConnectionFailed {
+            driver: "jdbc".to_string(),
+            message: "jdbc:mysql://test-user:super-secret-test-value@example.invalid/db?password=super-secret-test-value".to_string(),
+        };
+
+        let value = serde_json::to_string(&error).expect("serialize app error");
+        assert!(!value.contains("super-secret-test-value"));
+        assert!(value.contains("example.invalid"));
+    }
+
+    #[test]
+    fn query_error_detail_and_message_do_not_expose_sql() {
+        let sql = "SELECT * FROM accounts WHERE token = 'super-secret-test-value'";
+        let error = AppError::QueryFailed {
+            sql: sql.to_string(),
+            message: format!("syntax error while executing {sql}; SQLSTATE 42601"),
+        };
+
+        let value = serde_json::to_string(&error).expect("serialize app error");
+        assert!(!value.contains("super-secret-test-value"));
+        assert!(value.contains("SQLSTATE 42601"));
+        assert!(value.contains("[redacted: "));
     }
 }

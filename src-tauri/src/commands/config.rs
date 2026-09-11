@@ -12,6 +12,7 @@ use crate::{
         query_history::{QueryHistoryEntry, QueryHistoryStatus},
     },
     services::task_manager::{TaskInfo, TaskStatus},
+    utils::error_redaction::sanitize_diagnostic_error,
     AppState,
 };
 
@@ -179,7 +180,9 @@ pub async fn export_diagnostics_package(
                 runtime_status: status
                     .map(|status| status.status.clone())
                     .unwrap_or(ConnectionRuntimeStatus::Disconnected),
-                runtime_message: status.and_then(|status| status.message.clone()),
+                runtime_message: status
+                    .and_then(|status| status.message.as_deref())
+                    .map(|message| sanitize_diagnostic_error(message, None)),
                 created_at: connection.created_at,
                 updated_at: connection.updated_at,
             }
@@ -251,7 +254,10 @@ fn failed_query(entry: QueryHistoryEntry, include_sql_text: bool) -> Diagnostics
         started_at: entry.started_at,
         elapsed_ms: entry.elapsed_ms,
         error_code: entry.error_code,
-        error_message: entry.error_message,
+        error_message: entry
+            .error_message
+            .as_deref()
+            .map(|message| sanitize_diagnostic_error(message, Some(&entry.sql))),
     }
 }
 
@@ -277,10 +283,13 @@ fn task(task: TaskInfo) -> DiagnosticsTask {
             .into_iter()
             .map(|log| DiagnosticsTaskLog {
                 at: log.at,
-                message: log.message,
+                message: sanitize_diagnostic_error(&log.message, None),
             })
             .collect(),
-        error: task.error,
+        error: task
+            .error
+            .as_deref()
+            .map(|message| sanitize_diagnostic_error(message, None)),
         created_at: task.created_at,
         updated_at: task.updated_at,
         finished_at: task.finished_at,
@@ -289,7 +298,15 @@ fn task(task: TaskInfo) -> DiagnosticsTask {
 
 #[cfg(test)]
 mod tests {
-    use super::diagnostics_sql_text;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    use crate::models::{
+        connection::DriverType,
+        query_history::{QueryHistoryEntry, QueryHistoryStatus},
+    };
+
+    use super::{diagnostics_sql_text, failed_query};
 
     #[test]
     fn diagnostics_sql_text_is_redacted_by_default() {
@@ -299,5 +316,35 @@ mod tests {
         assert!(redacted.starts_with("[redacted: "));
         assert!(!redacted.contains("secret@example.test"));
         assert_eq!(diagnostics_sql_text(sql, true), sql);
+    }
+
+    #[test]
+    fn diagnostics_export_sanitizes_realistic_jdbc_failed_query() {
+        let secret = "super-secret-test-value";
+        let entry = QueryHistoryEntry {
+            id: Uuid::new_v4(),
+            connection_id: Uuid::new_v4(),
+            connection_name_snapshot: "MySQL diagnostics test".to_string(),
+            driver_type: DriverType::Mysql,
+            database: Some("demo".to_string()),
+            schema: None,
+            sql: "SELECT 1".to_string(),
+            status: QueryHistoryStatus::Failed,
+            started_at: Utc::now(),
+            elapsed_ms: Some(12),
+            row_count: None,
+            affected_rows: None,
+            error_code: Some("CONNECTION_FAILED".to_string()),
+            error_message: Some(format!(
+                "MySQL connection failed: jdbc:mysql://test-user:{secret}@example.invalid/db?password={secret}"
+            )),
+        };
+
+        let exported = serde_json::to_string(&failed_query(entry, false))
+            .expect("serialize diagnostics failed query");
+        assert!(!exported.contains(secret));
+        assert!(exported.contains("MySQL connection failed"));
+        assert!(exported.contains("example.invalid"));
+        assert!(exported.contains("[redacted: 8 chars]"));
     }
 }

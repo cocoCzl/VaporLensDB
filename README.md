@@ -9,24 +9,43 @@ administration console.
 
 Current version: **0.8.5**
 
-## Download
+## Project status
 
-VaporLensDB 0.8.5 is a **Technical Preview** for macOS arm64. It is an
-ad-hoc test artifact: it is not Developer ID signed, notarized, or stapled.
-Runtime verification for Windows, Linux, and PostgreSQL remains pending.
-See the [0.8.5 Technical Preview release notes](docs/RELEASE-NOTES-0.8.5.md)
-before installing it. Development and test installers are not published as
-GitHub Releases. Manually triggered packaging checks may retain temporary
-GitHub Actions artifacts for seven days.
+**Pre-1.0 Development.** VaporLensDB is currently developed and evaluated
+from source. It has no official downloadable binary releases, GitHub Releases,
+or pre-releases before 1.0.0. Locally built App bundles and installers are QA
+artifacts only, not public releases.
 
-| Platform | Recommended download | Notes |
-| --- | --- | --- |
-| macOS | `.dmg` | 0.8.5 Technical Preview is verified on Apple Silicon (arm64) only. |
-| Windows | — | Runtime verification is pending; do not treat CI packages as release-ready. |
-| Linux | — | Runtime verification is pending; do not treat CI packages as release-ready. |
+## Distribution
 
-See the [installation and first-use guide](docs/INSTALL.md) for platform
-installation steps, SHA-256 verification, and Oracle/JDBC setup.
+**Source Build Only.** To try VaporLensDB, clone this repository and run it
+locally. See the [installation guide](docs/INSTALL.md) for the distinction
+between current source builds, local QA packages, and future formal installers.
+
+## Platform validation status
+
+VaporLensDB targets macOS, Windows, and Linux. Target support and runtime
+verification are intentionally distinct:
+
+| Platform | Current validation status |
+| --- | --- |
+| macOS arm64 | Strongest runtime validation, including local QA packaging and MySQL/Oracle workflows. |
+| Windows x86_64 | Packaging and source-level checks completed; runtime verification pending. |
+| Linux x86_64 | Packaging and source-level checks completed; runtime verification pending. |
+
+## Database status
+
+**Implemented is not the same as app runtime verified.** The current evidence
+is deliberately recorded by layer:
+
+| Database | Implementation | Automated / integration evidence | App runtime verification |
+| --- | --- | --- | --- |
+| MySQL | Native driver; optional JDBC | Native and JDBC integration coverage, including FK/LONGTEXT regression | macOS arm64 verified |
+| Oracle | JDBC with a user-provided `ojdbc` JAR | JDBC query and metadata integration coverage | macOS arm64 verified |
+| PostgreSQL | Native driver; optional JDBC | Automated and opt-in JDBC integration coverage | Pending |
+| SQLite | Native driver; optional JDBC | Local automated coverage | Packaged-app verification incomplete |
+| SQL Server | Native driver implemented in source | Source-level coverage | Pending |
+| Custom JDBC | Generic configurable user-JAR path | Basic automated coverage | Vendor-specific completeness is not guaranteed |
 
 ## What it supports
 
@@ -42,34 +61,47 @@ installation steps, SHA-256 verification, and Oracle/JDBC setup.
 The result grid is intentionally read-only. ODBC and a full configurable
 dangerous-SQL policy are outside the current scope.
 
-## Quick start
+## Source-first quick start
 
-1. For the 0.8.5 macOS arm64 Technical Preview, mount the supplied DMG and
-   drag **VaporLensDB.app** to Applications. Gatekeeper will not recognize the
-   artifact because Developer ID signing and notarization are pending.
-2. Open **New Connection**, choose a database type, enter the connection
+Prerequisites: Node.js 22, pnpm 10, Rust stable, JDK 21, and the
+[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
+operating system.
+
+```bash
+git clone https://github.com/cocoCzl/VaporLensDB.git
+cd VaporLensDB
+pnpm install
+pnpm tauri dev
+```
+
+Validate a local checkout with:
+
+```bash
+./build.sh check
+```
+
+Platform-specific development and local-QA packaging requirements are in the
+[packaging guide](docs/PACKAGING.md). Local packaging does not make an
+official installer available.
+
+After starting the app from source:
+
+1. Open **New Connection**, choose a database type, enter the connection
    details, then select **Test** and **Save & Connect**.
-3. Browse schemas and tables in the Data Source explorer, or create a SQL tab
+2. Browse schemas and tables in the Data Source explorer, or create a SQL tab
    and run a query. A SQL tab keeps its own execution target while you browse
    other connections. Change the interface language or theme in **Settings**.
 
 Oracle and custom JDBC connections require a local JDBC driver JAR. The app
 guides you to add it when creating the connection.
 
-## Build from source
+## Local validation and QA packaging
 
-Source builds require Node.js 22, pnpm 10, Rust stable, and JDK 21.
-
-```bash
-pnpm install
-pnpm tauri dev
-```
-
-Run the release checks before packaging:
+Run the deterministic development gate before local packaging:
 
 ```bash
 ./build.sh check
-./build.sh live-tests --mysql --oracle  # Explicit RC live integration selection
+./build.sh live-tests --mysql --oracle  # Explicit live integration selection
 ```
 
 Build on the target operating system:
@@ -90,8 +122,17 @@ Copy `.env.example` to the Git-ignored `.env`, then explicitly select the
 database integrations to run. Ordinary checks and packaging never load private
 database configuration. See the testing guide for permissions and safety.
 
-Detailed prerequisites, artifact locations, and the formal GitHub Release
-process are in the [packaging guide](docs/PACKAGING.md).
+These outputs are local QA artifacts while VaporLensDB is pre-1.0. Future
+formal-distribution procedures are retained in the
+[packaging guide](docs/PACKAGING.md) for 1.0 release preparation.
+
+## Road to 1.0
+
+- Resolve persistence and data-safety semantics.
+- Finalize the supported database matrix.
+- Complete Windows and Linux runtime QA.
+- Freeze the 1.0 capability scope, then perform formal signing and release
+  preparation.
 
 ## Documentation
 
@@ -102,3 +143,5 @@ process are in the [packaging guide](docs/PACKAGING.md).
 - **Technical reference:** [JDBC metadata SQL](docs/JDBC_METADATA_SQL.md),
   [product and architecture design](docs/VaporLensDB-Design.md), and
   [technical selection](docs/VaporLensDB-Technical-Selection.md).
+- **Development record:** [0.8.5 validation notes](docs/VALIDATION-NOTES-0.8.5.md)
+  (internal QA evidence, not a release note).

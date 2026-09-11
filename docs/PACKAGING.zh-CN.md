@@ -3,11 +3,18 @@
 [English](PACKAGING.md) · [返回 README](../README.zh-CN.md)
 
 VaporLensDB 必须在目标操作系统上构建对应安装包。当前仓库不自动发布，也不包含
-代码签名或 macOS 公证流程。
+代码签名或 macOS 公证流程。在 Pre-1.0 Development 阶段，VaporLensDB 为
+**Source Build Only**：打包成功只会生成本地 QA artifact，并不代表存在 official
+downloadable release。
 
 在正式版本获准发布前，所有安装包均为本地或临时测试产物；不得将安装包或校验和提交到
 仓库、附加到 Pull Request 或发布为 GitHub Release。手动打包工作流生成的 Actions 产物
 保留 7 天。
+
+## 本地 QA 打包
+
+开发期间可用本地打包验证目标平台行为。不得将生成的 DMG、MSI、NSIS、AppImage、DEB
+或 RPM 描述为可公开获取的软件，也不得上传到 GitHub Release 或 Pre-release。
 
 ## 前提条件
 
@@ -35,7 +42,7 @@ pnpm install --frozen-lockfile
 - `./build.sh mac`：校验后替换本地 macOS App 和 DMG 产物。
 - `./build.sh windows`：校验后替换 Windows 的 MSI 和 NSIS 本地产物。
 - `./build.sh linux`：校验后替换 Linux 的 AppImage、DEB 和 RPM 本地产物。
-- `./build.sh live-tests --mysql --oracle`：显式运行选定的 RC JDBC 集成测试。
+- `./build.sh live-tests --mysql --oracle`：显式运行选定的 JDBC 真实集成测试。
 - `VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 ./build.sh destructive-live-tests --mysql`：在 disposable 环境中显式运行 CREATE/DROP DATABASE 测试。
 - `./build.sh jdbc-bridge`：只构建 Java JDBC bridge。
 
@@ -45,7 +52,7 @@ pnpm install --frozen-lockfile
 每个打包命令都会先构建 VaporLensDB 自有的 JDBC bridge，并将其作为应用资源打入安装包。
 Oracle 和自定义 JDBC 的厂商驱动仍由用户从本地选择，绝不会复制进安装包。
 
-## 打包前校验
+## 本地 QA 打包前校验
 
 每台构建机器生成安装包前均应执行：
 
@@ -80,7 +87,7 @@ artifacts/macos/<架构>/SHA256SUMS.txt
 `pnpm build` 重新生成。`src-tauri/target/` 是 Cargo/Tauri 的原始构建目录；`artifacts/`
 则是便于本地取用的汇总目录，已被 Git 忽略。每次构建都会替换当前架构目录，其中只保留
 最新的 App、DMG 和校验和。`.app` 可在 macOS 上直接运行，`.dmg` 是包含 App 和“应用程序”
-快捷方式的安装镜像，私下测试分发应优先使用 DMG。
+快捷方式的安装镜像。在 Pre-1.0 Development 阶段，两者都只是本地 QA artifact。
 
 Apple Silicon 的 `<架构>` 为 `aarch64`，Intel Mac 为 `x86_64`。打包前脚本会校验
 `package.json`、`src-tauri/tauri.conf.json` 与 `src-tauri/Cargo.toml` 的版本是否一致。
@@ -139,9 +146,10 @@ Windows 和 Linux 根据 Rust 原生 host 使用 `x86_64` 或 `aarch64`，脚本
 `windows-latest` 执行同一套校验与打包。工作流不使用真实数据库凭据，固定名称的测试产物
 保留 7 天；它不会创建 tag 或 GitHub Release。原生 `aarch64` 包仍需对应架构的构建机器。
 
-## 正式版本：手动发布 GitHub Release
+## 未来正式分发：1.0 Release Preparation
 
-仅在正式版本获准发布后才能执行本节；测试构建不得执行上传步骤。
+仅在 1.0 Release Preparation 阶段、正式版本获准发布后才能执行本节；Pre-1.0
+开发构建不得执行 tag、上传、公开校验和或 GitHub Release 步骤。
 
 1. 确认 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 中的版本号一致。
 2. 分别在 macOS、Windows 和 Linux 上使用以上命令完成校验与构建。
@@ -167,3 +175,11 @@ Windows 和 Linux 根据 Rust 原生 host 使用 `x86_64` 或 `aarch64`，脚本
 6. 在发布前从草稿 Release 下载每个附件并再次校验其 SHA-256。
 
 在真正启用并验证签名或公证前，不要在 Release 中声称安装包已经签名或已公证。
+
+## 未来签名阶段的 macOS entitlement 审查
+
+当前 macOS packaging config 包含 `allow-jit`、`allow-unsigned-executable-memory` 和
+`disable-library-validation` 这三项 hardened-runtime exceptions。它们只是当前配置，
+并不证明全部都为 Tauri、WebKit 或 JDBC 所必需。此前 minimal-entitlement A/B 测试未能
+证明运行时必要性。在未来 1.0 Developer ID signing/notarization 准备中，只保留能够通过
+移除后可复现 failure 证明必要的 exception。

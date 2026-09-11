@@ -81,7 +81,7 @@ includesAll(
   [
     'renameTab',
     'saveTabDraft',
-    'markDraftClosed',
+    'isEmptySqlDraft',
     'closeEditorTab',
     'onDoubleClick',
     'setEditingTabId',

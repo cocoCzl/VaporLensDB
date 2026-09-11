@@ -105,4 +105,67 @@ describe('SQL workspace persistence', () => {
       }],
     })
   })
+
+  it('keeps an empty open workspace tab ahead of a stale native draft and schedules cleanup', () => {
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      activeTabId: 'cleared-tab',
+      tabs: [{
+        id: 'cleared-tab',
+        kind: 'sql',
+        title: 'Cleared SQL',
+        sql: '',
+        connectionId: 'connection-1',
+        draftId: 'stale-native-draft',
+        dirty: false,
+      }],
+    }))
+
+    expect(readStoredSqlWorkspace()).toMatchObject({
+      activeTabId: 'cleared-tab',
+      tabs: [{
+        sql: '',
+        draftId: 'stale-native-draft',
+        dirty: true,
+      }],
+    })
+  })
+
+  it('persists a completed clear for normal restart without resurrecting old SQL', () => {
+    const tabs: EditorTab[] = [{
+      id: 'cleared-tab',
+      kind: 'sql',
+      title: 'Cleared SQL',
+      sql: '',
+      connectionId: 'connection-1',
+      draftId: null,
+      dirty: false,
+    }]
+
+    persistSqlWorkspace(tabs, 'cleared-tab')
+
+    expect(readStoredSqlWorkspace()).toMatchObject({
+      tabs: [{ sql: '', draftId: null, dirty: false }],
+    })
+  })
+
+  it('preserves a completed clear during pagehide-style abnormal recovery', () => {
+    const tabs: EditorTab[] = [{
+      id: 'cleared-tab',
+      kind: 'sql',
+      title: 'Cleared SQL',
+      sql: '',
+      connectionId: 'connection-1',
+      draftId: null,
+      dirty: false,
+      pinned: true,
+    }]
+
+    // App pagehide uses this same synchronous localStorage persistence path.
+    persistSqlWorkspace(tabs, 'cleared-tab')
+
+    expect(readStoredSqlWorkspace()).toMatchObject({
+      activeTabId: 'cleared-tab',
+      tabs: [{ sql: '', draftId: null, dirty: false, pinned: true }],
+    })
+  })
 })

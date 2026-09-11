@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     models::query_history::{QueryHistoryEntry, QueryHistoryStatus},
+    utils::error_redaction::sanitize_diagnostic_error,
     AppState,
 };
 
@@ -34,6 +35,10 @@ pub fn add_query_history(
         .map_err(String::from)?
         .ok_or_else(|| format!("connection not found: {}", input.connection_id))?;
 
+    let error_message = input
+        .error_message
+        .as_deref()
+        .map(|message| sanitize_diagnostic_error(message, Some(&input.sql)));
     let entry = QueryHistoryEntry {
         id: Uuid::new_v4(),
         connection_id: connection.id,
@@ -48,7 +53,7 @@ pub fn add_query_history(
         row_count: input.row_count,
         affected_rows: input.affected_rows,
         error_code: input.error_code,
-        error_message: input.error_message,
+        error_message,
     };
 
     state
@@ -71,4 +76,22 @@ pub fn list_query_history(
 #[tauri::command]
 pub fn clear_query_history(state: State<'_, AppState>) -> Result<(), String> {
     state.config_store.clear_query_history().map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_diagnostic_error;
+
+    #[test]
+    fn persisted_query_errors_are_sanitized_before_storage() {
+        let sql = "SELECT * FROM accounts WHERE token = 'super-secret-test-value'";
+        let raw = format!(
+            "syntax error while executing {sql}; jdbc:postgresql://example.invalid/db?password=super-secret-test-value"
+        );
+        let persisted = sanitize_diagnostic_error(&raw, Some(sql));
+
+        assert!(!persisted.contains("super-secret-test-value"));
+        assert!(persisted.contains("[REDACTED SQL]"));
+        assert!(persisted.contains("example.invalid"));
+    }
 }
