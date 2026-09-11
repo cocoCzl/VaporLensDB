@@ -1,6 +1,6 @@
 import { invokeCommand } from '@/ipc/client'
 import { COMMANDS } from '@/ipc/contracts'
-import type { ConnectionConfig, ConnectionInput, ConnectionStatus, DataSourceGroup } from '@/types/connection'
+import type { ConnectionConfig, ConnectionInput, ConnectionStatus, DataSourceGroup, DriverCapabilities } from '@/types/connection'
 
 export function createConnection(input: ConnectionInput) {
   return invokeCommand<ConnectionConfig>(COMMANDS.createConnection, { input })
@@ -28,6 +28,10 @@ export function connect(id: string, password?: string | null) {
 
 export function disconnect(id: string) {
   return invokeCommand<ConnectionStatus>(COMMANDS.disconnect, { id })
+}
+
+export function connectionCapabilities(id: string) {
+  return invokeCommand<DriverCapabilities>(COMMANDS.connectionCapabilities, { id })
 }
 
 export function listConnectionStatuses() {

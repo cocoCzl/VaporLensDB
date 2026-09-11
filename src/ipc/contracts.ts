@@ -38,6 +38,7 @@ export const COMMANDS = {
   connect: 'connect',
   disconnect: 'disconnect',
   connectionStatus: 'connection_status',
+  connectionCapabilities: 'connection_capabilities',
   listConnectionStatuses: 'list_connection_statuses',
   setConnectionSessionPolicy: 'set_connection_session_policy',
   listDataSourceGroups: 'list_data_source_groups',

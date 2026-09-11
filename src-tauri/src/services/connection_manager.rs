@@ -18,8 +18,11 @@ use crate::{
     models::{
         connection::{ConnectionConfig, ConnectionRuntimeStatus, ConnectionStatus, DriverType},
         driver_catalog::DriverDefinition,
-        error::AppError,
-        metadata::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo},
+        error::{AppError, DisconnectBlockReason},
+        metadata::{
+            ColumnInfo, DatabaseInfo, DriverCapabilities, ForeignKeyInfo, IndexInfo, SchemaInfo,
+            TableInfo,
+        },
         query_result::{ExplainResult, QueryResult},
     },
     services::ssh_tunnel::SshTunnel,
@@ -188,9 +191,9 @@ impl ConnectionManager {
             .map(|connection| connection.in_flight_operations > 0)
             .unwrap_or(false)
         {
-            return Err(AppError::ConfigError(
-                "cannot disconnect while this Data Source has running operations".to_string(),
-            ));
+            return Err(AppError::DisconnectBlocked {
+                reason: DisconnectBlockReason::RunningOperations,
+            });
         }
         if self
             .connections
@@ -202,9 +205,9 @@ impl ConnectionManager {
                     .any(|session| session.phase != ConsoleTransactionPhase::Idle)
             })
         {
-            return Err(AppError::ConfigError(
-                "cannot disconnect while a SQL Console has an uncommitted transaction".to_string(),
-            ));
+            return Err(AppError::DisconnectBlocked {
+                reason: DisconnectBlockReason::UncommittedTransaction,
+            });
         }
         self.connections.remove(&connection_id);
         self.pending_connections.remove(&connection_id);
@@ -353,6 +356,10 @@ impl ConnectionManager {
                 resource: "active connection".to_string(),
                 id: connection_id.to_string(),
             })
+    }
+
+    pub fn capabilities(&self, connection_id: Uuid) -> Result<DriverCapabilities, AppError> {
+        Ok(self.driver(connection_id)?.capabilities())
     }
 
     pub fn console_transaction_state(
@@ -796,8 +803,16 @@ mod tests {
     use tokio::sync::Semaphore;
     use uuid::Uuid;
 
-    use super::{ActiveConnection, ConnectionManager, QueryOperationStart};
-    use crate::{drivers::sqlite::SqliteDriver, models::connection::ConnectionRuntimeStatus};
+    use super::{
+        ActiveConnection, ConnectionManager, ConsoleTransactionPhase, QueryOperationStart,
+    };
+    use crate::{
+        drivers::sqlite::SqliteDriver,
+        models::{
+            connection::ConnectionRuntimeStatus,
+            error::{AppError, DisconnectBlockReason},
+        },
+    };
 
     async fn sqlite_connection(
         last_used: Instant,
@@ -1011,5 +1026,55 @@ mod tests {
             manager.status(connection_id).status,
             ConnectionRuntimeStatus::Disconnected
         ));
+    }
+
+    #[tokio::test]
+    async fn disconnect_reports_structured_running_operation_and_transaction_blocks() {
+        let mut manager = ConnectionManager::new();
+        let running_connection = Uuid::new_v4();
+        manager.connections.insert(
+            running_connection,
+            sqlite_connection(Instant::now(), 1).await,
+        );
+
+        let running_error = manager
+            .disconnect(running_connection)
+            .expect_err("running work must block disconnect");
+        assert!(matches!(
+            running_error,
+            AppError::DisconnectBlocked {
+                reason: DisconnectBlockReason::RunningOperations
+            }
+        ));
+        assert!(manager.connections.contains_key(&running_connection));
+
+        let transaction_connection = Uuid::new_v4();
+        manager.connections.insert(
+            transaction_connection,
+            sqlite_connection(Instant::now(), 0).await,
+        );
+        manager
+            .install_console_session(
+                transaction_connection,
+                "transaction-tab".to_string(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .expect("install console session");
+        manager.set_console_phase(
+            transaction_connection,
+            "transaction-tab",
+            ConsoleTransactionPhase::Active,
+        );
+
+        let transaction_error = manager
+            .disconnect(transaction_connection)
+            .expect_err("uncommitted transaction must block disconnect");
+        assert!(matches!(
+            transaction_error,
+            AppError::DisconnectBlocked {
+                reason: DisconnectBlockReason::UncommittedTransaction
+            }
+        ));
+        assert!(manager.connections.contains_key(&transaction_connection));
     }
 }

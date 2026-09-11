@@ -728,6 +728,18 @@
     "runningQueriesUnavailable": "当前驱动暂不报告可取消的 running queries。",
     "cancelUnsupported": "当前驱动不支持取消"
   },
+  "disconnectSafety": {
+    "runningQueryTitle": "查询仍在运行",
+    "runningQueryDescription": "{{name}} 上仍有查询正在运行，暂时不能安全断开。请先停止查询，待其结束后再请求断开连接。",
+    "transactionTitle": "存在未提交事务",
+    "transactionDescription": "{{name}} 存在包含未提交更改的事务。请先在 SQL 工作区提交或回滚，再断开连接。",
+    "stopQuery": "停止查询",
+    "keepConnected": "保持连接",
+    "cancelUnsupported": "{{name}} 上仍有查询正在运行。当前驱动暂不支持取消，请保持连接，直到查询结束。",
+    "cancellationRequested": "已请求取消。查询停止后请再次断开连接。",
+    "backendTransactionBlocked": "连接存在未提交事务。请先提交或回滚，再断开连接。",
+    "backendOperationBlocked": "连接上有操作正在进行。请等待其结束后再断开连接。"
+  },
   "drivers": {
     "title": "JDBC 驱动",
     "summary": "{{count}} 个 JDBC 模板；内置模板只读，自定义可编辑。",

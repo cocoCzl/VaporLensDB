@@ -73,6 +73,7 @@ pub fn run() {
             commands::connection::connect,
             commands::connection::disconnect,
             commands::connection::connection_status,
+            commands::connection::connection_capabilities,
             commands::connection::list_connection_statuses,
             commands::connection::set_connection_session_policy,
             commands::data_source_group::list_data_source_groups,

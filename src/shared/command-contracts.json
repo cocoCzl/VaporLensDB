@@ -84,6 +84,13 @@
     "status": "active"
   },
   {
+    "name": "connection_capabilities",
+    "namespace": "connection",
+    "args": "{ id: string }",
+    "response": "DriverCapabilities",
+    "status": "active"
+  },
+  {
     "name": "list_connection_statuses",
     "namespace": "connection",
     "args": "void",

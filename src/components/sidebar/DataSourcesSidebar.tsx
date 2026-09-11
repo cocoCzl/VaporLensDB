@@ -15,11 +15,10 @@ import {
   highlightDataSourceMatch,
   orderGroupConnections,
 } from '@/components/sidebar/connectionPresentation'
-import { useQuery } from '@/hooks/useQuery'
+import { useDisconnectRequest } from '@/hooks/useDisconnectRequest'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ConnectionConfig, ConnectionRuntimeStatus } from '@/types/connection'
 
 /**
@@ -38,7 +37,6 @@ export function DataSourcesSidebar() {
     favoriteDataSourceIds,
     loadConnections,
     connectConnection,
-    disconnectConnection,
     setActiveConnection,
     toggleFavoriteDataSource,
     moveConnectionToGroup,
@@ -54,7 +52,6 @@ export function DataSourcesSidebar() {
     favoriteDataSourceIds: state.favoriteDataSourceIds,
     loadConnections: state.loadConnections,
     connectConnection: state.connectConnection,
-    disconnectConnection: state.disconnectConnection,
     setActiveConnection: state.setActiveConnection,
     toggleFavoriteDataSource: state.toggleFavoriteDataSource,
     moveConnectionToGroup: state.moveConnectionToGroup,
@@ -64,11 +61,10 @@ export function DataSourcesSidebar() {
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
   const setActiveTab = useEditorStore((state) => state.setActiveTab)
-  const { cancelRunningQuery } = useQuery()
+  const { requestDisconnect, disconnectDialog } = useDisconnectRequest()
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const [expandedDataSourceIds, setExpandedDataSourceIds] = useState<Record<string, boolean>>({})
   const [contextMenu, setContextMenu] = useState<{ connection: ConnectionConfig; x: number; y: number } | null>(null)
-  const [disconnectPrompt, setDisconnectPrompt] = useState<ConnectionConfig | null>(null)
   const [query, setQuery] = useState('')
 
   useEffect(() => {
@@ -144,14 +140,6 @@ export function DataSourcesSidebar() {
     } else {
       addTab({ id: crypto.randomUUID(), kind: 'dataSources', title: t('connection.dataSources'), sql: '', connectionId: null })
     }
-  }
-
-  function requestDisconnect(connection: ConnectionConfig) {
-    if (tabs.some((tab) => tab.connectionId === connection.id && tab.runningQueryId)) {
-      setDisconnectPrompt(connection)
-      return
-    }
-    void disconnectConnection(connection.id)
   }
 
   function moveToGroup(connection: ConnectionConfig) {
@@ -277,7 +265,7 @@ export function DataSourcesSidebar() {
         t={t}
         onClose={() => setContextMenu(null)}
         onConnect={(connection) => void connectConnection(connection.id)}
-        onDisconnect={requestDisconnect}
+        onDisconnect={(connection) => void requestDisconnect(connection)}
         onNewQuery={openBoundSql}
         onRefresh={(connection) => useMetadataStore.getState().clearConnection(connection.id)}
         onEdit={openManagement}
@@ -291,29 +279,7 @@ export function DataSourcesSidebar() {
         }}
       />
 
-      <Dialog open={Boolean(disconnectPrompt)} onOpenChange={(open) => !open && setDisconnectPrompt(null)}>
-        <DialogContent className="w-full max-w-sm gap-0 overflow-hidden p-0" showCloseButton>
-          <DialogHeader className="border-b border-border/70 px-4 py-3 pr-11">
-            <DialogTitle>{t('connection.disconnect')}</DialogTitle>
-            <DialogDescription className="text-xs leading-5">
-              {disconnectPrompt ? t('sessions.runningQueriesBlockDisconnect', { name: disconnectPrompt.name }) : ''}
-            </DialogDescription>
-          </DialogHeader>
-          {disconnectPrompt && (
-            <div className="grid gap-1.5 px-4 py-3">
-              {tabs.filter((tab) => tab.connectionId === disconnectPrompt.id && tab.runningQueryId).map((tab) => (
-                <div key={tab.id} className="flex items-center gap-2 rounded-md bg-danger-bg/70 px-2.5 py-2 text-xs text-danger-foreground">
-                  <span className="min-w-0 flex-1 truncate">{tab.title}</span>
-                  <Button type="button" size="xs" variant="secondary" onClick={() => tab.runningQueryId && void cancelRunningQuery(tab.id, disconnectPrompt.id, tab.runningQueryId)}>{t('editor.cancel')}</Button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="flex justify-end border-t border-border/70 bg-surface-secondary/55 px-4 py-3">
-            <Button type="button" size="sm" variant="outline" onClick={() => setDisconnectPrompt(null)}>{t('common.close')}</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {disconnectDialog}
     </section>
   )
 }

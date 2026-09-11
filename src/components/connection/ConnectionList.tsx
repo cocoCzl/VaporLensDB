@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
+import { useDisconnectRequest } from '@/hooks/useDisconnectRequest'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,7 +30,6 @@ export function ConnectionList({
     error,
     loadConnections,
     connectConnection,
-    disconnectConnection,
     removeConnection,
     activeConnectionId,
     setActiveConnection,
@@ -42,6 +42,7 @@ export function ConnectionList({
     deleteGroup,
     moveConnectionToGroup,
   } = useConnectionStore()
+  const { requestDisconnect, disconnectDialog } = useDisconnectRequest()
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const [selectedConnectionIds, setSelectedConnectionIds] = useState<string[]>([])
   const [managerSearch, setManagerSearch] = useState('')
@@ -327,7 +328,7 @@ export function ConnectionList({
                             })
                           }
                         }}
-                        onDisconnect={() => disconnectConnection(connection.id)}
+                        onDisconnect={() => void requestDisconnect(connection)}
                         onDelete={() => removeConnection(connection.id)}
                         favorite={favoriteDataSourceIds.includes(connection.id)}
                         onToggleFavorite={() => toggleFavoriteDataSource(connection.id)}
@@ -343,6 +344,7 @@ export function ConnectionList({
           </div>
         )}
       </div>
+      {disconnectDialog}
     </div>
   )
 }

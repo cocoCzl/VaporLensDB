@@ -7,6 +7,7 @@ use crate::{
     models::connection::{
         ConnectionConfig, ConnectionStatus, DriverType, SshAuthMethod, SshTunnelConfig,
     },
+    models::metadata::DriverCapabilities,
     services::connection_manager::{
         create_active_connection, test_connection as test_connection_service,
     },
@@ -230,6 +231,19 @@ pub async fn connection_status(
     id: Uuid,
 ) -> Result<ConnectionStatus, String> {
     Ok(state.connection_manager.lock().await.status(id))
+}
+
+#[tauri::command]
+pub async fn connection_capabilities(
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> Result<DriverCapabilities, String> {
+    state
+        .connection_manager
+        .lock()
+        .await
+        .capabilities(id)
+        .map_err(Into::into)
 }
 
 #[tauri::command]

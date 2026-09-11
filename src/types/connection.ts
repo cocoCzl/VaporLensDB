@@ -40,6 +40,16 @@ export interface ConnectionStatus {
   message?: string | null
 }
 
+export interface DriverCapabilities {
+  hasDatabase: boolean
+  hasSchema: boolean
+  supportsTransactions: boolean
+  supportsExplain: boolean
+  supportsCancel: boolean
+  supportsDdl: boolean
+  supportsStreaming: boolean
+}
+
 export interface ConnectionInput {
   id?: string
   name: string

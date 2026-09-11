@@ -728,6 +728,18 @@
     "runningQueriesUnavailable": "The current driver does not report cancellable running queries.",
     "cancelUnsupported": "The current driver does not support cancel"
   },
+  "disconnectSafety": {
+    "runningQueryTitle": "Query still running",
+    "runningQueryDescription": "{{name}} has a query still running and cannot be disconnected safely. Stop the query first, then request disconnect again after it finishes.",
+    "transactionTitle": "Uncommitted transaction",
+    "transactionDescription": "{{name}} has a transaction with uncommitted changes. Commit or roll it back in the SQL workspace before disconnecting.",
+    "stopQuery": "Stop Query",
+    "keepConnected": "Keep Connected",
+    "cancelUnsupported": "{{name}} has a query still running. This driver cannot currently cancel it, so keep the connection open until the query finishes.",
+    "cancellationRequested": "Cancellation requested. Disconnect again after the query has stopped.",
+    "backendTransactionBlocked": "Connection has an uncommitted transaction. Commit or roll it back before disconnecting.",
+    "backendOperationBlocked": "Connection has an operation in progress. Wait for it to finish before disconnecting."
+  },
   "drivers": {
     "title": "JDBC Drivers",
     "summary": "{{count}} JDBC templates. Built-in templates are read-only; custom templates are editable.",

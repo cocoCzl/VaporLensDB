@@ -139,3 +139,62 @@ describe('connection store save lifecycle', () => {
     expect(useUiStore.getState().notifications.at(-1)).toMatchObject({ kind: 'error' })
   })
 })
+
+describe('connection store disconnect lifecycle', () => {
+  beforeEach(() => {
+    for (const mock of Object.values(connectionMocks)) mock.mockReset()
+    useConnectionStore.setState({
+      statuses: { 'connection-1': { connectionId: 'connection-1', status: 'connected' } },
+      busyConnectionIds: {},
+      browsingConnectionId: 'connection-1',
+      activeConnectionId: 'connection-1',
+      error: null,
+    })
+    useUiStore.setState({ notifications: [] })
+  })
+
+  it('disconnects an idle connection once and clears its selected context', async () => {
+    connectionMocks.disconnect.mockResolvedValue({ connectionId: 'connection-1', status: 'disconnected' })
+
+    await useConnectionStore.getState().disconnectConnection('connection-1')
+
+    expect(connectionMocks.disconnect).toHaveBeenCalledOnce()
+    expect(useConnectionStore.getState().statuses['connection-1']?.status).toBe('disconnected')
+    expect(useConnectionStore.getState().activeConnectionId).toBeNull()
+    expect(useConnectionStore.getState().browsingConnectionId).toBeNull()
+  })
+
+  it('does not issue another disconnect for an already disconnected or busy connection', async () => {
+    useConnectionStore.setState({
+      statuses: { 'connection-1': { connectionId: 'connection-1', status: 'disconnected' } },
+    })
+    await useConnectionStore.getState().disconnectConnection('connection-1')
+
+    useConnectionStore.setState({
+      statuses: { 'connection-1': { connectionId: 'connection-1', status: 'connected' } },
+      busyConnectionIds: { 'connection-1': true },
+    })
+    await useConnectionStore.getState().disconnectConnection('connection-1')
+
+    expect(connectionMocks.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('keeps the connection selected when the backend rejects a raced disconnect', async () => {
+    connectionMocks.disconnect.mockRejectedValue({
+      code: 'DISCONNECT_BLOCKED',
+      message: 'Connection cannot be disconnected while operations are running',
+    })
+
+    await expect(useConnectionStore.getState().disconnectConnection('connection-1')).rejects.toMatchObject({ code: 'DISCONNECT_BLOCKED' })
+
+    expect(useConnectionStore.getState().statuses['connection-1']?.status).toBe('connected')
+    expect(useConnectionStore.getState().activeConnectionId).toBe('connection-1')
+    const notification = useUiStore.getState().notifications.at(-1)
+    expect(notification).toMatchObject({
+      kind: 'error',
+      title: expect.any(String),
+    })
+    expect(notification?.message).toBe(useConnectionStore.getState().error)
+    expect(notification?.message).not.toContain('operations are running')
+  })
+})

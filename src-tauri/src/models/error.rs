@@ -12,6 +12,8 @@ pub enum AppError {
 
     QueryFailed { sql: String, message: String },
 
+    DisconnectBlocked { reason: DisconnectBlockReason },
+
     AuthError(String),
 
     IoError(String),
@@ -25,6 +27,12 @@ pub enum AppError {
     SerializationError(String),
 
     ConfigError(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisconnectBlockReason {
+    RunningOperations,
+    UncommittedTransaction,
 }
 
 impl AppError {
@@ -49,6 +57,15 @@ impl AppError {
                     sanitize_diagnostic_error(message, Some(sql))
                 )
             }
+            Self::DisconnectBlocked { reason } => match reason {
+                DisconnectBlockReason::RunningOperations => {
+                    "Connection cannot be disconnected while operations are running".to_string()
+                }
+                DisconnectBlockReason::UncommittedTransaction => {
+                    "Connection cannot be disconnected while a transaction has uncommitted changes"
+                        .to_string()
+                }
+            },
             Self::AuthError(message) => {
                 format!("Auth error: {}", sanitize_diagnostic_error(message, None))
             }
@@ -85,6 +102,7 @@ impl AppError {
             Self::ConnectionFailed { .. } => "CONNECTION_FAILED",
             Self::SshTunnelError { .. } => "SSH_TUNNEL_FAILED",
             Self::QueryFailed { .. } => "QUERY_FAILED",
+            Self::DisconnectBlocked { .. } => "DISCONNECT_BLOCKED",
             Self::AuthError(_) => "AUTH_ERROR",
             Self::IoError(_) => "IO_ERROR",
             Self::NotFound { .. } => "NOT_FOUND",
@@ -104,6 +122,12 @@ impl AppError {
             Self::QueryFailed { sql, .. } => {
                 Some(format!("sql=[redacted: {} chars]", sql.chars().count()))
             }
+            Self::DisconnectBlocked { reason } => Some(match reason {
+                DisconnectBlockReason::RunningOperations => "reason=running_operations".to_string(),
+                DisconnectBlockReason::UncommittedTransaction => {
+                    "reason=uncommitted_transaction".to_string()
+                }
+            }),
             Self::NotFound { resource, id } => Some(format!("resource={resource}; id={id}")),
             Self::Timeout {
                 operation,
@@ -270,5 +294,20 @@ mod tests {
         assert!(!value.contains("super-secret-test-value"));
         assert!(value.contains("SQLSTATE 42601"));
         assert!(value.contains("[redacted: "));
+    }
+
+    #[test]
+    fn serializes_disconnect_block_reason_without_exposing_driver_text() {
+        let error = AppError::DisconnectBlocked {
+            reason: super::DisconnectBlockReason::UncommittedTransaction,
+        };
+        let value = serde_json::to_value(error).expect("serialize disconnect block");
+
+        assert_eq!(value["code"], "DISCONNECT_BLOCKED");
+        assert_eq!(value["detail"], "reason=uncommitted_transaction");
+        assert!(value["message"]
+            .as_str()
+            .unwrap()
+            .contains("uncommitted changes"));
     }
 }

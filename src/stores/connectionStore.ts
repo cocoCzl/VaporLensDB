@@ -21,6 +21,7 @@ import { useMetadataStore } from '@/stores/metadataStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { ConnectionConfig, ConnectionInput, ConnectionStatus, DataSourceGroup } from '@/types/connection'
+import type { AppError } from '@/types/error'
 
 const RECENT_DATA_SOURCES_STORAGE_KEY = 'vaporlensdb.recentDataSources'
 const FAVORITE_DATA_SOURCES_STORAGE_KEY = 'vaporlensdb.favoriteDataSources'
@@ -76,6 +77,14 @@ function summarizeConnectionError(message: string) {
     return i18n.t('notifications.networkUnreachable')
   }
   return normalized.length > 120 ? `${normalized.slice(0, 120)}...` : normalized
+}
+
+function disconnectBlockedMessage(error: AppError): string | null {
+  if (error.code !== 'DISCONNECT_BLOCKED') return null
+  if (error.detail === 'reason=uncommitted_transaction') {
+    return i18n.t('disconnectSafety.backendTransactionBlocked')
+  }
+  return i18n.t('disconnectSafety.backendOperationBlocked')
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -283,6 +292,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   disconnectConnection: async (id) => {
+    if (get().busyConnectionIds[id] || get().statuses[id]?.status === 'disconnected') return
     set((state) => ({
       busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
       error: null,
@@ -296,8 +306,19 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       }))
       useMetadataStore.getState().clearConnection(id)
     } catch (error) {
-      set({ error: errorMessage(error) })
-      notifyError(error, i18n.t('notifications.disconnectFailed'))
+      const appError = normalizeAppError(error)
+      const blockedMessage = disconnectBlockedMessage(appError)
+      const message = blockedMessage ?? errorMessage(error)
+      set({ error: message })
+      if (blockedMessage) {
+        useUiStore.getState().notify({
+          kind: 'error',
+          title: i18n.t('notifications.disconnectFailed'),
+          message,
+        })
+      } else {
+        notifyError(error, i18n.t('notifications.disconnectFailed'))
+      }
       throw error
     } finally {
       set((state) => ({ busyConnectionIds: clearConnectionBusy(state.busyConnectionIds, id) }))
