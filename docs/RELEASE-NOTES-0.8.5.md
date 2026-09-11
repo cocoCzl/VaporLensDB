@@ -36,5 +36,9 @@ notarized public release.
 
 ## Checksums
 
-The release announcement must include the SHA-256 calculated from the exact
-DMG being distributed. Do not reuse a checksum from an earlier build.
+| Artifact | SHA-256 |
+| --- | --- |
+| `VaporLensDB.dmg` | `37f319df689663bbf163d3fe4a41fc2297ab1b6aaf556b5ed3f190eb14ffb59c` |
+
+This checksum belongs only to the RC1 DMG identified in this release note; do
+not reuse it for a later rebuild.
