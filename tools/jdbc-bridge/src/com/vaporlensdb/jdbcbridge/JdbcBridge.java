@@ -212,6 +212,9 @@ public final class JdbcBridge {
 
     private static String query(Connection connection, String sql, int queryTimeoutSeconds) throws Exception {
         long start = System.currentTimeMillis();
+        boolean oracle = connection.getMetaData().getDatabaseProductName()
+                .toLowerCase(Locale.ROOT)
+                .contains("oracle");
         try (Statement statement = connection.createStatement()) {
             statement.setQueryTimeout(queryTimeoutSeconds);
             // Avoid a driver default that prefetches an unbounded result window.
@@ -257,7 +260,7 @@ public final class JdbcBridge {
                         if (index > 1) {
                             output.append(',');
                         }
-                        appendJsonValue(output, resultValue(resultSet, metaData, index));
+                        appendJsonValue(output, resultValue(resultSet, metaData, index, oracle));
                     }
                     output.append(']');
                     rowCount += 1;
@@ -322,7 +325,7 @@ public final class JdbcBridge {
                     StringBuilder row = new StringBuilder("[");
                     for (int index = 1; index <= columnCount; index += 1) {
                         if (index > 1) row.append(',');
-                        appendJsonValue(row, resultValue(resultSet, metaData, index));
+                        appendJsonValue(row, resultValue(resultSet, metaData, index, oracle));
                     }
                     row.append(']');
                     rows.add(row.toString());
@@ -740,7 +743,11 @@ public final class JdbcBridge {
         }
     }
 
-    private static Object resultValue(ResultSet resultSet, ResultSetMetaData metaData, int index) throws Exception {
+    private static Object resultValue(
+            ResultSet resultSet,
+            ResultSetMetaData metaData,
+            int index,
+            boolean preserveOracleLong) throws Exception {
         int jdbcType = metaData.getColumnType(index);
         String jdbcTypeName = metaData.getColumnTypeName(index);
         // Oracle LONG values are legacy, forward-only streams. The thin
@@ -748,7 +755,7 @@ public final class JdbcBridge {
         // block the whole result stream. Do not dereference a LONG in the
         // interactive grid; preserve the row and expose an explicit marker
         // rather than letting one legacy column stall every other value.
-        if (jdbcType == Types.LONGVARCHAR || jdbcType == Types.LONGNVARCHAR) {
+        if (preserveOracleLong && (jdbcType == Types.LONGVARCHAR || jdbcType == Types.LONGNVARCHAR)) {
             return "LONG value (preview unavailable)";
         }
         // XMLTYPE is exposed by Oracle through oracle.xdb.XMLType. The XDB

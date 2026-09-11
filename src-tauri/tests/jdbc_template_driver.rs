@@ -226,9 +226,12 @@ async fn assert_template_metadata(
         .get_foreign_keys(schema, child)
         .await
         .expect("get JDBC foreign keys");
-    assert!(foreign_keys
-        .iter()
-        .any(|item| item.referenced_table == parent && item.referenced_columns == vec!["id"]));
+    assert!(
+        foreign_keys
+            .iter()
+            .any(|item| item.referenced_table == parent && item.referenced_columns == vec!["id"]),
+        "expected foreign key to reference {parent}(id); actual metadata: {foreign_keys:#?}"
+    );
 
     let views = driver.get_views(schema).await.expect("get JDBC views");
     assert!(views.iter().any(|item| item.name == view));
