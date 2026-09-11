@@ -20,6 +20,34 @@ if [ ! -f "$BINARY" ] || [ ! -f "$ENTITLEMENTS" ] || [ ! -f "$DEV_INFO_PLIST" ];
     exec "$BINARY" "$@"
 fi
 
+# Cargo invokes this runner for both `cargo run` and `cargo test`. The latter
+# supplies a test harness from target/**/deps. A test harness must be executed
+# by Cargo's process tree so its output and exit status remain authoritative;
+# LaunchServices' `open` only reports whether it launched an application, not
+# whether that harness passed. Signing the Mach-O directly preserves the same
+# development entitlements without introducing an app-bundle/LaunchServices
+# boundary for tests.
+case "$BINARY" in
+    "$TAURI_DIR"/target/*/deps/*)
+        if [ ! -x "$BINARY" ]; then
+            echo "Cargo test harness is not executable: $BINARY" >&2
+            exit 126
+        fi
+
+        if ! codesign --force --sign - --entitlements "$ENTITLEMENTS" "$BINARY" >/dev/null 2>&1; then
+            echo "Failed to sign Cargo test harness with macOS entitlements: $BINARY" >&2
+            exit 1
+        fi
+
+        if ! codesign --verify --strict "$BINARY" >/dev/null 2>&1; then
+            echo "Cargo test harness signature verification failed: $BINARY" >&2
+            exit 1
+        fi
+
+        exec "$BINARY" "$@"
+        ;;
+esac
+
 BINARY_DIR="$(cd "$(dirname "$BINARY")" && pwd)"
 DEV_APP="$BINARY_DIR/VaporLensDB-dev.app"
 DEV_CONTENTS="$DEV_APP/Contents"
