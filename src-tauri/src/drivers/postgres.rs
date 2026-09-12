@@ -36,10 +36,7 @@ impl PostgresDriver {
     pub async fn connect(connection_url: &str) -> Result<Self, AppError> {
         let (client, connection) = tokio_postgres::connect(connection_url, NoTls)
             .await
-            .map_err(|error| AppError::ConnectionFailed {
-                driver: "postgres".to_string(),
-                message: error.to_string(),
-            })?;
+            .map_err(map_postgres_connection_error)?;
 
         let connection_task = tokio::spawn(async move {
             if let Err(error) = connection.await {
@@ -75,14 +72,10 @@ impl PostgresDriver {
         if let Some(password) = password {
             config.password(password);
         }
-        let (client, connection) =
-            config
-                .connect(NoTls)
-                .await
-                .map_err(|error| AppError::ConnectionFailed {
-                    driver: "postgres".to_string(),
-                    message: error.to_string(),
-                })?;
+        let (client, connection) = config
+            .connect(NoTls)
+            .await
+            .map_err(map_postgres_connection_error)?;
         let connection_task = tokio::spawn(async move {
             if let Err(error) = connection.await {
                 log::error!(
@@ -121,14 +114,10 @@ impl PostgresDriver {
             .user(username)
             .password(password);
 
-        let (client, connection) =
-            config
-                .connect(NoTls)
-                .await
-                .map_err(|error| AppError::ConnectionFailed {
-                    driver: "postgres".to_string(),
-                    message: error.to_string(),
-                })?;
+        let (client, connection) = config
+            .connect(NoTls)
+            .await
+            .map_err(map_postgres_connection_error)?;
 
         let connection_task = tokio::spawn(async move {
             if let Err(error) = connection.await {
@@ -150,9 +139,36 @@ impl PostgresDriver {
     fn map_query_error(&self, sql: &str, error: tokio_postgres::Error) -> AppError {
         AppError::QueryFailed {
             sql: sql.to_string(),
-            message: error.to_string(),
+            message: postgres_error_message(&error),
         }
     }
+}
+
+fn map_postgres_connection_error(error: tokio_postgres::Error) -> AppError {
+    AppError::ConnectionFailed {
+        driver: "postgres".to_string(),
+        message: postgres_error_message(&error),
+    }
+}
+
+/// `tokio-postgres::Error` intentionally renders server errors as the generic
+/// "db error". Preserve the server's primary message and SQLSTATE instead;
+/// the message is still passed through the central diagnostic redactor at the
+/// `AppError` boundary.
+fn postgres_error_message(error: &tokio_postgres::Error) -> String {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = source {
+        if let Some(database_error) = current.downcast_ref::<tokio_postgres::error::DbError>() {
+            return format!(
+                "{} (SQLSTATE {})",
+                database_error.message(),
+                database_error.code().code()
+            );
+        }
+        source = current.source();
+    }
+
+    error.to_string()
 }
 
 #[async_trait]
@@ -181,10 +197,7 @@ impl DatabaseDriver for PostgresDriver {
         self.client
             .simple_query("SELECT 1")
             .await
-            .map_err(|error| AppError::ConnectionFailed {
-                driver: "postgres".to_string(),
-                message: error.to_string(),
-            })?;
+            .map_err(map_postgres_connection_error)?;
         Ok(())
     }
 

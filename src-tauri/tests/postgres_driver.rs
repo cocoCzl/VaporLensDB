@@ -12,6 +12,8 @@ use vapor_lens_db_lib::{
     models::metadata::DbObjectKind,
 };
 
+const WRONG_PASSWORD: &str = "postgres-runtime-redaction-regression-value";
+
 fn test_pg_url() -> Option<String> {
     std::env::var("TEST_PG_URL").ok().or_else(|| {
         let jdbc_url = std::env::var("TEST_PG_JDBC_URL").ok()?;
@@ -61,6 +63,30 @@ async fn connects_and_reads_postgres_metadata() {
         .expect("execute query");
     assert_eq!(result.row_count, 1);
     assert_eq!(result.rows[0][0], serde_json::json!(1));
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn wrong_password_is_actionable_and_redacted() {
+    let url = test_pg_url().expect("TEST_PG_URL or TEST_PG_JDBC_URL must be set");
+    let error = match PostgresDriver::connect_with_url_credentials(&url, None, Some(WRONG_PASSWORD))
+        .await
+    {
+        Ok(_) => panic!("wrong PostgreSQL password unexpectedly connected"),
+        Err(error) => error,
+    };
+
+    let message = error.safe_message();
+    assert!(
+        message.contains("password authentication failed"),
+        "{message}"
+    );
+    assert!(message.contains("SQLSTATE 28P01"));
+    assert!(!message.contains(WRONG_PASSWORD));
+    assert_eq!(
+        error.detail().as_deref(),
+        Some("driver=postgres\nphase=authentication\ncause=authentication_failed")
+    );
 }
 
 #[tokio::test]
