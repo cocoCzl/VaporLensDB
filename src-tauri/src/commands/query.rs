@@ -57,6 +57,64 @@ pub struct SetConsoleTransactionModeInput {
     pub mode: String,
 }
 
+/// A SQL tab's identifier is a logical console identity. Disconnecting a Data
+/// Source retires its runtime (including the runtime-owned console driver),
+/// but must not make an already-open manual-transaction tab permanently
+/// unusable after that Data Source reconnects. Recreate the runtime console on
+/// demand, preserving the tab's own connection/database/schema context.
+async fn ensure_console_session(
+    state: &State<'_, AppState>,
+    connection_id: Uuid,
+    console_id: &str,
+) -> Result<(), String> {
+    if state
+        .connection_manager
+        .lock()
+        .await
+        .console_driver(connection_id, console_id)
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    let config = state
+        .config_store
+        .get_connection(connection_id)
+        .map_err(String::from)?
+        .ok_or_else(|| "connection not found".to_string())?;
+    let password = state
+        .config_store
+        .decrypt_password(&config)
+        .map_err(String::from)?;
+    let definition = config
+        .driver_definition_id
+        .as_deref()
+        .map(|id| state.config_store.get_driver_definition(id))
+        .transpose()
+        .map_err(String::from)?
+        .flatten();
+    let ssh_tunnel = state
+        .config_store
+        .decrypt_ssh_tunnel(&config)
+        .map_err(String::from)?;
+    let mut runtime_config = config;
+    runtime_config.ssh_tunnel = ssh_tunnel;
+    let active = crate::services::connection_manager::create_active_connection(
+        &runtime_config,
+        password.as_deref(),
+        definition.as_ref(),
+    )
+    .await
+    .map_err(String::from)?;
+    state
+        .connection_manager
+        .lock()
+        .await
+        .install_console_session(connection_id, console_id.to_string(), active)
+        .map_err(String::from)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn execute_query(
     app: AppHandle,
@@ -64,6 +122,7 @@ pub async fn execute_query(
     input: ExecuteQueryInput,
 ) -> Result<ExecuteQueryResponse, String> {
     if let Some(console_id) = input.console_id.as_deref() {
+        ensure_console_session(&state, input.connection_id, console_id).await?;
         let (driver, phase) = {
             let manager = state.connection_manager.lock().await;
             let status = manager.console_transaction_state(input.connection_id, console_id);
@@ -166,6 +225,7 @@ pub async fn execute_query_stream(
     input: ExecuteQueryStreamInput,
 ) -> Result<(), String> {
     if let Some(console_id) = input.console_id.as_deref() {
+        ensure_console_session(&state, input.connection_id, console_id).await?;
         let (driver, phase) = {
             let manager = state.connection_manager.lock().await;
             let status = manager.console_transaction_state(input.connection_id, console_id);

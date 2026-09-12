@@ -2,7 +2,19 @@
 CREATE USER IF NOT EXISTS 'vaporlensdb_qa'@'%' IDENTIFIED BY 'vaporlensdb_qa_local_only';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES,
   CREATE VIEW, SHOW VIEW, TRIGGER ON vaporlensdb_qa.* TO 'vaporlensdb_qa'@'%';
+CREATE DATABASE vaporlensdb_qa_alt;
+GRANT SELECT ON vaporlensdb_qa_alt.* TO 'vaporlensdb_qa'@'%';
 FLUSH PRIVILEGES;
+
+USE vaporlensdb_qa_alt;
+CREATE TABLE vaporlensdb_qa_marker (
+  environment VARCHAR(64) NOT NULL PRIMARY KEY,
+  fixture_version INT NOT NULL
+);
+INSERT INTO vaporlensdb_qa_marker (environment, fixture_version)
+VALUES ('disposable_qa_alt', 1);
+CREATE TABLE context_marker (context_name VARCHAR(64) NOT NULL PRIMARY KEY);
+INSERT INTO context_marker VALUES ('vaporlensdb_qa_alt');
 
 USE vaporlensdb_qa;
 

@@ -56,9 +56,18 @@ verify() {
   "${COMPOSE[@]}" exec -T postgres psql -U vaporlensdb_qa_admin -d vaporlensdb_qa -Atqc \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('parent_items', 'child_items', 'child_item_view')" \
     | grep -qx '3'
+  "${COMPOSE[@]}" exec -T postgres psql -U vaporlensdb_qa_admin -d vaporlensdb_qa -Atqc \
+    "SELECT string_agg(schema_name, ',' ORDER BY schema_name) FROM information_schema.schemata WHERE schema_name IN ('qa_a', 'qa_b')" \
+    | grep -qx 'qa_a,qa_b'
+  "${COMPOSE[@]}" exec -T -e MYSQL_PWD=vaporlensdb_qa_admin_local_only mysql mysql --protocol=tcp -h 127.0.0.1 -uroot vaporlensdb_qa_alt \
+    -Nse "SELECT CONCAT(environment, ':', fixture_version) FROM vaporlensdb_qa_marker WHERE environment = 'disposable_qa_alt'" \
+    | grep -qx 'disposable_qa_alt:1'
   "${COMPOSE[@]}" exec -T -e MYSQL_PWD=vaporlensdb_qa_local_only mysql mysql --protocol=tcp -h 127.0.0.1 -uvaporlensdb_qa vaporlensdb_qa \
     -Nse "SELECT environment FROM vaporlensdb_qa_marker WHERE environment = 'disposable_qa'" \
     | grep -qx 'disposable_qa'
+  "${COMPOSE[@]}" exec -T -e MYSQL_PWD=vaporlensdb_qa_local_only mysql mysql --protocol=tcp -h 127.0.0.1 -uvaporlensdb_qa vaporlensdb_qa_alt \
+    -Nse "SELECT environment FROM vaporlensdb_qa_marker WHERE environment = 'disposable_qa_alt'" \
+    | grep -qx 'disposable_qa_alt'
   "${COMPOSE[@]}" exec -T -e PGPASSWORD=vaporlensdb_qa_local_only postgres psql -U vaporlensdb_qa -d vaporlensdb_qa -Atqc \
     "SELECT environment FROM vaporlensdb_qa_marker WHERE environment = 'disposable_qa'" \
     | grep -qx 'disposable_qa'

@@ -3,6 +3,15 @@ CREATE ROLE vaporlensdb_qa LOGIN PASSWORD 'vaporlensdb_qa_local_only';
 GRANT CONNECT, TEMP, CREATE ON DATABASE vaporlensdb_qa TO vaporlensdb_qa;
 GRANT USAGE, CREATE ON SCHEMA public TO vaporlensdb_qa;
 
+CREATE SCHEMA qa_a AUTHORIZATION vaporlensdb_qa;
+CREATE SCHEMA qa_b AUTHORIZATION vaporlensdb_qa;
+CREATE TABLE qa_a.context_marker (context_name TEXT PRIMARY KEY);
+CREATE TABLE qa_b.context_marker (context_name TEXT PRIMARY KEY);
+INSERT INTO qa_a.context_marker VALUES ('qa_a');
+INSERT INTO qa_b.context_marker VALUES ('qa_b');
+GRANT USAGE ON SCHEMA qa_a, qa_b TO vaporlensdb_qa;
+GRANT SELECT ON ALL TABLES IN SCHEMA qa_a, qa_b TO vaporlensdb_qa;
+
 CREATE TABLE vaporlensdb_qa_marker (
   environment TEXT PRIMARY KEY,
   fixture_version INTEGER NOT NULL

@@ -1077,4 +1077,65 @@ mod tests {
         ));
         assert!(manager.connections.contains_key(&transaction_connection));
     }
+
+    #[tokio::test]
+    async fn reconnect_can_reinstall_a_manual_console_for_the_same_tab() {
+        let mut manager = ConnectionManager::new();
+        let connection_id = Uuid::new_v4();
+        let first_tab_id = "existing-sql-tab-a";
+        let second_tab_id = "existing-sql-tab-b";
+        manager
+            .connections
+            .insert(connection_id, sqlite_connection(Instant::now(), 0).await);
+        manager
+            .install_console_session(
+                connection_id,
+                first_tab_id.to_string(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .expect("initial tab console installs");
+        manager
+            .install_console_session(
+                connection_id,
+                second_tab_id.to_string(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .expect("second initial tab console installs");
+
+        manager
+            .disconnect(connection_id)
+            .expect("idle manual console permits disconnect");
+        manager
+            .begin_connect(connection_id)
+            .expect("reconnect starts");
+        manager
+            .finish_connect(
+                connection_id,
+                Ok(sqlite_connection(Instant::now(), 0).await),
+            )
+            .expect("reconnect installs a fresh runtime");
+
+        manager
+            .install_console_session(
+                connection_id,
+                first_tab_id.to_string(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .expect("same logical tab can receive a fresh console runtime");
+        manager
+            .install_console_session(
+                connection_id,
+                second_tab_id.to_string(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .expect("second logical tab can receive an independent fresh console runtime");
+        assert!(manager.console_driver(connection_id, first_tab_id).is_ok());
+        assert!(manager.console_driver(connection_id, second_tab_id).is_ok());
+        assert_eq!(
+            manager
+                .console_transaction_state(connection_id, first_tab_id)
+                .phase,
+            ConsoleTransactionPhase::Idle
+        );
+    }
 }
