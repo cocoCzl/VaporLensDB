@@ -1,0 +1,44 @@
+name: vaporlensdb-qa
+
+# Local disposable QA only. Credentials below are synthetic fixtures, not secrets.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: vaporlensdb_qa
+      MYSQL_ROOT_PASSWORD: vaporlensdb_qa_admin_local_only
+    ports:
+      - "${VAPORLENSDB_QA_MYSQL_PORT:-13306}:3306"
+    volumes:
+      - vaporlensdb-qa-mysql-data:/var/lib/mysql
+      - ./qa/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -pvaporlensdb_qa_admin_local_only --silent"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: vaporlensdb_qa
+      POSTGRES_USER: vaporlensdb_qa_admin
+      POSTGRES_PASSWORD: vaporlensdb_qa_admin_local_only
+    ports:
+      - "${VAPORLENSDB_QA_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - vaporlensdb-qa-postgres-data:/var/lib/postgresql/data
+      - ./qa/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vaporlensdb_qa_admin -d vaporlensdb_qa"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  vaporlensdb-qa-mysql-data:
+    name: vaporlensdb-qa-mysql-data
+  vaporlensdb-qa-postgres-data:
+    name: vaporlensdb-qa-postgres-data

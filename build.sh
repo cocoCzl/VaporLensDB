@@ -59,11 +59,16 @@ ensure_dependencies() {
 }
 
 load_live_test_env() {
-  if [ -f "$ROOT_DIR/.env" ]; then
-    log "Loading local live-test configuration from .env"
+  local env_file="${VAPORLENSDB_LIVE_TEST_ENV_FILE:-$ROOT_DIR/.env}"
+  if [ -n "${VAPORLENSDB_LIVE_TEST_ENV_FILE:-}" ] && [ ! -f "$env_file" ]; then
+    printf 'Explicit live-test environment file is missing: %s\n' "$env_file" >&2
+    return 1
+  fi
+  if [ -f "$env_file" ]; then
+    log "Loading explicit local live-test configuration"
     set -a
     # shellcheck disable=SC1091
-    source "$ROOT_DIR/.env"
+    source "$env_file"
     set +a
   fi
 }

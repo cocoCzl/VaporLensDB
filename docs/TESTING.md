@@ -114,6 +114,10 @@ Build and local-QA packaging commands are deterministic: `check`, `current`,
 This keeps the gate set stable for the same source commit, toolchain, and
 target platform.
 
+For repeatable local MySQL/PostgreSQL QA, use the disposable Docker stack in
+[Disposable Database QA](QA-DATABASES.md). It has its own synthetic local-only
+configuration and never loads this repository's `.env`.
+
 ## Explicit Live Integration
 
 Run selected live JDBC integrations explicitly:

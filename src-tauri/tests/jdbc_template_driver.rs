@@ -39,6 +39,8 @@ async fn postgres_jdbc_template_queries_and_reads_metadata() {
     assert_eq!(result.row_count, 1);
     assert_one(&result.rows[0][0]);
 
+    assert_postgres_disposable_qa_marker(&driver).await;
+
     let schema = format!("vaporlensdb_jdbc_{}", Uuid::new_v4().simple());
     driver
         .execute_query(&format!(r#"CREATE SCHEMA "{schema}""#), None)
@@ -133,16 +135,19 @@ async fn mysql_jdbc_template_queries_and_reads_metadata() {
     assert_eq!(result.row_count, 1);
     assert_one(&result.rows[0][0]);
 
-    let schema = format!("vaporlensdb_jdbc_{}", Uuid::new_v4().simple());
-    driver
-        .execute_query(&format!("CREATE DATABASE `{schema}`"), None)
-        .await
-        .expect("create mysql JDBC schema");
+    assert_mysql_disposable_qa_marker(&driver).await;
+
+    let suffix = Uuid::new_v4().simple();
+    let schema = "vaporlensdb_qa";
+    let parent = format!("vaporlensdb_jdbc_parent_{suffix}");
+    let child = format!("vaporlensdb_jdbc_child_{suffix}");
+    let view = format!("vaporlensdb_jdbc_view_{suffix}");
+    let foreign_key = format!("fk_jdbc_{suffix}");
     driver
         .execute_query(
             &format!(
                 r#"
-                CREATE TABLE `{schema}`.parent_items (
+                CREATE TABLE `{parent}` (
                     id INT NOT NULL PRIMARY KEY,
                     name VARCHAR(64) NOT NULL
                 )
@@ -156,12 +161,12 @@ async fn mysql_jdbc_template_queries_and_reads_metadata() {
         .execute_query(
             &format!(
                 r#"
-                CREATE TABLE `{schema}`.child_items (
+                CREATE TABLE `{child}` (
                     id INT NOT NULL PRIMARY KEY,
                     parent_id INT NOT NULL,
                     note VARCHAR(128),
                     INDEX idx_child_parent (parent_id),
-                    CONSTRAINT fk_child_parent FOREIGN KEY (parent_id) REFERENCES parent_items(id)
+                    CONSTRAINT `{foreign_key}` FOREIGN KEY (parent_id) REFERENCES `{parent}`(id)
                 )
                 "#
             ),
@@ -171,27 +176,62 @@ async fn mysql_jdbc_template_queries_and_reads_metadata() {
         .expect("create mysql JDBC child table");
     driver
         .execute_query(
-            &format!(
-                "CREATE VIEW `{schema}`.child_item_view AS SELECT id, parent_id, note FROM `{schema}`.child_items"
-            ),
+            &format!("CREATE VIEW `{view}` AS SELECT id, parent_id, note FROM `{child}`"),
             None,
         )
         .await
         .expect("create mysql JDBC view");
 
-    assert_template_metadata(
-        &driver,
-        &schema,
-        "child_items",
-        "parent_items",
-        "child_item_view",
-    )
-    .await;
+    assert_template_metadata(&driver, schema, &child, &parent, &view).await;
 
     driver
-        .execute_query(&format!("DROP DATABASE `{schema}`"), None)
+        .execute_query(&format!("DROP VIEW `{view}`"), None)
         .await
-        .expect("drop mysql JDBC schema");
+        .expect("drop mysql JDBC view");
+    driver
+        .execute_query(&format!("DROP TABLE `{child}`"), None)
+        .await
+        .expect("drop mysql JDBC child table");
+    driver
+        .execute_query(&format!("DROP TABLE `{parent}`"), None)
+        .await
+        .expect("drop mysql JDBC parent table");
+}
+
+async fn assert_postgres_disposable_qa_marker(driver: &JdbcDriver) {
+    require_qa_environment();
+    let result = driver
+        .execute_query(
+            "SELECT current_database(), environment FROM vaporlensdb_qa_marker WHERE environment = 'disposable_qa'",
+            None,
+        )
+        .await
+        .expect("verify PostgreSQL disposable QA marker");
+    assert_eq!(result.row_count, 1, "PostgreSQL QA marker must exist");
+    assert_eq!(result.rows[0][0], serde_json::json!("vaporlensdb_qa"));
+    assert_eq!(result.rows[0][1], serde_json::json!("disposable_qa"));
+}
+
+async fn assert_mysql_disposable_qa_marker(driver: &JdbcDriver) {
+    require_qa_environment();
+    let result = driver
+        .execute_query(
+            "SELECT DATABASE(), environment FROM vaporlensdb_qa_marker WHERE environment = 'disposable_qa'",
+            None,
+        )
+        .await
+        .expect("verify MySQL disposable QA marker");
+    assert_eq!(result.row_count, 1, "MySQL QA marker must exist");
+    assert_eq!(result.rows[0][0], serde_json::json!("vaporlensdb_qa"));
+    assert_eq!(result.rows[0][1], serde_json::json!("disposable_qa"));
+}
+
+fn require_qa_environment() {
+    assert_eq!(
+        std::env::var("VAPORLENSDB_QA_ENVIRONMENT").as_deref(),
+        Ok("1"),
+        "refusing fixture mutation without VAPORLENSDB_QA_ENVIRONMENT=1"
+    );
 }
 
 async fn assert_template_metadata(
