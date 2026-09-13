@@ -130,7 +130,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().schemas[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, cacheKey, async () => {
+    return withLoading(set, metadataLoadingKey(cacheKey, 'schemas'), async () => {
       const schemas = await getSchemas(connectionId, database)
       set((state) => ({ schemas: putBounded(state.schemas, cacheKey, schemas) }))
       return schemas
@@ -142,7 +142,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().tables[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, cacheKey, async () => {
+    return withLoading(set, metadataLoadingKey(cacheKey, 'tables'), async () => {
       const tables = await getTables(connectionId, schema)
       set((state) => ({ tables: putBounded(state.tables, cacheKey, tables) }))
       return tables
@@ -154,7 +154,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().views[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, cacheKey, async () => {
+    return withLoading(set, metadataLoadingKey(cacheKey, 'views'), async () => {
       const views = await getViews(connectionId, schema)
       set((state) => ({ views: putBounded(state.views, cacheKey, views) }))
       return views
@@ -166,7 +166,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().functions[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, cacheKey, async () => {
+    return withLoading(set, metadataLoadingKey(cacheKey, 'functions'), async () => {
       const functions = await getFunctions(connectionId, schema)
       set((state) => ({ functions: putBounded(state.functions, cacheKey, functions) }))
       return functions
@@ -178,7 +178,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().schemaObjects[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, cacheKey, async () => {
+    return withLoading(set, metadataLoadingKey(cacheKey, 'schemaObjects'), async () => {
       const objects = await getSchemaObjects(connectionId, schema, kind)
       set((state) => ({ schemaObjects: putBounded(state.schemaObjects, cacheKey, objects) }))
       return objects
@@ -190,7 +190,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().columns[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, cacheKey, async () => {
+    return withLoading(set, metadataLoadingKey(cacheKey, 'columns'), async () => {
       const columns = await getColumns(connectionId, schema, table)
       set((state) => ({ columns: putBounded(state.columns, cacheKey, columns) }))
       return columns
@@ -202,7 +202,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().indexes[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, cacheKey, async () => {
+    return withLoading(set, metadataLoadingKey(cacheKey, 'indexes'), async () => {
       const indexes = await getIndexes(connectionId, schema, table)
       set((state) => ({ indexes: putBounded(state.indexes, cacheKey, indexes) }))
       return indexes
@@ -214,7 +214,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().foreignKeys[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, cacheKey, async () => {
+    return withLoading(set, metadataLoadingKey(cacheKey, 'foreignKeys'), async () => {
       const foreignKeys = await getForeignKeys(connectionId, schema, table)
       set((state) => ({ foreignKeys: putBounded(state.foreignKeys, cacheKey, foreignKeys) }))
       return foreignKeys
@@ -342,6 +342,10 @@ export function tableObjectKey(connectionId: string, schema: string, table: stri
 
 function databaseLoadingKey(connectionId: string) {
   return `${connectionId}::databases`
+}
+
+function metadataLoadingKey(cacheKey: string, category: string) {
+  return `${cacheKey}::${category}`
 }
 
 async function withLoading<T>(

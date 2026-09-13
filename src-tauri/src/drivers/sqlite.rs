@@ -704,6 +704,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maps_sqlite_foreign_key_metadata_without_including_columns() {
+        let driver = SqliteDriver::connect(":memory:").await.unwrap();
+        driver
+            .execute_query("CREATE TABLE parent_items (id INTEGER PRIMARY KEY)", None)
+            .await
+            .unwrap();
+        driver
+            .execute_query(
+                "CREATE TABLE child_items (id INTEGER PRIMARY KEY, parent_id INTEGER, FOREIGN KEY (parent_id) REFERENCES parent_items(id))",
+                None,
+            )
+            .await
+            .unwrap();
+
+        let child_foreign_keys = driver
+            .get_foreign_keys("main", "child_items")
+            .await
+            .unwrap();
+        let parent_foreign_keys = driver
+            .get_foreign_keys("main", "parent_items")
+            .await
+            .unwrap();
+
+        assert_eq!(child_foreign_keys.len(), 1);
+        let foreign_key = &child_foreign_keys[0];
+        assert_eq!(foreign_key.table, "child_items");
+        assert_eq!(foreign_key.columns, vec!["parent_id"]);
+        assert_eq!(foreign_key.referenced_table, "parent_items");
+        assert_eq!(foreign_key.referenced_columns, vec!["id"]);
+        assert!(parent_foreign_keys.is_empty());
+    }
+
+    #[tokio::test]
     async fn streams_rows_without_materializing_the_full_result() {
         let (sender, mut receiver) = mpsc::channel(2);
         let worker = std::thread::spawn(move || {

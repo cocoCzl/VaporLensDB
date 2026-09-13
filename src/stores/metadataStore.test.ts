@@ -1,17 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { MetadataSearchResult } from '@/types/metadata'
+import type { ColumnInfo, ForeignKeyInfo, IndexInfo, MetadataSearchResult } from '@/types/metadata'
 
 const metadataMocks = vi.hoisted(() => ({
+  getColumns: vi.fn(),
   getDatabases: vi.fn(),
+  getForeignKeys: vi.fn(),
+  getIndexes: vi.fn(),
   searchMetadataIndex: vi.fn(),
 }))
 
 vi.mock('@/ipc/metadata', () => ({
-  getColumns: vi.fn(),
+  getColumns: metadataMocks.getColumns,
   getDatabases: metadataMocks.getDatabases,
-  getForeignKeys: vi.fn(),
+  getForeignKeys: metadataMocks.getForeignKeys,
   getFunctions: vi.fn(),
-  getIndexes: vi.fn(),
+  getIndexes: metadataMocks.getIndexes,
   getSchemaObjects: vi.fn(),
   getSchemas: vi.fn(),
   getTables: vi.fn(),
@@ -43,9 +46,19 @@ function deferred<T>() {
 
 describe('metadata store resource bounds', () => {
   beforeEach(() => {
+    metadataMocks.getColumns.mockReset()
     metadataMocks.getDatabases.mockReset()
+    metadataMocks.getForeignKeys.mockReset()
+    metadataMocks.getIndexes.mockReset()
     metadataMocks.searchMetadataIndex.mockReset()
-    useMetadataStore.setState({ databases: {}, indexResults: [], loading: {} })
+    useMetadataStore.setState({
+      databases: {},
+      columns: {},
+      foreignKeys: {},
+      indexes: {},
+      indexResults: [],
+      loading: {},
+    })
   })
 
   it('keeps only the latest 256 frontend metadata cache keys', async () => {
@@ -76,5 +89,53 @@ describe('metadata store resource bounds', () => {
     await olderRequest
 
     expect(useMetadataStore.getState().indexResults).toEqual(searchResult('new_table'))
+  })
+
+  it('keeps columns and foreign keys isolated when structure metadata loads concurrently', async () => {
+    const childColumns: ColumnInfo[] = [
+      { schema: 'main', table: 'child_items', name: 'id', ordinalPosition: 1, dataType: 'INTEGER', nullable: true, isPrimaryKey: true },
+      { schema: 'main', table: 'child_items', name: 'parent_id', ordinalPosition: 2, dataType: 'INTEGER', nullable: true, isPrimaryKey: false },
+    ]
+    const childIndexes: IndexInfo[] = []
+    const childForeignKeys: ForeignKeyInfo[] = [{
+      schema: 'main',
+      table: 'child_items',
+      name: 'fk_child_items_0',
+      columns: ['parent_id'],
+      referencedSchema: 'main',
+      referencedTable: 'parent_items',
+      referencedColumns: ['id'],
+    }]
+    const parentColumns: ColumnInfo[] = [
+      { schema: 'main', table: 'parent_items', name: 'id', ordinalPosition: 1, dataType: 'INTEGER', nullable: true, isPrimaryKey: true },
+    ]
+
+    metadataMocks.getColumns
+      .mockResolvedValueOnce(childColumns)
+      .mockResolvedValueOnce(parentColumns)
+    metadataMocks.getIndexes.mockResolvedValue(childIndexes)
+    metadataMocks.getForeignKeys
+      .mockResolvedValueOnce(childForeignKeys)
+      .mockResolvedValueOnce([])
+
+    const store = useMetadataStore.getState()
+    const [columns, indexes, foreignKeys] = await Promise.all([
+      store.loadColumns('connection-1', 'main', 'child_items'),
+      store.loadIndexes('connection-1', 'main', 'child_items'),
+      store.loadForeignKeys('connection-1', 'main', 'child_items'),
+    ])
+    const [parentMetadata, parentForeignKeys] = await Promise.all([
+      store.loadColumns('connection-1', 'main', 'parent_items'),
+      store.loadForeignKeys('connection-1', 'main', 'parent_items'),
+    ])
+
+    expect(columns).toEqual(childColumns)
+    expect(indexes).toEqual(childIndexes)
+    expect(foreignKeys).toEqual(childForeignKeys)
+    expect(parentMetadata).toEqual(parentColumns)
+    expect(parentForeignKeys).toEqual([])
+    expect(foreignKeys).not.toEqual(columns)
+    expect(metadataMocks.getForeignKeys).toHaveBeenCalledWith('connection-1', 'main', 'child_items')
+    expect(metadataMocks.getForeignKeys).toHaveBeenCalledWith('connection-1', 'main', 'parent_items')
   })
 })
