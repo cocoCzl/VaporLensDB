@@ -170,7 +170,7 @@ export function DataSourcesSidebar() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t('connection.dataSources')}>
-      <header className="flex h-11 shrink-0 items-center border-b border-border/55 px-3.5">
+      <header className="flex h-10 shrink-0 items-center border-b border-border/55 px-3.5">
         <h2 className="min-w-0 flex-1 truncate text-[14px] font-[650] tracking-[-0.02em]">{t('connection.dataSources')}</h2>
         <ConnectionDialog
           trigger={
@@ -181,7 +181,7 @@ export function DataSourcesSidebar() {
         />
       </header>
 
-      <div className="shrink-0 border-b border-border/45 px-3.5 py-3">
+      <div className="shrink-0 border-b border-border/45 px-3.5 py-3.5">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input

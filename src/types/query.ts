@@ -17,6 +17,8 @@ export interface QueryResult {
   maxRows?: number | null
   firstRowMs?: number | null
   receivedBytes?: number | null
+  /** True only while a streamed query is awaiting its terminal completion event. */
+  streaming?: boolean
 }
 
 export interface ExecuteQueryResponse {

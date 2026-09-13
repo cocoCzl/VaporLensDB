@@ -33,6 +33,7 @@ import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
 import { persistDirtySqlDrafts } from '@/lib/sqlDraftPersistence'
 import { isSystemSchema } from '@/lib/systemObjects'
 import { normalizeAppError } from '@/ipc/client'
+import { foreignKeyDisplayRows } from '@/lib/foreignKeyDisplay'
 import { analyzeSqlRisk, commitConsoleTransaction, rollbackConsoleTransaction, setConsoleTransactionMode, type SqlRiskAnalysis, type SqlRiskReason } from '@/ipc/query'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
@@ -862,6 +863,7 @@ export function MainPanel() {
             }
           >
             <SqlEditor
+              key={activeTab.id}
               value={activeTab.sql}
               connectionId={queryCapabilities.canComplete ? connectionId : null}
               schema={selectedSchema}
@@ -1027,6 +1029,8 @@ export function MainPanel() {
                 title: `${entry.connectionNameSnapshot} history`,
                 sql: entry.sql,
                 connectionId: entry.connectionId,
+                database: entry.database ?? null,
+                schema: entry.schema ?? null,
               })
               setActiveConnection(entry.connectionId)
             }}
@@ -2014,12 +2018,7 @@ function ForeignKeysView({ foreignKeys }: { foreignKeys: ForeignKeyInfo[] }) {
   return (
     <StructureTable
       headers={['Name', 'Columns', 'Referenced Table', 'Referenced Columns']}
-      rows={foreignKeys.map((key) => [
-        key.name,
-        key.columns.join(', '),
-        [key.referencedSchema, key.referencedTable].filter(Boolean).join('.'),
-        key.referencedColumns.join(', '),
-      ])}
+      rows={foreignKeyDisplayRows(foreignKeys)}
     />
   )
 }
@@ -2512,7 +2511,7 @@ function formatSqlRiskReason(reason: SqlRiskReason) {
 
 function resultSummary(result: QueryResult) {
   if (result.columns.length === 0) {
-    if (result.elapsedMs === 0 && result.affectedRows === 0) {
+    if (result.streaming) {
       return i18n.t('workbench.receivingResults')
     }
     return i18n.t('workbench.affectedRowsSummary', {
@@ -2619,7 +2618,7 @@ function formatHistoryTime(value: string) {
 
 function compactResultSummary(result: QueryResult) {
   if (result.columns.length === 0) {
-    return result.elapsedMs === 0 && result.affectedRows === 0
+    return result.streaming
       ? i18n.t('workbench.receivingShort')
       : `${result.affectedRows.toLocaleString()} affected`
   }

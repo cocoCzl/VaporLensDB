@@ -13,6 +13,7 @@ import { useEditorStore } from '@/stores/editorStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useMetadataStore } from '@/stores/metadataStore'
 
 export function useQuery() {
   const setTabRunning = useEditorStore((state) => state.setTabRunning)
@@ -63,6 +64,8 @@ export function useQuery() {
         if (streamState.state.failed) {
           void useQueryHistoryStore.getState().addEntry({
             connectionId,
+            database: options.database,
+            schema: options.schema,
             sql,
             status: 'failed',
             startedAt,
@@ -91,19 +94,25 @@ export function useQuery() {
         useEditorStore.getState().setTabTransactionState(tabId, 'manual', 'active')
       }
       if (containsLikelyDdl(sql)) {
+        // The backend invalidates its metadata caches after successful DDL. Mirror that
+        // boundary in the renderer so a previously expanded Object Browser does not
+        // retain an empty/stale category until the user manually reloads it.
+        useMetadataStore.getState().requestConnectionRefresh(connectionId)
         notify({
           kind: 'info',
           title: i18n.t('notifications.objectStructureChanged'),
           message: i18n.t('notifications.refreshObjectStructureHint'),
         })
       }
-      recordQueryHistory(connectionId, sql, queryId, startedAt, performance.now() - startedMs)
+      recordQueryHistory(connectionId, sql, queryId, startedAt, performance.now() - startedMs, options)
       setTabQueryState(tabId, queryId)
       return true
     } catch (error) {
       const appError = normalizeAppError(error)
       void useQueryHistoryStore.getState().addEntry({
         connectionId,
+        database: options.database,
+        schema: options.schema,
         sql,
         status: 'failed',
         startedAt,
@@ -157,10 +166,13 @@ function recordQueryHistory(
   queryId: string,
   startedAt: string,
   elapsedMs: number,
+  context: { database?: string | null; schema?: string | null },
 ) {
   const result = useQueryResultStore.getState().results[queryId]?.[0]
   void useQueryHistoryStore.getState().addEntry({
     connectionId,
+    database: context.database,
+    schema: context.schema,
     sql,
     status: 'success',
     startedAt,
@@ -202,7 +214,7 @@ function canStreamSql(sql: string) {
   return splitSqlStatements(sql).length === 1
 }
 
-function containsLikelyDdl(sql: string) {
+export function containsLikelyDdl(sql: string) {
   return splitSqlStatements(sql).some((statement) => {
     const normalized = statement.trim().toLowerCase()
     return (
@@ -210,10 +222,7 @@ function containsLikelyDdl(sql: string) {
       normalized.startsWith('alter ') ||
       normalized.startsWith('drop ') ||
       normalized.startsWith('truncate ') ||
-      normalized.startsWith('rename ') ||
-      normalized.startsWith('comment ') ||
-      normalized.startsWith('grant ') ||
-      normalized.startsWith('revoke ')
+      normalized.startsWith('rename ')
     )
   })
 }

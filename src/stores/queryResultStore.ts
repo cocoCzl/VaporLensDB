@@ -25,7 +25,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
   explains: {},
   sources: {},
   setResults: (queryId, results) =>
-    set((s) => ({ results: retainNewest({ ...s.results, [queryId]: results.map(boundInteractiveResult) }) })),
+    set((s) => ({ results: retainNewest({ ...s.results, [queryId]: results.map((result) => boundInteractiveResult({ ...result, streaming: false })) }) })),
   setExplain: (queryId, explain) =>
     set((s) => ({ explains: retainNewest({ ...s.explains, [queryId]: explain }) })),
   setResultSource: (queryId, connectionId, context = {}) =>
@@ -52,6 +52,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
             queryId,
             truncated: false,
             maxRows: null,
+            streaming: true,
           },
         ],
       }),
@@ -90,6 +91,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
           : done.maxRows ?? current.maxRows ?? MAX_INTERACTIVE_RESULT_ROWS,
         firstRowMs: done.firstRowMs ?? null,
         receivedBytes: done.receivedBytes,
+        streaming: false,
       }
 
       return { results: retainNewest({ ...s.results, [done.queryId]: [next] }) }

@@ -115,10 +115,10 @@ export function SqlEditor({
         minimap: { enabled: false },
         fontSize: editorFontSize,
         fontFamily: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-        lineHeight: 20,
+        lineHeight: 22,
         // Give SQL a composed writing surface while keeping the result panel
         // as the primary work area below it.
-        padding: { top: 12, bottom: 12 },
+        padding: { top: 16, bottom: 12 },
         scrollBeyondLastLine: false,
         automaticLayout: true,
         wordWrap: 'on',

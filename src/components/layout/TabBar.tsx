@@ -106,8 +106,8 @@ export function TabBar() {
   }
 
   return (
-    <div className="ide-tab-strip flex h-9 items-center border-b">
-      <div className="flex min-w-0 flex-1 overflow-x-auto">
+    <div className="ide-tab-strip flex h-10 items-center border-b">
+      <div className="tab-strip-scroll flex min-w-0 flex-1 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId
           const connection = connections.find((item) => item.id === tab.connectionId)
@@ -117,7 +117,7 @@ export function TabBar() {
             <div
               key={tab.id}
               className={[
-                'group flex h-9 max-w-56 items-center border-r border-border/45 text-xs transition-colors',
+                'group flex h-10 min-w-28 max-w-52 items-center border-r border-border/45 text-xs transition-colors',
                 active
                   ? 'bg-surface text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary)),inset_0_1px_0_hsl(var(--foreground)/0.035)]'
                   : 'text-muted-foreground hover:bg-accent-hover hover:text-foreground',

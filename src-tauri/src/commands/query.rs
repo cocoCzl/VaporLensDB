@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::{
+    models::connection::DriverType,
     models::query_result::ExplainResult,
     services::{
         connection_manager::{
@@ -115,6 +116,61 @@ async fn ensure_console_session(
     Ok(())
 }
 
+/// Apply the SQL tab's explicit execution context immediately before its
+/// statement runs.  A toolbar selection is a property of the logical tab,
+/// not merely metadata used for completion.  Native PostgreSQL/MySQL runtime
+/// connections are shared in Auto mode, so the selected context must be sent
+/// to the driver for every execution rather than inherited from the sidebar
+/// or a prior tab's session state.
+async fn apply_execution_context(
+    driver: std::sync::Arc<dyn crate::drivers::trait_def::DatabaseDriver>,
+    driver_type: DriverType,
+    database: Option<&str>,
+    schema: Option<&str>,
+) -> Result<(), String> {
+    let statement = execution_context_statement(driver_type, database, schema);
+
+    if let Some(statement) = statement {
+        driver
+            .execute_query(&statement, None)
+            .await
+            .map_err(String::from)?;
+    }
+    Ok(())
+}
+
+fn execution_context_statement(
+    driver_type: DriverType,
+    database: Option<&str>,
+    schema: Option<&str>,
+) -> Option<String> {
+    match driver_type {
+        DriverType::Postgres => schema
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!("SET search_path TO {}", quote_identifier(value))),
+        DriverType::Mysql => database
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!("USE {}", quote_identifier(value))),
+        _ => None,
+    }
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('\"', "\"\""))
+}
+
+fn execution_driver_type(
+    state: &State<'_, AppState>,
+    connection_id: Uuid,
+) -> Result<DriverType, String> {
+    state
+        .config_store
+        .get_connection(connection_id)
+        .map_err(String::from)?
+        .map(|config| config.driver_type)
+        .ok_or_else(|| "connection not found".to_string())
+}
+
 #[tauri::command]
 pub async fn execute_query(
     app: AppHandle,
@@ -138,6 +194,13 @@ pub async fn execute_query(
                 "transaction failed; rollback is required".to_string(),
             )));
         }
+        apply_execution_context(
+            driver.clone(),
+            execution_driver_type(&state, input.connection_id)?,
+            input.database.as_deref(),
+            input.schema.as_deref(),
+        )
+        .await?;
         if phase == ConsoleTransactionPhase::Idle {
             driver.begin_transaction().await.map_err(String::from)?;
             state.connection_manager.lock().await.set_console_phase(
@@ -146,6 +209,7 @@ pub async fn execute_query(
                 ConsoleTransactionPhase::Active,
             );
         }
+        let sql = input.sql.clone();
         let result = state
             .query_engine
             .execute_query(driver, &input.sql, input.query_id)
@@ -157,6 +221,7 @@ pub async fn execute_query(
                 ConsoleTransactionPhase::Failed,
             );
         }
+        clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
         return result.map_err(Into::into);
     }
     let operation_start = {
@@ -185,6 +250,21 @@ pub async fn execute_query(
             operation
         }
     };
+    if let Err(error) = apply_execution_context(
+        operation.driver.clone(),
+        execution_driver_type(&state, input.connection_id)?,
+        input.database.as_deref(),
+        input.schema.as_deref(),
+    )
+    .await
+    {
+        state
+            .connection_manager
+            .lock()
+            .await
+            .release_operation(input.connection_id);
+        return Err(error);
+    }
     log_execute_context(
         input.tab_id.as_deref(),
         input.connection_id,
@@ -195,6 +275,7 @@ pub async fn execute_query(
         operation.generation,
     );
     emit_query_queue_state(&app, &input.query_id, input.connection_id, "running");
+    let sql = input.sql.clone();
     let execution = state
         .query_engine
         .execute_query(operation.driver, &input.sql, input.query_id)
@@ -210,6 +291,7 @@ pub async fn execute_query(
         )
         .await;
     }
+    clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &execution).await;
     state
         .connection_manager
         .lock()
@@ -241,6 +323,13 @@ pub async fn execute_query_stream(
                 "transaction failed; rollback is required".to_string(),
             )));
         }
+        apply_execution_context(
+            driver.clone(),
+            execution_driver_type(&state, input.connection_id)?,
+            input.database.as_deref(),
+            input.schema.as_deref(),
+        )
+        .await?;
         if phase == ConsoleTransactionPhase::Idle {
             driver.begin_transaction().await.map_err(String::from)?;
             state.connection_manager.lock().await.set_console_phase(
@@ -249,6 +338,7 @@ pub async fn execute_query_stream(
                 ConsoleTransactionPhase::Active,
             );
         }
+        let sql = input.sql.clone();
         let result = state
             .query_engine
             .execute_query_stream(
@@ -269,6 +359,7 @@ pub async fn execute_query_stream(
                 ConsoleTransactionPhase::Failed,
             );
         }
+        clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
         return result;
     }
     let operation_start = {
@@ -296,6 +387,21 @@ pub async fn execute_query_stream(
             operation
         }
     };
+    if let Err(error) = apply_execution_context(
+        operation.driver.clone(),
+        execution_driver_type(&state, input.connection_id)?,
+        input.database.as_deref(),
+        input.schema.as_deref(),
+    )
+    .await
+    {
+        state
+            .connection_manager
+            .lock()
+            .await
+            .release_operation(input.connection_id);
+        return Err(error);
+    }
     log_execute_context(
         input.tab_id.as_deref(),
         input.connection_id,
@@ -311,6 +417,7 @@ pub async fn execute_query_stream(
         input.connection_id,
         "running",
     );
+    let sql = input.sql.clone();
     let result = state
         .query_engine
         .execute_query_stream(
@@ -335,12 +442,40 @@ pub async fn execute_query_stream(
         )
         .await;
     }
+    clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
     state
         .connection_manager
         .lock()
         .await
         .release_operation(input.connection_id);
     result
+}
+
+async fn clear_metadata_after_successful_ddl<T, E>(
+    state: &State<'_, AppState>,
+    connection_id: Uuid,
+    sql: &str,
+    result: &Result<T, E>,
+) {
+    if result.is_ok() && contains_metadata_ddl(sql) {
+        state.metadata_service.clear_connection(connection_id).await;
+        state.metadata_index.clear_connection(connection_id).await;
+    }
+}
+
+fn contains_metadata_ddl(sql: &str) -> bool {
+    sql.split(';').any(|statement| {
+        let keyword = statement
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim_matches(|character: char| !character.is_ascii_alphabetic())
+            .to_ascii_uppercase();
+        matches!(
+            keyword.as_str(),
+            "ALTER" | "CREATE" | "DROP" | "RENAME" | "TRUNCATE"
+        )
+    })
 }
 
 fn log_execute_context(
@@ -397,7 +532,7 @@ async fn retire_stale_connection(state: &State<'_, AppState>, connection_id: Uui
 
 #[cfg(test)]
 mod tests {
-    use super::should_retire_stale_connection_message;
+    use super::{contains_metadata_ddl, should_retire_stale_connection_message};
 
     #[test]
     fn detects_closed_pool_errors_without_retiring_sql_errors() {
@@ -407,6 +542,21 @@ mod tests {
         assert!(should_retire_stale_connection_message("pool 已被关闭"));
         assert!(!should_retire_stale_connection_message(
             "ORA-00942: table or view does not exist"
+        ));
+    }
+
+    #[test]
+    fn identifies_metadata_changing_ddl_without_invalidating_for_dml_or_selects() {
+        assert!(contains_metadata_ddl(
+            "CREATE TABLE child_items (id INTEGER PRIMARY KEY);"
+        ));
+        assert!(contains_metadata_ddl(
+            "ALTER TABLE child_items ADD COLUMN note TEXT;"
+        ));
+        assert!(contains_metadata_ddl("DROP VIEW child_item_view;"));
+        assert!(!contains_metadata_ddl("SELECT * FROM child_items;"));
+        assert!(!contains_metadata_ddl(
+            "UPDATE child_items SET quantity = 11 WHERE id = 1;"
         ));
     }
 }
@@ -602,4 +752,34 @@ pub async fn rollback_console_transaction(
         ConsoleTransactionPhase::Idle,
     );
     Ok(manager.console_transaction_state(input.connection_id, &input.console_id))
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::execution_context_statement;
+    use crate::models::connection::DriverType;
+
+    #[test]
+    fn native_execution_context_uses_the_tab_not_the_prior_session_state() {
+        assert_eq!(
+            execution_context_statement(DriverType::Postgres, Some("ignored"), Some("qa_a")),
+            Some("SET search_path TO \"qa_a\"".to_string())
+        );
+        assert_eq!(
+            execution_context_statement(DriverType::Mysql, Some("vaporlensdb_qa_alt"), None),
+            Some("USE \"vaporlensdb_qa_alt\"".to_string())
+        );
+        assert_eq!(
+            execution_context_statement(DriverType::Postgres, None, None),
+            None
+        );
+    }
+
+    #[test]
+    fn execution_context_quotes_identifiers() {
+        assert_eq!(
+            execution_context_statement(DriverType::Postgres, None, Some("qa\"name")),
+            Some("SET search_path TO \"qa\"\"name\"".to_string())
+        );
+    }
 }

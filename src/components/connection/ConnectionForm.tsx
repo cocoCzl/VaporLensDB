@@ -11,6 +11,7 @@ import { AppSelect } from '@/components/ui/app-select'
 import { normalizeAppError } from '@/ipc/client'
 import { openExternalUrl } from '@/lib/openExternalUrl'
 import { normalizeConnectionEndpoint } from '@/lib/connectionEndpoint'
+import { normalizeConnectionUrl } from '@/lib/connectionUrlNormalization'
 import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
@@ -830,10 +831,7 @@ function normalizeInput(
     host: emptyToNull(endpoint.host),
     port: endpoint.port,
     database: emptyToNull(input.database),
-    connectionUrl:
-      profile.usesUrl && variant !== 'urlOnly'
-        ? emptyToNull(profile.defaultUrl(input, variant))
-        : emptyToNull(input.connectionUrl),
+    connectionUrl: normalizeConnectionUrl(input, variant, profile),
     username: variant === 'file' ? null : emptyToNull(input.username),
     password: variant === 'file' ? null : emptyToNull(input.password),
     savePassword: variant === 'file' ? false : input.savePassword,

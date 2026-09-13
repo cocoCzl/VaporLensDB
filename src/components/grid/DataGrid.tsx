@@ -63,7 +63,7 @@ export function DataGrid({
   }
 
   if (result.columns.length === 0) {
-    if (result.elapsedMs === 0 && result.affectedRows === 0) {
+    if (result.streaming) {
       return (
         <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
           {t('result.receiving')}

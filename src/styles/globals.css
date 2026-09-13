@@ -314,6 +314,15 @@
     border-bottom: 1px solid hsl(var(--border) / 0.64);
   }
 
+  .tab-strip-scroll {
+    scrollbar-width: none;
+    overscroll-behavior-inline: contain;
+  }
+
+  .tab-strip-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
   .workspace-context-label {
     color: hsl(var(--muted-foreground));
     font-size: 0.625rem;

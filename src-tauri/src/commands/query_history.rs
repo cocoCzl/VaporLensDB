@@ -13,6 +13,7 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct CreateQueryHistoryInput {
     pub connection_id: Uuid,
+    pub database: Option<String>,
     pub schema: Option<String>,
     pub sql: String,
     pub status: QueryHistoryStatus,
@@ -44,7 +45,7 @@ pub fn add_query_history(
         connection_id: connection.id,
         connection_name_snapshot: connection.name,
         driver_type: connection.driver_type,
-        database: connection.database,
+        database: input.database.or(connection.database),
         schema: input.schema,
         sql: input.sql,
         status: input.status,

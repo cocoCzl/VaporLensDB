@@ -1,5 +1,6 @@
 use chrono::Utc;
 use serde::Deserialize;
+use std::path::Path;
 use tauri::State;
 use uuid::Uuid;
 
@@ -56,7 +57,7 @@ pub struct SshTunnelInput {
 }
 
 #[tauri::command]
-pub fn create_connection(
+pub async fn create_connection(
     state: State<'_, AppState>,
     mut input: ConnectionInput,
 ) -> Result<ConnectionConfig, String> {
@@ -64,6 +65,13 @@ pub fn create_connection(
     let password = input.password.clone();
     let save_password = input.save_password;
     let config = input_to_config(input, Uuid::new_v4());
+    // Explicitly creating a new SQLite datasource retains the product's
+    // create-on-open contract. Reconnects use the separate saved-file guard.
+    if config.driver_type == DriverType::Sqlite {
+        test_connection_service(&config, None, None)
+            .await
+            .map_err(String::from)?;
+    }
     state
         .config_store
         .create_connection(config, password, save_password)
@@ -144,6 +152,7 @@ pub async fn connect(
         .get_connection(id)
         .map_err(String::from)?
         .ok_or_else(|| format!("connection not found: {id}"))?;
+    validate_saved_sqlite_reconnect(&config)?;
     let password = match password.filter(|value| !value.is_empty()) {
         Some(password) => Some(password),
         None => state
@@ -210,6 +219,25 @@ pub async fn connect(
         .await
         .finish_connect(id, active)
         .map_err(Into::into)
+}
+
+/// A saved SQLite datasource represents an existing user file. Do not let
+/// SQLite's create-on-open behavior silently replace a missing database during
+/// reconnect; explicit new-connection flows still retain their create contract.
+fn validate_saved_sqlite_reconnect(config: &ConnectionConfig) -> Result<(), String> {
+    if config.driver_type != DriverType::Sqlite {
+        return Ok(());
+    }
+    let path = config
+        .connection_url
+        .as_deref()
+        .ok_or_else(|| "SQLite database path is required".to_string())?;
+    if path == ":memory:" || Path::new(path).is_file() {
+        return Ok(());
+    }
+    Err(format!(
+        "SQLite database file not found: {path}. Update the saved connection path or create a new SQLite connection."
+    ))
 }
 
 #[tauri::command]
@@ -527,5 +555,32 @@ mod tests {
             normalize_host_port(Some("2001:db8::1".to_string()), Some(3306)),
             (Some("2001:db8::1".to_string()), Some(3306))
         );
+    }
+
+    #[test]
+    fn saved_sqlite_reconnect_requires_an_existing_file() {
+        let missing =
+            std::env::temp_dir().join(format!("vaporlensdb-missing-{}.sqlite", Uuid::new_v4()));
+        let mut sqlite = input(&missing.to_string_lossy());
+        sqlite.driver_type = DriverType::Sqlite;
+        let config = input_to_config(sqlite, Uuid::new_v4());
+
+        let error = validate_saved_sqlite_reconnect(&config)
+            .expect_err("missing saved SQLite file must not reconnect");
+        assert!(error.contains("file not found"));
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn saved_sqlite_reconnect_allows_an_existing_file() {
+        let path =
+            std::env::temp_dir().join(format!("vaporlensdb-existing-{}.sqlite", Uuid::new_v4()));
+        std::fs::File::create(&path).expect("temporary SQLite file");
+        let mut sqlite = input(&path.to_string_lossy());
+        sqlite.driver_type = DriverType::Sqlite;
+        let config = input_to_config(sqlite, Uuid::new_v4());
+
+        assert!(validate_saved_sqlite_reconnect(&config).is_ok());
+        std::fs::remove_file(path).expect("remove temporary SQLite file");
     }
 }

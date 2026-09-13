@@ -21,6 +21,7 @@ export interface QueryHistoryEntry {
 
 export interface CreateQueryHistoryInput {
   connectionId: string
+  database?: string | null
   schema?: string | null
   sql: string
   status: QueryHistoryStatus

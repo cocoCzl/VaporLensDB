@@ -59,7 +59,7 @@ export function AppTopBar() {
   }
 
   return (
-    <header className="ide-top-bar flex h-11 shrink-0 items-center gap-2 border-b px-3.5" aria-label={t('topBar.label')}>
+    <header className="ide-top-bar flex h-[46px] shrink-0 items-center gap-2.5 border-b px-3.5" aria-label={t('topBar.label')}>
       <VaporLensMark className="size-6 shrink-0" />
 
       <div className="flex shrink-0 items-center gap-0.5">
@@ -71,12 +71,12 @@ export function AppTopBar() {
         </IconTooltipButton>
       </div>
 
-      <div className="flex min-w-0 flex-1 justify-center px-3">
+      <div className="flex min-w-0 flex-1 justify-center px-4">
         <Button
           type="button"
           size="sm"
           variant="outline"
-          className="h-[30px] w-full max-w-[36rem] justify-start gap-2 px-2.5 font-normal text-muted-foreground shadow-none"
+          className="h-8 w-[clamp(260px,32vw,520px)] max-w-full justify-start gap-2 px-2.5 font-normal text-muted-foreground shadow-none"
           aria-label={t('topBar.searchAria')}
           onClick={() => window.dispatchEvent(new Event('vaporlensdb:open-command-palette'))}
         >
@@ -85,7 +85,7 @@ export function AppTopBar() {
             <span className="hidden min-[980px]:inline">{t('topBar.searchPlaceholder')}</span>
             <span className="min-[980px]:hidden">{t('topBar.searchShort')}</span>
           </span>
-          <kbd className="hidden rounded-sm border border-border bg-surface-secondary px-1 py-px font-mono text-[10px] text-muted-foreground min-[760px]:inline">{commandShortcut}</kbd>
+          <kbd className="hidden rounded-sm border border-border/70 bg-surface-secondary/65 px-1 py-px font-mono text-[10px] text-muted-foreground/80 min-[760px]:inline">{commandShortcut}</kbd>
         </Button>
       </div>
 
