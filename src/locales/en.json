@@ -676,6 +676,7 @@
     "closeTab": "Close tab",
     "closeOtherTabs": "Close other tabs",
     "closeTabsToRight": "Close tabs to the right",
+    "closeAllTabs": "Close all tabs",
     "lastEditedScript": "Last edited SQL script",
     "noRecentScripts": "No recent SQL drafts yet.",
     "noRecentScriptsHint": "Continue your work here after editing SQL.",

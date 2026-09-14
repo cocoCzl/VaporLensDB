@@ -10,20 +10,12 @@ const mocks = vi.hoisted(() => ({
   saveTabDraft: vi.fn(),
   setActiveConnection: vi.fn(),
   setActiveTab: vi.fn(),
+  tabs: [] as Array<Record<string, unknown>>,
 }))
 
 vi.mock('@/stores/editorStore', () => ({
   useEditorStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
-    tabs: [{
-      id: 'sql-1',
-      kind: 'sql',
-      title: 'SQL 1',
-      sql: '',
-      connectionId: null,
-      draftId: null,
-      transactionMode: 'auto',
-      transactionPhase: 'idle',
-    }],
+    tabs: mocks.tabs,
     activeTabId: 'sql-1',
     closeTab: mocks.closeTab,
     renameTab: vi.fn(),
@@ -67,6 +59,16 @@ describe('TabBar close control', () => {
     mocks.closeTab.mockClear()
     mocks.setActiveTab.mockClear()
     mocks.saveTabDraft.mockResolvedValue({ kind: 'cleared' })
+    mocks.tabs = [{
+      id: 'sql-1',
+      kind: 'sql',
+      title: 'SQL 1',
+      sql: '',
+      connectionId: null,
+      draftId: null,
+      transactionMode: 'auto',
+      transactionPhase: 'idle',
+    }]
   })
 
   it('renders a sibling close button that closes without activating the tab', () => {
@@ -79,5 +81,31 @@ describe('TabBar close control', () => {
 
     expect(mocks.closeTab).toHaveBeenCalledWith('sql-1')
     expect(mocks.setActiveTab).not.toHaveBeenCalled()
+  })
+
+  it('keeps a context-menu action mounted through mousedown and closes all tabs', async () => {
+    mocks.tabs = [
+      ...mocks.tabs,
+      {
+        id: 'sql-2',
+        kind: 'sql',
+        title: 'SQL 2',
+        sql: '',
+        connectionId: null,
+        draftId: null,
+        transactionMode: 'auto',
+        transactionPhase: 'idle',
+      },
+    ]
+    render(<TabBar />)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'SQL 1' }), { clientX: 12, clientY: 12 })
+    const closeAll = screen.getByRole('menuitem', { name: 'Close all tabs' })
+    fireEvent.mouseDown(closeAll)
+    fireEvent.click(closeAll)
+
+    await Promise.resolve()
+    expect(mocks.closeTab).toHaveBeenCalledWith('sql-1')
+    expect(mocks.closeTab).toHaveBeenCalledWith('sql-2')
   })
 })

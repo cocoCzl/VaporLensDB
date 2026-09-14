@@ -30,7 +30,8 @@ export function TabBar() {
   const [tabListOpen, setTabListOpen] = useState(false)
   const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const tabListMenuRef = useRef<HTMLDivElement | null>(null)
-  const tabRefs = useRef(new Map<string, HTMLButtonElement>())
+  const tabContextMenuRef = useRef<HTMLDivElement | null>(null)
+  const tabRefs = useRef(new Map<string, HTMLDivElement>())
 
   function commitRename(tabId: string) {
     renameTab(tabId, editingTitle)
@@ -69,14 +70,22 @@ export function TabBar() {
 
   useEffect(() => {
     if (!activeTabId) return
-    tabRefs.current.get(activeTabId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    const keepActiveTabVisible = () => {
+      tabRefs.current.get(activeTabId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+    keepActiveTabVisible()
+    window.addEventListener('resize', keepActiveTabVisible)
+    return () => window.removeEventListener('resize', keepActiveTabVisible)
   }, [activeTabId])
 
   useEffect(() => {
     if (!tabListOpen && !tabContextMenu) return
 
     function closeMenus(event: MouseEvent) {
-      if (tabListMenuRef.current?.contains(event.target as Node)) return
+      if (
+        tabListMenuRef.current?.contains(event.target as Node)
+        || tabContextMenuRef.current?.contains(event.target as Node)
+      ) return
       setTabListOpen(false)
       setTabContextMenu(null)
     }
@@ -116,6 +125,13 @@ export function TabBar() {
           return (
             <div
               key={tab.id}
+              ref={(element) => {
+                if (element) {
+                  tabRefs.current.set(tab.id, element)
+                } else {
+                  tabRefs.current.delete(tab.id)
+                }
+              }}
               className={[
                 'group flex h-10 min-w-32 max-w-52 shrink-0 items-center border-r border-border/45 text-xs transition-colors',
                 active
@@ -151,13 +167,6 @@ export function TabBar() {
                 </div>
               ) : (
                 <button
-                  ref={(element) => {
-                    if (element) {
-                      tabRefs.current.set(tab.id, element)
-                    } else {
-                      tabRefs.current.delete(tab.id)
-                    }
-                  }}
                   type="button"
                   className="flex min-w-0 flex-1 items-center gap-1.5 px-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35"
                   onClick={() => {
@@ -261,6 +270,7 @@ export function TabBar() {
         return (
           <div
             role="menu"
+            ref={tabContextMenuRef}
             className="ide-overlay fixed z-[200] w-48 rounded-lg p-1 text-xs"
             style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
           >
@@ -304,6 +314,16 @@ export function TabBar() {
             >
               <X className="size-3.5" />
               {t('sql.closeTabsToRight')}
+            </button>
+            <div role="separator" className="my-1 border-t border-border/70" />
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+              onClick={() => closeTabs(tabs)}
+            >
+              <X className="size-3.5" />
+              {t('sql.closeAllTabs')}
             </button>
           </div>
         )

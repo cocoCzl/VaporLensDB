@@ -676,6 +676,7 @@
     "closeTab": "关闭标签页",
     "closeOtherTabs": "关闭其他标签页",
     "closeTabsToRight": "关闭右侧标签页",
+    "closeAllTabs": "关闭所有标签页",
     "lastEditedScript": "上次编辑的 SQL 脚本",
     "noRecentScripts": "还没有最近 SQL 草稿。",
     "noRecentScriptsHint": "编辑 SQL 后可在这里继续工作。",
