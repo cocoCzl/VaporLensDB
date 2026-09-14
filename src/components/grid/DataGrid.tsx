@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/incompatible-library -- TanStack Virtual intentionally exposes non-memoizable instance methods. */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Braces, Copy, Maximize2, Rows3, X } from 'lucide-react'
+import { Braces, Check, Copy, Maximize2, Rows3, X } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -72,8 +72,9 @@ export function DataGrid({
     }
 
     return (
-      <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-        {t('result.statementComplete', { count: result.affectedRows, elapsedMs: result.elapsedMs })}
+      <div className="flex h-full items-center justify-center gap-1.5 text-xs text-success-foreground">
+        <Check className="size-3.5 text-success" aria-hidden="true" />
+        {statementCompletionLabel(result, t)}
       </div>
     )
   }
@@ -256,6 +257,14 @@ export function DataGrid({
  * Result-set metadata comes from the driver's query response, so opening this
  * view never needs a second SQL request or assumes a single source table.
  */
+function statementCompletionLabel(result: QueryResult, t: ReturnType<typeof useTranslation>['t']) {
+  if (result.statementKind === 'dml') return t('result.dmlSuccess', { count: result.affectedRows, elapsedMs: result.elapsedMs })
+  if (result.statementKind === 'ddl') return t('result.ddlSuccess', { elapsedMs: result.elapsedMs })
+  if (result.statementKind === 'commit') return t('result.commitSuccess', { elapsedMs: result.elapsedMs })
+  if (result.statementKind === 'rollback') return t('result.rollbackSuccess', { elapsedMs: result.elapsedMs })
+  return t('result.statementSuccess', { elapsedMs: result.elapsedMs })
+}
+
 export function ResultMetadataGrid({ result }: DataGridProps) {
   const { t } = useTranslation()
 

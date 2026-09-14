@@ -117,7 +117,7 @@ export function TabBar() {
             <div
               key={tab.id}
               className={[
-                'group flex h-10 min-w-28 max-w-52 items-center border-r border-border/45 text-xs transition-colors',
+                'group flex h-10 min-w-32 max-w-52 shrink-0 items-center border-r border-border/45 text-xs transition-colors',
                 active
                   ? 'bg-surface text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary)),inset_0_1px_0_hsl(var(--foreground)/0.035)]'
                   : 'text-muted-foreground hover:bg-accent-hover hover:text-foreground',
@@ -202,7 +202,7 @@ export function TabBar() {
                 type="button"
                 aria-label={t('sql.closeTab')}
                 title={t('sql.closeTab')}
-                className="mr-1 grid size-5 shrink-0 place-items-center rounded-sm opacity-0 transition-colors hover:bg-accent-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100"
+                className={['mr-1 grid size-5 shrink-0 place-items-center rounded-sm transition-colors hover:bg-accent-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100', active ? 'opacity-100' : 'opacity-0'].join(' ')}
                 onClick={() => closeEditorTab(tab)}
               >
                 <X className="size-3" />

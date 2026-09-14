@@ -19,6 +19,7 @@ export interface QueryResult {
   receivedBytes?: number | null
   /** True only while a streamed query is awaiting its terminal completion event. */
   streaming?: boolean
+  statementKind?: 'dml' | 'ddl' | 'commit' | 'rollback' | 'other'
 }
 
 export interface ExecuteQueryResponse {

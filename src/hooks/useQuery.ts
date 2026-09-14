@@ -43,7 +43,7 @@ export function useQuery() {
     setTabRunning(tabId, true, queryId)
     try {
       if (canStreamSql(sql)) {
-        startStreamResult(queryId)
+        startStreamResult(queryId, classifyStatement(sql))
         const streamState = await registerStreamListeners(tabId, queryId)
         try {
           await executeQueryStream({
@@ -87,7 +87,7 @@ export function useQuery() {
           database: options.database,
           schema: options.schema,
         })
-        setResults(queryId, response.results)
+        setResults(queryId, response.results, classifyStatement(sql))
       }
       setResultSource(queryId, connectionId, options)
       if (useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual') {
@@ -212,6 +212,15 @@ async function registerStreamListeners(tabId: string, queryId: string) {
 
 function canStreamSql(sql: string) {
   return splitSqlStatements(sql).length === 1
+}
+
+function classifyStatement(sql: string): import('@/types/query').QueryResult['statementKind'] {
+  const statement = sql.trim().toLowerCase()
+  if (/^(insert|update|delete|replace|merge)\b/u.test(statement)) return 'dml'
+  if (/^(create|alter|drop|rename|truncate)\b/u.test(statement)) return 'ddl'
+  if (/^commit\b/u.test(statement)) return 'commit'
+  if (/^rollback\b/u.test(statement)) return 'rollback'
+  return 'other'
 }
 
 export function containsLikelyDdl(sql: string) {

@@ -11,10 +11,10 @@ interface QueryResultState {
   results: Record<string, QueryResult[]>
   explains: Record<string, ExplainResult>
   sources: Record<string, { connectionId: string; database: string | null; schema: string | null; executedAt: string }>
-  setResults: (queryId: string, results: QueryResult[]) => void
+  setResults: (queryId: string, results: QueryResult[], statementKind?: QueryResult['statementKind']) => void
   setExplain: (queryId: string, explain: ExplainResult) => void
   setResultSource: (queryId: string, connectionId: string, context?: { database?: string | null; schema?: string | null }) => void
-  startStreamResult: (queryId: string) => void
+  startStreamResult: (queryId: string, statementKind?: QueryResult['statementKind']) => void
   appendResultChunk: (chunk: QueryResultChunk) => void
   finishStreamResult: (done: QueryStreamDone) => void
   clearResult: (queryId: string) => void
@@ -24,8 +24,8 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
   results: {},
   explains: {},
   sources: {},
-  setResults: (queryId, results) =>
-    set((s) => ({ results: retainNewest({ ...s.results, [queryId]: results.map((result) => boundInteractiveResult({ ...result, streaming: false })) }) })),
+  setResults: (queryId, results, statementKind) =>
+    set((s) => ({ results: retainNewest({ ...s.results, [queryId]: results.map((result) => boundInteractiveResult({ ...result, streaming: false, statementKind })) }) })),
   setExplain: (queryId, explain) =>
     set((s) => ({ explains: retainNewest({ ...s.explains, [queryId]: explain }) })),
   setResultSource: (queryId, connectionId, context = {}) =>
@@ -38,7 +38,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
         executedAt: new Date().toISOString(),
       },
     }) })),
-  startStreamResult: (queryId) =>
+  startStreamResult: (queryId, statementKind) =>
     set((s) => ({
       results: retainNewest({
         ...s.results,
@@ -53,6 +53,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
             truncated: false,
             maxRows: null,
             streaming: true,
+            statementKind,
           },
         ],
       }),

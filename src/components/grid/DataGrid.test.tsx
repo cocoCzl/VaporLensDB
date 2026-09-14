@@ -59,6 +59,11 @@ describe('DataGrid', () => {
     expect(screen.getByText('INT')).toBeInTheDocument()
   })
 
+  it('uses an explicit DML success summary instead of a generic completion', () => {
+    render(<DataGrid result={{ queryId: 'update', columns: [], rows: [], rowCount: 0, affectedRows: 1, elapsedMs: 2, truncated: false, statementKind: 'dml' }} />)
+    expect(screen.getByText(/Executed successfully.*1 rows affected.*2 ms/)).toBeInTheDocument()
+  })
+
   it('renders a two-line column header with metadata-only details', () => {
     render(
       <DataGrid
