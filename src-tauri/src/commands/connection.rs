@@ -1,6 +1,9 @@
 use chrono::Utc;
 use serde::Deserialize;
-use std::path::Path;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tauri::State;
 use uuid::Uuid;
 
@@ -136,9 +139,82 @@ pub async fn test_connection(
         .transpose()
         .map_err(String::from)?
         .flatten();
-    test_connection_service(&config, password.as_deref(), definition.as_ref())
-        .await
-        .map_err(Into::into)
+    if config.driver_type == DriverType::Sqlite {
+        test_sqlite_connection(&config, password.as_deref(), definition.as_ref())
+            .await
+            .map_err(Into::into)
+    } else {
+        test_connection_service(&config, password.as_deref(), definition.as_ref())
+            .await
+            .map_err(Into::into)
+    }
+}
+
+/// Tests an unsaved SQLite path without materializing the final database.
+///
+/// SQLite's normal read-write connection intentionally carries CREATE for the
+/// actual save/connect workflow. For Test Connection, an existing file is
+/// opened normally, while a missing path is validated with a disposable
+/// SQLite file in the same parent directory. That proves the driver can
+/// create and open a database there without leaving a user-visible database
+/// behind when the connection dialog is cancelled.
+async fn test_sqlite_connection(
+    config: &ConnectionConfig,
+    password: Option<&str>,
+    definition: Option<&crate::models::driver_catalog::DriverDefinition>,
+) -> Result<(), crate::models::error::AppError> {
+    let path = config.connection_url.as_deref().ok_or_else(|| {
+        crate::models::error::AppError::ConfigError("SQLite database path is required".to_string())
+    })?;
+    let target = Path::new(path);
+
+    if path == ":memory:" || target.exists() {
+        return test_connection_service(config, password, definition).await;
+    }
+
+    let parent = target
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        return Err(crate::models::error::AppError::ConfigError(format!(
+            "SQLite parent directory does not exist: {}",
+            parent.display()
+        )));
+    }
+
+    let probe = sqlite_test_probe_path(parent);
+    let mut probe_config = config.clone();
+    probe_config.connection_url = Some(probe.to_string_lossy().into_owned());
+    let result = test_connection_service(&probe_config, password, definition).await;
+    let cleanup = remove_sqlite_test_probe(&probe);
+
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(error)) => Err(crate::models::error::AppError::IoError(format!(
+            "SQLite path validation succeeded but temporary probe cleanup failed: {error}"
+        ))),
+        (Err(error), _) => Err(error),
+    }
+}
+
+fn sqlite_test_probe_path(parent: &Path) -> PathBuf {
+    parent.join(format!(
+        ".vaporlensdb-sqlite-test-{}.sqlite",
+        Uuid::new_v4()
+    ))
+}
+
+fn remove_sqlite_test_probe(path: &Path) -> Result<(), std::io::Error> {
+    for suffix in ["", "-journal", "-wal", "-shm"] {
+        let candidate = PathBuf::from(format!("{}{}", path.display(), suffix));
+        match fs::remove_file(candidate) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -494,6 +570,7 @@ fn input_to_ssh_tunnel(input: SshTunnelInput) -> Option<SshTunnelConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drivers::{sqlite::SqliteDriver, trait_def::DatabaseDriver};
 
     fn input(url: &str) -> ConnectionInput {
         ConnectionInput {
@@ -582,5 +659,83 @@ mod tests {
 
         assert!(validate_saved_sqlite_reconnect(&config).is_ok());
         std::fs::remove_file(path).expect("remove temporary SQLite file");
+    }
+
+    fn sqlite_config(path: &Path) -> ConnectionConfig {
+        let mut sqlite = input(&path.to_string_lossy());
+        sqlite.driver_type = DriverType::Sqlite;
+        input_to_config(sqlite, Uuid::new_v4())
+    }
+
+    #[tokio::test]
+    async fn sqlite_test_connection_keeps_a_missing_target_absent() {
+        let root = std::env::temp_dir().join(format!("vaporlensdb-sqlite-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create test root");
+        let target = root.join("space path").join("测试路径.sqlite");
+        fs::create_dir_all(target.parent().expect("test parent")).expect("create test parent");
+        let config = sqlite_config(&target);
+
+        test_sqlite_connection(&config, None, None)
+            .await
+            .expect("test a new SQLite path");
+
+        assert!(
+            !target.exists(),
+            "Test Connection must not create the target database"
+        );
+        assert_eq!(
+            fs::read_dir(target.parent().expect("test parent"))
+                .unwrap()
+                .count(),
+            0
+        );
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[tokio::test]
+    async fn sqlite_test_connection_preserves_an_existing_database() {
+        let path = std::env::temp_dir().join(format!(
+            "vaporlensdb-existing-test-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let driver = SqliteDriver::connect(path.to_str().expect("utf-8 path"))
+            .await
+            .expect("create SQLite database");
+        driver
+            .execute_query("CREATE TABLE marker(value TEXT NOT NULL)", None)
+            .await
+            .expect("create marker table");
+        driver
+            .execute_query("INSERT INTO marker VALUES ('preserved')", None)
+            .await
+            .expect("seed SQLite database");
+        drop(driver);
+
+        test_sqlite_connection(&sqlite_config(&path), None, None)
+            .await
+            .expect("test existing SQLite database");
+
+        let connection =
+            rusqlite::Connection::open(&path).expect("reopen existing SQLite database");
+        let marker: String = connection
+            .query_row("SELECT value FROM marker", [], |row| row.get(0))
+            .expect("read preserved marker");
+        assert_eq!(marker, "preserved");
+        fs::remove_file(path).expect("remove test database");
+    }
+
+    #[tokio::test]
+    async fn explicit_new_sqlite_connection_still_creates_its_database() {
+        let path =
+            std::env::temp_dir().join(format!("vaporlensdb-create-test-{}.sqlite", Uuid::new_v4()));
+        assert!(!path.exists());
+
+        let driver = SqliteDriver::connect(path.to_str().expect("utf-8 path"))
+            .await
+            .expect("explicit SQLite connection creates the database");
+        drop(driver);
+
+        assert!(path.is_file());
+        fs::remove_file(path).expect("remove test database");
     }
 }

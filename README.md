@@ -29,7 +29,7 @@ verification are intentionally distinct:
 
 | Platform | Current validation status |
 | --- | --- |
-| macOS arm64 | Strongest runtime validation, including local QA packaging and MySQL/Oracle workflows. |
+| macOS arm64 | Runtime verified for the current Tier-A QA scope. |
 | Windows x86_64 | Packaging and source-level checks completed; runtime verification pending. |
 | Linux x86_64 | Packaging and source-level checks completed; runtime verification pending. |
 

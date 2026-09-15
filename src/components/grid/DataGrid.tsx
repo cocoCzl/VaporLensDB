@@ -2,8 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Braces, Check, Copy, Maximize2, Rows3, X } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { isTauri } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
+import { writeText as writeNativeClipboardText } from '@tauri-apps/plugin-clipboard-manager'
 import { Button } from '@/components/ui/button'
+import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
 import {
   Dialog,
   DialogContent,
@@ -26,7 +29,9 @@ export function DataGrid({
 }: DataGridProps) {
   const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const activeCellRef = useRef<HTMLButtonElement>(null)
   const [selection, setSelection] = useState<GridSelection | null>(null)
+  const [cellContextMenu, setCellContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [includeHeaders, setIncludeHeaders] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [viewerValue, setViewerValue] = useState<{ title: string; value: string } | null>(null)
@@ -54,6 +59,10 @@ export function DataGrid({
     return ROW_INDEX_WIDTH + columns.reduce((sum, column) => sum + (columnWidths[column.name] ?? defaultColumnWidth(column)), 0)
   }, [columnWidths, result?.columns])
 
+  useEffect(() => {
+    activeCellRef.current?.focus({ preventScroll: true })
+  }, [selection])
+
   if (!result) {
     return (
       <div className="ide-empty-state">
@@ -80,7 +89,15 @@ export function DataGrid({
   }
 
   return (
-    <div className="data-grid-shell flex h-full min-h-0 min-w-0 overflow-hidden bg-surface text-xs tabular-nums">
+    <div
+      className="data-grid-shell flex h-full min-h-0 min-w-0 overflow-hidden bg-surface text-xs tabular-nums"
+      onKeyDownCapture={(event) => {
+        if (event.key.toLowerCase() !== 'c' || (!event.metaKey && !event.ctrlKey)) return
+        if (!selection || document.activeElement !== activeCellRef.current) return
+        event.preventDefault()
+        copyToClipboard(activeCellValue(result, selection))
+      }}
+    >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-auto">
         <div className="relative" style={{ minWidth: minGridWidth }}>
@@ -179,13 +196,17 @@ export function DataGrid({
                         >
                           <div className="flex h-full min-w-0 items-center">
                             <button
+                              ref={focusCell ? activeCellRef : null}
                               type="button"
-                              className={`flex h-full min-w-0 flex-1 items-center gap-1 px-3 ${alignment}`}
-                              onClick={(event) =>
-                                setSelection((current) =>
-                                  nextCellSelection(current, virtualRow.index, columnIndex, event.shiftKey),
-                                )
-                              }
+                              className={`flex h-full min-w-0 flex-1 items-center gap-1 px-3 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/65 ${alignment}`}
+                              onClick={(event) => {
+                                setSelection((current) => nextCellSelection(current, virtualRow.index, columnIndex, event.shiftKey))
+                              }}
+                              onContextMenu={(event) => {
+                                event.preventDefault()
+                                setSelection((current) => nextCellSelection(current, virtualRow.index, columnIndex, event.shiftKey))
+                                setCellContextMenu({ x: event.clientX, y: event.clientY })
+                              }}
                             >
                               <span
                                 className={[
@@ -249,6 +270,20 @@ export function DataGrid({
         />
       )}
       <ValueViewer value={viewerValue} onOpenChange={(open) => !open && setViewerValue(null)} />
+      {cellContextMenu && selection && (
+        <ContextMenu
+          x={cellContextMenu.x}
+          y={cellContextMenu.y}
+          actions={cellContextActions(result, selection, t, {
+            copy: copyToClipboard,
+            openInspector: () => setInspectorOpen(true),
+          })}
+          onClose={() => {
+            setCellContextMenu(null)
+            requestAnimationFrame(() => activeCellRef.current?.focus({ preventScroll: true }))
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -348,7 +383,7 @@ function CellInspector({
   const firstRow = result.rows[range.startRow] ?? []
   const value = formatValue(firstRow[range.startColumn])
   const valueLength = value === 'NULL' ? 0 : value.length
-  const rowValue = JSON.stringify(Object.fromEntries(result.columns.map((item, index) => [item.name, firstRow[index]])))
+  const rowValue = rowClipboardValue(result, range.startRow)
   const rangeLabel =
     range.startRow === range.endRow && range.startColumn === range.endColumn
       ? `${range.startRow + 1}.${firstColumn?.name ?? range.startColumn + 1}`
@@ -602,7 +637,7 @@ function ValueViewer({
             onChange={(event) => setQuery(event.target.value)}
           />
           <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground min-[560px]:inline">{t('result.matchCount', { count: matchCount })}</span>
-          <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-[11px]" onClick={() => navigator.clipboard?.writeText(raw)}>
+          <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-[11px]" onClick={() => copyToClipboard(raw)}>
             <Copy className="size-3.5" />
             {t('common.copy')}
           </Button>
@@ -627,7 +662,53 @@ function ValueViewer({
 }
 
 function copyToClipboard(value: string) {
-  navigator.clipboard?.writeText(value)
+  if (typeof window !== 'undefined' && (isTauri() || '__TAURI_INTERNALS__' in window)) {
+    void writeNativeClipboardText(value).catch(() => copyWithSelection(value))
+    return
+  }
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(value).catch(() => copyWithSelection(value))
+    return
+  }
+  copyWithSelection(value)
+}
+
+function copyWithSelection(value: string) {
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.setAttribute('readonly', '')
+  textarea.style.cssText = 'position:fixed;opacity:0;pointer-events:none;'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  textarea.remove()
+}
+
+function activeCellValue(result: QueryResult, selection: GridSelection) {
+  return formatValue(result.rows[selection.focusRow]?.[selection.focusColumn])
+}
+
+function cellContextActions(
+  result: QueryResult,
+  selection: GridSelection,
+  t: ReturnType<typeof useTranslation>['t'],
+  handlers: { copy: (value: string) => void; openInspector: () => void },
+): ContextMenuAction[] {
+  return [
+    { id: 'copy-cell', label: t('result.copyCell'), icon: 'copy', onSelect: () => handlers.copy(activeCellValue(result, selection)) },
+    {
+      id: 'copy-row',
+      label: t('result.copyRow'),
+      icon: 'data',
+      onSelect: () => handlers.copy(rowClipboardValue(result, selection.focusRow)),
+    },
+    { id: 'row-details', label: t('result.rowDetails'), icon: 'data', onSelect: handlers.openInspector },
+  ]
+}
+
+function rowClipboardValue(result: QueryResult, rowIndex: number) {
+  const row = result.rows[rowIndex] ?? []
+  return JSON.stringify(Object.fromEntries(result.columns.map((column, index) => [column.name, row[index]])))
 }
 
 function nextCellSelection(

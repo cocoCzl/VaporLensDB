@@ -1,6 +1,8 @@
 import { Clipboard, Code2, Copy, FolderInput, Link, Pencil, RefreshCw, Star, Table2, Trash2, Unplug } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+import { resolveContextMenuPlacement, type ContextMenuPlacement } from '@/components/explorer/contextMenuPlacement'
 
 export interface ContextMenuAction {
   id: string
@@ -37,6 +39,7 @@ const ICONS = {
 export function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
+  const [placement, setPlacement] = useState<ContextMenuPlacement | null>(null)
 
   useEffect(() => {
     menuRef.current?.focus()
@@ -47,7 +50,34 @@ export function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [onClose])
 
-  return (
+  useLayoutEffect(() => {
+    function updatePlacement() {
+      const menu = menuRef.current
+      if (!menu) return
+      const bounds = menu.getBoundingClientRect()
+      setPlacement(resolveContextMenuPlacement({
+        x,
+        y,
+        menuWidth: bounds.width,
+        menuHeight: bounds.height,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      }))
+    }
+
+    updatePlacement()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updatePlacement)
+    if (menuRef.current) observer?.observe(menuRef.current)
+    window.addEventListener('resize', updatePlacement)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', updatePlacement)
+    }
+  }, [actions.length, x, y])
+
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
     <>
       <button
         type="button"
@@ -59,8 +89,13 @@ export function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {
         ref={menuRef}
         role="menu"
         tabIndex={-1}
-        className="ide-overlay fixed z-50 min-w-44 rounded p-1 text-xs outline-none"
-        style={{ left: x, top: y }}
+        className="ide-overlay fixed z-50 min-w-44 overflow-x-hidden overflow-y-auto rounded p-1 text-xs outline-none"
+        style={{
+          left: placement?.left ?? x,
+          top: placement?.top ?? y,
+          maxHeight: placement?.maxHeight,
+          visibility: placement ? 'visible' : 'hidden',
+        }}
       >
         {actions.map((action) => {
           const Icon = ICONS[action.icon]
@@ -86,6 +121,7 @@ export function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {
           )
         })}
       </div>
-    </>
+    </>,
+    document.body,
   )
 }

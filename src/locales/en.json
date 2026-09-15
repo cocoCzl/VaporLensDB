@@ -551,6 +551,7 @@
     "notNullable": "Not nullable",
     "characterCount": "{{count}} chars",
     "cell": "Cell",
+    "copyCell": "Copy Cell",
     "row": "Row",
     "copyRow": "Copy row",
     "noRows": "0 rows",

@@ -551,6 +551,7 @@
     "notNullable": "非空",
     "characterCount": "{{count}} 个字符",
     "cell": "单元格",
+    "copyCell": "复制单元格",
     "row": "行",
     "copyRow": "复制行",
     "noRows": "0 行",

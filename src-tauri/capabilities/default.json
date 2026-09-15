@@ -9,6 +9,7 @@
     "core:event:allow-listen",
     "dialog:default",
     "dialog:allow-open",
+    "clipboard-manager:allow-write-text",
     "shell:allow-open"
   ]
 }

@@ -150,13 +150,17 @@ fn execution_context_statement(
             .map(|value| format!("SET search_path TO {}", quote_identifier(value))),
         DriverType::Mysql => database
             .filter(|value| !value.trim().is_empty())
-            .map(|value| format!("USE {}", quote_identifier(value))),
+            .map(|value| format!("USE {}", quote_mysql_identifier(value))),
         _ => None,
     }
 }
 
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('\"', "\"\""))
+}
+
+fn quote_mysql_identifier(identifier: &str) -> String {
+    format!("`{}`", identifier.replace('`', "``"))
 }
 
 fn execution_driver_type(
@@ -767,7 +771,7 @@ mod context_tests {
         );
         assert_eq!(
             execution_context_statement(DriverType::Mysql, Some("vaporlensdb_qa_alt"), None),
-            Some("USE \"vaporlensdb_qa_alt\"".to_string())
+            Some("USE `vaporlensdb_qa_alt`".to_string())
         );
         assert_eq!(
             execution_context_statement(DriverType::Postgres, None, None),
@@ -780,6 +784,10 @@ mod context_tests {
         assert_eq!(
             execution_context_statement(DriverType::Postgres, None, Some("qa\"name")),
             Some("SET search_path TO \"qa\"\"name\"".to_string())
+        );
+        assert_eq!(
+            execution_context_statement(DriverType::Mysql, Some("qa`name"), None),
+            Some("USE `qa``name`".to_string())
         );
     }
 }

@@ -26,7 +26,7 @@ VaporLensDB 的目标平台是 macOS、Windows 和 Linux；“目标支持”与
 
 | 平台 | 当前验证状态 |
 | --- | --- |
-| macOS arm64 | 运行时验证最充分，包含本地 QA 打包及 MySQL / Oracle 工作流。 |
+| macOS arm64 | 当前 Tier-A QA 范围已完成运行时验证。 |
 | Windows x86_64 | 已完成打包与源码级检查；运行时验证待完成。 |
 | Linux x86_64 | 已完成打包与源码级检查；运行时验证待完成。 |
 
