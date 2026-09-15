@@ -22,34 +22,21 @@ artifacts only, not public releases.
 locally. See the [installation guide](docs/INSTALL.md) for the distinction
 between current source builds, local QA packages, and future formal installers.
 
-## Platform validation status
+## Platform and database status
 
-VaporLensDB targets macOS, Windows, and Linux. Target support and runtime
-verification are intentionally distinct:
+The canonical [support matrix](docs/SUPPORT.md) records implementation,
+automated evidence, per-platform runtime evidence, and 1.0 support tier as
+separate facts.
 
-| Platform | Current validation status |
-| --- | --- |
-| macOS arm64 | Runtime verified for the current Tier-A QA scope. |
-| Windows x86_64 | Packaging and source-level checks completed; runtime verification pending. |
-| Linux x86_64 | Packaging and source-level checks completed; runtime verification pending. |
-
-## Database status
-
-**Implemented is not the same as app runtime verified.** The current evidence
-is deliberately recorded by layer:
-
-| Database | Implementation | Automated / integration evidence | App runtime verification |
-| --- | --- | --- | --- |
-| MySQL | Native driver; optional JDBC | Native and JDBC integration coverage, including FK/LONGTEXT regression | macOS arm64 verified |
-| Oracle | JDBC with a user-provided `ojdbc` JAR | JDBC query and metadata integration coverage | macOS arm64 verified |
-| PostgreSQL | Native driver; optional JDBC | Automated and opt-in JDBC integration coverage | Pending |
-| SQLite | Native driver; optional JDBC | Local automated coverage | Packaged-app verification incomplete |
-| SQL Server | Native driver implemented in source | Source-level coverage | Pending |
-| Custom JDBC | Generic configurable user-JAR path | Basic automated coverage | Vendor-specific completeness is not guaranteed |
+- macOS Tier-A runtime is verified for MySQL, PostgreSQL, and SQLite.
+- Windows and Linux desktop runtime are **NOT EXECUTED**.
+- Oracle JDBC and Custom JDBC are experimental / best-effort, not Tier-A.
+- SQL Server is implemented but is not advertised as a 1.0 Tier-A target.
 
 ## What it supports
 
-- PostgreSQL, MySQL, SQLite, and SQL Server through native Rust drivers.
+- PostgreSQL, MySQL, and SQLite through Tier-A native Rust drivers.
+- SQL Server through a native Rust driver, without a Tier-A support promise.
 - Oracle through a local, user-provided `ojdbc` JAR.
 - Custom JDBC drivers through user-provided JARs, driver classes, and JDBC URLs.
 - A grouped, searchable Data Source explorer with clear connection states and
@@ -63,7 +50,8 @@ dangerous-SQL policy are outside the current scope.
 
 ## Source-first quick start
 
-Prerequisites: Node.js 22, pnpm 10, Rust stable, JDK 21, and the
+Prerequisites: Node.js 22, pnpm 10, Rust stable, JDK 21 where JDBC is used,
+and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
 operating system.
 
@@ -74,9 +62,10 @@ pnpm install
 pnpm tauri dev
 ```
 
-Validate a local checkout with:
+For reproducible validation, install from the lockfile and run:
 
 ```bash
+pnpm install --frozen-lockfile
 ./build.sh check
 ```
 
@@ -128,11 +117,10 @@ formal-distribution procedures are retained in the
 
 ## Road to 1.0
 
-- Resolve persistence and data-safety semantics.
-- Finalize the supported database matrix.
+- Keep the Tier-A macOS scope frozen and resolve only release blockers.
 - Complete Windows and Linux runtime QA.
-- Freeze the 1.0 capability scope, then perform formal signing and release
-  preparation.
+- Perform formal signing and release preparation only after real cross-platform
+  runtime evidence is available.
 
 ## Documentation
 
@@ -145,3 +133,4 @@ formal-distribution procedures are retained in the
   [technical selection](docs/VaporLensDB-Technical-Selection.md).
 - **Development record:** [0.8.5 validation notes](docs/VALIDATION-NOTES-0.8.5.md)
   (internal QA evidence, not a release note).
+- **Current support status:** [support matrix](docs/SUPPORT.md).

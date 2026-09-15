@@ -5,10 +5,11 @@ use std::{
 
 #[cfg(unix)]
 use std::io::Write;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-use std::process::Command;
 #[cfg(target_os = "linux")]
-use std::process::Stdio;
+use std::process::{Command, Stdio};
+
+#[cfg(target_os = "macos")]
+use security_framework::passwords::{get_generic_password, set_generic_password};
 
 use aes_gcm::{
     aead::{Aead, AeadCore, Generate, KeyInit},
@@ -25,6 +26,8 @@ const WINDOWS_KEY_FILE: &str = "os-secret.key";
 const KEYCHAIN_SERVICE: &str = "com.vaporlensdb.encryption-key";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "VaporLensDB";
+#[cfg(target_os = "macos")]
+const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
 pub fn key_backend_label() -> &'static str {
     if use_dev_key() {
@@ -133,50 +136,37 @@ fn load_or_create_macos_keychain_key(config_dir: &Path) -> Result<[u8; 32], AppE
 
 #[cfg(target_os = "macos")]
 fn read_macos_keychain_secret() -> Result<Option<String>, AppError> {
-    let output = Command::new("/usr/bin/security")
-        .args([
-            "find-generic-password",
-            "-a",
-            KEYCHAIN_ACCOUNT,
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-w",
-        ])
-        .output()?;
-
-    if output.status.success() {
-        let secret = String::from_utf8(output.stdout).map_err(|error| {
-            AppError::AuthError(format!("macOS Keychain value is not valid UTF-8: {error}"))
-        })?;
-        return Ok(Some(secret.trim().to_string()));
+    // SecItem searches the user's configured Keychain search list. Unlike the
+    // legacy SecKeychain default API, it remains valid when a QA run supplies a
+    // temporary HOME without its own Library/Keychains directory.
+    match get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
+        Ok(secret) => {
+            let secret = String::from_utf8(secret).map_err(|error| {
+                AppError::AuthError(format!("macOS Keychain value is not valid UTF-8: {error}"))
+            })?;
+            Ok(Some(secret.trim().to_string()))
+        }
+        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+        Err(error) => Err(macos_keychain_error("read", error.code())),
     }
-
-    Ok(None)
 }
 
 #[cfg(target_os = "macos")]
 fn write_macos_keychain_secret(secret: &str) -> Result<(), AppError> {
-    let output = Command::new("/usr/bin/security")
-        .args([
-            "add-generic-password",
-            "-a",
-            KEYCHAIN_ACCOUNT,
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-w",
-            secret,
-            "-U",
-        ])
-        .output()?;
+    // `security add-generic-password -w <secret>` exposes the value through
+    // process argv. Security.framework retains the bytes in-process and uses
+    // the same generic-password service/account attributes as that old item.
+    set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, secret.as_bytes())
+        .map_err(|error| macos_keychain_error("write", error.code()))
+}
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(AppError::AuthError(format!(
-            "write macOS Keychain secret failed: {message}"
-        )))
-    }
+#[cfg(target_os = "macos")]
+fn macos_keychain_error(operation: &str, status: i32) -> AppError {
+    // Do not format the secret or Keychain payload. OSStatus is actionable and
+    // stable enough for support diagnostics while remaining safe for IPC.
+    AppError::AuthError(format!(
+        "macOS Keychain {operation} failed (OSStatus {status})"
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -456,6 +446,14 @@ mod tests {
 
     use super::{decrypt_password, encrypt_password, key_path};
 
+    #[cfg(target_os = "macos")]
+    use super::{macos_keychain_error, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE};
+
+    #[cfg(target_os = "macos")]
+    use security_framework::passwords::{
+        delete_generic_password, get_generic_password, set_generic_password,
+    };
+
     #[test]
     fn encrypts_and_decrypts_password() {
         std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
@@ -490,5 +488,32 @@ mod tests {
         assert_eq!(mode, 0o600);
 
         fs::remove_dir_all(dir).expect("remove key permission test directory");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_keychain_record_is_stable_and_errors_do_not_echo_secret_data() {
+        // These names match the historical `/usr/bin/security -s/-a` item, so
+        // Security.framework reads existing keys without a user-data migration.
+        assert_eq!(KEYCHAIN_SERVICE, "com.vaporlensdb.encryption-key");
+        assert_eq!(KEYCHAIN_ACCOUNT, "VaporLensDB");
+
+        let rendered = macos_keychain_error("write", -25293).to_string();
+        assert!(rendered.contains("OSStatus -25293"));
+        assert!(!rendered.contains("test-secret-value"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "writes then removes a uniquely named item from the logged-in macOS Keychain"]
+    fn native_keychain_generic_password_round_trip() {
+        let service = format!("com.vaporlensdb.test.{}", uuid::Uuid::new_v4());
+        let account = "VaporLensDB native Keychain test";
+        let secret = b"ephemeral-native-keychain-test-key";
+
+        set_generic_password(&service, account, secret).expect("write native Keychain item");
+        let restored = get_generic_password(&service, account).expect("read native Keychain item");
+        assert_eq!(restored, secret);
+        delete_generic_password(&service, account).expect("remove native Keychain item");
     }
 }

@@ -14,9 +14,16 @@ pnpm install
 pnpm tauri dev
 ```
 
+For reproducible validation, use the lockfile before the deterministic gate:
+
+```bash
+pnpm install --frozen-lockfile
+./build.sh check
+```
+
 Source builds require Node.js 22, pnpm 10, Rust stable, JDK 21, and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the host
-operating system. Run `./build.sh check` to validate a checkout. See
+operating system. JDK 21 is required when JDBC drivers are used. See
 [PACKAGING.md](PACKAGING.md) for platform prerequisites and local QA packaging.
 
 ## Future packaged releases and local QA packages
@@ -108,11 +115,15 @@ starting VaporLensDB; accepted values are 64–1024.
 
 ## Saved credentials
 
-Saved database and SSH passwords are encrypted with a key protected by macOS
-Keychain, Windows DPAPI, or Linux Secret Service. Linux requires the
-`secret-tool` command (package `libsecret-tools` on Debian/Ubuntu). If no Linux
-Secret Service session is available, leave **Save password** disabled and enter
-the password for the current session.
+Saved database and SSH passwords are encrypted with a key protected by an OS
+credential store. Current verification is platform-specific:
+
+- macOS Keychain credential restore is runtime verified.
+- Windows DPAPI implementation is present; Windows runtime is **NOT EXECUTED**.
+- Linux Secret Service / `secret-tool` implementation is present; Linux runtime
+  is **NOT EXECUTED**. Linux needs `libsecret-tools` on Debian/Ubuntu; without
+  an active Secret Service session, leave **Save password** disabled and enter
+  the password for the current session.
 
 `VAPORLENSDB_USE_DEV_KEY=1` enables a local development key and must not be used
 for a normal installation. Existing development keys are migrated into the OS

@@ -68,6 +68,7 @@
     "test:workspace-capacity": "node scripts/workspace-capacity-smoke.mjs",
     "test:performance-guardrails": "node scripts/performance-guardrails-smoke.mjs",
     "test:release-gate-policy": "node scripts/release-gate-policy-smoke.mjs",
+    "test:production-policy": "node scripts/production-policy-smoke.mjs",
     "test:bundle-budget": "node --test scripts/bundle-budget.test.mjs && node scripts/bundle-budget.mjs",
     "test:database-vendor-icons": "node scripts/database-vendor-icons-smoke.mjs",
     "test:qa-db": "node scripts/qa-db-contract-smoke.mjs",

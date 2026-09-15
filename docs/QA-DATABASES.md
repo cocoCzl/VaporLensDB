@@ -134,6 +134,17 @@ profile_dir="$(./scripts/qa-dev-profile.sh create)"
 This isolates backend config, the config SQLite file, and the development key
 file from the normal profile.
 
+For the focused macOS Keychain credential-restore check, keep the logged-in
+Keychain while isolating only VaporLensDB's config database:
+
+```bash
+profile_dir="$(./scripts/qa-dev-profile.sh create)"
+./scripts/qa-dev-profile.sh run-keychain "$profile_dir"
+```
+
+`run-keychain` sets the explicit `VAPORLENSDB_CONFIG_DIR` QA override. Normal
+launches do not set it and retain the standard platform configuration path.
+
 macOS Keychain is otherwise an OS-wide shared item for VaporLensDB, so a
 temporary `HOME` alone does not isolate it. The development-key setting is
 appropriate only for this local QA procedure; it is not a normal-installation

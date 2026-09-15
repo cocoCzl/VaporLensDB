@@ -6,6 +6,11 @@ VaporLensDB 0.8.5 is in **Pre-1.0 Development** and is **Source Build Only**.
 This document records validation evidence from development QA. It is not a
 published release note, download announcement, or release candidate.
 
+> **Historical status notice:** this document reflects the validation state when
+> it was written. Later Phase 13 macOS runtime work superseded its
+> current-status interpretation. For the current database and platform matrix,
+> see [SUPPORT.md](SUPPORT.md); do not rewrite the historical results below.
+
 ## Recorded validation checkpoint
 
 - macOS Apple Silicon (arm64) local QA packaging was validated.

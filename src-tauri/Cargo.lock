@@ -5051,6 +5051,7 @@ dependencies = [
  "mysql_async",
  "regex",
  "rusqlite",
+ "security-framework",
  "serde",
  "serde_json",
  "tauri",

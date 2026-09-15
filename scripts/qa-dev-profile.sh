@@ -3,10 +3,12 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF' >&2
-Usage: ./scripts/qa-dev-profile.sh <create|run|cleanup> [profile-directory]
+Usage: ./scripts/qa-dev-profile.sh <create|run|run-keychain|cleanup> [profile-directory]
 
 create                 Print a new disposable QA HOME directory.
 run <profile-directory> Launch pnpm tauri dev with that temporary HOME.
+run-keychain <profile-directory> Launch with an isolated config directory but
+                           the logged-in macOS Keychain, for credential QA.
 cleanup <profile-dir>  Remove only a QA profile directory created under TMPDIR.
 EOF
 }
@@ -27,6 +29,16 @@ case "${1:-}" in
       RUSTUP_HOME="${RUSTUP_HOME:-$host_home/.rustup}" \
       CARGO_HOME="${CARGO_HOME:-$host_home/.cargo}" \
       VAPORLENSDB_USE_DEV_KEY=1 \
+      pnpm tauri dev
+    ;;
+  run-keychain)
+    profile_dir="${2:-}"
+    [[ -d "$profile_dir" ]] || { printf 'QA profile directory does not exist: %s\n' "$profile_dir" >&2; exit 1; }
+    host_home="$HOME"
+    VAPORLENSDB_CONFIG_DIR="$profile_dir/.vaporlensdb" \
+      COREPACK_HOME="${COREPACK_HOME:-$host_home/.cache/node/corepack}" \
+      RUSTUP_HOME="${RUSTUP_HOME:-$host_home/.rustup}" \
+      CARGO_HOME="${CARGO_HOME:-$host_home/.cargo}" \
       pnpm tauri dev
     ;;
   cleanup)

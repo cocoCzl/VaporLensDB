@@ -13,7 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# Keep Tauri's production feature surface explicit. In particular, do not enable
+# its `devtools` feature: debug builds retain developer tooling via
+# `debug_assertions`, while release artifacts do not compile the DevTools API.
+tauri = { version = "2", default-features = false, features = ["wry", "compression", "common-controls-v6", "dynamic-acl", "x11", "dbus"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
@@ -39,6 +42,11 @@ tauri-plugin-clipboard-manager = "2.3.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Uses Security.framework directly for the existing generic-password Keychain
+# item, avoiding the `security -w <secret>` command-line exposure.
+security-framework = "3.7.0"
 
 [profile.release]
 lto = "thin"

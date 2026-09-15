@@ -22,6 +22,7 @@ assert(helper.includes('VAPORLENSDB_QA_POSTGRES_PORT:-15432'), 'QA env output mu
 assert(helper.includes('down --volumes --remove-orphans'), 'QA reset must be scoped to Compose project volumes')
 assert(!helper.includes('system prune') && !helper.includes('volume prune'), 'QA helper must not invoke Docker-wide prune')
 assert(profileHelper.includes('VAPORLENSDB_USE_DEV_KEY=1'), 'isolated QA profile must opt into the development key explicitly')
+assert(profileHelper.includes('run-keychain') && profileHelper.includes('VAPORLENSDB_CONFIG_DIR'), 'Keychain QA must isolate config without replacing the logged-in Keychain')
 assert(profileHelper.includes('Refusing to remove a non-QA profile directory'), 'profile cleanup must fail closed')
 assert(jdbcTests.includes('VAPORLENSDB_QA_ENVIRONMENT=1'), 'fixture-mutating JDBC tests must require explicit QA opt-in')
 assert(jdbcTests.includes('vaporlensdb_qa_marker'), 'fixture-mutating JDBC tests must verify the QA marker')

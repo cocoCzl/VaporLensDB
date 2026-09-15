@@ -101,19 +101,26 @@ const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
 
 impl ConfigStore {
     pub fn new_default() -> Result<Self, AppError> {
+        // Explicit QA/automation override. Normal installations do not set it
+        // and continue to use their platform-default configuration directory.
+        let explicit_config_dir = std::env::var_os("VAPORLENSDB_CONFIG_DIR").map(PathBuf::from);
         #[cfg(windows)]
-        let config_dir = std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .map(|path| path.join("VaporLensDB"))
-            .or_else(|| {
-                std::env::var_os("USERPROFILE")
-                    .map(PathBuf::from)
-                    .map(|path| path.join(".vaporlensdb"))
-            });
+        let config_dir = explicit_config_dir.or_else(|| {
+            std::env::var_os("APPDATA")
+                .map(PathBuf::from)
+                .map(|path| path.join("VaporLensDB"))
+                .or_else(|| {
+                    std::env::var_os("USERPROFILE")
+                        .map(PathBuf::from)
+                        .map(|path| path.join(".vaporlensdb"))
+                })
+        });
         #[cfg(not(windows))]
-        let config_dir = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .map(|path| path.join(".vaporlensdb"));
+        let config_dir = explicit_config_dir.or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|path| path.join(".vaporlensdb"))
+        });
 
         Self::new(config_dir.ok_or_else(|| {
             AppError::ConfigError("user configuration directory is unavailable".to_string())

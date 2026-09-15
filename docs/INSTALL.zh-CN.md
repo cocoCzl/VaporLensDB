@@ -13,9 +13,16 @@ pnpm install
 pnpm tauri dev
 ```
 
+如需可复现校验，请先使用 lockfile，再运行确定性 gate：
+
+```bash
+pnpm install --frozen-lockfile
+./build.sh check
+```
+
 源码构建需要 Node.js 22、pnpm 10、Rust stable、JDK 21，以及当前系统的
-[Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。使用 `./build.sh check`
-校验 checkout。平台前提与本地 QA 打包请参阅 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。
+[Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。JDK 21 仅在使用 JDBC
+驱动时需要。平台前提与本地 QA 打包请参阅 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。
 
 ## 未来正式安装包与本地 QA 包
 
@@ -88,10 +95,13 @@ bridge，但不会内置任何专有数据库驱动文件。
 
 ## 保存的凭据
 
-数据库与 SSH 密码使用由 macOS Keychain、Windows DPAPI 或 Linux Secret Service
-保护的密钥加密。Linux 需要 `secret-tool` 命令（Debian/Ubuntu 的包名为
-`libsecret-tools`）。如果当前 Linux 会话没有 Secret Service，请不要勾选“保存密码”，
-并在本次会话连接时输入密码。
+数据库与 SSH 密码由操作系统凭据存储保护的密钥加密。当前验证状态按平台区分：
+
+- macOS Keychain 的凭据恢复已完成 runtime 验证。
+- Windows DPAPI 实现已存在；Windows runtime 为 **NOT EXECUTED**。
+- Linux Secret Service / `secret-tool` 实现已存在；Linux runtime 为
+  **NOT EXECUTED**。Debian/Ubuntu 需要 `libsecret-tools`；如果当前 Linux 会话没有
+  Secret Service，请不要勾选“保存密码”，并在本次会话连接时输入密码。
 
 `VAPORLENSDB_USE_DEV_KEY=1` 只用于开发测试，正常安装不得启用。升级后，旧开发密钥
 会在系统凭据存储写入成功后自动迁移。

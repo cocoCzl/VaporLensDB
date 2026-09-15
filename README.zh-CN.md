@@ -19,33 +19,20 @@ App 与安装包仅用于 QA，不是公开发布版本。
 **Source Build Only。** 如需体验 VaporLensDB，请 clone 本仓库并在本地运行。请阅读
 [安装指南](docs/INSTALL.zh-CN.md)，其中区分当前源码运行、本地 QA 包与未来正式安装包。
 
-## 平台验证状态
+## 平台与数据库状态
 
-VaporLensDB 的目标平台是 macOS、Windows 和 Linux；“目标支持”与“已完成运行时验证”
-必须分开理解：
+唯一的当前状态来源是[支持矩阵](docs/SUPPORT.md)。它将“已实现”、自动化证据、各平台运行时
+证据和 1.0 支持等级明确分开。
 
-| 平台 | 当前验证状态 |
-| --- | --- |
-| macOS arm64 | 当前 Tier-A QA 范围已完成运行时验证。 |
-| Windows x86_64 | 已完成打包与源码级检查；运行时验证待完成。 |
-| Linux x86_64 | 已完成打包与源码级检查；运行时验证待完成。 |
-
-## 数据库状态
-
-**Implemented 不等于 App Runtime Verified。** 当前证据按层次记录如下：
-
-| 数据库 | 实现 | 自动化 / 集成证据 | App 运行时验证 |
-| --- | --- | --- | --- |
-| MySQL | 原生驱动；可选 JDBC | 原生与 JDBC 集成覆盖，含 FK/LONGTEXT 回归 | macOS arm64 已验证 |
-| Oracle | JDBC，需用户提供 `ojdbc` JAR | JDBC 查询与元数据集成覆盖 | macOS arm64 已验证 |
-| PostgreSQL | 原生驱动；可选 JDBC | 自动化与显式 JDBC 集成覆盖 | 待完成 |
-| SQLite | 原生驱动；可选 JDBC | 本地自动化覆盖 | packaged-app 验证未完成 |
-| SQL Server | 源码中已实现原生驱动 | 源码级覆盖 | 待完成 |
-| 自定义 JDBC | 通用、可配置的用户 JAR 路径 | 基础自动化覆盖 | 不保证各厂商完整性 |
+- macOS 的 MySQL、PostgreSQL、SQLite 已完成 Tier-A runtime 验证。
+- Windows 和 Linux 的桌面运行时均为 **NOT EXECUTED**。
+- Oracle JDBC 与自定义 JDBC 是 Experimental / Best-effort，不是 Tier-A。
+- SQL Server 已实现，但不会作为 1.0 Tier-A 宣传目标。
 
 ## 支持能力
 
-- PostgreSQL、MySQL、SQLite、SQL Server：使用原生 Rust 驱动。
+- PostgreSQL、MySQL、SQLite：Tier-A 原生 Rust 驱动。
+- SQL Server：原生 Rust 驱动，但不作 Tier-A 承诺。
 - Oracle：使用用户本地提供的 `ojdbc` JAR。
 - 自定义 JDBC：使用用户提供的 JAR、驱动类和 JDBC URL。
 - 支持按分组搜索的数据源浏览器、明确的连接状态，以及相互独立的 SQL 执行数据源。
@@ -56,7 +43,7 @@ VaporLensDB 的目标平台是 macOS、Windows 和 Linux；“目标支持”与
 
 ## 源码优先快速开始
 
-前提：Node.js 22、pnpm 10、Rust stable、JDK 21，以及当前系统所需的
+前提：Node.js 22、pnpm 10、Rust stable、JDBC 场景所需的 JDK 21，以及当前系统所需的
 [Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
@@ -66,9 +53,10 @@ pnpm install
 pnpm tauri dev
 ```
 
-使用以下命令校验本地 checkout：
+如需可复现地校验本地 checkout，请使用 lockfile：
 
 ```bash
+pnpm install --frozen-lockfile
 ./build.sh check
 ```
 
@@ -112,10 +100,9 @@ PostgreSQL、MySQL、Oracle 与 JDBC 联网测试是独立的显式 opt-in suite
 
 ## Road to 1.0
 
-- 解决 persistence 与 data-safety semantics。
-- 确定 supported database matrix。
+- 冻结 macOS Tier-A 范围，只修复 release blocker。
 - 完成 Windows 和 Linux runtime QA。
-- 冻结 1.0 capability scope，再进入正式签名与发布准备。
+- 取得真实跨平台 runtime 证据后，再进入正式签名与发布准备。
 
 ## 文档
 
@@ -128,3 +115,4 @@ PostgreSQL、MySQL、Oracle 与 JDBC 联网测试是独立的显式 opt-in suite
   [技术选型](docs/VaporLensDB-Technical-Selection.md)。
 - **开发记录：**[0.8.5 验证说明](docs/VALIDATION-NOTES-0.8.5.md)
   （内部 QA 证据，不是 release note）。
+- **当前支持状态：**[支持矩阵](docs/SUPPORT.md)。
