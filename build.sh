@@ -10,7 +10,7 @@ fi
 usage() {
   cat <<'EOF'
 Usage:
-  ./build.sh [mac|windows|linux|current|check|live-tests|destructive-live-tests|jdbc-bridge] [selectors]
+  ./build.sh [mac|windows|linux|current|check|live-tests|destructive-live-tests|jdbc-bridge|clean-macos-app-index] [selectors]
 
 Targets:
   mac      Build a macOS app bundle and DMG on macOS.
@@ -21,6 +21,8 @@ Targets:
   live-tests Run explicitly selected non-destructive RC JDBC integration tests.
   destructive-live-tests Run explicitly selected CREATE/DROP DATABASE integration tests.
   jdbc-bridge Build the lightweight Java JDBC bridge jar.
+  clean-macos-app-index Remove approved obsolete project bundles and clean their
+                targeted macOS LaunchServices registrations. macOS only.
 
 Outputs:
   macOS app: src-tauri/target/release/bundle/macos/VaporLensDB.app
@@ -34,6 +36,78 @@ Outputs:
   Linux rpm: src-tauri/target/release/bundle/rpm/*.rpm
   Linux local staging: artifacts/linux/<architecture>/
 EOF
+}
+
+macos_lsregister() {
+  printf '%s\n' \
+    '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+}
+
+unregister_macos_app() {
+  local app_path="$1"
+  local lsregister
+  lsregister="$(macos_lsregister)"
+  if [ -x "$lsregister" ]; then
+    "$lsregister" -u "$app_path" >/dev/null 2>&1 || true
+  fi
+}
+
+register_macos_app() {
+  local app_path="$1"
+  local lsregister
+  lsregister="$(macos_lsregister)"
+  if [ -x "$lsregister" ] && [ -d "$app_path" ]; then
+    "$lsregister" -f "$app_path" >/dev/null 2>&1 || true
+  fi
+}
+
+clean_macos_app_index() {
+  if [ "$(uname -s)" != "Darwin" ]; then
+    printf 'The clean-macos-app-index target must be run on macOS.\n' >&2
+    exit 1
+  fi
+
+  local debug_bundle="$ROOT_DIR/src-tauri/target/debug/bundle/macos/VaporLensDB.app"
+  local debug_deps_bundle="$ROOT_DIR/src-tauri/target/debug/deps/VaporLensDB-dev.app"
+  local raw_release_bundle="$ROOT_DIR/src-tauri/target/release/bundle/macos/VaporLensDB.app"
+  local staged_qa_bundle="$ROOT_DIR/artifacts/macos/$(mac_architecture)/VaporLensDB.app"
+  local active_dev_bundle="$ROOT_DIR/src-tauri/target/debug/VaporLensDB-dev.app"
+  local lsregister
+  lsregister="$(macos_lsregister)"
+
+  log "Unregistering obsolete VaporLensDB build bundles"
+  unregister_macos_app "$debug_bundle"
+  unregister_macos_app "$debug_deps_bundle"
+  unregister_macos_app "$raw_release_bundle"
+
+  # Only inspect and unregister LaunchServices records belonging to this project
+  # or to VaporLensDB's own now-missing temporary QA directories. Never touch
+  # /Applications, user data, Keychain, profiles, or unrelated applications.
+  if [ -x "$lsregister" ]; then
+    while IFS= read -r stale_path; do
+      [ -n "$stale_path" ] && "$lsregister" -u "$stale_path" >/dev/null 2>&1 || true
+    done < <(
+      "$lsregister" -dump 2>/dev/null | awk '
+        /^path: / { path = $0; sub(/^path: +/, "", path) }
+        /^identifier: (com\.vaporlens\.db|com\.vaporlens\.db\.dev)$/ {
+          if (path ~ /^\/private\/tmp\/vaporlens-/ ||
+              path == "'"$debug_bundle"'" ||
+              path == "'"$debug_deps_bundle"'" ||
+              path == "'"$raw_release_bundle"'") print path
+          path = ""
+        }
+      '
+    )
+  fi
+
+  log "Removing approved obsolete project build bundles"
+  rm -rf "$debug_bundle" "$debug_deps_bundle"
+
+  # These are the only two local application-search identities intended for
+  # development and release-like QA. The raw release bundle stays on disk but
+  # is deliberately not registered.
+  register_macos_app "$active_dev_bundle"
+  register_macos_app "$staged_qa_bundle"
 }
 
 log() {
@@ -330,6 +404,12 @@ build_mac() {
     shasum -a 256 "VaporLensDB.dmg" > SHA256SUMS.txt
   )
 
+  # The staged artifact is the designated manually launched QA application.
+  # Keep it registered, but do not let Tauri's raw build intermediate appear as
+  # a second user-facing VaporLensDB application.
+  unregister_macos_app "$app_path"
+  register_macos_app "$artifact_dir/VaporLensDB.app"
+
   log "Build artifacts"
   printf '%s\n%s\n%s\n' \
     "$app_path" \
@@ -448,6 +528,9 @@ case "$TARGET" in
     ;;
   jdbc-bridge)
     build_jdbc_bridge
+    ;;
+  clean-macos-app-index)
+    clean_macos_app_index
     ;;
   *)
     usage >&2

@@ -28,6 +28,17 @@ The canonical [support matrix](docs/SUPPORT.md) records implementation,
 automated evidence, per-platform runtime evidence, and 1.0 support tier as
 separate facts.
 
+VaporLensDB is a cross-platform database management tool for macOS, Windows,
+and Linux. macOS has completed real runtime validation for the Tier-A database
+scope. Windows and Linux build targets are available, while real desktop runtime
+validation is still pending.
+
+| Platform | Build Target | Runtime Verification |
+| --- | --- | --- |
+| macOS | Yes | Verified |
+| Windows | Yes | **NOT EXECUTED** |
+| Linux | Yes | **NOT EXECUTED** |
+
 - macOS Tier-A runtime is verified for MySQL, PostgreSQL, and SQLite.
 - Windows and Linux desktop runtime are **NOT EXECUTED**.
 - Oracle JDBC and Custom JDBC are experimental / best-effort, not Tier-A.

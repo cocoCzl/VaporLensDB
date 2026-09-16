@@ -143,7 +143,7 @@ Windows 和 Linux 根据 Rust 原生 host 使用 `x86_64` 或 `aarch64`，脚本
 ## 手动云端打包验证
 
 在 GitHub Actions 页面手动运行 **Package smoke test**，会分别使用 Ubuntu 22.04 和
-`windows-latest` 执行同一套校验与打包。工作流不使用真实数据库凭据，固定名称的测试产物
+`macos-latest`、Ubuntu 22.04 和 `windows-latest` 执行同一套校验与打包。工作流不使用真实数据库凭据，固定名称的测试产物
 保留 7 天；它不会创建 tag 或 GitHub Release。原生 `aarch64` 包仍需对应架构的构建机器。
 
 ## 未来正式分发：1.0 Release Preparation

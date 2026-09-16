@@ -70,15 +70,15 @@ fi
 codesign --force --sign - --entitlements "$ENTITLEMENTS" "$DEV_EXECUTABLE" >/dev/null 2>&1
 codesign --force --deep --sign - --entitlements "$ENTITLEMENTS" "$DEV_APP" >/dev/null 2>&1
 
-# Build and staging bundles share the same bundle identifier. If they were
-# opened during development, LaunchServices keeps every path and Launchpad
-# shows several identical VaporLensDB icons. Keep only this active dev bundle
-# registered; no build artifact is deleted.
+# Target build intermediates and temporary QA bundles can otherwise leave stale
+# LaunchServices records. Keep this active Dev bundle registered, but preserve
+# the designated staged QA artifact under artifacts/macos/ as the sole
+# release-like QA launch target; no build artifact is deleted here.
 if [ -x "$LSREGISTER" ]; then
     while IFS= read -r stale_app; do
         [ "$stale_app" = "$DEV_APP" ] || "$LSREGISTER" -u "$stale_app" >/dev/null 2>&1 || true
     done < <(
-        find "$TAURI_DIR/target" "$PROJECT_DIR/artifacts" "${TMPDIR:-/tmp}" \
+        find "$TAURI_DIR/target" "${TMPDIR:-/tmp}" \
             -type d \( -name 'VaporLensDB.app' -o -name 'VaporLensDB-dev.app' \) \
             -prune 2>/dev/null
     )
@@ -92,7 +92,6 @@ cleanup() {
         kill "$APP_PID" >/dev/null 2>&1 || true
     fi
     if [ -x "$LSREGISTER" ]; then
-        "$LSREGISTER" -u "$DEV_APP" >/dev/null 2>&1 || true
         "$LSREGISTER" -gc >/dev/null 2>&1 || true
     fi
 }

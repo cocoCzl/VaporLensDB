@@ -157,10 +157,10 @@ set for macOS, Windows, or Linux.
 ## Manual hosted packaging check
 
 Run the **Package smoke test** workflow from the GitHub Actions page to build on
-Ubuntu 22.04 and `windows-latest`. It performs the same validation and packaging
-steps without live database credentials, then retains fixed-name test artifacts
-for seven days. It does not create a tag or GitHub Release. Native `aarch64`
-packages still require a matching build machine.
+`macos-latest`, Ubuntu 22.04, and `windows-latest`. It performs the same
+validation and packaging steps without live database credentials, then retains
+fixed-name test artifacts for seven days. It does not create a tag or GitHub
+Release. Native `aarch64` packages still require a matching build machine.
 
 ## Future Formal Distribution: 1.0 Release Preparation
 

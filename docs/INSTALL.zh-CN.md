@@ -24,6 +24,18 @@ pnpm install --frozen-lockfile
 [Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。JDK 21 仅在使用 JDBC
 驱动时需要。平台前提与本地 QA 打包请参阅 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。
 
+## 平台构建目标
+
+| 平台 | 构建目标 / 前提 | 运行时验证 |
+| --- | --- | --- |
+| macOS | `./build.sh mac`；Xcode Command Line Tools | Tier-A 已验证 |
+| Windows | 在 Windows/Git Bash 中运行 `./build.sh windows`；MSVC Build Tools 与 WebView2 | **NOT EXECUTED** |
+| Linux | 在 Linux 中运行 `./build.sh linux`；WebKitGTK/GTK/Tauri 打包依赖 | **NOT EXECUTED** |
+
+Windows 和 Linux 的构建前提与目标已文档化，但真实桌面运行时验证仍待完成。精确的
+native-host 前提请见 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。JDK 21 在使用 JDBC 时需要；
+Linux 凭据持久化还需要一个活动的 Secret Service 会话。
+
 ## 未来正式安装包与本地 QA 包
 
 以下安装包说明仅面向未来正式发布或本地生成的 QA 包。当前尚未发布正式安装包。正式版本发布后，请只从项目的

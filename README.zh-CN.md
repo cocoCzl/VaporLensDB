@@ -24,6 +24,14 @@ App 与安装包仅用于 QA，不是公开发布版本。
 唯一的当前状态来源是[支持矩阵](docs/SUPPORT.md)。它将“已实现”、自动化证据、各平台运行时
 证据和 1.0 支持等级明确分开。
 
+VaporLensDB 是一款跨平台数据库管理工具，面向 macOS、Windows 和 Linux。当前 macOS 已完成核心运行时验证，Windows/Linux 正处于构建与运行时验证阶段。
+
+| 平台 | 构建目标 | 运行时验证 |
+| --- | --- | --- |
+| macOS | 是 | 已验证 |
+| Windows | 是 | **NOT EXECUTED** |
+| Linux | 是 | **NOT EXECUTED** |
+
 - macOS 的 MySQL、PostgreSQL、SQLite 已完成 Tier-A runtime 验证。
 - Windows 和 Linux 的桌面运行时均为 **NOT EXECUTED**。
 - Oracle JDBC 与自定义 JDBC 是 Experimental / Best-effort，不是 Tier-A。

@@ -26,6 +26,19 @@ Source builds require Node.js 22, pnpm 10, Rust stable, JDK 21, and the
 operating system. JDK 21 is required when JDBC drivers are used. See
 [PACKAGING.md](PACKAGING.md) for platform prerequisites and local QA packaging.
 
+## Platform build targets
+
+| Platform | Build target / prerequisites | Runtime verification |
+| --- | --- | --- |
+| macOS | `./build.sh mac`; Xcode Command Line Tools | Tier-A verified |
+| Windows | `./build.sh windows` on Windows/Git Bash; MSVC Build Tools and WebView2 | **NOT EXECUTED** |
+| Linux | `./build.sh linux` on Linux; WebKitGTK/GTK/Tauri packaging packages | **NOT EXECUTED** |
+
+Windows and Linux prerequisites and build targets are documented, but their
+real desktop runtime validation is still pending. See [PACKAGING.md](PACKAGING.md)
+for the exact native-host requirements. JDK 21 is required where JDBC is used;
+Linux credential persistence additionally needs an active Secret Service session.
+
 ## Future packaged releases and local QA packages
 
 The following installer guidance is for future formal releases or a locally
