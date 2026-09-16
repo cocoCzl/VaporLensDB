@@ -99,8 +99,8 @@ bridge，但不会内置任何专有数据库驱动文件。
 
 - macOS 将每个已保存的**数据库密码**直接存入 Keychain，配置数据库只保存不透明的凭据引用。
   读取是非交互的：正常使用绝不应弹出 macOS Keychain 授权框。旧版本保存的数据库凭据不会被
-  读取或自动迁移；如不可用，请在连接设置中重新输入数据库密码并保存一次。该行为的最终 macOS
-  runtime 验收仍在进行中。
+  读取或自动迁移；如不可用，请在连接设置中重新输入数据库密码并保存一次。该行为已在当前 macOS
+  release-like QA artifact 上 **PASS / Accepted / Frozen**。
 - Windows DPAPI 实现已存在；Windows runtime 为 **NOT EXECUTED**。
 - Linux Secret Service / `secret-tool` 实现已存在；Linux runtime 为
   **NOT EXECUTED**。Debian/Ubuntu 需要 `libsecret-tools`；如果当前 Linux 会话没有

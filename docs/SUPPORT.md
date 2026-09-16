@@ -28,7 +28,8 @@ desktop runtime QA.
 
 - macOS Keychain: each saved database password is stored directly under an
   opaque datasource credential reference and read non-interactively; final
-  zero-authorization-UI runtime acceptance is in progress. Older credential
+  zero-authorization-UI runtime acceptance is **PASS / Accepted / Frozen**.
+  Older credential
   generations require database-password re-entry rather than Keychain migration.
 - Windows DPAPI: implementation present; runtime **NOT EXECUTED**.
 - Linux Secret Service / `secret-tool`: implementation present; runtime
@@ -47,3 +48,24 @@ The Tier-A drivers currently use capability-aware query cancellation: MySQL and
 SQLite do not promise cancellation, while PostgreSQL supports its native
 cancellation path. This does not imply a generalized cancellation guarantee
 for every driver.
+
+## Pre-1.0 feature freeze
+
+The macOS Tier-A product scope is frozen. Before 1.0, accepted behavior may
+change only for P0/P1 correctness defects, data-loss/corruption risks, security
+or credential/privacy defects, crashes/blank WebView failures, broken Tier-A
+workflows, release-engineering blockers, or real Windows/Linux runtime blockers
+when those hosts are available.
+
+New features, new database capabilities, broad UX redesign, non-defect visual
+polish, advanced grid editing, import/export expansion, schema compare,
+monitoring, plugins, ODBC, SQL Server promotion, and Oracle Tier-A promotion
+are deferred until after 1.0.
+
+## Frozen macOS acceptance record
+
+- Phase 14C.3: **PASS / Accepted / Frozen** — driver switching updates a
+  system-generated datasource name, a user-entered name is preserved, and the
+  datasource context menu provides a persisted display-name-only Rename action.
+- Phase 14C: **PASS / Accepted / Frozen** — release-like Tier-A smoke,
+  production DevTools policy, and the minimized macOS entitlement set passed.

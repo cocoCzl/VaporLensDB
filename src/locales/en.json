@@ -484,7 +484,7 @@
   },
   "home": {
     "welcomeTitle": "Welcome back",
-    "welcomeDescription": "Manage your databases and continue where you left off.",
+    "welcomeDescription": "Connect to your data and keep working.",
     "quickActions": "Quick Actions",
     "newQuery": "New Query",
     "newQueryDescription": "Open a focused SQL workspace",

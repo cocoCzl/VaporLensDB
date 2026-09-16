@@ -123,7 +123,8 @@ verification is platform-specific:
   non-interactive: normal use must never show a macOS Keychain authorization
   dialog. Older saved database credentials are intentionally not read or
   migrated; re-enter and save the database password once if one is unavailable.
-  Final macOS runtime acceptance for this behavior is in progress.
+  This behavior is **PASS / Accepted / Frozen** on the current macOS
+  release-like QA artifact.
 - Windows DPAPI implementation is present; Windows runtime is **NOT EXECUTED**.
 - Linux Secret Service / `secret-tool` implementation is present; Linux runtime
   is **NOT EXECUTED**. Linux needs `libsecret-tools` on Debian/Ubuntu; without

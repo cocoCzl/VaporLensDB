@@ -484,7 +484,7 @@
   },
   "home": {
     "welcomeTitle": "欢迎回来",
-    "welcomeDescription": "管理数据库，并从上次的工作继续。",
+    "welcomeDescription": "连接数据，继续你的工作。",
     "quickActions": "快捷操作",
     "newQuery": "新建查询",
     "newQueryDescription": "打开专注的 SQL 工作区",
