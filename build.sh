@@ -150,6 +150,11 @@ stage_installer_artifacts() {
 }
 
 tauri_bundle_build() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    bash "$ROOT_DIR/scripts/tauri-release-build.sh" "$@"
+    return
+  fi
+
   pnpm tauri build --config src-tauri/tauri.bundle.conf.json "$@"
 }
 

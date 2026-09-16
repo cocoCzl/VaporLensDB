@@ -76,7 +76,8 @@
     "moveToGroup": "Move to group",
     "selectedCount": "{{count}} selected",
     "notReady": "Not ready",
-    "driverHelp": "PostgreSQL and MySQL use built-in drivers. Oracle requires a local ojdbc JAR and supports connection, query execution, object browsing, DDL/source, and completion."
+    "driverHelp": "PostgreSQL and MySQL use built-in drivers. Oracle requires a local ojdbc JAR and supports connection, query execution, object browsing, DDL/source, and completion.",
+    "savedCredentialUnavailable": "The previously saved password is unavailable. Please re-enter the database password in the connection settings and save."
   },
   "databaseCreate": {
     "action": "New Database",

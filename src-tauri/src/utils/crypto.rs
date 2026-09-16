@@ -3,19 +3,38 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(test)]
+use std::cell::Cell;
+
 #[cfg(unix)]
 use std::io::Write;
 #[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 
 #[cfg(target_os = "macos")]
-use security_framework::passwords::{get_generic_password, set_generic_password};
+use core_foundation::{
+    base::{TCFType, ToVoid},
+    data::CFData,
+    dictionary::CFMutableDictionary,
+    string::CFString,
+};
+#[cfg(target_os = "macos")]
+use security_framework::item::{ItemClass, ItemSearchOptions, SearchResult};
+#[cfg(target_os = "macos")]
+use security_framework_sys::{
+    item::{
+        kSecAttrAccount, kSecAttrLabel, kSecAttrService, kSecClass, kSecClassGenericPassword,
+        kSecUseAuthenticationUI, kSecUseAuthenticationUISkip, kSecValueData,
+    },
+    keychain_item::SecItemAdd,
+};
 
 use aes_gcm::{
     aead::{Aead, AeadCore, Generate, KeyInit},
     Aes256Gcm, Key, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use zeroize::Zeroizing;
 
 use crate::models::error::AppError;
 
@@ -23,11 +42,108 @@ const KEY_FILE: &str = "dev-secret.key";
 #[cfg(target_os = "windows")]
 const WINDOWS_KEY_FILE: &str = "os-secret.key";
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "com.vaporlensdb.encryption-key";
+const KEYCHAIN_SERVICE: &str = "com.vaporlensdb.encryption-key.v4";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "VaporLensDB";
+/// The only macOS Keychain service used for normal datasource passwords.
+///
+/// The account is an opaque, per-save UUID rather than a connection name. This
+/// makes a saved password independent of user-editable datasource metadata and
+/// lets a re-save create a clean credential without probing an inaccessible
+/// item left by an earlier build.
+#[cfg(target_os = "macos")]
+const MACOS_DATASOURCE_PASSWORD_SERVICE: &str = "com.vaporlensdb.datasource-password.v1";
+#[cfg(target_os = "macos")]
+const MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX: &str = "macos-keychain-v1:";
 #[cfg(target_os = "macos")]
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+#[cfg(target_os = "macos")]
+const ERR_SEC_DUPLICATE_ITEM: i32 = -25299;
+#[cfg(target_os = "macos")]
+const ERR_SEC_AUTH_FAILED: i32 = -25293;
+#[cfg(target_os = "macos")]
+const ERR_SEC_INTERACTION_NOT_ALLOWED: i32 = -25308;
+const CURRENT_CIPHERTEXT_PREFIX: &str = "v4:";
+
+#[cfg(test)]
+thread_local! {
+    static KEY_RESOLUTION_COUNT: Cell<u32> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_key_resolution() {
+    KEY_RESOLUTION_COUNT.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(test)]
+fn reset_key_resolution_count() {
+    KEY_RESOLUTION_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn key_resolution_count() -> u32 {
+    KEY_RESOLUTION_COUNT.with(Cell::get)
+}
+
+/// A scoped resolver for one logical credential operation. It does not escape
+/// the operation, so the encryption key is not kept in global application
+/// state. It also prevents password plus SSH-secret handling from repeatedly
+/// reading the active credential-store item within that operation.
+pub struct SecretOperation<'a> {
+    config_dir: &'a Path,
+    current_key: Option<Zeroizing<[u8; 32]>>,
+}
+
+pub struct DecryptedSecret {
+    pub plaintext: String,
+}
+
+impl<'a> SecretOperation<'a> {
+    pub fn new(config_dir: &'a Path) -> Self {
+        Self {
+            config_dir,
+            current_key: None,
+        }
+    }
+
+    pub fn encrypt(&mut self, plaintext: &str) -> Result<String, AppError> {
+        let encrypted = encrypt_with_key(self.current_key()?, plaintext)?;
+        Ok(format!("{CURRENT_CIPHERTEXT_PREFIX}{encrypted}"))
+    }
+
+    pub fn decrypt(&mut self, encrypted: &str) -> Result<DecryptedSecret, AppError> {
+        #[cfg(target_os = "macos")]
+        let ciphertext = encrypted
+            .strip_prefix(CURRENT_CIPHERTEXT_PREFIX)
+            // Never inspect or probe an older macOS Keychain generation. The
+            // user re-enters the database password to create a V4 credential.
+            .ok_or_else(saved_credential_unavailable)?;
+
+        #[cfg(not(target_os = "macos"))]
+        // Non-macOS implementations retain their pre-V4 encrypted-record
+        // compatibility. macOS deliberately does not: V1/V2/V3 could carry
+        // interactive Keychain ACL state and are completely inert at runtime.
+        let ciphertext = encrypted
+            .strip_prefix(CURRENT_CIPHERTEXT_PREFIX)
+            .unwrap_or(encrypted);
+
+        Ok(DecryptedSecret {
+            plaintext: decrypt_with_key(self.current_key()?, ciphertext)?,
+        })
+    }
+
+    fn current_key(&mut self) -> Result<&[u8; 32], AppError> {
+        if self.current_key.is_none() {
+            #[cfg(test)]
+            note_key_resolution();
+            self.current_key = Some(Zeroizing::new(load_or_create_current_key(self.config_dir)?));
+        }
+        Ok(self
+            .current_key
+            .as_ref()
+            .expect("current key was initialized"))
+    }
+}
 
 pub fn key_backend_label() -> &'static str {
     if use_dev_key() {
@@ -52,7 +168,196 @@ pub fn key_backend_label() -> &'static str {
 }
 
 pub fn encrypt_password(config_dir: &Path, plaintext: &str) -> Result<String, AppError> {
-    let cipher = cipher(config_dir)?;
+    SecretOperation::new(config_dir).encrypt(plaintext)
+}
+
+pub fn decrypt_password(config_dir: &Path, encrypted: &str) -> Result<String, AppError> {
+    decrypt_password_with_operation(&mut SecretOperation::new(config_dir), encrypted)
+        .map(|secret| secret.plaintext)
+}
+
+pub fn decrypt_password_with_operation(
+    operation: &mut SecretOperation<'_>,
+    encrypted: &str,
+) -> Result<DecryptedSecret, AppError> {
+    operation.decrypt(encrypted)
+}
+
+/// Store one datasource password directly in the macOS Keychain.
+///
+/// Normal macOS datasource credentials deliberately do not use the historical
+/// "Keychain master key -> AES payload in config.db" arrangement. The config
+/// database retains only the opaque returned reference. Each save gets a fresh
+/// account identifier, so this path never has to update or inspect a possibly
+/// authorization-gated prior item.
+#[cfg(target_os = "macos")]
+pub fn store_macos_datasource_password(
+    config_dir: &Path,
+    password: &str,
+) -> Result<String, AppError> {
+    // Unit tests use the explicit local development backend rather than the
+    // developer's login Keychain. Production builds always take the direct
+    // Keychain branch below.
+    if use_dev_key() {
+        let encrypted = encrypt_password(config_dir, password)?;
+        return Ok(format!(
+            "{MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX}dev:{encrypted}"
+        ));
+    }
+
+    let account = uuid::Uuid::new_v4().to_string();
+
+    // This creates a brand-new opaque account only. It never updates or
+    // probes V1/V2/V3/master-key records, so an old ACL cannot cause an
+    // authorization dialog here.
+    match add_macos_generic_password_silently(
+        MACOS_DATASOURCE_PASSWORD_SERVICE,
+        &account,
+        "VaporLensDB saved datasource password",
+        password.as_bytes(),
+    ) {
+        Ok(()) => Ok(format!(
+            "{MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX}{account}"
+        )),
+        Err(error) if is_silent_keychain_unavailable(error.code()) => {
+            Err(saved_credential_unavailable())
+        }
+        Err(error) => Err(macos_keychain_error(
+            "write datasource password",
+            error.code(),
+        )),
+    }
+}
+
+/// Resolve a direct macOS datasource-password reference without ever allowing
+/// Security.framework to present authentication UI.
+#[cfg(target_os = "macos")]
+pub fn read_macos_datasource_password(
+    config_dir: &Path,
+    reference: &str,
+) -> Result<DecryptedSecret, AppError> {
+    let account = reference
+        .strip_prefix(MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX)
+        .ok_or_else(saved_credential_unavailable)?;
+
+    if let Some(encrypted) = account.strip_prefix("dev:") {
+        return decrypt_password(config_dir, encrypted)
+            .map(|plaintext| DecryptedSecret { plaintext });
+    }
+
+    // Do not query arbitrary config text as a Keychain account. A valid
+    // opaque UUID is the sole supported V1 direct-password reference.
+    if uuid::Uuid::parse_str(account).is_err() {
+        return Err(saved_credential_unavailable());
+    }
+
+    let mut search = ItemSearchOptions::new();
+    search
+        .class(ItemClass::generic_password())
+        .service(MACOS_DATASOURCE_PASSWORD_SERVICE)
+        .account(account)
+        .load_data(true)
+        // Maps to kSecUseAuthenticationUISkip. A read may succeed silently or
+        // return an app error; it must never ask for the macOS login password.
+        .skip_authenticated_items(true);
+    match search.search() {
+        Ok(results) => match results.into_iter().next() {
+            Some(SearchResult::Data(secret)) => {
+                let plaintext =
+                    String::from_utf8(secret).map_err(|_| saved_credential_unavailable())?;
+                Ok(DecryptedSecret { plaintext })
+            }
+            None | Some(_) => Err(saved_credential_unavailable()),
+        },
+        Err(error) if is_silent_keychain_unavailable(error.code()) => {
+            Err(saved_credential_unavailable())
+        }
+        Err(error) => Err(macos_keychain_error(
+            "silent read datasource password",
+            error.code(),
+        )),
+    }
+}
+
+/// Remove only a direct V1 datasource-password item, with authentication UI
+/// forbidden. Failure to remove an inaccessible item is intentionally silent:
+/// config metadata still stops referencing it, and normal app use must never
+/// surface a system authorization dialog for cleanup.
+#[cfg(target_os = "macos")]
+pub fn remove_macos_datasource_password(reference: &str) -> Result<(), AppError> {
+    let Some(account) = reference.strip_prefix(MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX) else {
+        return Ok(());
+    };
+    if account.starts_with("dev:") || uuid::Uuid::parse_str(account).is_err() {
+        return Ok(());
+    }
+
+    let mut search = ItemSearchOptions::new();
+    search
+        .class(ItemClass::generic_password())
+        .service(MACOS_DATASOURCE_PASSWORD_SERVICE)
+        .account(account)
+        .skip_authenticated_items(true);
+    match search.delete() {
+        Ok(()) => Ok(()),
+        Err(error) if is_silent_keychain_unavailable(error.code()) => Ok(()),
+        Err(error) => Err(macos_keychain_error(
+            "silent delete datasource password",
+            error.code(),
+        )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn is_macos_datasource_password_reference(value: &str) -> bool {
+    value.starts_with(MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX)
+}
+
+/// Adds a generic-password Keychain item with authentication UI explicitly
+/// forbidden. The high-level crate exposes this flag for lookups but not adds,
+/// so the single macOS gateway uses the native call here. A locked Keychain
+/// must return an OSStatus to VaporLensDB, never a system password sheet.
+#[cfg(target_os = "macos")]
+fn add_macos_generic_password_silently(
+    service: &str,
+    account: &str,
+    label: &str,
+    secret: &[u8],
+) -> Result<(), security_framework::base::Error> {
+    let service = CFString::new(service);
+    let account = CFString::new(account);
+    let label = CFString::new(label);
+    let secret = CFData::from_buffer(secret);
+    // SAFETY: Security.framework owns these immutable constants for the
+    // process lifetime. The wrapper retains the generic-password class.
+    let class = unsafe { CFString::wrap_under_get_rule(kSecClassGenericPassword) };
+    let mut attributes = CFMutableDictionary::from_CFType_pairs(&[]);
+    // SAFETY: all Core Foundation keys and values remain alive through the
+    // synchronous SecItemAdd call; no result object is requested.
+    let status = unsafe {
+        attributes.add(&kSecClass.to_void(), &class.to_void());
+        attributes.add(&kSecAttrService.to_void(), &service.to_void());
+        attributes.add(&kSecAttrAccount.to_void(), &account.to_void());
+        attributes.add(&kSecAttrLabel.to_void(), &label.to_void());
+        attributes.add(&kSecValueData.to_void(), &secret.to_void());
+        attributes.add(
+            &kSecUseAuthenticationUI.to_void(),
+            &kSecUseAuthenticationUISkip.to_void(),
+        );
+        SecItemAdd(
+            attributes.to_immutable().as_concrete_TypeRef(),
+            std::ptr::null_mut(),
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(security_framework::base::Error::from_code(status))
+    }
+}
+
+fn encrypt_with_key(key: &[u8; 32], plaintext: &str) -> Result<String, AppError> {
+    let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key));
     let nonce = Nonce::<<Aes256Gcm as AeadCore>::NonceSize>::generate();
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
@@ -65,7 +370,7 @@ pub fn encrypt_password(config_dir: &Path, plaintext: &str) -> Result<String, Ap
     ))
 }
 
-pub fn decrypt_password(config_dir: &Path, encrypted: &str) -> Result<String, AppError> {
+fn decrypt_with_key(key: &[u8; 32], encrypted: &str) -> Result<String, AppError> {
     let (nonce, ciphertext) = encrypted
         .split_once(':')
         .ok_or_else(|| AppError::AuthError("invalid encrypted password payload".to_string()))?;
@@ -76,7 +381,7 @@ pub fn decrypt_password(config_dir: &Path, encrypted: &str) -> Result<String, Ap
         AppError::AuthError(format!("decode encrypted password failed: {error}"))
     })?;
 
-    let cipher = cipher(config_dir)?;
+    let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key));
     let nonce = Nonce::<<Aes256Gcm as AeadCore>::NonceSize>::try_from(nonce.as_slice())
         .map_err(|_| AppError::AuthError("invalid encrypted password nonce".to_string()))?;
     let plaintext = cipher
@@ -87,18 +392,13 @@ pub fn decrypt_password(config_dir: &Path, encrypted: &str) -> Result<String, Ap
         .map_err(|error| AppError::AuthError(format!("password is not valid UTF-8: {error}")))
 }
 
-fn cipher(config_dir: &Path) -> Result<Aes256Gcm, AppError> {
-    let key = load_or_create_key(config_dir)?;
-    Ok(Aes256Gcm::new(&Key::<Aes256Gcm>::from(key)))
-}
-
-fn load_or_create_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
+fn load_or_create_current_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
     if use_dev_key() {
         return load_or_create_dev_key(config_dir);
     }
     #[cfg(target_os = "macos")]
     {
-        load_or_create_macos_keychain_key(config_dir)
+        load_or_create_macos_keychain_key()
     }
     #[cfg(target_os = "windows")]
     {
@@ -121,14 +421,13 @@ fn use_dev_key() -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn load_or_create_macos_keychain_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
+fn load_or_create_macos_keychain_key() -> Result<[u8; 32], AppError> {
     match read_macos_keychain_secret()? {
         Some(secret) => decode_key(&secret, "macOS Keychain"),
         None => {
-            let key = migrated_or_new_key(config_dir)?;
+            let key = new_key();
             let encoded = STANDARD.encode(key);
             write_macos_keychain_secret(&encoded)?;
-            remove_legacy_dev_key(config_dir)?;
             Ok(key)
         }
     }
@@ -136,28 +435,67 @@ fn load_or_create_macos_keychain_key(config_dir: &Path) -> Result<[u8; 32], AppE
 
 #[cfg(target_os = "macos")]
 fn read_macos_keychain_secret() -> Result<Option<String>, AppError> {
-    // SecItem searches the user's configured Keychain search list. Unlike the
-    // legacy SecKeychain default API, it remains valid when a QA run supplies a
-    // temporary HOME without its own Library/Keychains directory.
-    match get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
-        Ok(secret) => {
-            let secret = String::from_utf8(secret).map_err(|error| {
-                AppError::AuthError(format!("macOS Keychain value is not valid UTF-8: {error}"))
-            })?;
-            Ok(Some(secret.trim().to_string()))
-        }
-        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
-        Err(error) => Err(macos_keychain_error("read", error.code())),
+    // `kSecUseAuthenticationUISkip` is essential product policy: this query
+    // must either return data silently or fail in VaporLensDB. Security.framework
+    // is never allowed to put up a login-password/Touch ID dialog during normal
+    // database use.
+    let mut search = ItemSearchOptions::new();
+    search
+        .class(ItemClass::generic_password())
+        .service(KEYCHAIN_SERVICE)
+        .account(KEYCHAIN_ACCOUNT)
+        .load_data(true)
+        .skip_authenticated_items(true);
+    match search.search() {
+        Ok(results) => match results.into_iter().next() {
+            Some(SearchResult::Data(secret)) => decode_macos_keychain_secret(secret),
+            // Authentication-required records are deliberately skipped. Treat
+            // them as unavailable rather than asking macOS to authenticate.
+            None | Some(_) => Ok(None),
+        },
+        // With `kSecUseAuthenticationUISkip`, an inaccessible item may be
+        // reported as either auth-failed or interaction-not-allowed. Both
+        // mean "not available silently", never "ask macOS to authenticate".
+        Err(error) if is_silent_keychain_unavailable(error.code()) => Ok(None),
+        Err(error) => Err(macos_keychain_error("silent read", error.code())),
     }
 }
 
 #[cfg(target_os = "macos")]
+fn is_silent_keychain_unavailable(status: i32) -> bool {
+    matches!(
+        status,
+        ERR_SEC_ITEM_NOT_FOUND | ERR_SEC_AUTH_FAILED | ERR_SEC_INTERACTION_NOT_ALLOWED
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn decode_macos_keychain_secret(secret: Vec<u8>) -> Result<Option<String>, AppError> {
+    let secret = String::from_utf8(secret).map_err(|error| {
+        AppError::AuthError(format!("macOS Keychain value is not valid UTF-8: {error}"))
+    })?;
+    Ok(Some(secret.trim().to_string()))
+}
+
+#[cfg(target_os = "macos")]
 fn write_macos_keychain_secret(secret: &str) -> Result<(), AppError> {
-    // `security add-generic-password -w <secret>` exposes the value through
-    // process argv. Security.framework retains the bytes in-process and uses
-    // the same generic-password service/account attributes as that old item.
-    set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, secret.as_bytes())
-        .map_err(|error| macos_keychain_error("write", error.code()))
+    // Create-only deliberately avoids an update of an inaccessible item. A
+    // duplicate means the item was not silently readable and is surfaced as a
+    // controlled credential re-entry error rather than an authorization UI.
+    match add_macos_generic_password_silently(
+        KEYCHAIN_SERVICE,
+        KEYCHAIN_ACCOUNT,
+        "VaporLensDB encryption key",
+        secret.as_bytes(),
+    ) {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == ERR_SEC_DUPLICATE_ITEM => Err(saved_credential_unavailable()),
+        Err(error) => Err(macos_keychain_error("write", error.code())),
+    }
+}
+
+fn saved_credential_unavailable() -> AppError {
+    AppError::CredentialUnavailable
 }
 
 #[cfg(target_os = "macos")]
@@ -388,17 +726,23 @@ fn load_or_create_dev_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
     Ok(key_bytes)
 }
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn migrated_or_new_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
     let legacy = key_path(config_dir);
     if legacy.exists() {
         return decode_key(fs::read_to_string(legacy)?.trim(), "legacy development key");
     }
+    Ok(new_key())
+}
+
+fn new_key() -> [u8; 32] {
     let key = Key::<Aes256Gcm>::generate();
     let mut bytes = [0_u8; 32];
     bytes.copy_from_slice(key.as_slice());
-    Ok(bytes)
+    bytes
 }
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn remove_legacy_dev_key(config_dir: &Path) -> Result<(), AppError> {
     let path = key_path(config_dir);
     if path.exists() {
@@ -441,17 +785,24 @@ fn decode_key(encoded: &str, source: &str) -> Result<[u8; 32], AppError> {
 mod tests {
     use std::fs;
 
+    #[cfg(target_os = "macos")]
+    use crate::models::error::AppError;
+
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
-    use super::{decrypt_password, encrypt_password, key_path};
+    use super::{
+        decrypt_password, encrypt_password, key_path, key_resolution_count,
+        reset_key_resolution_count, SecretOperation, CURRENT_CIPHERTEXT_PREFIX,
+    };
 
     #[cfg(target_os = "macos")]
-    use super::{macos_keychain_error, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE};
-
-    #[cfg(target_os = "macos")]
-    use security_framework::passwords::{
-        delete_generic_password, get_generic_password, set_generic_password,
+    use super::{
+        is_silent_keychain_unavailable, macos_keychain_error, read_macos_datasource_password,
+        saved_credential_unavailable, store_macos_datasource_password, ERR_SEC_AUTH_FAILED,
+        ERR_SEC_INTERACTION_NOT_ALLOWED, ERR_SEC_ITEM_NOT_FOUND, KEYCHAIN_ACCOUNT,
+        KEYCHAIN_SERVICE, MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX,
+        MACOS_DATASOURCE_PASSWORD_SERVICE,
     };
 
     #[test]
@@ -465,6 +816,35 @@ mod tests {
 
         let decrypted = decrypt_password(&dir, &encrypted).expect("decrypt password");
         assert_eq!(decrypted, "postgres123");
+
+        fs::remove_dir_all(dir).expect("remove crypto test directory");
+    }
+
+    #[test]
+    fn scoped_secret_operation_resolves_the_master_key_once() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-scoped-crypto-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        reset_key_resolution_count();
+
+        let mut operation = SecretOperation::new(&dir);
+        let first = operation.encrypt("first").expect("encrypt first");
+        let second = operation.encrypt("second").expect("encrypt second");
+        assert!(first.starts_with(CURRENT_CIPHERTEXT_PREFIX));
+        assert_eq!(
+            operation.decrypt(&first).expect("decrypt first").plaintext,
+            "first"
+        );
+        assert_eq!(
+            operation
+                .decrypt(&second)
+                .expect("decrypt second")
+                .plaintext,
+            "second"
+        );
+        assert_eq!(key_resolution_count(), 1);
 
         fs::remove_dir_all(dir).expect("remove crypto test directory");
     }
@@ -492,28 +872,72 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_keychain_record_is_stable_and_errors_do_not_echo_secret_data() {
-        // These names match the historical `/usr/bin/security -s/-a` item, so
-        // Security.framework reads existing keys without a user-data migration.
-        assert_eq!(KEYCHAIN_SERVICE, "com.vaporlensdb.encryption-key");
+    fn macos_keychain_v4_errors_do_not_echo_secret_data() {
+        assert_eq!(KEYCHAIN_SERVICE, "com.vaporlensdb.encryption-key.v4");
         assert_eq!(KEYCHAIN_ACCOUNT, "VaporLensDB");
 
         let rendered = macos_keychain_error("write", -25293).to_string();
         assert!(rendered.contains("OSStatus -25293"));
         assert!(!rendered.contains("test-secret-value"));
+        assert_eq!(
+            saved_credential_unavailable().safe_message(),
+            "Unable to access the saved database password. Please enter it again."
+        );
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    #[ignore = "writes then removes a uniquely named item from the logged-in macOS Keychain"]
-    fn native_keychain_generic_password_round_trip() {
-        let service = format!("com.vaporlensdb.test.{}", uuid::Uuid::new_v4());
-        let account = "VaporLensDB native Keychain test";
-        let secret = b"ephemeral-native-keychain-test-key";
+    fn noninteractive_keychain_denials_use_the_controlled_reentry_path() {
+        assert!(is_silent_keychain_unavailable(ERR_SEC_ITEM_NOT_FOUND));
+        assert!(is_silent_keychain_unavailable(ERR_SEC_AUTH_FAILED));
+        assert!(is_silent_keychain_unavailable(
+            ERR_SEC_INTERACTION_NOT_ALLOWED
+        ));
+        assert!(!is_silent_keychain_unavailable(-50));
+    }
 
-        set_generic_password(&service, account, secret).expect("write native Keychain item");
-        let restored = get_generic_password(&service, account).expect("read native Keychain item");
-        assert_eq!(restored, secret);
-        delete_generic_password(&service, account).expect("remove native Keychain item");
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_datasource_password_reference_keeps_plaintext_out_of_config() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-direct-password-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+
+        let reference = store_macos_datasource_password(&dir, "postgres123")
+            .expect("store direct datasource password");
+        assert!(reference.starts_with(MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX));
+        assert!(!reference.contains("postgres123"));
+        assert_eq!(
+            read_macos_datasource_password(&dir, &reference)
+                .expect("read direct datasource password")
+                .plaintext,
+            "postgres123"
+        );
+        assert_eq!(
+            MACOS_DATASOURCE_PASSWORD_SERVICE,
+            "com.vaporlensdb.datasource-password.v1"
+        );
+
+        fs::remove_dir_all(dir).expect("remove crypto test directory");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn old_macos_ciphertext_is_unavailable_without_resolving_any_key() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-old-credential-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        reset_key_resolution_count();
+
+        let mut operation = SecretOperation::new(&dir);
+        assert!(matches!(
+            operation.decrypt("v3:old-ciphertext"),
+            Err(AppError::CredentialUnavailable)
+        ));
+        assert_eq!(key_resolution_count(), 0);
     }
 }

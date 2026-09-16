@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import i18n from '@/i18n'
+import zh from '@/locales/zh.json'
 import type { ConnectionConfig, ConnectionInput } from '@/types/connection'
 
 const connectionMocks = vi.hoisted(() => ({
@@ -196,5 +198,42 @@ describe('connection store disconnect lifecycle', () => {
     })
     expect(notification?.message).toBe(useConnectionStore.getState().error)
     expect(notification?.message).not.toContain('operations are running')
+  })
+})
+
+describe('saved credential recovery', () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en')
+    for (const mock of Object.values(connectionMocks)) mock.mockReset()
+    const saved = connection('connection-1', 'Saved MySQL')
+    useConnectionStore.setState({
+      connections: [saved],
+      statuses: {},
+      browsingConnectionId: null,
+      activeConnectionId: null,
+      busyConnectionIds: {},
+      error: null,
+    })
+    useUiStore.setState({ notifications: [] })
+  })
+
+  it('keeps datasource metadata and gives controlled re-entry guidance when silent credential access fails', async () => {
+    connectionMocks.connect.mockRejectedValue({
+      code: 'SAVED_CREDENTIAL_UNAVAILABLE',
+      message: 'Unable to access the saved database password. Please enter it again.',
+    })
+
+    await expect(useConnectionStore.getState().connectConnection('connection-1'))
+      .rejects.toMatchObject({ code: 'SAVED_CREDENTIAL_UNAVAILABLE' })
+
+    expect(useConnectionStore.getState().connections).toEqual([connection('connection-1', 'Saved MySQL')])
+    expect(useConnectionStore.getState().statuses['connection-1']).toMatchObject({ status: 'failed' })
+    expect(useConnectionStore.getState().error).toBe(
+      'The previously saved password is unavailable. Please re-enter the database password in the connection settings and save.',
+    )
+    expect(useUiStore.getState().notifications.at(-1)?.message).toBe(useConnectionStore.getState().error)
+
+    await i18n.changeLanguage('zh')
+    expect(i18n.t('connection.savedCredentialUnavailable')).toBe(zh.connection.savedCredentialUnavailable)
   })
 })

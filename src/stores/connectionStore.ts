@@ -58,11 +58,21 @@ interface ConnectionState {
 }
 
 function errorMessage(error: unknown) {
-  return summarizeConnectionError(normalizeAppError(error).message)
+  const appError = normalizeAppError(error)
+  if (appError.code === 'SAVED_CREDENTIAL_UNAVAILABLE') {
+    return i18n.t('connection.savedCredentialUnavailable')
+  }
+  return summarizeConnectionError(appError.message)
 }
 
 function notifyError(error: unknown, title: string) {
-  useUiStore.getState().notifyError(normalizeAppError(error), title)
+  const appError = normalizeAppError(error)
+  useUiStore.getState().notifyError(
+    appError.code === 'SAVED_CREDENTIAL_UNAVAILABLE'
+      ? { ...appError, message: i18n.t('connection.savedCredentialUnavailable') }
+      : appError,
+    title,
+  )
 }
 
 function indexStatuses(statuses: ConnectionStatus[]) {

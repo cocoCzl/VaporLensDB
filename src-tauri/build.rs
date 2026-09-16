@@ -1,4 +1,8 @@
 fn main() {
+    // Keep macOS signing metadata in Cargo's dependency graph. Without this,
+    // changing the entitlement plist can leave a locally cached release binary
+    // signed with an earlier entitlement set.
+    println!("cargo:rerun-if-changed=gen/apple/Entitlements.plist");
     tauri_build::build();
 
     #[cfg(target_os = "macos")]

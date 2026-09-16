@@ -83,9 +83,9 @@ async fn ensure_console_session(
         .get_connection(connection_id)
         .map_err(String::from)?
         .ok_or_else(|| "connection not found".to_string())?;
-    let password = state
+    let (password, ssh_tunnel) = state
         .config_store
-        .decrypt_password(&config)
+        .decrypt_connection_credentials(&config)
         .map_err(String::from)?;
     let definition = config
         .driver_definition_id
@@ -94,10 +94,6 @@ async fn ensure_console_session(
         .transpose()
         .map_err(String::from)?
         .flatten();
-    let ssh_tunnel = state
-        .config_store
-        .decrypt_ssh_tunnel(&config)
-        .map_err(String::from)?;
     let mut runtime_config = config;
     runtime_config.ssh_tunnel = ssh_tunnel;
     let active = crate::services::connection_manager::create_active_connection(
@@ -684,9 +680,9 @@ pub async fn set_console_transaction_mode(
         .get_connection(input.connection_id)
         .map_err(String::from)?
         .ok_or_else(|| "connection not found".to_string())?;
-    let password = state
+    let (password, ssh_tunnel) = state
         .config_store
-        .decrypt_password(&config)
+        .decrypt_connection_credentials(&config)
         .map_err(String::from)?;
     let definition = config
         .driver_definition_id
@@ -695,10 +691,6 @@ pub async fn set_console_transaction_mode(
         .transpose()
         .map_err(String::from)?
         .flatten();
-    let ssh_tunnel = state
-        .config_store
-        .decrypt_ssh_tunnel(&config)
-        .map_err(String::from)?;
     let mut runtime_config = config.clone();
     runtime_config.ssh_tunnel = ssh_tunnel;
     let active = crate::services::connection_manager::create_active_connection(

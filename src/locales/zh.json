@@ -76,7 +76,8 @@
     "moveToGroup": "移动到分组",
     "selectedCount": "已选择 {{count}} 项",
     "notReady": "未就绪",
-    "driverHelp": "PostgreSQL 和 MySQL 使用内置驱动；Oracle 需要本地 ojdbc，连接、查询、对象浏览、DDL/source 和补全可用。"
+    "driverHelp": "PostgreSQL 和 MySQL 使用内置驱动；Oracle 需要本地 ojdbc，连接、查询、对象浏览、DDL/source 和补全可用。",
+    "savedCredentialUnavailable": "无法读取之前保存的密码，请在连接设置中重新输入数据库密码并保存。"
   },
   "databaseCreate": {
     "action": "新建数据库",

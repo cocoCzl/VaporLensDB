@@ -165,15 +165,15 @@ impl ConfigStore {
         let now = Utc::now();
         config.created_at = now;
         config.updated_at = now;
-        config.password_encrypted = save_password
-            .then_some(password)
-            .flatten()
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .map(|value| crypto::encrypt_password(&self.config_dir, value))
-            .transpose()?;
+        let mut secrets = crypto::SecretOperation::new(&self.config_dir);
+        config.password_encrypted = save_connection_password(
+            &self.config_dir,
+            config.id,
+            password.as_deref(),
+            save_password,
+        )?;
         config.has_saved_password = config.password_encrypted.is_some();
-        encrypt_ssh_tunnel_secrets(&self.config_dir, &mut config, None)?;
+        encrypt_ssh_tunnel_secrets(&mut secrets, &mut config, None)?;
 
         self.conn()?.execute(
             "
@@ -207,18 +207,16 @@ impl ConfigStore {
         self.resolve_group_reference(&mut config)?;
         config.created_at = existing.created_at;
         config.updated_at = Utc::now();
-        config.password_encrypted = if !save_password {
-            None
-        } else {
-            match password {
-                Some(password) if !password.is_empty() => {
-                    Some(crypto::encrypt_password(&self.config_dir, &password)?)
-                }
-                _ => existing.password_encrypted,
-            }
-        };
+        let mut secrets = crypto::SecretOperation::new(&self.config_dir);
+        config.password_encrypted = update_connection_password(
+            &self.config_dir,
+            config.id,
+            password.as_deref(),
+            save_password,
+            existing.password_encrypted.as_deref(),
+        )?;
         config.has_saved_password = config.password_encrypted.is_some();
-        encrypt_ssh_tunnel_secrets(&self.config_dir, &mut config, existing.ssh_tunnel.as_ref())?;
+        encrypt_ssh_tunnel_secrets(&mut secrets, &mut config, existing.ssh_tunnel.as_ref())?;
 
         self.conn()?.execute(
             "
@@ -249,10 +247,21 @@ impl ConfigStore {
             params_from_config(&config),
         )?;
 
+        #[cfg(target_os = "macos")]
+        if existing.password_encrypted.as_deref() != config.password_encrypted.as_deref() {
+            if let Some(reference) = existing.password_encrypted.as_deref() {
+                // Cleanup touches only the direct V1 reference that this
+                // connection previously owned. The gateway is noninteractive;
+                // it never looks at legacy Keychain generations.
+                crypto::remove_macos_datasource_password(reference)?;
+            }
+        }
+
         Ok(config)
     }
 
     pub fn delete_connection(&self, id: Uuid) -> Result<(), AppError> {
+        let existing = self.get_connection(id)?;
         let affected = self.conn()?.execute(
             "DELETE FROM connections WHERE id = ?1",
             params![id.to_string()],
@@ -262,6 +271,10 @@ impl ConfigStore {
                 resource: "connection".to_string(),
                 id: id.to_string(),
             });
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(reference) = existing.and_then(|config| config.password_encrypted) {
+            crypto::remove_macos_datasource_password(&reference)?;
         }
         Ok(())
     }
@@ -502,30 +515,81 @@ impl ConfigStore {
     }
 
     pub fn decrypt_password(&self, config: &ConnectionConfig) -> Result<Option<String>, AppError> {
-        config
-            .password_encrypted
-            .as_deref()
-            .map(|value| crypto::decrypt_password(&self.config_dir, value))
-            .transpose()
+        let mut secrets = crypto::SecretOperation::new(&self.config_dir);
+        self.decrypt_password_with_operation(config, &mut secrets)
+    }
+
+    pub fn decrypt_connection_credentials(
+        &self,
+        config: &ConnectionConfig,
+    ) -> Result<(Option<String>, Option<SshTunnelConfig>), AppError> {
+        let mut secrets = crypto::SecretOperation::new(&self.config_dir);
+        let password = self.decrypt_password_with_operation(config, &mut secrets)?;
+        let ssh_tunnel = self.decrypt_ssh_tunnel_with_operation(config, &mut secrets)?;
+        Ok((password, ssh_tunnel))
+    }
+
+    fn decrypt_password_with_operation(
+        &self,
+        config: &ConnectionConfig,
+        secrets: &mut crypto::SecretOperation<'_>,
+    ) -> Result<Option<String>, AppError> {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = secrets;
+            config
+                .password_encrypted
+                .as_deref()
+                .map(|reference| {
+                    if !crypto::is_macos_datasource_password_reference(reference) {
+                        // V1/V2/V3 and the temporary V4 master-key ciphertext
+                        // are intentionally inert. Do not inspect or migrate
+                        // them: old Keychain ACLs can display system UI.
+                        return Err(AppError::CredentialUnavailable);
+                    }
+                    crypto::read_macos_datasource_password(&self.config_dir, reference)
+                        .map(|secret| secret.plaintext)
+                })
+                .transpose()
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            config
+                .password_encrypted
+                .as_deref()
+                .map(|value| {
+                    let decrypted = crypto::decrypt_password_with_operation(secrets, value)?;
+                    Ok(decrypted.plaintext)
+                })
+                .transpose()
+        }
     }
 
     pub fn decrypt_ssh_tunnel(
         &self,
         config: &ConnectionConfig,
     ) -> Result<Option<SshTunnelConfig>, AppError> {
+        let mut secrets = crypto::SecretOperation::new(&self.config_dir);
+        self.decrypt_ssh_tunnel_with_operation(config, &mut secrets)
+    }
+
+    fn decrypt_ssh_tunnel_with_operation(
+        &self,
+        config: &ConnectionConfig,
+        secrets: &mut crypto::SecretOperation<'_>,
+    ) -> Result<Option<SshTunnelConfig>, AppError> {
         let Some(mut tunnel) = config.ssh_tunnel.clone() else {
             return Ok(None);
         };
-        tunnel.password_encrypted = tunnel
-            .password_encrypted
-            .as_deref()
-            .map(|value| crypto::decrypt_password(&self.config_dir, value))
-            .transpose()?;
-        tunnel.private_key_passphrase_encrypted = tunnel
-            .private_key_passphrase_encrypted
-            .as_deref()
-            .map(|value| crypto::decrypt_password(&self.config_dir, value))
-            .transpose()?;
+        if let Some(value) = tunnel.password_encrypted.as_deref() {
+            let decrypted = crypto::decrypt_password_with_operation(secrets, value)?;
+            tunnel.password_encrypted = Some(decrypted.plaintext);
+        }
+        if let Some(value) = tunnel.private_key_passphrase_encrypted.as_deref() {
+            let decrypted = crypto::decrypt_password_with_operation(secrets, value)?;
+            tunnel.private_key_passphrase_encrypted = Some(decrypted.plaintext);
+        }
         Ok(Some(tunnel))
     }
 
@@ -1397,23 +1461,83 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool, AppError> {
     .map_err(AppError::from)
 }
 
-fn encrypt_ssh_tunnel_secrets(
+#[cfg(target_os = "macos")]
+fn save_connection_password(
     config_dir: &Path,
+    _connection_id: Uuid,
+    password: Option<&str>,
+    save_password: bool,
+) -> Result<Option<String>, AppError> {
+    match (save_password, password.filter(|value| !value.is_empty())) {
+        (true, Some(password)) => {
+            crypto::store_macos_datasource_password(config_dir, password).map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn save_connection_password(
+    config_dir: &Path,
+    _connection_id: Uuid,
+    password: Option<&str>,
+    save_password: bool,
+) -> Result<Option<String>, AppError> {
+    save_password
+        .then_some(password)
+        .flatten()
+        .filter(|value| !value.is_empty())
+        .map(|value| crypto::encrypt_password(config_dir, value))
+        .transpose()
+}
+
+#[cfg(target_os = "macos")]
+fn update_connection_password(
+    config_dir: &Path,
+    _connection_id: Uuid,
+    password: Option<&str>,
+    save_password: bool,
+    existing: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    if !save_password {
+        return Ok(None);
+    }
+    match password.filter(|value| !value.is_empty()) {
+        Some(password) => crypto::store_macos_datasource_password(config_dir, password).map(Some),
+        None => Ok(existing.map(str::to_string)),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn update_connection_password(
+    config_dir: &Path,
+    _connection_id: Uuid,
+    password: Option<&str>,
+    save_password: bool,
+    existing: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    if !save_password {
+        return Ok(None);
+    }
+    match password.filter(|value| !value.is_empty()) {
+        Some(password) => crypto::encrypt_password(config_dir, password).map(Some),
+        None => Ok(existing.map(str::to_string)),
+    }
+}
+
+fn encrypt_ssh_tunnel_secrets(
+    secrets: &mut crypto::SecretOperation<'_>,
     config: &mut ConnectionConfig,
     existing: Option<&SshTunnelConfig>,
 ) -> Result<(), AppError> {
     if let Some(tunnel) = config.ssh_tunnel.as_mut() {
         tunnel.password_encrypted = match tunnel.password_encrypted.take() {
-            Some(password) if !password.is_empty() => {
-                Some(crypto::encrypt_password(config_dir, &password)?)
-            }
+            Some(password) if !password.is_empty() => Some(secrets.encrypt(&password)?),
             _ => existing.and_then(|value| value.password_encrypted.clone()),
         };
         tunnel.private_key_passphrase_encrypted =
             match tunnel.private_key_passphrase_encrypted.take() {
-                Some(passphrase) if !passphrase.is_empty() => {
-                    Some(crypto::encrypt_password(config_dir, &passphrase)?)
-                }
+                Some(passphrase) if !passphrase.is_empty() => Some(secrets.encrypt(&passphrase)?),
                 _ => existing.and_then(|value| value.private_key_passphrase_encrypted.clone()),
             };
     }
@@ -1707,6 +1831,7 @@ mod tests {
             DriverBackend, DriverConnectionVariant, DriverDefinition, DriverDefinitionCapabilities,
             DriverStatus,
         },
+        error::AppError,
         query_history::{QueryHistoryEntry, QueryHistoryStatus},
         sql_draft::SqlDraft,
     };
@@ -2408,6 +2533,68 @@ mod tests {
 
         let connections = store.list_connections().expect("list connections");
         assert_eq!(connections.len(), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn old_macos_credential_metadata_requires_reentry_without_mutation() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-legacy-credential-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let config = ConnectionConfig {
+            id: Uuid::new_v4(),
+            name: "Legacy PG".to_string(),
+            driver_definition_id: Some("postgres".to_string()),
+            driver_type: DriverType::Postgres,
+            driver_dialect: Some("postgresql".to_string()),
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            database: Some("legacy".to_string()),
+            connection_url: None,
+            username: Some("postgres".to_string()),
+            password_encrypted: None,
+            has_saved_password: false,
+            driver_class: None,
+            driver_paths: Vec::new(),
+            ssl_mode: None,
+            group_id: None,
+            group: None,
+            color_tag: None,
+            ssh_tunnel: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let saved = store
+            .create_connection(config, Some("legacy-password".to_string()), true)
+            .expect("save connection");
+        store
+            .conn()
+            .expect("open config")
+            .execute(
+                "UPDATE connections SET password_encrypted = ?1 WHERE id = ?2",
+                params!["v3:retired-credential-payload", saved.id.to_string()],
+            )
+            .expect("write old credential metadata only");
+
+        let legacy_config = store
+            .get_connection(saved.id)
+            .expect("read connection")
+            .expect("connection exists");
+        assert!(matches!(
+            store.decrypt_password(&legacy_config),
+            Err(AppError::CredentialUnavailable)
+        ));
+        let unchanged = store
+            .get_connection(saved.id)
+            .expect("read unchanged connection")
+            .expect("connection exists");
+        assert!(unchanged
+            .password_encrypted
+            .as_deref()
+            .is_some_and(|value| value.starts_with("v3:")));
     }
 
     #[test]

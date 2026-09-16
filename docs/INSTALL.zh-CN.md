@@ -95,16 +95,19 @@ bridge，但不会内置任何专有数据库驱动文件。
 
 ## 保存的凭据
 
-数据库与 SSH 密码由操作系统凭据存储保护的密钥加密。当前验证状态按平台区分：
+保存的凭据使用操作系统凭据存储后端。当前验证状态按平台区分：
 
-- macOS Keychain 的凭据恢复已完成 runtime 验证。
+- macOS 将每个已保存的**数据库密码**直接存入 Keychain，配置数据库只保存不透明的凭据引用。
+  读取是非交互的：正常使用绝不应弹出 macOS Keychain 授权框。旧版本保存的数据库凭据不会被
+  读取或自动迁移；如不可用，请在连接设置中重新输入数据库密码并保存一次。该行为的最终 macOS
+  runtime 验收仍在进行中。
 - Windows DPAPI 实现已存在；Windows runtime 为 **NOT EXECUTED**。
 - Linux Secret Service / `secret-tool` 实现已存在；Linux runtime 为
   **NOT EXECUTED**。Debian/Ubuntu 需要 `libsecret-tools`；如果当前 Linux 会话没有
   Secret Service，请不要勾选“保存密码”，并在本次会话连接时输入密码。
 
-`VAPORLENSDB_USE_DEV_KEY=1` 只用于开发测试，正常安装不得启用。升级后，旧开发密钥
-会在系统凭据存储写入成功后自动迁移。
+`VAPORLENSDB_USE_DEV_KEY=1` 只用于开发测试，正常安装不得启用。正常 macOS 使用不会
+迁移或探测旧 Keychain 凭据代际。
 
 ## 偏好设置与帮助
 

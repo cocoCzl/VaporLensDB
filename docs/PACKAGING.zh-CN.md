@@ -178,8 +178,16 @@ Windows 和 Linux 根据 Rust 原生 host 使用 `x86_64` 或 `aarch64`，脚本
 
 ## 未来签名阶段的 macOS entitlement 审查
 
-当前 macOS packaging config 包含 `allow-jit`、`allow-unsigned-executable-memory` 和
-`disable-library-validation` 这三项 hardened-runtime exceptions。它们只是当前配置，
-并不证明全部都为 Tauri、WebKit 或 JDBC 所必需。此前 minimal-entitlement A/B 测试未能
-证明运行时必要性。在未来 1.0 Developer ID signing/notarization 准备中，只保留能够通过
-移除后可复现 failure 证明必要的 exception。
+release entitlement plist 现在只显式保留
+`com.apple.security.app-sandbox=false`。VaporLensDB 面向 Developer ID 直接分发，
+并非 Mac App Store sandbox 模式：它需要用户选择数据库文件和 JDBC JAR、连接任意数据库
+端点、启动本地 Java 进程及可选 SSH 集成。经过受控 release-mode 构建和启动验证后，
+`allow-jit`、`allow-unsigned-executable-memory`、
+`disable-library-validation` 三项 exception 已移除。
+
+macOS 打包会通过 `scripts/tauri-release-build.sh`，由当前构建机动态生成 Rust
+source-path remapping，避免将本机 workspace、Cargo 或 Rustup 路径留在可分发
+executable string 中。只检查本地 `.app` 时使用 `pnpm build:release:macos`。
+
+正式流程见[macOS 签名与公证清单](release/macos-signing.md)。本仓库配置仍未实际启用
+Developer ID 签名或 notarization。

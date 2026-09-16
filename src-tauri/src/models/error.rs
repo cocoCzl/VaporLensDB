@@ -6,23 +6,46 @@ use crate::utils::error_redaction::sanitize_diagnostic_error;
 
 #[derive(Debug)]
 pub enum AppError {
-    ConnectionFailed { driver: String, message: String },
+    ConnectionFailed {
+        driver: String,
+        message: String,
+    },
 
-    SshTunnelError { message: String },
+    SshTunnelError {
+        message: String,
+    },
 
-    QueryFailed { sql: String, message: String },
+    QueryFailed {
+        sql: String,
+        message: String,
+    },
 
-    DisconnectBlocked { reason: DisconnectBlockReason },
+    DisconnectBlocked {
+        reason: DisconnectBlockReason,
+    },
 
     AuthError(String),
 
+    /// A Keychain entry could not be read without interactive system
+    /// authentication. The UI must request the database password again.
+    CredentialUnavailable,
+
     IoError(String),
 
-    NotFound { resource: String, id: String },
+    NotFound {
+        resource: String,
+        id: String,
+    },
 
-    Timeout { operation: String, elapsed_ms: u64 },
+    Timeout {
+        operation: String,
+        elapsed_ms: u64,
+    },
 
-    UnsupportedOperation { driver: String, operation: String },
+    UnsupportedOperation {
+        driver: String,
+        operation: String,
+    },
 
     SerializationError(String),
 
@@ -69,6 +92,9 @@ impl AppError {
             Self::AuthError(message) => {
                 format!("Auth error: {}", sanitize_diagnostic_error(message, None))
             }
+            Self::CredentialUnavailable => {
+                "Unable to access the saved database password. Please enter it again.".to_string()
+            }
             Self::IoError(message) => {
                 format!("IO error: {}", sanitize_diagnostic_error(message, None))
             }
@@ -104,6 +130,7 @@ impl AppError {
             Self::QueryFailed { .. } => "QUERY_FAILED",
             Self::DisconnectBlocked { .. } => "DISCONNECT_BLOCKED",
             Self::AuthError(_) => "AUTH_ERROR",
+            Self::CredentialUnavailable => "SAVED_CREDENTIAL_UNAVAILABLE",
             Self::IoError(_) => "IO_ERROR",
             Self::NotFound { .. } => "NOT_FOUND",
             Self::Timeout { .. } => "TIMEOUT",

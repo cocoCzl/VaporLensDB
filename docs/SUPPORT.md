@@ -26,7 +26,10 @@ desktop runtime QA.
 
 ## Credential storage status
 
-- macOS Keychain: implementation and credential restore runtime verified.
+- macOS Keychain: each saved database password is stored directly under an
+  opaque datasource credential reference and read non-interactively; final
+  zero-authorization-UI runtime acceptance is in progress. Older credential
+  generations require database-password re-entry rather than Keychain migration.
 - Windows DPAPI: implementation present; runtime **NOT EXECUTED**.
 - Linux Secret Service / `secret-tool`: implementation present; runtime
   **NOT EXECUTED**.

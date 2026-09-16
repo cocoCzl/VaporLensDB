@@ -229,11 +229,18 @@ pub async fn connect(
         .map_err(String::from)?
         .ok_or_else(|| format!("connection not found: {id}"))?;
     validate_saved_sqlite_reconnect(&config)?;
-    let password = match password.filter(|value| !value.is_empty()) {
-        Some(password) => Some(password),
+    let supplied_password = password.filter(|value| !value.is_empty());
+    let (password, ssh_tunnel) = match supplied_password {
+        Some(password) => (
+            Some(password),
+            state
+                .config_store
+                .decrypt_ssh_tunnel(&config)
+                .map_err(String::from)?,
+        ),
         None => state
             .config_store
-            .decrypt_password(&config)
+            .decrypt_connection_credentials(&config)
             .map_err(String::from)?,
     };
 
@@ -248,10 +255,6 @@ pub async fn connect(
         .map_err(String::from)?
         .flatten();
 
-    let ssh_tunnel = state
-        .config_store
-        .decrypt_ssh_tunnel(&config)
-        .map_err(String::from)?;
     let mut runtime_config = config.clone();
     runtime_config.ssh_tunnel = ssh_tunnel;
 

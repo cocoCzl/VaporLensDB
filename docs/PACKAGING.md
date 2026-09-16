@@ -200,10 +200,20 @@ actually enabled and verified.
 
 ## macOS entitlement review for future signing
 
-The current macOS packaging configuration contains hardened-runtime exceptions
-for `allow-jit`, `allow-unsigned-executable-memory`, and
-`disable-library-validation`. They are present configuration, not proof that
-they are all required by Tauri, WebKit, or JDBC. The earlier minimal-entitlement
-A/B work did not establish runtime necessity. During 1.0 Developer ID
-signing/notarization preparation, retain only exceptions justified by a
-reproducible failure without them.
+The release entitlement plist deliberately contains only
+`com.apple.security.app-sandbox=false`. VaporLensDB is prepared for Developer
+ID direct distribution, not the Mac App Store sandbox model: it needs
+user-selected database files and JDBC JARs, arbitrary database endpoints,
+local Java processes, and optional SSH integration. The prior
+`allow-jit`, `allow-unsigned-executable-memory`, and
+`disable-library-validation` exceptions were removed after controlled local
+release-mode builds and runtime launch checks.
+
+macOS packaging runs through `scripts/tauri-release-build.sh`, which derives
+Rust source-path remapping from the active build machine. This keeps local
+workspace, Cargo, and Rustup paths out of distributable executable strings;
+use `pnpm build:release:macos` for the focused local `.app` check.
+
+See [the macOS signing and notarization checklist](release/macos-signing.md)
+for the formal-release procedure. Developer ID signing/notarization itself is
+still not enabled by this repository configuration.

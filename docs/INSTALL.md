@@ -115,10 +115,15 @@ starting VaporLensDB; accepted values are 64–1024.
 
 ## Saved credentials
 
-Saved database and SSH passwords are encrypted with a key protected by an OS
-credential store. Current verification is platform-specific:
+Saved credentials use the platform credential-store backend. Current
+verification is platform-specific:
 
-- macOS Keychain credential restore is runtime verified.
+- macOS stores each saved **database password** directly in Keychain and keeps
+  only an opaque credential reference in its config database. Reads are
+  non-interactive: normal use must never show a macOS Keychain authorization
+  dialog. Older saved database credentials are intentionally not read or
+  migrated; re-enter and save the database password once if one is unavailable.
+  Final macOS runtime acceptance for this behavior is in progress.
 - Windows DPAPI implementation is present; Windows runtime is **NOT EXECUTED**.
 - Linux Secret Service / `secret-tool` implementation is present; Linux runtime
   is **NOT EXECUTED**. Linux needs `libsecret-tools` on Debian/Ubuntu; without
@@ -126,8 +131,8 @@ credential store. Current verification is platform-specific:
   the password for the current session.
 
 `VAPORLENSDB_USE_DEV_KEY=1` enables a local development key and must not be used
-for a normal installation. Existing development keys are migrated into the OS
-credential store after a successful upgrade.
+for a normal installation. Normal macOS operation never migrates or probes
+older Keychain credential generations.
 
 ## Preferences and help
 
