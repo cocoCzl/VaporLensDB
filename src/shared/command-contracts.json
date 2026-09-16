@@ -42,6 +42,13 @@
     "status": "active"
   },
   {
+    "name": "rename_connection",
+    "namespace": "connection",
+    "args": "{ id: string; name: string }",
+    "response": "ConnectionConfig",
+    "status": "active"
+  },
+  {
     "name": "delete_connection",
     "namespace": "connection",
     "args": "{ id: string }",

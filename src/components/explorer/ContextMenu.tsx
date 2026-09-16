@@ -7,7 +7,7 @@ import { resolveContextMenuPlacement, type ContextMenuPlacement } from '@/compon
 export interface ContextMenuAction {
   id: string
   label: string
-  icon: 'data' | 'ddl' | 'copy' | 'copyFull' | 'refresh' | 'connect' | 'disconnect' | 'edit' | 'duplicate' | 'move' | 'favorite' | 'delete'
+  icon: 'data' | 'ddl' | 'copy' | 'copyFull' | 'refresh' | 'connect' | 'disconnect' | 'edit' | 'rename' | 'duplicate' | 'move' | 'favorite' | 'delete'
   disabled?: boolean
   separatorBefore?: boolean
   tone?: 'danger'
@@ -30,6 +30,7 @@ const ICONS = {
   connect: Link,
   disconnect: Unplug,
   edit: Pencil,
+  rename: Pencil,
   duplicate: Copy,
   move: FolderInput,
   favorite: Star,

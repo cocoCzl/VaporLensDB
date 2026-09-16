@@ -68,6 +68,7 @@ pub fn run() {
             commands::config::export_diagnostics_package,
             commands::connection::create_connection,
             commands::connection::update_connection,
+            commands::connection::rename_connection,
             commands::connection::delete_connection,
             commands::connection::list_connections,
             commands::connection::test_connection,

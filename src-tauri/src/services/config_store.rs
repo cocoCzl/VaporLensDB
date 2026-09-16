@@ -279,6 +279,27 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// Persist a display-name-only change without decrypting credentials or
+    /// invalidating the live connection identified by `id`.
+    pub fn rename_connection(&self, id: Uuid, name: &str) -> Result<ConnectionConfig, AppError> {
+        let name = normalize_connection_name(name)?;
+        let mut connection = self.get_connection(id)?.ok_or_else(|| AppError::NotFound {
+            resource: "connection".to_string(),
+            id: id.to_string(),
+        })?;
+        connection.name = name;
+        connection.updated_at = Utc::now();
+        self.conn()?.execute(
+            "UPDATE connections SET name = ?2, updated_at = ?3 WHERE id = ?1",
+            params![
+                id.to_string(),
+                connection.name,
+                connection.updated_at.to_rfc3339()
+            ],
+        )?;
+        Ok(connection)
+    }
+
     pub fn list_connections(&self) -> Result<Vec<ConnectionConfig>, AppError> {
         let conn = self.conn()?;
         let mut statement = conn.prepare(
@@ -1691,6 +1712,16 @@ fn normalize_group_name(value: &str) -> Result<String, AppError> {
     Ok(name.to_string())
 }
 
+fn normalize_connection_name(value: &str) -> Result<String, AppError> {
+    let name = value.trim();
+    if name.is_empty() {
+        return Err(AppError::ConfigError(
+            "data source name is required".to_string(),
+        ));
+    }
+    Ok(name.to_string())
+}
+
 fn row_to_query_history(row: &Row<'_>) -> Result<QueryHistoryEntry, rusqlite::Error> {
     let id: String = row.get(0)?;
     let connection_id: String = row.get(1)?;
@@ -2836,6 +2867,60 @@ mod tests {
             .get_connection(connection_id)
             .expect("get deleted connection")
             .is_none());
+    }
+
+    #[test]
+    fn renames_only_connection_display_name() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!(
+            "vaporlensdb-connection-rename-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(dir).expect("create config store");
+        let created_at = Utc::now();
+        let saved = store
+            .create_connection(
+                ConnectionConfig {
+                    id: Uuid::new_v4(),
+                    name: "Local MySQL".to_string(),
+                    driver_definition_id: Some("mysql".to_string()),
+                    driver_type: DriverType::Mysql,
+                    driver_dialect: Some("mysql".to_string()),
+                    host: Some("localhost".to_string()),
+                    port: Some(3306),
+                    database: Some("qa".to_string()),
+                    connection_url: None,
+                    username: Some("qa_user".to_string()),
+                    password_encrypted: None,
+                    has_saved_password: false,
+                    driver_class: None,
+                    driver_paths: Vec::new(),
+                    ssl_mode: Some("prefer".to_string()),
+                    group_id: None,
+                    group: None,
+                    color_tag: Some("qa".to_string()),
+                    ssh_tunnel: None,
+                    created_at,
+                    updated_at: created_at,
+                },
+                None,
+                true,
+            )
+            .expect("create connection");
+
+        let renamed = store
+            .rename_connection(saved.id, "  QA MySQL  ")
+            .expect("rename connection");
+
+        assert_eq!(renamed.name, "QA MySQL");
+        assert_eq!(renamed.driver_type, saved.driver_type);
+        assert_eq!(renamed.host, saved.host);
+        assert_eq!(renamed.port, saved.port);
+        assert_eq!(renamed.database, saved.database);
+        assert_eq!(renamed.username, saved.username);
+        assert_eq!(renamed.password_encrypted, saved.password_encrypted);
+        assert_eq!(renamed.ssh_tunnel, saved.ssh_tunnel);
+        assert!(store.rename_connection(saved.id, " \t ").is_err());
     }
 
     #[test]

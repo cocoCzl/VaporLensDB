@@ -111,6 +111,20 @@ pub async fn update_connection(
     Ok(updated)
 }
 
+/// Changes only the datasource display name. It intentionally preserves live
+/// sessions and does not read, update, or remove saved credentials.
+#[tauri::command]
+pub fn rename_connection(
+    state: State<'_, AppState>,
+    id: Uuid,
+    name: String,
+) -> Result<ConnectionConfig, String> {
+    state
+        .config_store
+        .rename_connection(id, &name)
+        .map_err(Into::into)
+}
+
 #[tauri::command]
 pub async fn delete_connection(state: State<'_, AppState>, id: Uuid) -> Result<(), String> {
     state.connection_manager.lock().await.disconnect(id).ok();

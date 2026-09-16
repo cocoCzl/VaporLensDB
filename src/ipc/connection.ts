@@ -10,6 +10,10 @@ export function updateConnection(input: ConnectionInput) {
   return invokeCommand<ConnectionConfig>(COMMANDS.updateConnection, { input })
 }
 
+export function renameConnection(id: string, name: string) {
+  return invokeCommand<ConnectionConfig>(COMMANDS.renameConnection, { id, name })
+}
+
 export function deleteConnection(id: string) {
   return invokeCommand<void>(COMMANDS.deleteConnection, { id })
 }

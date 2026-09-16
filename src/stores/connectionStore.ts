@@ -10,6 +10,7 @@ import {
   listConnections,
   listConnectionStatuses,
   listDataSourceGroups,
+  renameConnection,
   renameDataSourceGroup,
   reorderDataSourceGroups,
   setConnectionDataSourceGroup,
@@ -48,6 +49,7 @@ interface ConnectionState {
   deleteGroup: (id: string) => Promise<void>
   moveConnectionToGroup: (connectionId: string, groupId: string | null) => Promise<void>
   saveConnection: (input: ConnectionInput) => Promise<ConnectionConfig>
+  renameConnection: (id: string, name: string) => Promise<ConnectionConfig>
   removeConnection: (id: string) => Promise<void>
   testConnectionInput: (input: ConnectionInput) => Promise<void>
   connectConnection: (id: string, options?: { selectForBrowsing?: boolean; password?: string | null }) => Promise<void>
@@ -210,6 +212,18 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       return saved
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
+      notifyError(error, i18n.t('notifications.saveConnectionFailed'))
+      throw error
+    }
+  },
+  renameConnection: async (id, name) => {
+    const normalizedName = name.trim()
+    if (!normalizedName) throw new Error('data source name is required')
+    try {
+      const saved = await renameConnection(id, normalizedName)
+      set((state) => ({ connections: upsertConnection(state.connections, saved) }))
+      return saved
+    } catch (error) {
       notifyError(error, i18n.t('notifications.saveConnectionFailed'))
       throw error
     }

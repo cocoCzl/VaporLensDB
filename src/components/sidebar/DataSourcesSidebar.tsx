@@ -9,6 +9,7 @@ import { DatabaseTree } from '@/components/explorer/DatabaseTree'
 import { ConnectionContextMenu } from '@/components/sidebar/ConnectionContextMenu'
 import { ConnectionGroup } from '@/components/sidebar/ConnectionGroup'
 import { ConnectionRow } from '@/components/sidebar/ConnectionRow'
+import { RenameConnectionDialog } from '@/components/sidebar/RenameConnectionDialog'
 import { RecentSection } from '@/components/sidebar/RecentSection'
 import {
   filterConnections,
@@ -41,6 +42,7 @@ export function DataSourcesSidebar() {
     toggleFavoriteDataSource,
     moveConnectionToGroup,
     removeConnection,
+    renameConnection,
     saveConnection,
   } = useConnectionStore(useShallow((state) => ({
     connections: state.connections,
@@ -56,6 +58,7 @@ export function DataSourcesSidebar() {
     toggleFavoriteDataSource: state.toggleFavoriteDataSource,
     moveConnectionToGroup: state.moveConnectionToGroup,
     removeConnection: state.removeConnection,
+    renameConnection: state.renameConnection,
     saveConnection: state.saveConnection,
   })))
   const tabs = useEditorStore((state) => state.tabs)
@@ -65,6 +68,7 @@ export function DataSourcesSidebar() {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const [expandedDataSourceIds, setExpandedDataSourceIds] = useState<Record<string, boolean>>({})
   const [contextMenu, setContextMenu] = useState<{ connection: ConnectionConfig; x: number; y: number } | null>(null)
+  const [renameConnectionTarget, setRenameConnectionTarget] = useState<ConnectionConfig | null>(null)
   const [query, setQuery] = useState('')
 
   useEffect(() => {
@@ -269,6 +273,7 @@ export function DataSourcesSidebar() {
         onNewQuery={openBoundSql}
         onRefresh={(connection) => useMetadataStore.getState().clearConnection(connection.id)}
         onEdit={openManagement}
+        onRename={setRenameConnectionTarget}
         onDuplicate={duplicateConnection}
         onMove={moveToGroup}
         onToggleFavorite={(connection) => toggleFavoriteDataSource(connection.id)}
@@ -277,6 +282,14 @@ export function DataSourcesSidebar() {
             void removeConnection(connection.id)
           }
         }}
+      />
+
+      <RenameConnectionDialog
+        key={renameConnectionTarget?.id ?? 'closed'}
+        connection={renameConnectionTarget}
+        open={Boolean(renameConnectionTarget)}
+        onOpenChange={(open) => { if (!open) setRenameConnectionTarget(null) }}
+        onSave={async (connection, name) => { await renameConnection(connection.id, name) }}
       />
 
       {disconnectDialog}

@@ -14,6 +14,7 @@ interface ConnectionContextMenuProps {
   onNewQuery: (connection: ConnectionConfig) => void
   onRefresh: (connection: ConnectionConfig) => void
   onEdit: (connection: ConnectionConfig) => void
+  onRename: (connection: ConnectionConfig) => void
   onDuplicate: (connection: ConnectionConfig) => void
   onMove: (connection: ConnectionConfig) => void
   onToggleFavorite: (connection: ConnectionConfig) => void
@@ -32,6 +33,7 @@ export function ConnectionContextMenu({
   onNewQuery,
   onRefresh,
   onEdit,
+  onRename,
   onDuplicate,
   onMove,
   onToggleFavorite,
@@ -51,6 +53,7 @@ export function ConnectionContextMenu({
     { id: 'new-query', label: t('workbench.newSql'), icon: 'data', onSelect: () => onNewQuery(connection) },
     { id: 'refresh', label: t('common.refresh'), icon: 'refresh', onSelect: () => onRefresh(connection) },
     { id: 'edit', label: t('connection.edit'), icon: 'edit', separatorBefore: true, onSelect: () => onEdit(connection) },
+    { id: 'rename', label: t('connection.rename'), icon: 'rename', onSelect: () => onRename(connection) },
     { id: 'duplicate', label: t('common.copy'), icon: 'duplicate', onSelect: () => onDuplicate(connection) },
     { id: 'move', label: t('connection.moveToGroup'), icon: 'move', onSelect: () => onMove(connection) },
     {

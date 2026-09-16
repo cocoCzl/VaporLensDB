@@ -13,6 +13,7 @@ const connectionMocks = vi.hoisted(() => ({
   listConnections: vi.fn(),
   listConnectionStatuses: vi.fn(),
   listDataSourceGroups: vi.fn(),
+  renameConnection: vi.fn(),
   renameDataSourceGroup: vi.fn(),
   reorderDataSourceGroups: vi.fn(),
   setConnectionDataSourceGroup: vi.fn(),
@@ -101,6 +102,19 @@ describe('connection store save lifecycle', () => {
 
     expect(useConnectionStore.getState().connections).toEqual([updated])
     expect(useConnectionStore.getState().loading).toBe(false)
+  })
+
+  it('renames only the datasource display name through the dedicated persistence command', async () => {
+    const existing = connection('connection-1', 'Local MySQL')
+    const renamed = { ...existing, name: 'QA MySQL' }
+    useConnectionStore.setState({ connections: [existing] })
+    connectionMocks.renameConnection.mockResolvedValue(renamed)
+
+    await expect(useConnectionStore.getState().renameConnection(existing.id, '  QA MySQL  ')).resolves.toEqual(renamed)
+
+    expect(connectionMocks.renameConnection).toHaveBeenCalledWith(existing.id, 'QA MySQL')
+    expect(connectionMocks.updateConnection).not.toHaveBeenCalled()
+    expect(useConnectionStore.getState().connections).toEqual([renamed])
   })
 
   it('retains the saved connection when the follow-up list refresh fails', async () => {

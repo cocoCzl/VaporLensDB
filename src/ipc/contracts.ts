@@ -32,6 +32,7 @@ export const COMMANDS = {
   setApplicationMenuLanguage: 'set_application_menu_language',
   createConnection: 'create_connection',
   updateConnection: 'update_connection',
+  renameConnection: 'rename_connection',
   deleteConnection: 'delete_connection',
   listConnections: 'list_connections',
   testConnection: 'test_connection',

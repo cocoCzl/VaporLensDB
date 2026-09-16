@@ -12,6 +12,7 @@ import { normalizeAppError } from '@/ipc/client'
 import { openExternalUrl } from '@/lib/openExternalUrl'
 import { normalizeConnectionEndpoint } from '@/lib/connectionEndpoint'
 import { normalizeConnectionUrl } from '@/lib/connectionUrlNormalization'
+import { defaultConnectionName, nextConnectionName } from '@/lib/defaultConnectionName'
 import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
@@ -57,7 +58,7 @@ export function ConnectionForm({
   const initialUrlCredentials = extractUrlCredentials(connection?.connectionUrl ?? '')
   const [form, setForm] = useState<ConnectionInput>({
     id: connection?.id,
-    name: connection?.name ?? 'Local PostgreSQL',
+    name: connection?.name ?? defaultConnectionName('postgres'),
     driverDefinitionId: connection?.driverDefinitionId ?? connection?.driverType ?? 'postgres',
     driverType: connection?.driverType ?? 'postgres',
     driverDialect: connection?.driverDialect ?? connection?.driverType ?? 'postgresql',
@@ -91,6 +92,7 @@ export function ConnectionForm({
   })
   const [message, setMessage] = useState<string | null>(null)
   const [messageDetail, setMessageDetail] = useState<string | null>(null)
+  const [nameIsGenerated, setNameIsGenerated] = useState(connection === null)
   const [passwordVisible, setPasswordVisible] = useState(false)
   const [groupSelection, setGroupSelection] = useState(connection?.groupId ?? '')
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
@@ -172,7 +174,7 @@ export function ConnectionForm({
       driverDefinitionId: definition?.id ?? driverType,
       driverType,
       driverDialect: definition?.driverDialect ?? driverType,
-      name: current.name || definition?.name || profile.defaultName,
+      name: nextConnectionName(current.name, nameIsGenerated, driverType),
       port: profile.defaultPort,
       database: current.database || profile.defaultDatabase,
       username: current.username || profile.defaultUsername,
@@ -279,7 +281,10 @@ export function ConnectionForm({
           <section className="grid gap-3.5 pt-0.5">
             <div className="grid gap-1.5">
               <SectionLabel htmlFor="connection-name">{t('connectionForm.name')}</SectionLabel>
-              <Input id="connection-name" value={form.name} disableTextAssistance onChange={(event) => update('name', event.target.value)} required />
+              <Input id="connection-name" value={form.name} disableTextAssistance onChange={(event) => {
+                setNameIsGenerated(false)
+                update('name', event.target.value)
+              }} required />
             </div>
 
             {activeConnectionVariant === 'file' ? (
@@ -1051,7 +1056,7 @@ const HOST_PORT_VARIANTS: ConnectionVariantOption[] = [
 
 const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
   postgres: {
-    defaultName: 'Local PostgreSQL',
+    defaultName: defaultConnectionName('postgres'),
     defaultPort: 5432,
     defaultDatabase: '',
     defaultUsername: '',
@@ -1060,7 +1065,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUrl: () => '',
   },
   mysql: {
-    defaultName: 'Local MySQL',
+    defaultName: defaultConnectionName('mysql'),
     defaultPort: 3306,
     defaultDatabase: '',
     defaultUsername: '',
@@ -1069,7 +1074,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUrl: () => '',
   },
   oracle: {
-    defaultName: 'Oracle',
+    defaultName: defaultConnectionName('oracle'),
     defaultPort: 1521,
     defaultDatabase: '',
     defaultUsername: '',
@@ -1093,7 +1098,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     },
   },
   jdbc: {
-    defaultName: 'Custom JDBC',
+    defaultName: defaultConnectionName('jdbc'),
     defaultPort: 0,
     defaultDatabase: '',
     defaultUsername: '',
@@ -1106,7 +1111,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUrl: (input) => input.connectionUrl || '',
   },
   sqlite: {
-    defaultName: 'SQLite',
+    defaultName: defaultConnectionName('sqlite'),
     defaultPort: 0,
     defaultDatabase: '',
     defaultUsername: '',
@@ -1118,7 +1123,7 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUrl: (input) => input.connectionUrl || '',
   },
   mssql: {
-    defaultName: 'SQL Server',
+    defaultName: defaultConnectionName('mssql'),
     defaultPort: 1433,
     defaultDatabase: '',
     defaultUsername: '',
