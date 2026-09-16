@@ -4,7 +4,7 @@
 
 ## 当前 Pre-1.0 使用方式：从源码运行
 
-VaporLensDB 0.8.5 处于 **Pre-1.0 Development**，当前分发方式为
+VaporLensDB 0.9.0 处于 **Pre-1.0 Development**，当前分发方式为
 **Source Build Only**。在 1.0.0 之前，没有可供公开下载的 official DMG、MSI、NSIS、
 AppImage、DEB 或 RPM。使用当前项目请 clone 源码并运行：
 

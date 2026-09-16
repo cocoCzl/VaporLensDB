@@ -4,7 +4,7 @@
 
 ## Current pre-1.0 use: build from source
 
-VaporLensDB 0.8.5 is in **Pre-1.0 Development** and is distributed as
+VaporLensDB 0.9.0 is in **Pre-1.0 Development** and is distributed as
 **Source Build Only**. There is no official downloadable DMG, MSI, NSIS,
 AppImage, DEB, or RPM before 1.0.0. To use the current project, clone it and
 run:

@@ -2,6 +2,13 @@
 
 All notable changes to VaporLensDB are documented in this file.
 
+## [0.9.0]
+
+### Changed
+
+- Finalized native build-target readiness and platform-validation documentation.
+- Added local macOS development and QA application-registration hygiene.
+
 ## [0.8.5]
 
 ### Fixed
