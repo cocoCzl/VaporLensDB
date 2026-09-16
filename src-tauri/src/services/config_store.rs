@@ -261,6 +261,7 @@ impl ConfigStore {
     }
 
     pub fn delete_connection(&self, id: Uuid) -> Result<(), AppError> {
+        #[cfg(target_os = "macos")]
         let existing = self.get_connection(id)?;
         let affected = self.conn()?.execute(
             "DELETE FROM connections WHERE id = ?1",
@@ -1855,6 +1856,9 @@ fn parse_error(error: impl ToString) -> rusqlite::Error {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use crate::models::error::AppError;
+
     use super::{migrate_data_source_groups, table_columns, table_exists, ConfigStore};
     use crate::models::{
         connection::{ConnectionConfig, DriverType, SshAuthMethod, SshTunnelConfig},
@@ -1862,7 +1866,6 @@ mod tests {
             DriverBackend, DriverConnectionVariant, DriverDefinition, DriverDefinitionCapabilities,
             DriverStatus,
         },
-        error::AppError,
         query_history::{QueryHistoryEntry, QueryHistoryStatus},
         sql_draft::SqlDraft,
     };

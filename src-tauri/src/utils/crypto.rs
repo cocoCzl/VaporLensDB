@@ -494,6 +494,7 @@ fn write_macos_keychain_secret(secret: &str) -> Result<(), AppError> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn saved_credential_unavailable() -> AppError {
     AppError::CredentialUnavailable
 }
