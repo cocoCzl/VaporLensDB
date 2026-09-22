@@ -755,6 +755,7 @@ pub(crate) async fn create_active_connection(
     password: Option<&str>,
     definition: Option<&DriverDefinition>,
 ) -> Result<ActiveConnection, AppError> {
+    super::connection_tls::validate_connection_tls(config, definition)?;
     let (ssh_tunnel, runtime_config) = open_tunnel(config).await?;
     let driver = create_driver(&runtime_config, password, definition).await?;
     driver.ping().await?;
@@ -775,6 +776,7 @@ pub(crate) async fn test_connection(
     password: Option<&str>,
     definition: Option<&DriverDefinition>,
 ) -> Result<(), AppError> {
+    super::connection_tls::validate_connection_tls(config, definition)?;
     let (_tunnel, runtime_config) = open_tunnel(config).await?;
     let driver = create_driver(&runtime_config, password, definition).await?;
     driver.ping().await
@@ -817,8 +819,15 @@ async fn create_driver(
                 let database = required(config.database.as_deref(), "database")?;
                 let username = required(config.username.as_deref(), "username")?;
                 let password = password.unwrap_or("");
-                PostgresDriver::connect_with_params(host, port, database, username, password)
-                    .await?
+                PostgresDriver::connect_with_params_tls(
+                    host,
+                    port,
+                    database,
+                    username,
+                    password,
+                    config.ssl_mode.as_deref(),
+                )
+                .await?
             };
             Ok(Arc::new(driver))
         }
@@ -839,7 +848,15 @@ async fn create_driver(
                 let database = config.database.as_deref().unwrap_or("");
                 let username = required(config.username.as_deref(), "username")?;
                 let password = password.unwrap_or("");
-                MysqlDriver::connect_with_params(host, port, database, username, password).await?
+                MysqlDriver::connect_with_params_tls(
+                    host,
+                    port,
+                    database,
+                    username,
+                    password,
+                    config.ssl_mode.as_deref(),
+                )
+                .await?
             };
             Ok(Arc::new(driver))
         }

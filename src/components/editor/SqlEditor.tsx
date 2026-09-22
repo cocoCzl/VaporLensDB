@@ -1,3 +1,4 @@
+import { statementAtOffset } from '@/lib/sqlLexer'
 import Editor, { loader, type BeforeMount, type Monaco, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { useEffect, useRef } from 'react'
@@ -249,78 +250,4 @@ function sqlAtCursor(instance: editor.IStandaloneCodeEditor) {
     return ''
   }
   return statementAtOffset(model.getValue(), model.getOffsetAt(position))
-}
-
-function statementAtOffset(sql: string, offset: number) {
-  const statements: Array<{ start: number; end: number }> = []
-  let start = 0
-  let inSingleQuote = false
-  let inDoubleQuote = false
-  let inLineComment = false
-  let inBlockComment = false
-
-  for (let index = 0; index < sql.length; index += 1) {
-    const character = sql[index]
-    const next = sql[index + 1]
-
-    if (inLineComment) {
-      if (character === '\n') inLineComment = false
-      continue
-    }
-    if (inBlockComment) {
-      if (character === '*' && next === '/') {
-        index += 1
-        inBlockComment = false
-      }
-      continue
-    }
-    if (!inSingleQuote && !inDoubleQuote && character === '-' && next === '-') {
-      index += 1
-      inLineComment = true
-      continue
-    }
-    if (!inSingleQuote && !inDoubleQuote && character === '/' && next === '*') {
-      index += 1
-      inBlockComment = true
-      continue
-    }
-    if (character === "'" && !inDoubleQuote) {
-      if (inSingleQuote && next === "'") {
-        index += 1
-      } else {
-        inSingleQuote = !inSingleQuote
-      }
-      continue
-    }
-    if (character === '"' && !inSingleQuote) {
-      if (inDoubleQuote && next === '"') {
-        index += 1
-      } else {
-        inDoubleQuote = !inDoubleQuote
-      }
-      continue
-    }
-    if (character === ';' && !inSingleQuote && !inDoubleQuote) {
-      if (sql.slice(start, index).trim()) {
-        statements.push({ start, end: index })
-      }
-      start = index + 1
-    }
-  }
-
-  if (sql.slice(start).trim()) {
-    statements.push({ start, end: sql.length })
-  }
-
-  const statementAtCursor = statements.find(
-    (candidate) => offset >= candidate.start && offset <= candidate.end,
-  )
-  const statementBeforeTrailingDelimiter = statements
-    .filter(
-      (candidate) =>
-        candidate.end < offset && /^[\s;]*$/.test(sql.slice(candidate.end, offset)),
-    )
-    .at(-1)
-  const statement = statementAtCursor ?? statementBeforeTrailingDelimiter
-  return statement ? sql.slice(statement.start, statement.end).trim() : ''
 }

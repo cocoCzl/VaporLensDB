@@ -71,6 +71,8 @@ describe('DDL metadata refresh classification', () => {
     expect(containsLikelyDdl('RENAME TABLE child_items TO archived_items')).toBe(true)
     expect(containsLikelyDdl('TRUNCATE TABLE child_items')).toBe(true)
     expect(containsLikelyDdl('SELECT 1')).toBe(false)
+    expect(containsLikelyDdl('/* comment */ CREATE\nTABLE items(id INT)')).toBe(true)
+    expect(containsLikelyDdl('SELECT $$; DROP TABLE items;$$')).toBe(false)
     expect(containsLikelyDdl('UPDATE child_items SET parent_id = parent_id WHERE id = 1')).toBe(false)
   })
 })

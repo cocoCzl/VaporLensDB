@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use async_trait::async_trait;
-use mysql_async::{prelude::Queryable, Column, Conn, Opts, OptsBuilder, Row, Value};
+use mysql_async::{prelude::Queryable, Column, Conn, Opts, OptsBuilder, Row, SslOpts, Value};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
@@ -25,13 +25,7 @@ pub struct MysqlDriver {
 
 impl MysqlDriver {
     pub async fn connect(connection_url: &str) -> Result<Self, AppError> {
-        let opts = Opts::from_url(connection_url).map_err(|error| {
-            AppError::ConfigError(format!("Invalid MySQL connection URL: {error}"))
-        })?;
-        let conn = Conn::new(opts).await.map_err(map_mysql_connection_error)?;
-        Ok(Self {
-            conn: Mutex::new(conn),
-        })
+        Self::connect_with_url_credentials(connection_url, None, None).await
     }
 
     pub async fn connect_with_url_credentials(
@@ -49,7 +43,7 @@ impl MysqlDriver {
         if let Some(password) = password {
             builder = builder.pass(Some(password));
         }
-        let conn = Conn::new(builder)
+        let conn = Conn::new(tls_transport_options(builder.into())?)
             .await
             .map_err(map_mysql_connection_error)?;
         Ok(Self {
@@ -64,22 +58,69 @@ impl MysqlDriver {
         username: &str,
         password: &str,
     ) -> Result<Self, AppError> {
+        Self::connect_with_params_tls(host, port, database, username, password, None).await
+    }
+
+    pub async fn connect_with_params_tls(
+        host: &str,
+        port: u16,
+        database: &str,
+        username: &str,
+        password: &str,
+        ssl_mode: Option<&str>,
+    ) -> Result<Self, AppError> {
         let mut opts = OptsBuilder::default()
             .ip_or_hostname(host)
             .tcp_port(port)
             .user(Some(username))
-            .pass(Some(password));
+            .pass(Some(password))
+            .ssl_opts(mysql_ssl_options(ssl_mode)?);
         // Do not pass an empty schema as a database name. MySQL accepts a
         // connection without a default database and exposes the server's
         // database list after authentication.
         if !database.trim().is_empty() {
             opts = opts.db_name(Some(database));
         }
-        let conn = Conn::new(opts).await.map_err(map_mysql_connection_error)?;
+        let conn = Conn::new(tls_transport_options(opts.into())?)
+            .await
+            .map_err(map_mysql_connection_error)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
+}
+
+fn mysql_ssl_options(mode: Option<&str>) -> Result<Option<SslOpts>, AppError> {
+    match mode.map(str::trim).filter(|mode| !mode.is_empty()) {
+        None | Some("disable") => Ok(None),
+        Some("require") => Ok(Some(
+            SslOpts::default()
+                .with_danger_accept_invalid_certs(true)
+                .with_danger_skip_domain_validation(true),
+        )),
+        Some("verify-ca") => Ok(Some(
+            SslOpts::default().with_danger_skip_domain_validation(true),
+        )),
+        Some("verify-full") => Ok(Some(SslOpts::default())),
+        Some("prefer") => Err(AppError::ConfigError(
+            "MySQL prefer TLS mode is not supported; select an explicit encryption policy".into(),
+        )),
+        Some(_) => Err(AppError::ConfigError("Unknown MySQL SSL mode".into())),
+    }
+}
+
+fn tls_transport_options(opts: Opts) -> Result<Opts, AppError> {
+    if opts.ssl_opts().is_none() {
+        return Ok(opts);
+    }
+    if opts.socket().is_some() {
+        return Err(AppError::ConfigError(
+            "MySQL TLS requires a TCP connection, not an explicit local socket".into(),
+        ));
+    }
+    // Do not let localhost discovery replace a requested TLS transport with a
+    // local socket. URL certificate policy remains unchanged.
+    Ok(OptsBuilder::from_opts(opts).prefer_socket(false).into())
 }
 
 #[async_trait]
@@ -636,5 +677,101 @@ mod result_value_tests {
             serde_json::json!("18446744073709551615")
         );
         assert_eq!(value_to_json(&Value::NULL), serde_json::Value::Null);
+    }
+
+    #[test]
+    fn tls_options_distinguish_encryption_from_identity_verification() {
+        for (mode, invalid_certs, skip_name) in [
+            ("require", true, true),
+            ("verify-ca", false, true),
+            ("verify-full", false, false),
+        ] {
+            let ssl = super::mysql_ssl_options(Some(mode)).unwrap().unwrap();
+            assert_eq!(ssl.accept_invalid_certs(), invalid_certs);
+            assert_eq!(ssl.skip_domain_validation(), skip_name);
+            assert!(!ssl.disable_built_in_roots());
+        }
+        assert!(super::mysql_ssl_options(None).unwrap().is_none());
+        assert!(super::mysql_ssl_options(Some("disable")).unwrap().is_none());
+        assert!(super::mysql_ssl_options(Some("prefer")).is_err());
+        assert!(super::mysql_ssl_options(Some("unknown")).is_err());
+    }
+
+    #[test]
+    fn url_tls_keeps_verification_and_disables_socket_discovery() {
+        let opts = mysql_async::Opts::from_url("mysql://localhost/db?require_ssl=true").unwrap();
+        let opts = super::tls_transport_options(opts).unwrap();
+        assert!(!opts.prefer_socket());
+        assert!(!opts.ssl_opts().unwrap().accept_invalid_certs());
+        assert!(!opts.ssl_opts().unwrap().skip_domain_validation());
+        let opts = mysql_async::OptsBuilder::from_opts(opts).socket(Some("/tmp/mysql.sock"));
+        assert!(super::tls_transport_options(opts.into()).is_err());
+    }
+
+    #[tokio::test]
+    async fn required_tls_rejects_server_without_ssl_before_authentication() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+            time::{timeout, Duration},
+        };
+        for mode in ["require", "verify-ca", "verify-full", "url-require"] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                // Protocol 10 greeting, protocol-41/secure-connection/plugin-auth,
+                // deliberately omitting CLIENT_SSL (0x0800).
+                let mut greeting = vec![10];
+                greeting.extend_from_slice(b"8.0.0\0");
+                greeting.extend_from_slice(&1u32.to_le_bytes());
+                greeting.extend_from_slice(b"12345678\0");
+                greeting.extend_from_slice(&0x8201u16.to_le_bytes());
+                greeting.push(45);
+                greeting.extend_from_slice(&2u16.to_le_bytes());
+                greeting.extend_from_slice(&8u16.to_le_bytes());
+                greeting.push(21);
+                greeting.extend_from_slice(&[0; 10]);
+                greeting.extend_from_slice(b"123456789012\0mysql_native_password\0");
+                let length = greeting.len() as u32;
+                socket.write_all(&length.to_le_bytes()[..3]).await.unwrap();
+                socket.write_all(&[0]).await.unwrap();
+                socket.write_all(&greeting).await.unwrap();
+                let mut response = Vec::new();
+                socket.read_to_end(&mut response).await.unwrap();
+                assert!(
+                    response.is_empty(),
+                    "must not send a plaintext authentication response"
+                );
+            });
+            let attempt = async {
+                if mode == "url-require" {
+                    super::MysqlDriver::connect(&format!(
+                        "mysql://user:password@127.0.0.1:{port}/db?require_ssl=true"
+                    ))
+                    .await
+                } else {
+                    super::MysqlDriver::connect_with_params_tls(
+                        "127.0.0.1",
+                        port,
+                        "db",
+                        "user",
+                        "password",
+                        Some(mode),
+                    )
+                    .await
+                }
+            };
+            let error = timeout(Duration::from_secs(5), attempt)
+                .await
+                .unwrap()
+                .err()
+                .expect("TLS must fail");
+            assert!(error.to_string().to_lowercase().contains("ssl"), "{error}");
+            timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     }
 }

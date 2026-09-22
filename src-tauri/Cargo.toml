@@ -28,7 +28,7 @@ thiserror = "2"
 async-trait = "0.1"
 futures-util = "0.3"
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
-mysql_async = { version = "0.37", default-features = false, features = ["minimal"] }
+mysql_async = { version = "0.37", default-features = false, features = ["minimal", "native-tls-tls"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "native-tls", "chrono"] }
 url = "2"
@@ -40,6 +40,8 @@ env_logger = "0.11"
 regex = "1"
 tauri-plugin-clipboard-manager = "2.3.3"
 zeroize = "1.8"
+postgres-native-tls = "0.5"
+native-tls = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }

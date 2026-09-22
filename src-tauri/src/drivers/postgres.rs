@@ -3,10 +3,12 @@ use std::{collections::HashMap, sync::Mutex, time::Instant};
 
 use async_trait::async_trait;
 use futures_util::{pin_mut, TryStreamExt};
+use postgres_native_tls::MakeTlsConnector;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_postgres::{
+    config::SslMode,
     types::{Json, ToSql},
-    CancelToken, Client, Config, NoTls, Row, Statement,
+    CancelToken, Client, Config, Row, Statement,
 };
 
 use crate::{
@@ -25,34 +27,43 @@ use crate::{
     utils::error_redaction::sanitize_diagnostic_error,
 };
 
+struct PostgresTlsPolicy {
+    mode: SslMode,
+    verify_ca: bool,
+    verify_hostname: bool,
+}
+
+impl PostgresTlsPolicy {
+    fn resolve(mode: Option<&str>, url_mode: SslMode) -> Result<Self, AppError> {
+        let mode = mode.map(str::trim).filter(|mode| !mode.is_empty());
+        let (mode, verify_ca, verify_hostname) = match mode {
+            None => (url_mode, false, false),
+            Some("disable") => (SslMode::Disable, false, false),
+            Some("prefer") => (SslMode::Prefer, false, false),
+            Some("require") => (SslMode::Require, false, false),
+            Some("verify-ca") => (SslMode::Require, true, false),
+            Some("verify-full") => (SslMode::Require, true, true),
+            Some(_) => return Err(AppError::ConfigError("Unknown PostgreSQL SSL mode".into())),
+        };
+        Ok(Self {
+            mode,
+            verify_ca,
+            verify_hostname,
+        })
+    }
+}
+
 pub struct PostgresDriver {
     client: Client,
     cancel_token: CancelToken,
+    tls: MakeTlsConnector,
     active_queries: Mutex<HashMap<String, CancelToken>>,
     _connection_task: JoinHandle<()>,
 }
 
 impl PostgresDriver {
     pub async fn connect(connection_url: &str) -> Result<Self, AppError> {
-        let (client, connection) = tokio_postgres::connect(connection_url, NoTls)
-            .await
-            .map_err(map_postgres_connection_error)?;
-
-        let connection_task = tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                log::error!(
-                    "postgres connection task failed: {}",
-                    sanitize_diagnostic_error(&error.to_string(), None)
-                );
-            }
-        });
-
-        Ok(Self {
-            cancel_token: client.cancel_token(),
-            client,
-            active_queries: Mutex::new(HashMap::new()),
-            _connection_task: connection_task,
-        })
+        Self::connect_with_url_credentials(connection_url, None, None).await
     }
 
     pub async fn connect_with_url_credentials(
@@ -60,9 +71,6 @@ impl PostgresDriver {
         username: Option<&str>,
         password: Option<&str>,
     ) -> Result<Self, AppError> {
-        if username.is_none() && password.is_none() {
-            return Self::connect(connection_url).await;
-        }
         let mut config = Config::from_str(connection_url).map_err(|error| {
             AppError::ConfigError(format!("Invalid PostgreSQL connection URL: {error}"))
         })?;
@@ -72,24 +80,7 @@ impl PostgresDriver {
         if let Some(password) = password {
             config.password(password);
         }
-        let (client, connection) = config
-            .connect(NoTls)
-            .await
-            .map_err(map_postgres_connection_error)?;
-        let connection_task = tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                log::error!(
-                    "postgres connection task failed: {}",
-                    sanitize_diagnostic_error(&error.to_string(), None)
-                );
-            }
-        });
-        Ok(Self {
-            cancel_token: client.cancel_token(),
-            client,
-            active_queries: Mutex::new(HashMap::new()),
-            _connection_task: connection_task,
-        })
+        Self::connect_config(config, None).await
     }
 
     pub async fn connect_with_params(
@@ -98,6 +89,17 @@ impl PostgresDriver {
         database: &str,
         username: &str,
         password: &str,
+    ) -> Result<Self, AppError> {
+        Self::connect_with_params_tls(host, port, database, username, password, None).await
+    }
+
+    pub async fn connect_with_params_tls(
+        host: &str,
+        port: u16,
+        database: &str,
+        username: &str,
+        password: &str,
+        ssl_mode: Option<&str>,
     ) -> Result<Self, AppError> {
         if host.contains('=') || database.contains('=') || username.contains('=') {
             return Err(AppError::ConfigError(
@@ -114,8 +116,20 @@ impl PostgresDriver {
             .user(username)
             .password(password);
 
+        Self::connect_config(config, ssl_mode).await
+    }
+
+    async fn connect_config(mut config: Config, mode: Option<&str>) -> Result<Self, AppError> {
+        let policy = PostgresTlsPolicy::resolve(mode, config.get_ssl_mode())?;
+        config.ssl_mode(policy.mode);
+        let mut builder = native_tls::TlsConnector::builder();
+        builder.danger_accept_invalid_certs(!policy.verify_ca);
+        builder.danger_accept_invalid_hostnames(!policy.verify_hostname);
+        let tls = MakeTlsConnector::new(builder.build().map_err(|_| {
+            AppError::ConfigError("Unable to initialize PostgreSQL TLS connector".into())
+        })?);
         let (client, connection) = config
-            .connect(NoTls)
+            .connect(tls.clone())
             .await
             .map_err(map_postgres_connection_error)?;
 
@@ -130,6 +144,7 @@ impl PostgresDriver {
 
         Ok(Self {
             cancel_token: client.cancel_token(),
+            tls,
             client,
             active_queries: Mutex::new(HashMap::new()),
             _connection_task: connection_task,
@@ -762,7 +777,7 @@ impl DatabaseDriver for PostgresDriver {
             })?;
 
         token
-            .cancel_query(NoTls)
+            .cancel_query(self.tls.clone())
             .await
             .map_err(|error| AppError::QueryFailed {
                 sql: "<cancel>".to_string(),
@@ -780,7 +795,7 @@ impl DatabaseDriver for PostgresDriver {
             .collect::<Vec<_>>();
 
         for token in tokens {
-            let _ = token.cancel_query(NoTls).await;
+            let _ = token.cancel_query(self.tls.clone()).await;
         }
 
         Ok(())
@@ -963,15 +978,94 @@ fn escape_param(value: &str) -> String {
 }
 
 fn returns_rows(sql: &str) -> bool {
-    let sql = sql.trim_start().to_ascii_lowercase();
-    ["select", "with", "show", "explain", "values", "table"]
-        .iter()
-        .any(|keyword| sql.starts_with(keyword))
-        || sql.contains(" returning ")
+    let sql = crate::utils::sql_parser::mask_sql(sql);
+    let mut words = sql
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .filter(|word| !word.is_empty());
+    let first = words.next().unwrap_or_default().to_ascii_lowercase();
+    matches!(
+        first.as_str(),
+        "select" | "with" | "show" | "explain" | "values" | "table"
+    ) || words.any(|word| word.eq_ignore_ascii_case("returning"))
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tls_policy_distinguishes_encryption_ca_and_hostname_checks() {
+        use super::{PostgresTlsPolicy, SslMode};
+        for (mode, ssl, ca, hostname) in [
+            ("disable", SslMode::Disable, false, false),
+            ("prefer", SslMode::Prefer, false, false),
+            ("require", SslMode::Require, false, false),
+            ("verify-ca", SslMode::Require, true, false),
+            ("verify-full", SslMode::Require, true, true),
+        ] {
+            let policy = PostgresTlsPolicy::resolve(Some(mode), SslMode::Prefer).unwrap();
+            assert_eq!(policy.mode, ssl);
+            assert_eq!(policy.verify_ca, ca);
+            assert_eq!(policy.verify_hostname, hostname);
+        }
+        assert_eq!(
+            PostgresTlsPolicy::resolve(None, SslMode::Require)
+                .unwrap()
+                .mode,
+            SslMode::Require
+        );
+        assert!(PostgresTlsPolicy::resolve(Some("unknown"), SslMode::Prefer).is_err());
+    }
+
+    #[tokio::test]
+    async fn required_tls_never_sends_startup_credentials_to_a_plaintext_server() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+            time::{timeout, Duration},
+        };
+        for mode in ["require", "verify-ca", "verify-full", "url-require"] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 8];
+                socket.read_exact(&mut request).await.unwrap();
+                assert_eq!(request, [0, 0, 0, 8, 4, 210, 22, 47]); // PostgreSQL SSLRequest
+                socket.write_all(b"N").await.unwrap();
+                let mut remaining = Vec::new();
+                socket.read_to_end(&mut remaining).await.unwrap();
+                assert!(
+                    remaining.is_empty(),
+                    "must not downgrade to a plaintext StartupMessage"
+                );
+            });
+            let attempt = async {
+                if mode == "url-require" {
+                    super::PostgresDriver::connect(&format!(
+                        "postgres://user:password@127.0.0.1:{port}/db?sslmode=require"
+                    ))
+                    .await
+                } else {
+                    super::PostgresDriver::connect_with_params_tls(
+                        "127.0.0.1",
+                        port,
+                        "db",
+                        "user",
+                        "password",
+                        Some(mode),
+                    )
+                    .await
+                }
+            };
+            assert!(timeout(Duration::from_secs(5), attempt)
+                .await
+                .unwrap()
+                .is_err());
+            timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
     use super::{escape_param, quote_identifier, returns_rows};
 
     #[test]
@@ -990,5 +1084,10 @@ mod tests {
         assert!(returns_rows("select 1"));
         assert!(returns_rows("insert into t values (1) returning id"));
         assert!(!returns_rows("update t set name = 'returning'"));
+        assert!(returns_rows("/* before */ -- query\n SELECT 1"));
+        assert!(returns_rows("UPDATE t SET x=1\nRETURNING\nid"));
+        assert!(!returns_rows("UPDATE t SET x=$body$ returning id $body$"));
+        assert!(!returns_rows("UPDATE t SET x=1 /* returning id */"));
+        assert!(!returns_rows("UPDATE t SET \"returning\"=1"));
     }
 }

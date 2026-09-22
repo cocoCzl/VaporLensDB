@@ -1,3 +1,4 @@
+import { maskSql, splitSqlStatements } from '@/lib/sqlLexer'
 import {
   cancelQuery,
   executeQuery,
@@ -234,7 +235,7 @@ function canStreamSql(sql: string) {
 }
 
 function classifyStatement(sql: string): import('@/types/query').QueryResult['statementKind'] {
-  const statement = sql.trim().toLowerCase()
+  const statement = maskSql(sql).trim().toLowerCase()
   if (/^(insert|update|delete|replace|merge)\b/u.test(statement)) return 'dml'
   if (/^(create|alter|drop|rename|truncate)\b/u.test(statement)) return 'ddl'
   if (/^commit\b/u.test(statement)) return 'commit'
@@ -244,92 +245,7 @@ function classifyStatement(sql: string): import('@/types/query').QueryResult['st
 
 export function containsLikelyDdl(sql: string) {
   return splitSqlStatements(sql).some((statement) => {
-    const normalized = statement.trim().toLowerCase()
-    return (
-      normalized.startsWith('create ') ||
-      normalized.startsWith('alter ') ||
-      normalized.startsWith('drop ') ||
-      normalized.startsWith('truncate ') ||
-      normalized.startsWith('rename ')
-    )
+    const normalized = maskSql(statement).trim().toLowerCase()
+    return /^(create|alter|drop|truncate|rename)\b/u.test(normalized)
   })
-}
-
-function splitSqlStatements(sql: string) {
-  const statements: string[] = []
-  let current = ''
-  let inSingleQuote = false
-  let inDoubleQuote = false
-  let inLineComment = false
-  let inBlockComment = false
-
-  for (let index = 0; index < sql.length; index += 1) {
-    const char = sql[index]
-    const next = sql[index + 1]
-
-    if (inLineComment) {
-      current += char
-      if (char === '\n') inLineComment = false
-      continue
-    }
-
-    if (inBlockComment) {
-      current += char
-      if (char === '*' && next === '/') {
-        current += next
-        index += 1
-        inBlockComment = false
-      }
-      continue
-    }
-
-    if (!inSingleQuote && !inDoubleQuote) {
-      if (char === '-' && next === '-') {
-        current += char + next
-        index += 1
-        inLineComment = true
-        continue
-      }
-
-      if (char === '/' && next === '*') {
-        current += char + next
-        index += 1
-        inBlockComment = true
-        continue
-      }
-    }
-
-    if (char === "'" && !inDoubleQuote) {
-      current += char
-      if (inSingleQuote && next === "'") {
-        current += next
-        index += 1
-      } else {
-        inSingleQuote = !inSingleQuote
-      }
-      continue
-    }
-
-    if (char === '"' && !inSingleQuote) {
-      current += char
-      if (inDoubleQuote && next === '"') {
-        current += next
-        index += 1
-      } else {
-        inDoubleQuote = !inDoubleQuote
-      }
-      continue
-    }
-
-    if (char === ';' && !inSingleQuote && !inDoubleQuote) {
-      if (current.trim()) statements.push(current.trim())
-      current = ''
-      continue
-    }
-
-    current += char
-  }
-
-  if (current.trim()) statements.push(current.trim())
-  return statements
 }

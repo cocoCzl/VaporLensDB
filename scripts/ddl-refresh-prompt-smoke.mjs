@@ -34,11 +34,8 @@ includesAll(
     "title: i18n.t('notifications.objectStructureChanged')",
     "message: i18n.t('notifications.refreshObjectStructureHint')",
     'function containsLikelyDdl(sql: string)',
-    "normalized.startsWith('create ')",
-    "normalized.startsWith('alter ')",
-    "normalized.startsWith('drop ')",
-    "normalized.startsWith('truncate ')",
-    "normalized.startsWith('rename ')",
+    'maskSql(statement)',
+    '/^(create|alter|drop|truncate|rename)\\b/u.test(normalized)',
   ],
   'DDL success refresh prompt',
 )
