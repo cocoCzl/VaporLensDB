@@ -599,7 +599,7 @@ fn column_data_to_json(value: &ColumnData<'_>) -> serde_json::Value {
         ColumnData::U8(Some(value)) => serde_json::json!(value),
         ColumnData::I16(Some(value)) => serde_json::json!(value),
         ColumnData::I32(Some(value)) => serde_json::json!(value),
-        ColumnData::I64(Some(value)) => serde_json::json!(value),
+        ColumnData::I64(Some(value)) => crate::utils::result_value::signed_integer(*value),
         ColumnData::F32(Some(value)) => serde_json::json!(value),
         ColumnData::F64(Some(value)) => serde_json::json!(value),
         ColumnData::Bit(Some(value)) => serde_json::json!(value),
@@ -669,5 +669,26 @@ fn map_mssql_query_error(sql: &str, error: tiberius::error::Error) -> AppError {
     AppError::QueryFailed {
         sql: sql.to_string(),
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod result_value_tests {
+    use super::*;
+
+    #[test]
+    fn preserves_bigints_and_real_nulls() {
+        assert_eq!(
+            column_data_to_json(&ColumnData::I64(Some(42))),
+            serde_json::json!(42)
+        );
+        assert_eq!(
+            column_data_to_json(&ColumnData::I64(Some(i64::MAX))),
+            serde_json::json!("9223372036854775807")
+        );
+        assert_eq!(
+            column_data_to_json(&ColumnData::I64(None)),
+            serde_json::Value::Null
+        );
     }
 }

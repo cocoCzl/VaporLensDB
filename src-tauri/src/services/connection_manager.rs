@@ -60,6 +60,46 @@ pub(crate) struct ConsoleSession {
     driver: Arc<dyn DatabaseDriver>,
     _ssh_tunnel: Option<SshTunnel>,
     phase: ConsoleTransactionPhase,
+    operation_gate: Arc<Semaphore>,
+    active_query: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+/// A console has one transaction state and one physical session. Reject
+/// overlapping execution/commit/rollback and release occupancy on every exit.
+pub struct ConsoleOperation {
+    pub driver: Arc<dyn DatabaseDriver>,
+    pub phase: ConsoleTransactionPhase,
+    active_query: Arc<std::sync::Mutex<Option<String>>>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl Drop for ConsoleOperation {
+    fn drop(&mut self) {
+        if let Ok(mut query) = self.active_query.lock() {
+            *query = None;
+        }
+    }
+}
+
+impl ActiveConnection {
+    fn has_running_operations(&self) -> bool {
+        self.in_flight_operations > 0
+            || !self.queued_queries.is_empty()
+            || self
+                .console_sessions
+                .values()
+                .any(|session| session.operation_gate.available_permits() == 0)
+    }
+
+    fn has_uncommitted_transaction(&self) -> bool {
+        self.console_sessions
+            .values()
+            .any(|session| session.phase != ConsoleTransactionPhase::Idle)
+    }
+
+    fn can_reclaim(&self) -> bool {
+        !self.has_running_operations() && !self.has_uncommitted_transaction()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -188,7 +228,7 @@ impl ConnectionManager {
         if self
             .connections
             .get(&connection_id)
-            .map(|connection| connection.in_flight_operations > 0)
+            .map(ActiveConnection::has_running_operations)
             .unwrap_or(false)
         {
             return Err(AppError::DisconnectBlocked {
@@ -198,12 +238,7 @@ impl ConnectionManager {
         if self
             .connections
             .get(&connection_id)
-            .is_some_and(|connection| {
-                connection
-                    .console_sessions
-                    .values()
-                    .any(|session| session.phase != ConsoleTransactionPhase::Idle)
-            })
+            .is_some_and(ActiveConnection::has_uncommitted_transaction)
         {
             return Err(AppError::DisconnectBlocked {
                 reason: DisconnectBlockReason::UncommittedTransaction,
@@ -412,6 +447,8 @@ impl ConnectionManager {
                 driver: active.driver,
                 _ssh_tunnel: active._ssh_tunnel,
                 phase: ConsoleTransactionPhase::Idle,
+                operation_gate: Arc::new(Semaphore::new(1)),
+                active_query: Arc::new(std::sync::Mutex::new(None)),
             },
         );
         Ok(ConsoleTransactionState {
@@ -437,7 +474,10 @@ impl ConnectionManager {
         if connection
             .console_sessions
             .get(console_id)
-            .is_some_and(|session| session.phase != ConsoleTransactionPhase::Idle)
+            .is_some_and(|session| {
+                session.phase != ConsoleTransactionPhase::Idle
+                    || session.operation_gate.available_permits() == 0
+            })
         {
             return Err(AppError::ConfigError(
                 "commit or rollback the active transaction before switching to Auto".to_string(),
@@ -460,6 +500,62 @@ impl ConnectionManager {
                 resource: "SQL Console session".to_string(),
                 id: console_id.to_string(),
             })
+    }
+
+    pub fn begin_console_operation(
+        &mut self,
+        connection_id: Uuid,
+        console_id: &str,
+        query_id: Option<&str>,
+    ) -> Result<ConsoleOperation, AppError> {
+        let connection =
+            self.connections
+                .get_mut(&connection_id)
+                .ok_or_else(|| AppError::NotFound {
+                    resource: "active connection".into(),
+                    id: connection_id.to_string(),
+                })?;
+        let session =
+            connection
+                .console_sessions
+                .get(console_id)
+                .ok_or_else(|| AppError::NotFound {
+                    resource: "SQL Console session".into(),
+                    id: console_id.to_string(),
+                })?;
+        let permit = session.operation_gate.clone().try_acquire_owned().map_err(|_| AppError::ConfigError(
+            "SQL Console is busy; wait for the current operation before executing or changing its transaction".into()
+        ))?;
+        *session
+            .active_query
+            .lock()
+            .map_err(|_| AppError::ConfigError("console query registry is poisoned".into()))? =
+            query_id.map(str::to_owned);
+        connection.last_used = Instant::now();
+        Ok(ConsoleOperation {
+            driver: session.driver.clone(),
+            phase: session.phase,
+            active_query: session.active_query.clone(),
+            _permit: permit,
+        })
+    }
+
+    pub fn query_driver(
+        &self,
+        connection_id: Uuid,
+        query_id: &str,
+    ) -> Result<Arc<dyn DatabaseDriver>, AppError> {
+        if let Some(connection) = self.connections.get(&connection_id) {
+            for session in connection.console_sessions.values() {
+                let query = session.active_query.lock().map_err(|_| {
+                    AppError::ConfigError("console query registry is poisoned".into())
+                })?;
+                if query.as_deref() == Some(query_id) {
+                    return Ok(session.driver.clone());
+                }
+            }
+        }
+        self.driver(connection_id)
     }
 
     pub fn set_console_phase(
@@ -594,7 +690,7 @@ impl ConnectionManager {
             return Ok(());
         }
         let candidate = self.connections.iter()
-            .filter(|(_, connection)| connection.in_flight_operations == 0)
+            .filter(|(_, connection)| connection.can_reclaim())
             .min_by_key(|(_, connection)| connection.last_used)
             .map(|(id, _)| *id)
             .ok_or_else(|| AppError::ConfigError(format!(
@@ -618,8 +714,7 @@ impl ConnectionManager {
             .connections
             .iter()
             .filter(|(_, connection)| {
-                connection.in_flight_operations == 0
-                    && now.duration_since(connection.last_used) >= idle_after
+                connection.can_reclaim() && now.duration_since(connection.last_used) >= idle_after
             })
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
@@ -916,6 +1011,158 @@ mod tests {
 
         assert!(error.to_string().contains("limit"));
         assert!(manager.connections.contains_key(&busy));
+    }
+
+    #[tokio::test]
+    async fn active_and_failed_transactions_survive_both_reclaim_paths() {
+        for phase in [
+            ConsoleTransactionPhase::Active,
+            ConsoleTransactionPhase::Failed,
+        ] {
+            let mut manager = ConnectionManager::new();
+            manager.set_session_policy(1, Some(5));
+            let id = Uuid::new_v4();
+            manager.connections.insert(
+                id,
+                sqlite_connection(Instant::now() - Duration::from_secs(3600), 0).await,
+            );
+            manager
+                .install_console_session(
+                    id,
+                    "console".into(),
+                    sqlite_connection(Instant::now(), 0).await,
+                )
+                .unwrap();
+            manager.set_console_phase(id, "console", phase);
+            assert!(manager.begin_connect(Uuid::new_v4()).is_err());
+            assert!(manager.connections.contains_key(&id));
+            assert_eq!(
+                manager.console_transaction_state(id, "console").phase,
+                phase
+            );
+            assert!(manager.disconnect(id).is_err());
+            manager.set_console_phase(id, "console", ConsoleTransactionPhase::Idle);
+            manager.reclaim_idle_sessions();
+            assert!(!manager.connections.contains_key(&id));
+        }
+    }
+
+    #[tokio::test]
+    async fn console_lease_blocks_close_reclaim_and_overlapping_transaction_control() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(1, Some(5));
+        let id = Uuid::new_v4();
+        manager
+            .connections
+            .insert(id, sqlite_connection(Instant::now(), 0).await);
+        manager
+            .install_console_session(
+                id,
+                "console".into(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .unwrap();
+        let operation = manager
+            .begin_console_operation(id, "console", Some("query-a"))
+            .unwrap();
+        assert!(manager
+            .begin_console_operation(id, "console", None)
+            .is_err());
+        assert!(manager.remove_console_session(id, "console").is_err());
+        assert!(manager.disconnect(id).is_err());
+        assert!(manager.reclaim_session_if_needed().is_err());
+        assert!(Arc::ptr_eq(
+            &operation.driver,
+            &manager.query_driver(id, "query-a").unwrap()
+        ));
+        assert!(!Arc::ptr_eq(
+            &operation.driver,
+            &manager.query_driver(id, "unrelated").unwrap()
+        ));
+        // Models early-return/cancellation: no explicit release call is needed.
+        drop(operation);
+        assert!(Arc::ptr_eq(
+            &manager.driver(id).unwrap(),
+            &manager.query_driver(id, "query-a").unwrap()
+        ));
+        let commit = manager
+            .begin_console_operation(id, "console", None)
+            .unwrap();
+        assert!(manager
+            .begin_console_operation(id, "console", Some("query-b"))
+            .is_err());
+        drop(commit);
+        manager.remove_console_session(id, "console").unwrap();
+        manager.disconnect(id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn queued_queries_protect_the_gap_between_running_operations() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(1, None);
+        let id = Uuid::new_v4();
+        manager
+            .connections
+            .insert(id, sqlite_connection(Instant::now(), 0).await);
+        let QueryOperationStart::Ready(first) = manager.begin_query_operation(id, "first").unwrap()
+        else {
+            panic!("first must run")
+        };
+        let QueryOperationStart::Queued(second) =
+            manager.begin_query_operation(id, "second").unwrap()
+        else {
+            panic!("second must queue")
+        };
+        drop(first);
+        manager.release_operation(id);
+        assert!(manager.disconnect(id).is_err());
+        assert!(manager.reclaim_session_if_needed().is_err());
+        let second = second.wait().await.unwrap();
+        manager.activate_queued_query(id, "second").unwrap();
+        drop(second);
+        manager.release_operation(id);
+        manager.disconnect(id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_an_old_console_lease_does_not_clear_a_reconnected_query() {
+        let mut manager = ConnectionManager::new();
+        let id = Uuid::new_v4();
+        manager
+            .connections
+            .insert(id, sqlite_connection(Instant::now(), 0).await);
+        manager
+            .install_console_session(
+                id,
+                "console".into(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .unwrap();
+        let old = manager
+            .begin_console_operation(id, "console", Some("old"))
+            .unwrap();
+        manager.invalidate_connection(id, "test disconnect");
+        manager
+            .connections
+            .insert(id, sqlite_connection(Instant::now(), 0).await);
+        manager
+            .install_console_session(
+                id,
+                "console".into(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .unwrap();
+        let new = manager
+            .begin_console_operation(id, "console", Some("new"))
+            .unwrap();
+        drop(old);
+        assert!(Arc::ptr_eq(
+            &new.driver,
+            &manager.query_driver(id, "new").unwrap()
+        ));
+        assert!(manager.disconnect(id).is_err());
+        drop(new);
+        manager.disconnect(id).unwrap();
     }
 
     #[tokio::test]

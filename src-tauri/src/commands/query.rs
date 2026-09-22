@@ -143,7 +143,8 @@ fn execution_context_statement(
     match driver_type {
         DriverType::Postgres => schema
             .filter(|value| !value.trim().is_empty())
-            .map(|value| format!("SET search_path TO {}", quote_identifier(value))),
+            .map(|value| format!("SET search_path TO {}", quote_identifier(value)))
+            .or_else(|| Some("SET search_path TO DEFAULT".to_string())),
         DriverType::Mysql => database
             .filter(|value| !value.trim().is_empty())
             .map(|value| format!("USE {}", quote_mysql_identifier(value))),
@@ -175,20 +176,24 @@ fn execution_driver_type(
 pub async fn execute_query(
     app: AppHandle,
     state: State<'_, AppState>,
-    input: ExecuteQueryInput,
+    mut input: ExecuteQueryInput,
 ) -> Result<ExecuteQueryResponse, String> {
+    let input_query_id = input
+        .query_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    input.query_id = Some(input_query_id.clone());
+    let driver_type = execution_driver_type(&state, input.connection_id)?;
     if let Some(console_id) = input.console_id.as_deref() {
         ensure_console_session(&state, input.connection_id, console_id).await?;
-        let (driver, phase) = {
-            let manager = state.connection_manager.lock().await;
-            let status = manager.console_transaction_state(input.connection_id, console_id);
-            (
-                manager
-                    .console_driver(input.connection_id, console_id)
-                    .map_err(String::from)?,
-                status.phase,
-            )
-        };
+        let operation = state
+            .connection_manager
+            .lock()
+            .await
+            .begin_console_operation(input.connection_id, console_id, Some(&input_query_id))
+            .map_err(String::from)?;
+        let driver = operation.driver.clone();
+        let phase = operation.phase;
         if phase == ConsoleTransactionPhase::Failed {
             return Err(String::from(crate::models::error::AppError::ConfigError(
                 "transaction failed; rollback is required".to_string(),
@@ -196,7 +201,7 @@ pub async fn execute_query(
         }
         apply_execution_context(
             driver.clone(),
-            execution_driver_type(&state, input.connection_id)?,
+            driver_type,
             input.database.as_deref(),
             input.schema.as_deref(),
         )
@@ -252,7 +257,7 @@ pub async fn execute_query(
     };
     if let Err(error) = apply_execution_context(
         operation.driver.clone(),
-        execution_driver_type(&state, input.connection_id)?,
+        driver_type,
         input.database.as_deref(),
         input.schema.as_deref(),
     )
@@ -306,18 +311,18 @@ pub async fn execute_query_stream(
     state: State<'_, AppState>,
     input: ExecuteQueryStreamInput,
 ) -> Result<(), String> {
+    let driver_type = execution_driver_type(&state, input.connection_id)?;
     if let Some(console_id) = input.console_id.as_deref() {
+        let input_query_id = input.query_id.clone();
         ensure_console_session(&state, input.connection_id, console_id).await?;
-        let (driver, phase) = {
-            let manager = state.connection_manager.lock().await;
-            let status = manager.console_transaction_state(input.connection_id, console_id);
-            (
-                manager
-                    .console_driver(input.connection_id, console_id)
-                    .map_err(String::from)?,
-                status.phase,
-            )
-        };
+        let operation = state
+            .connection_manager
+            .lock()
+            .await
+            .begin_console_operation(input.connection_id, console_id, Some(&input_query_id))
+            .map_err(String::from)?;
+        let driver = operation.driver.clone();
+        let phase = operation.phase;
         if phase == ConsoleTransactionPhase::Failed {
             return Err(String::from(crate::models::error::AppError::ConfigError(
                 "transaction failed; rollback is required".to_string(),
@@ -325,7 +330,7 @@ pub async fn execute_query_stream(
         }
         apply_execution_context(
             driver.clone(),
-            execution_driver_type(&state, input.connection_id)?,
+            driver_type,
             input.database.as_deref(),
             input.schema.as_deref(),
         )
@@ -389,7 +394,7 @@ pub async fn execute_query_stream(
     };
     if let Err(error) = apply_execution_context(
         operation.driver.clone(),
-        execution_driver_type(&state, input.connection_id)?,
+        driver_type,
         input.database.as_deref(),
         input.schema.as_deref(),
     )
@@ -562,22 +567,91 @@ mod tests {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the existing flat IPC arguments; context fields are optional.
 pub async fn explain_query(
+    app: AppHandle,
     state: State<'_, AppState>,
     connection_id: Uuid,
     sql: String,
+    query_id: Option<String>,
+    console_id: Option<String>,
+    database: Option<String>,
+    schema: Option<String>,
 ) -> Result<ExplainResult, String> {
-    let driver = {
+    let driver_type = execution_driver_type(&state, connection_id)?;
+    let query_id = query_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    if let Some(console_id) = console_id {
+        // EXPLAIN must see the existing console's temporary/uncommitted objects.
+        // Do not silently recreate a lost transaction on a fresh connection.
+        let operation = state
+            .connection_manager
+            .lock()
+            .await
+            .begin_console_operation(connection_id, &console_id, Some(&query_id))
+            .map_err(String::from)?;
+        if operation.phase == ConsoleTransactionPhase::Failed {
+            return Err("transaction failed; rollback is required".into());
+        }
+        let result = async {
+            apply_execution_context(
+                operation.driver.clone(),
+                driver_type,
+                database.as_deref(),
+                schema.as_deref(),
+            )
+            .await?;
+            state
+                .query_engine
+                .explain_query(operation.driver.clone(), &sql)
+                .await
+                .map_err(String::from)
+        }
+        .await;
+        if result.is_err() && operation.phase == ConsoleTransactionPhase::Active {
+            state.connection_manager.lock().await.set_console_phase(
+                connection_id,
+                &console_id,
+                ConsoleTransactionPhase::Failed,
+            );
+        }
+        return result;
+    }
+    let start = {
         let mut manager = state.connection_manager.lock().await;
         manager
-            .acquire_driver(connection_id)
+            .begin_query_operation(connection_id, &query_id)
             .map_err(String::from)?
     };
-    let result = state
-        .query_engine
-        .explain_query(driver, &sql)
-        .await
-        .map_err(Into::into);
+    let operation = match start {
+        QueryOperationStart::Ready(operation) => operation,
+        QueryOperationStart::Queued(queued) => {
+            emit_query_queue_state(&app, &Some(query_id.clone()), connection_id, "queued");
+            let operation = queued.wait().await.map_err(String::from)?;
+            state
+                .connection_manager
+                .lock()
+                .await
+                .activate_queued_query(connection_id, &query_id)
+                .map_err(String::from)?;
+            operation
+        }
+    };
+    emit_query_queue_state(&app, &Some(query_id), connection_id, "running");
+    let result = async {
+        apply_execution_context(
+            operation.driver.clone(),
+            driver_type,
+            database.as_deref(),
+            schema.as_deref(),
+        )
+        .await?;
+        state
+            .query_engine
+            .explain_query(operation.driver.clone(), &sql)
+            .await
+            .map_err(String::from)
+    }
+    .await;
     state
         .connection_manager
         .lock()
@@ -602,7 +676,9 @@ pub async fn cancel_query(
     }
     let driver = {
         let manager = state.connection_manager.lock().await;
-        manager.driver(connection_id).map_err(String::from)?
+        manager
+            .query_driver(connection_id, &query_id)
+            .map_err(String::from)?
     };
 
     state
@@ -713,13 +789,17 @@ pub async fn commit_console_transaction(
     state: State<'_, AppState>,
     input: ConsoleTransactionInput,
 ) -> Result<ConsoleTransactionState, String> {
-    let driver = state
+    let operation = state
         .connection_manager
         .lock()
         .await
-        .console_driver(input.connection_id, &input.console_id)
+        .begin_console_operation(input.connection_id, &input.console_id, None)
         .map_err(String::from)?;
-    driver.commit_transaction().await.map_err(String::from)?;
+    operation
+        .driver
+        .commit_transaction()
+        .await
+        .map_err(String::from)?;
     let mut manager = state.connection_manager.lock().await;
     manager.set_console_phase(
         input.connection_id,
@@ -734,13 +814,17 @@ pub async fn rollback_console_transaction(
     state: State<'_, AppState>,
     input: ConsoleTransactionInput,
 ) -> Result<ConsoleTransactionState, String> {
-    let driver = state
+    let operation = state
         .connection_manager
         .lock()
         .await
-        .console_driver(input.connection_id, &input.console_id)
+        .begin_console_operation(input.connection_id, &input.console_id, None)
         .map_err(String::from)?;
-    driver.rollback_transaction().await.map_err(String::from)?;
+    operation
+        .driver
+        .rollback_transaction()
+        .await
+        .map_err(String::from)?;
     let mut manager = state.connection_manager.lock().await;
     manager.set_console_phase(
         input.connection_id,
@@ -767,7 +851,7 @@ mod context_tests {
         );
         assert_eq!(
             execution_context_statement(DriverType::Postgres, None, None),
-            None
+            Some("SET search_path TO DEFAULT".to_string())
         );
     }
 

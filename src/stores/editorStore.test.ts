@@ -4,6 +4,20 @@ import { persistSqlWorkspace, readStoredSqlWorkspace, type EditorTab, useEditorS
 const storageKey = 'vaporlensdb.sqlWorkspace.v1'
 
 describe('SQL workspace persistence', () => {
+  it('acknowledges a saved ID without marking newer SQL or context as saved', () => {
+    useEditorStore.setState({ tabs: [{
+      id: 'editing', title: 'SQL', sql: 'select 1', connectionId: null, dirty: true,
+    }] })
+    useEditorStore.getState().updateTabSql('editing', 'select 2')
+    useEditorStore.getState().setTabDraft('editing', 'saved-id', 0)
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({ dirty: true, draftId: 'saved-id' })
+    useEditorStore.getState().setTabDraft('editing', 'saved-id', 1)
+    expect(useEditorStore.getState().tabs[0].dirty).toBe(false)
+    useEditorStore.getState().updateSqlTabContext('editing', { schema: 'other' })
+    useEditorStore.getState().setTabDraft('editing', 'saved-id', 1)
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({ dirty: true, draftRevision: 2 })
+  })
+
   it('stores only restorable SQL state and selects a valid active tab', () => {
     const tabs: EditorTab[] = [
       {

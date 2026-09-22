@@ -1037,6 +1037,24 @@ fn csv_cell(value: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod precision_tests {
+    use super::*;
+
+    #[test]
+    fn csv_keeps_exact_numeric_strings_and_json_text() {
+        assert_eq!(
+            csv_value(Some(&serde_json::json!("9007199254740993"))),
+            "9007199254740993"
+        );
+        assert_eq!(csv_value(Some(&serde_json::json!("123.4500"))), "123.4500");
+        assert_eq!(
+            csv_value(Some(&serde_json::json!("{\"id\":9007199254740993}"))),
+            "\"{\"\"id\"\":9007199254740993}\""
+        );
+    }
+}
+
 fn display_file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())

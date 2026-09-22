@@ -345,7 +345,7 @@
   {
     "name": "explain_query",
     "namespace": "query",
-    "args": "{ connectionId: string; sql: string }",
+    "args": "{ connectionId: string; sql: string; queryId?: string; consoleId?: string; database?: string | null; schema?: string | null }",
     "response": "ExplainResult",
     "status": "active"
   },

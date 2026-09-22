@@ -14,6 +14,43 @@ use vapor_lens_db_lib::{
 
 const WRONG_PASSWORD: &str = "postgres-runtime-redaction-regression-value";
 
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn preserves_result_types_and_precision_in_queries_and_streams() {
+    let driver = PostgresDriver::connect(&test_pg_url().expect("PostgreSQL test URL"))
+        .await
+        .unwrap();
+    let sql = "SELECT 7::smallint, 9007199254740993::bigint, 123.4500::numeric(10,4), DATE '2026-09-22', TIMESTAMP '2026-09-22 12:34:56', '00000000-0000-0000-0000-000000000001'::uuid, decode('00ff','hex'), NULL::numeric, ARRAY[7,NULL]::smallint[], '{\"id\":9007199254740993}'::json";
+    let expected = vec![
+        serde_json::json!(7),
+        serde_json::json!("9007199254740993"),
+        serde_json::json!("123.4500"),
+        serde_json::json!("2026-09-22"),
+        serde_json::json!("2026-09-22 12:34:56"),
+        serde_json::json!("00000000-0000-0000-0000-000000000001"),
+        serde_json::json!("0x00ff"),
+        serde_json::Value::Null,
+        serde_json::json!([7, null]),
+        serde_json::json!("{\"id\":9007199254740993}"),
+    ];
+    let result = driver.execute_query(sql, None).await.unwrap();
+    assert_eq!(result.rows, vec![expected.clone()]);
+    let (tx, mut rx) = mpsc::channel(4);
+    let summary = driver
+        .execute_query_stream(sql, "typed-result", 10, Some(10), tx)
+        .await
+        .unwrap();
+    assert_eq!(summary.row_count, 1);
+    assert_eq!(rx.recv().await.unwrap().unwrap().rows, vec![expected]);
+    let error = driver
+        .execute_query("SELECT point(1,2)", None)
+        .await
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("Cannot decode PostgreSQL result column"));
+}
+
 fn test_pg_url() -> Option<String> {
     std::env::var("TEST_PG_URL").ok().or_else(|| {
         let jdbc_url = std::env::var("TEST_PG_JDBC_URL").ok()?;
@@ -50,6 +87,10 @@ async fn connects_and_reads_postgres_metadata() {
         .expect("connect postgres");
 
     driver.ping().await.expect("ping postgres");
+    assert!(
+        !driver.supports_concurrent_queries(),
+        "a physical PostgreSQL session must serialize context and execution"
+    );
 
     let databases = driver.get_databases().await.expect("get databases");
     assert!(!databases.is_empty());

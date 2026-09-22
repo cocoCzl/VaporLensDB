@@ -24,7 +24,7 @@ interface PersistDirtySqlDraftsInput {
     tab: EditorTab,
     context: SqlDraftSaveContext,
   ) => Promise<SqlDraftPersistenceResult | null>
-  completeTabPersistence: (tabId: string, draftId: string | null) => void
+  completeTabPersistence: (tabId: string, draftId: string | null, savedRevision: number) => void
 }
 
 /**
@@ -48,6 +48,6 @@ export async function persistDirtySqlDrafts({
     })
 
     if (!result) continue
-    completeTabPersistence(tab.id, result.kind === 'saved' ? result.draft.id : null)
+    completeTabPersistence(tab.id, result.kind === 'saved' ? result.draft.id : null, tab.draftRevision ?? 0)
   }
 }

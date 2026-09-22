@@ -57,7 +57,7 @@ includesAll(
     'runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {',
     'maxRows: dataTabFetchLimit(activeDataContext.limit)',
     'maxRows: dataTabFetchLimit(nextContext.limit)',
-    'exportQueryResultCsv({ result, path, includeHeader: true })',
+    'exportQueryResultCsv({ result: snapshot, path, includeHeader: true })',
   ],
   'SQL tab large-result UI and CSV behavior',
 )

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use futures_util::{pin_mut, TryStreamExt};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_postgres::{
-    types::{Json, ToSql, Type},
+    types::{Json, ToSql},
     CancelToken, Client, Config, NoTls, Row, Statement,
 };
 
@@ -190,7 +190,9 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     fn supports_concurrent_queries(&self) -> bool {
-        true
+        // SET search_path and the following query share this physical session.
+        // Hold the manager's serial permit across both operations.
+        false
     }
 
     async fn ping(&self) -> Result<(), AppError> {
@@ -227,10 +229,7 @@ impl DatabaseDriver for PostgresDriver {
             .await
             .map_err(|error| self.map_query_error(sql, error))?;
 
-        Ok(rows_to_query_result(
-            rows,
-            start.elapsed().as_millis() as u64,
-        ))
+        rows_to_query_result(rows, start.elapsed().as_millis() as u64)
     }
 
     async fn execute_query_stream(
@@ -293,7 +292,7 @@ impl DatabaseDriver for PostgresDriver {
                 columns = columns_from_row(&row);
             }
 
-            rows.push(row_to_json_values(&row));
+            rows.push(row_to_json_values(&row)?);
             row_count += 1;
 
             if rows.len() >= chunk_size {
@@ -825,13 +824,16 @@ impl Drop for QueryRegistration<'_> {
     }
 }
 
-fn rows_to_query_result(rows: Vec<Row>, elapsed_ms: u64) -> QueryResult {
+fn rows_to_query_result(rows: Vec<Row>, elapsed_ms: u64) -> Result<QueryResult, AppError> {
     let columns = rows.first().map(columns_from_row).unwrap_or_default();
 
     let row_count = rows.len() as u64;
-    let rows = rows.iter().map(row_to_json_values).collect();
+    let rows = rows
+        .iter()
+        .map(row_to_json_values)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    QueryResult {
+    Ok(QueryResult {
         columns,
         rows,
         row_count,
@@ -840,7 +842,7 @@ fn rows_to_query_result(rows: Vec<Row>, elapsed_ms: u64) -> QueryResult {
         query_id: None,
         truncated: false,
         max_rows: None,
-    }
+    })
 }
 
 fn columns_from_row(row: &Row) -> Vec<ColumnMeta> {
@@ -886,52 +888,19 @@ async fn send_query_chunk(
         .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))
 }
 
-fn row_to_json_values(row: &Row) -> Vec<serde_json::Value> {
+fn row_to_json_values(row: &Row) -> Result<Vec<serde_json::Value>, AppError> {
     row.columns()
         .iter()
         .enumerate()
-        .map(|(index, column)| value_to_json(row, index, column.type_()))
+        .map(|(index, column)| {
+            row.try_get::<_, Option<super::postgres_value::PgValue>>(index)
+                .map(|value| value.map_or(serde_json::Value::Null, |value| value.0))
+                .map_err(|_| AppError::SerializationError(format!(
+                    "Cannot decode PostgreSQL result column {} ({}, type {}). The value was not replaced with NULL.",
+                    index + 1, column.name(), column.type_().name()
+                )))
+        })
         .collect()
-}
-
-fn value_to_json(row: &Row, index: usize, pg_type: &Type) -> serde_json::Value {
-    if matches!(pg_type, &Type::BOOL) {
-        optional_to_json(row.try_get::<_, Option<bool>>(index))
-    } else if matches!(
-        pg_type,
-        &Type::INT2 | &Type::INT4 | &Type::OID | &Type::XID | &Type::CID
-    ) {
-        optional_to_json(row.try_get::<_, Option<i32>>(index))
-    } else if matches!(pg_type, &Type::INT8) {
-        optional_to_json(row.try_get::<_, Option<i64>>(index))
-    } else if matches!(pg_type, &Type::FLOAT4) {
-        optional_to_json(row.try_get::<_, Option<f32>>(index))
-    } else if matches!(pg_type, &Type::FLOAT8) {
-        optional_to_json(row.try_get::<_, Option<f64>>(index))
-    } else if matches!(pg_type, &Type::JSON | &Type::JSONB) {
-        row.try_get::<_, Option<Json<serde_json::Value>>>(index)
-            .ok()
-            .flatten()
-            .map(|value| value.0)
-            .unwrap_or(serde_json::Value::Null)
-    } else {
-        row.try_get::<_, Option<String>>(index)
-            .ok()
-            .flatten()
-            .map(serde_json::Value::String)
-            .unwrap_or(serde_json::Value::Null)
-    }
-}
-
-fn optional_to_json<T>(value: Result<Option<T>, tokio_postgres::Error>) -> serde_json::Value
-where
-    T: serde::Serialize,
-{
-    value
-        .ok()
-        .flatten()
-        .and_then(|value| serde_json::to_value(value).ok())
-        .unwrap_or(serde_json::Value::Null)
 }
 
 fn table_info_from_row(row: Row) -> TableInfo {

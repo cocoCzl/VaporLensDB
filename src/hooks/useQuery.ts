@@ -6,6 +6,8 @@ import {
   onQueryResultDone,
   onQueryResultError,
   explainQuery,
+  getConsoleTransactionState,
+  type ExplainQueryContext,
 } from '@/ipc/query'
 import i18n from '@/i18n'
 import { normalizeAppError } from '@/ipc/client'
@@ -37,6 +39,8 @@ export function useQuery() {
       connectionName?: string
     } = {},
   ) {
+    const tab = useEditorStore.getState().tabs.find((item) => item.id === tabId)
+    if (!tab || tab.connectionId !== connectionId || tab.closing || tab.transactionBusy || tab.running) return false
     const queryId = crypto.randomUUID()
     const startedAt = new Date().toISOString()
     const startedMs = performance.now()
@@ -129,17 +133,31 @@ export function useQuery() {
     }
   }
 
-  async function runExplain(tabId: string, connectionId: string, sql: string) {
+  async function runExplain(tabId: string, connectionId: string, sql: string, context: ExplainQueryContext = {}) {
+    const tab = useEditorStore.getState().tabs.find((item) => item.id === tabId)
+    if (!tab || tab.connectionId !== connectionId || tab.closing || tab.transactionBusy || tab.running) return
     const queryId = crypto.randomUUID()
     setTabRunning(tabId, true, queryId)
     try {
-      const response = await explainQuery(connectionId, sql)
+      const response = await explainQuery(connectionId, sql, { ...context, queryId })
       setExplain(queryId, response)
       setTabQueryState(tabId, queryId)
     } catch (error) {
       const appError = normalizeAppError(error)
       setTabQueryState(tabId, queryId, appError.message)
       notifyError(appError, i18n.t('notifications.explainFailed'))
+    } finally {
+      if (context.consoleId) {
+        try {
+          const transaction = await getConsoleTransactionState(connectionId, context.consoleId)
+          const tab = useEditorStore.getState().tabs.find((item) => item.id === tabId)
+          if (tab?.connectionId === connectionId && tab.transactionMode === 'manual' && tab.lastQueryId === queryId) {
+            useEditorStore.getState().setTabTransactionState(tabId, transaction.mode, transaction.phase)
+          }
+        } catch {
+          // Preserve the last known transaction state when the session is unavailable.
+        }
+      }
     }
   }
 
@@ -151,8 +169,9 @@ export function useQuery() {
       return true
     } catch (error) {
       const appError = normalizeAppError(error)
-      setTabQueryState(tabId, queryId, appError.message)
       notifyError(appError, i18n.t('notifications.cancelQueryFailed'))
+      // A failed cancellation request does not mean execution has finished.
+      setTabCancelling(tabId, false)
       return false
     }
   }

@@ -138,6 +138,9 @@ describe('DataGrid', () => {
   it.each([
     ['text', 'hello', 'hello'],
     ['number', 42, '42'],
+    ['exact bigint', '9007199254740993', '9007199254740993'],
+    ['exact decimal', '123.4500', '123.4500'],
+    ['lossless JSON text', '{"id":9007199254740993}', '{"id":9007199254740993}'],
     ['empty string', '', ''],
     ['NULL', null, 'NULL'],
   ])('focuses and copies a %s cell with Cmd+C', (_kind, sourceValue, expectedClipboardValue) => {

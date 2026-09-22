@@ -57,8 +57,8 @@ describe('SQL draft persistence semantics', () => {
     })
 
     expect(saveTabDraft).toHaveBeenCalledTimes(2)
-    expect(completeTabPersistence).toHaveBeenNthCalledWith(1, 'saved', 'saved-draft')
-    expect(completeTabPersistence).toHaveBeenNthCalledWith(2, 'cleared', null)
+    expect(completeTabPersistence).toHaveBeenNthCalledWith(1, 'saved', 'saved-draft', 0)
+    expect(completeTabPersistence).toHaveBeenNthCalledWith(2, 'cleared', null, 0)
     expect(completeTabPersistence).not.toHaveBeenCalledWith('never-edited', expect.anything())
   })
 

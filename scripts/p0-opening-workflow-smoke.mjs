@@ -80,14 +80,14 @@ includesAll(
   tabBar,
   [
     'renameTab',
-    'saveTabDraft',
-    'isEmptySqlDraft',
     'closeEditorTab',
+    'closeEditorTabs',
     'onDoubleClick',
     'setEditingTabId',
   ],
   'SQL tab context and naming',
 )
+includesAll(read('src/lib/closeEditorTab.ts'), ['saveTabDraft', 'rollbackConsoleTransaction', 'setConsoleTransactionMode'], 'shared tab close protection')
 includesAll(app, ["case 'new-sql'", 'connection ? `SQL · ${connection.name}` : \'SQL\'', 'connectionId', "case 'query-history'"], 'application SQL creation and history commands')
 
 assert(!tabBar.includes('CreateDatabaseDialog'), 'tab bar must not expose database creation')

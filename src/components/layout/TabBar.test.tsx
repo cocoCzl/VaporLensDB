@@ -6,11 +6,17 @@ import i18n from '@/i18n'
 
 const mocks = vi.hoisted(() => ({
   closeTab: vi.fn(),
+  closeTabs: vi.fn(),
   markClosed: vi.fn(),
   saveTabDraft: vi.fn(),
   setActiveConnection: vi.fn(),
   setActiveTab: vi.fn(),
   tabs: [] as Array<Record<string, unknown>>,
+}))
+
+vi.mock('@/lib/closeEditorTab', () => ({
+  closeEditorTab: mocks.closeTab,
+  closeEditorTabs: mocks.closeTabs,
 }))
 
 vi.mock('@/stores/editorStore', () => ({
@@ -57,6 +63,7 @@ describe('TabBar close control', () => {
       value: vi.fn(),
     })
     mocks.closeTab.mockClear()
+    mocks.closeTabs.mockClear()
     mocks.setActiveTab.mockClear()
     mocks.saveTabDraft.mockResolvedValue({ kind: 'cleared' })
     mocks.tabs = [{
@@ -105,7 +112,6 @@ describe('TabBar close control', () => {
     fireEvent.click(closeAll)
 
     await Promise.resolve()
-    expect(mocks.closeTab).toHaveBeenCalledWith('sql-1')
-    expect(mocks.closeTab).toHaveBeenCalledWith('sql-2')
+    expect(mocks.closeTabs).toHaveBeenCalledWith(['sql-1', 'sql-2'])
   })
 })

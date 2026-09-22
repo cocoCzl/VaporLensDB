@@ -618,7 +618,7 @@ fn sqlite_row_to_json_values(
 fn sqlite_value_to_json(value: ValueRef<'_>) -> serde_json::Value {
     match value {
         ValueRef::Null => serde_json::Value::Null,
-        ValueRef::Integer(value) => serde_json::json!(value),
+        ValueRef::Integer(value) => crate::utils::result_value::signed_integer(value),
         ValueRef::Real(value) => serde_json::json!(value),
         ValueRef::Text(value) => serde_json::json!(String::from_utf8_lossy(value).to_string()),
         ValueRef::Blob(value) => serde_json::json!(encode_hex(value)),
@@ -674,6 +674,27 @@ mod tests {
     fn derives_database_name_from_path() {
         assert_eq!(sqlite_database_name("/tmp/demo.sqlite"), "demo.sqlite");
         assert_eq!(sqlite_database_name("relative.db"), "relative.db");
+    }
+
+    #[tokio::test]
+    async fn preserves_integer_precision_in_queries_and_streams() {
+        let driver = SqliteDriver::connect(":memory:").await.unwrap();
+        let sql = "SELECT 9007199254740993 AS large_id, -9223372036854775808 AS minimum, 42 AS small_id, NULL AS absent";
+        let result = driver.execute_query(sql, None).await.unwrap();
+        let expected = vec![
+            serde_json::json!("9007199254740993"),
+            serde_json::json!("-9223372036854775808"),
+            serde_json::json!(42),
+            serde_json::Value::Null,
+        ];
+        assert_eq!(result.rows, vec![expected.clone()]);
+        let (tx, mut rx) = mpsc::channel(4);
+        let summary = driver
+            .execute_query_stream(sql, "precision", 10, Some(10), tx)
+            .await
+            .unwrap();
+        assert_eq!(summary.row_count, 1);
+        assert_eq!(rx.recv().await.unwrap().unwrap().rows, vec![expected]);
     }
 
     #[test]

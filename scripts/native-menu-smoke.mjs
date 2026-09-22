@@ -99,6 +99,8 @@ includesAll(
 )
 
 const app = read('src/App.tsx')
+assert(app.includes('void closeEditorTab(editor.activeTabId)'), 'native close must use the shared protected workflow')
+assert(!app.includes('editor.closeTab('), 'native close must not bypass persistence and transaction protection')
 includesAll(
   app,
   [

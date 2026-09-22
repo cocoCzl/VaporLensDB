@@ -59,6 +59,8 @@ includesAll(
 
 assert(!mainPanel.includes('new Blob([csv]'), 'CSV export should not build Blob on the UI thread')
 assert(!mainPanel.includes('function toCsv('), 'CSV export should not stringify result sets on the UI thread')
+assert(!mainPanel.includes('exportQueryCsv'), 'current-result export must not re-execute editor SQL')
+assert(mainPanel.includes('captureResultExport(result)'), 'export must capture rows before asynchronous filesystem work')
 
 const contracts = read('src/shared/command-contracts.json')
 includesAll(

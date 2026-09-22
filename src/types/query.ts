@@ -6,6 +6,10 @@ export interface ColumnMeta {
 
 export interface QueryResult {
   columns: ColumnMeta[]
+  /** Native drivers encode integers outside JS's safe range as decimal strings.
+   * PostgreSQL NUMERIC and JSON/JSONB are text to preserve decimal/nested-number precision.
+   * SQL NULL remains null; a PostgreSQL decode failure is a query error, never a fake null.
+   */
   rows: unknown[][]
   rowCount: number
   elapsedMs: number

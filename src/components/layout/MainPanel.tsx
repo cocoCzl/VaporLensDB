@@ -22,7 +22,6 @@ import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useQuery } from '@/hooks/useQuery'
 import {
   exportQueryResultCsv,
-  exportQueryCsv,
   exportTableCsv,
   importTableCsv,
   previewTableCsvImport,
@@ -31,6 +30,8 @@ import {
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
 import { persistDirtySqlDrafts } from '@/lib/sqlDraftPersistence'
+import { captureResultExport } from '@/lib/resultExport'
+import { runTabTransaction } from '@/lib/tabTransaction'
 import { isSystemSchema } from '@/lib/systemObjects'
 import { normalizeAppError } from '@/ipc/client'
 import { foreignKeyDisplayRows } from '@/lib/foreignKeyDisplay'
@@ -427,7 +428,11 @@ export function MainPanel() {
         return
       }
     }
-    await runExplain(activeTab.id, connectionId, sql)
+    await runExplain(activeTab.id, connectionId, sql, {
+      database: selectedDatabase,
+      schema: selectedSchema,
+      consoleId: activeTab.transactionMode === 'manual' ? activeTab.id : undefined,
+    })
   }
 
   function cancel() {
@@ -825,7 +830,7 @@ export function MainPanel() {
         onHistoryToggle={() => setHistoryOpen((open) => !open)}
         transactionMode={activeTab.transactionMode ?? 'auto'}
         transactionPhase={activeTab.transactionPhase ?? 'idle'}
-        transactionDisabled={!connectionIsConnected}
+        transactionDisabled={!connectionIsConnected || activeTab.closing || activeTab.transactionBusy}
         onTransactionModeChange={(mode) => {
           if (!connectionId || !connectionIsConnected) return
           void (async () => {
@@ -834,18 +839,17 @@ export function MainPanel() {
                 useUiStore.getState().notify({ kind: 'warning', title: 'Commit or rollback the active transaction first' })
                 return
               }
-              const next = await setConsoleTransactionMode(connectionId, activeTab.id, mode)
-              useEditorStore.getState().setTabTransactionState(activeTab.id, next.mode, next.phase)
+              await runTabTransaction(activeTab.id, () => setConsoleTransactionMode(connectionId, activeTab.id, mode))
             } catch (error) { useUiStore.getState().notifyError(normalizeAppError(error), 'Unable to change transaction mode') }
           })()
         }}
         onCommit={() => {
           if (!connectionId || !connectionIsConnected) return
-          void commitConsoleTransaction(connectionId, activeTab.id).then((next) => useEditorStore.getState().setTabTransactionState(activeTab.id, next.mode, next.phase)).catch((error) => useUiStore.getState().notifyError(normalizeAppError(error), 'Commit failed'))
+          void runTabTransaction(activeTab.id, () => commitConsoleTransaction(connectionId, activeTab.id)).catch((error) => useUiStore.getState().notifyError(normalizeAppError(error), 'Commit failed'))
         }}
         onRollback={() => {
           if (!connectionId || !connectionIsConnected) return
-          void rollbackConsoleTransaction(connectionId, activeTab.id).then((next) => useEditorStore.getState().setTabTransactionState(activeTab.id, next.mode, next.phase)).catch((error) => useUiStore.getState().notifyError(normalizeAppError(error), 'Rollback failed'))
+          void runTabTransaction(activeTab.id, () => rollbackConsoleTransaction(connectionId, activeTab.id)).catch((error) => useUiStore.getState().notifyError(normalizeAppError(error), 'Rollback failed'))
         }}
         workspaceView={workspaceView}
         onWorkspaceViewChange={setWorkspaceView}
@@ -953,7 +957,7 @@ export function MainPanel() {
               size="icon-xs"
               label={t('workbench.exportCsv')}
               variant="ghost"
-              disabled={Boolean(activeExplain) || !activeResult || activeResult.columns.length === 0}
+              disabled={Boolean(activeExplain) || !activeResult || activeResult.columns.length === 0 || Boolean(activeTab.running)}
               onClick={() =>
                 activeResult &&
                 exportCurrentResult(
@@ -963,9 +967,6 @@ export function MainPanel() {
                   notifyError,
                   upsertTask,
                   exportDirectory,
-                  activeTab.connectionId && isSelectForStreamingExport(activeTab.sql)
-                    ? { connectionId: activeTab.connectionId, sql: activeTab.sql }
-                    : undefined,
                 )
               }
             >
@@ -2632,17 +2633,15 @@ async function exportCurrentResult(
   notifyError: (error: AppError, title?: string) => void,
   upsertTask: (task: TaskInfo) => void,
   exportDirectory: string | null,
-  source?: { connectionId: string; sql: string },
 ) {
   try {
+    const snapshot = captureResultExport(result)
     const directory = exportDirectory ?? await downloadDir()
     const fileName = `${safeFileName(title || 'query-result')}-${new Date()
       .toISOString()
       .replace(/[:.]/g, '-')}.csv`
     const path = await join(directory, fileName)
-    const task = source
-      ? await exportQueryCsv({ ...source, path, includeHeader: true })
-      : await exportQueryResultCsv({ result, path, includeHeader: true })
+    const task = await exportQueryResultCsv({ result: snapshot, path, includeHeader: true })
     upsertTask(task)
     notify({
       kind: 'info',
@@ -2670,10 +2669,4 @@ function dataContextToSqlInput(context: NonNullable<EditorTab['dataContext']>) {
 
 function safeFileName(value: string) {
   return value.trim().replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'query-result'
-}
-
-// Re-running a result for export is only safe for a conservative read-only
-// subset. Other result-producing statements retain the existing snapshot export.
-function isSelectForStreamingExport(sql: string) {
-  return sql.trimStart().toLowerCase().startsWith('select')
 }

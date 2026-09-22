@@ -3,28 +3,23 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
-import { isEmptySqlDraft } from '@/lib/sqlDraftPersistence'
+import { closeEditorTab, closeEditorTabs } from '@/lib/closeEditorTab'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
-import { useSqlDraftStore } from '@/stores/sqlDraftStore'
-import { rollbackConsoleTransaction, setConsoleTransactionMode } from '@/ipc/query'
 import type { EditorTab } from '@/stores/editorStore'
 
 export function TabBar() {
   const { t } = useTranslation()
-  const { tabs, activeTabId, setActiveTab, closeTab, renameTab, setTabDraft, toggleTabPinned } = useEditorStore(useShallow((state) => ({
+  const { tabs, activeTabId, setActiveTab, renameTab, toggleTabPinned } = useEditorStore(useShallow((state) => ({
     tabs: state.tabs,
     activeTabId: state.activeTabId,
     setActiveTab: state.setActiveTab,
-    closeTab: state.closeTab,
     renameTab: state.renameTab,
-    setTabDraft: state.setTabDraft,
     toggleTabPinned: state.toggleTabPinned,
   })))
   const connections = useConnectionStore((state) => state.connections)
   const statuses = useConnectionStore((state) => state.statuses)
   const setActiveConnection = useConnectionStore((state) => state.setActiveConnection)
-  const saveTabDraft = useSqlDraftStore((state) => state.saveTabDraft)
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [tabListOpen, setTabListOpen] = useState(false)
@@ -37,35 +32,6 @@ export function TabBar() {
     renameTab(tabId, editingTitle)
     setEditingTabId(null)
     setEditingTitle('')
-  }
-
-  function closeEditorTab(tab: EditorTab) {
-    if (tab.connectionId && tab.transactionMode === 'manual') {
-      if (tab.transactionPhase !== 'idle') {
-        if (!window.confirm('This Console has an uncommitted transaction. Roll it back and close the Console?')) return
-        void rollbackConsoleTransaction(tab.connectionId, tab.id)
-          .then(() => setConsoleTransactionMode(tab.connectionId!, tab.id, 'auto'))
-          .then(() => closeEditorTabAfterTransaction(tab))
-        return
-      }
-      void setConsoleTransactionMode(tab.connectionId, tab.id, 'auto').then(() => closeEditorTabAfterTransaction(tab))
-      return
-    }
-    closeEditorTabAfterTransaction(tab)
-  }
-
-  function closeEditorTabAfterTransaction(tab: EditorTab) {
-    if (!tab.kind || tab.kind === 'sql') {
-      const connection = connections.find((item) => item.id === tab.connectionId) ?? null
-      void saveTabDraft(tab, { connection }, !isEmptySqlDraft(tab.sql)).then((result) => {
-        if (result?.kind === 'saved') {
-          setTabDraft(tab.id, result.draft.id)
-        } else if (result?.kind === 'cleared') {
-          setTabDraft(tab.id, null)
-        }
-      })
-    }
-    closeTab(tab.id)
   }
 
   useEffect(() => {
@@ -110,7 +76,7 @@ export function TabBar() {
   if (tabs.length === 0) return null
 
   function closeTabs(candidates: EditorTab[]) {
-    candidates.forEach((tab) => closeEditorTab(tab))
+    void closeEditorTabs(candidates.map((tab) => tab.id))
     setTabContextMenu(null)
   }
 
@@ -182,7 +148,7 @@ export function TabBar() {
                   onAuxClick={(event) => {
                     if (event.button === 1 && !tab.pinned) {
                       event.preventDefault()
-                      closeEditorTab(tab)
+                      void closeEditorTab(tab.id)
                     }
                   }}
                 >
@@ -212,7 +178,8 @@ export function TabBar() {
                 aria-label={t('sql.closeTab')}
                 title={t('sql.closeTab')}
                 className={['mr-1 grid size-5 shrink-0 place-items-center rounded-sm transition-colors hover:bg-accent-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100', active ? 'opacity-100' : 'opacity-0'].join(' ')}
-                onClick={() => closeEditorTab(tab)}
+                onClick={() => { void closeEditorTab(tab.id) }}
+                disabled={tab.closing}
               >
                 <X className="size-3" />
               </button>

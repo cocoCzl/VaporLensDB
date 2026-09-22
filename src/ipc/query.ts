@@ -54,8 +54,15 @@ export function executeQueryStream(input: ExecuteQueryStreamInput) {
   return invokeCommand<void>(COMMANDS.executeQueryStream, { input })
 }
 
-export function explainQuery(connectionId: string, sql: string) {
-  return invokeCommand<ExplainResult>(COMMANDS.explainQuery, { connectionId, sql })
+export interface ExplainQueryContext {
+  queryId?: string
+  consoleId?: string
+  database?: string | null
+  schema?: string | null
+}
+
+export function explainQuery(connectionId: string, sql: string, context: ExplainQueryContext = {}) {
+  return invokeCommand<ExplainResult>(COMMANDS.explainQuery, { connectionId, sql, ...context })
 }
 
 export function cancelQuery(connectionId: string, queryId: string) {

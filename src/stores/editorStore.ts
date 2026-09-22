@@ -36,10 +36,14 @@ export interface EditorTab {
   lastQueryId?: string | null
   runningQueryId?: string | null
   running?: boolean
+  closing?: boolean
+  transactionBusy?: boolean
   cancelling?: boolean
   error?: string | null
   draftId?: string | null
   dirty?: boolean
+  /** Monotonic within this workspace session; guards async draft acknowledgements. */
+  draftRevision?: number
   pinned?: boolean
   /** Set when the saved Data Source was removed; SQL remains recoverable. */
   unavailableConnectionName?: string | null
@@ -118,10 +122,12 @@ interface EditorState {
     context?: { database?: string | null; schema?: string | null },
   ) => void
   updateSqlTabContext: (id: string, context: { database?: string | null; schema?: string | null }) => void
-  setTabDraft: (id: string, draftId: string | null) => void
+  setTabDraft: (id: string, draftId: string | null, savedRevision: number) => void
   setRecordsConnectionFilter: (id: string, connectionId: string | null) => void
   toggleTabPinned: (id: string) => void
   setTabRunning: (id: string, running: boolean, queryId?: string | null) => void
+  setTabClosing: (id: string, closing: boolean) => void
+  setTabTransactionBusy: (id: string, transactionBusy: boolean) => void
   setTabCancelling: (id: string, cancelling: boolean) => void
   setTabQueryState: (id: string, queryId: string | null, error?: string | null) => void
   setTabTransactionState: (id: string, mode: TransactionMode, phase: TransactionPhase) => void
@@ -161,14 +167,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === id
-          ? { ...t, title: title.trim() || t.title, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty }
+          ? { ...t, title: title.trim() || t.title, draftRevision: (t.draftRevision ?? 0) + 1, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty }
           : t,
       ),
     })),
   updateTabSql: (id, sql) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
-        t.id === id ? { ...t, sql, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty } : t,
+        t.id === id ? { ...t, sql, draftRevision: (t.draftRevision ?? 0) + 1, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty } : t,
       ),
     })),
   updateDataTabLimit: (id, limit, sql) =>
@@ -186,7 +192,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   updateTabConnection: (id, connectionId, context = {}) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
-        t.id === id
+        t.id === id && !t.closing && !t.transactionBusy
           ? {
               ...t,
               connectionId,
@@ -200,6 +206,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               transactionMode: 'auto',
               transactionPhase: 'idle',
               unavailableConnectionName: null,
+              draftRevision: (t.draftRevision ?? 0) + 1,
               dirty: t.kind === 'sql' || !t.kind ? true : t.dirty,
             }
           : t,
@@ -207,11 +214,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })),
   updateSqlTabContext: (id, context) =>
     set((s) => ({
-      tabs: s.tabs.map((t) => t.id === id ? { ...t, ...context } : t),
+      tabs: s.tabs.map((t) => t.id === id && (
+        ('database' in context && context.database !== t.database)
+        || ('schema' in context && context.schema !== t.schema)
+      ) ? {
+        ...t, ...context, draftRevision: (t.draftRevision ?? 0) + 1,
+        dirty: t.kind === 'sql' || !t.kind ? true : t.dirty,
+      } : t),
     })),
-  setTabDraft: (id, draftId) =>
+  setTabDraft: (id, draftId, savedRevision) =>
     set((s) => ({
-      tabs: s.tabs.map((t) => (t.id === id ? { ...t, draftId, dirty: false } : t)),
+      tabs: s.tabs.map((t) => (t.id === id ? {
+        ...t, draftId, dirty: (t.draftRevision ?? 0) === savedRevision ? false : t.dirty,
+      } : t)),
     })),
   setRecordsConnectionFilter: (id, connectionId) =>
     set((s) => ({
@@ -221,6 +236,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, pinned: !t.pinned } : t)),
     })),
+  setTabClosing: (id, closing) => set((state) => ({
+    tabs: state.tabs.map((tab) => tab.id === id ? { ...tab, closing } : tab),
+  })),
+  setTabTransactionBusy: (id, transactionBusy) => set((state) => ({
+    tabs: state.tabs.map((tab) => tab.id === id ? { ...tab, transactionBusy } : tab),
+  })),
   setTabRunning: (id, running, queryId) => {
     if (running && queryId) {
       const previousQueryId = get().tabs.find((tab) => tab.id === id)?.lastQueryId

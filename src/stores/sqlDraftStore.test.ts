@@ -23,7 +23,7 @@ vi.mock('@/stores/uiStore', () => ({
 
 import { useSqlDraftStore } from '@/stores/sqlDraftStore'
 import { useQueryHistoryStore } from '@/stores/queryHistoryStore'
-import type { EditorTab } from '@/stores/editorStore'
+import { useEditorStore, type EditorTab } from '@/stores/editorStore'
 import type { SqlDraft } from '@/types/sqlDraft'
 
 function tab(overrides: Partial<EditorTab>): EditorTab {
@@ -52,6 +52,7 @@ describe('native SQL draft persistence', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useSqlDraftStore.setState({ drafts: [], loading: false, error: null })
+    useEditorStore.setState({ tabs: [tab({})], activeTabId: null })
     useQueryHistoryStore.setState({
       entries: [{
         id: 'history-1',
@@ -81,6 +82,97 @@ describe('native SQL draft persistence', () => {
 
     expect(result).toEqual({ kind: 'saved', draft: saved })
     expect(useSqlDraftStore.getState().drafts).toEqual([saved])
+  })
+
+  it('reuses the first native ID for overlapping initial saves', async () => {
+    let finish!: (value: SqlDraft) => void
+    mocks.upsertSqlDraft.mockImplementationOnce(() => new Promise<SqlDraft>((resolve) => { finish = resolve }))
+    mocks.upsertSqlDraft.mockResolvedValue(draft())
+    const first = useSqlDraftStore.getState().saveTabDraft(tab({ sql: 'SELECT 1' }), {})
+    const second = useSqlDraftStore.getState().saveTabDraft(tab({ sql: 'SELECT 2' }), {})
+    await vi.waitFor(() => expect(mocks.upsertSqlDraft).toHaveBeenCalledTimes(1))
+    finish(draft())
+    await Promise.all([first, second])
+    expect(mocks.upsertSqlDraft.mock.calls[1][0]).toMatchObject({ id: 'draft-1', sql: 'SELECT 2' })
+  })
+
+  it('keeps edits made during a save dirty and persists them using the returned ID', async () => {
+    let finish!: (value: SqlDraft) => void
+    mocks.upsertSqlDraft.mockImplementationOnce(() => new Promise<SqlDraft>((resolve) => { finish = resolve }))
+    const original = tab({ sql: 'SELECT 1' })
+    useEditorStore.setState({ tabs: [original] })
+    const saving = useSqlDraftStore.getState().saveTabDraft(original, {})
+    await vi.waitFor(() => expect(mocks.upsertSqlDraft).toHaveBeenCalledTimes(1))
+    useEditorStore.getState().updateTabSql(original.id, 'SELECT 2')
+    finish(draft())
+    await saving
+    const current = useEditorStore.getState().tabs[0]
+    expect(current).toMatchObject({ sql: 'SELECT 2', dirty: true, draftId: 'draft-1' })
+    mocks.upsertSqlDraft.mockResolvedValue({ ...draft(), sql: 'SELECT 2' })
+    await useSqlDraftStore.getState().saveTabDraft(current, {})
+    expect(useEditorStore.getState().tabs[0].dirty).toBe(false)
+    expect(mocks.upsertSqlDraft.mock.calls[1][0].id).toBe('draft-1')
+  })
+
+  it('deletes an initially pending save when the following snapshot is empty', async () => {
+    mocks.upsertSqlDraft.mockResolvedValue(draft())
+    mocks.deleteSqlDraft.mockResolvedValue(undefined)
+    const first = useSqlDraftStore.getState().saveTabDraft(tab({ sql: 'SELECT 1' }), {})
+    const cleared = useSqlDraftStore.getState().saveTabDraft(tab({ sql: '' }), {})
+    await Promise.all([first, cleared])
+    expect(mocks.deleteSqlDraft).toHaveBeenCalledWith('draft-1')
+    expect(useSqlDraftStore.getState().drafts).toEqual([])
+  })
+
+  it.each(['clear', 'removeDraft'] as const)('orders %s after an in-flight save', async (operation) => {
+    let finish!: (value: SqlDraft) => void
+    mocks.upsertSqlDraft.mockImplementationOnce(() => new Promise<SqlDraft>((resolve) => { finish = resolve }))
+    mocks.deleteSqlDraft.mockResolvedValue(undefined)
+    mocks.clearSqlDrafts.mockResolvedValue(undefined)
+    const saving = useSqlDraftStore.getState().saveTabDraft(tab({ sql: 'SELECT 1' }), {})
+    const removing = operation === 'clear'
+      ? useSqlDraftStore.getState().clear()
+      : useSqlDraftStore.getState().removeDraft('draft-1')
+    await vi.waitFor(() => expect(mocks.upsertSqlDraft).toHaveBeenCalledTimes(1))
+    expect(mocks.deleteSqlDraft).not.toHaveBeenCalled()
+    expect(mocks.clearSqlDrafts).not.toHaveBeenCalled()
+    finish(draft())
+    await Promise.all([saving, removing])
+    expect(useSqlDraftStore.getState().drafts).toEqual([])
+  })
+
+  it('rejects an old snapshot queued after the editor has advanced', async () => {
+    const original = tab({ sql: 'SELECT 1' })
+    useEditorStore.setState({ tabs: [original] })
+    useEditorStore.getState().updateTabSql(original.id, 'SELECT 2')
+    expect(await useSqlDraftStore.getState().saveTabDraft(original, {})).toBeNull()
+    expect(mocks.upsertSqlDraft).not.toHaveBeenCalled()
+  })
+
+  it('skips autosaves captured before a tab closed', async () => {
+    const snapshot = tab({ sql: 'SELECT 1' })
+    useEditorStore.getState().closeTab(snapshot.id)
+    expect(await useSqlDraftStore.getState().saveTabDraft(snapshot, {})).toBeNull()
+    expect(mocks.upsertSqlDraft).not.toHaveBeenCalled()
+  })
+
+  it('skips queued autosaves during close but accepts the final closed save', async () => {
+    const snapshot = tab({ sql: 'SELECT 1' })
+    const autosave = useSqlDraftStore.getState().saveTabDraft(snapshot, {})
+    useEditorStore.getState().setTabClosing(snapshot.id, true)
+    expect(await autosave).toBeNull()
+    mocks.upsertSqlDraft.mockResolvedValue(draft())
+    expect(await useSqlDraftStore.getState().saveTabDraft(snapshot, {}, true)).toMatchObject({ kind: 'saved' })
+    expect(mocks.upsertSqlDraft).toHaveBeenCalledOnce()
+    expect(mocks.upsertSqlDraft.mock.calls[0][0].closed).toBe(true)
+  })
+
+  it('allows saves after a failed clear instead of poisoning the queue', async () => {
+    mocks.clearSqlDrafts.mockRejectedValueOnce(new Error('storage unavailable'))
+    await expect(useSqlDraftStore.getState().clear()).rejects.toThrow('storage unavailable')
+    mocks.upsertSqlDraft.mockResolvedValue(draft())
+    expect(await useSqlDraftStore.getState().saveTabDraft(tab({ sql: 'SELECT 1' }), {}))
+      .toEqual({ kind: 'saved', draft: draft() })
   })
 
   it('deletes a saved draft after SQL is cleared without touching query history', async () => {

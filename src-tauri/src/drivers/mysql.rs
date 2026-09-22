@@ -585,8 +585,8 @@ fn value_to_json(value: &Value) -> serde_json::Value {
     match value {
         Value::NULL => serde_json::Value::Null,
         Value::Bytes(value) => serde_json::Value::String(String::from_utf8_lossy(value).into()),
-        Value::Int(value) => serde_json::json!(value),
-        Value::UInt(value) => serde_json::json!(value),
+        Value::Int(value) => crate::utils::result_value::signed_integer(*value),
+        Value::UInt(value) => crate::utils::result_value::unsigned_integer(*value),
         Value::Float(value) => serde_json::json!(value),
         Value::Double(value) => serde_json::json!(value),
         Value::Date(year, month, day, hour, minute, second, micros) => serde_json::Value::String(
@@ -618,4 +618,23 @@ fn map_mysql_query_error(sql: &str, error: mysql_async::Error) -> AppError {
 
 fn escape_identifier(value: &str) -> String {
     value.replace('`', "``")
+}
+
+#[cfg(test)]
+mod result_value_tests {
+    use super::*;
+
+    #[test]
+    fn preserves_signed_and_unsigned_bigints() {
+        assert_eq!(value_to_json(&Value::Int(42)), serde_json::json!(42));
+        assert_eq!(
+            value_to_json(&Value::Int(i64::MIN)),
+            serde_json::json!("-9223372036854775808")
+        );
+        assert_eq!(
+            value_to_json(&Value::UInt(u64::MAX)),
+            serde_json::json!("18446744073709551615")
+        );
+        assert_eq!(value_to_json(&Value::NULL), serde_json::Value::Null);
+    }
 }

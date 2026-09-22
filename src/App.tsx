@@ -18,6 +18,7 @@ import { persistSqlWorkspace, useEditorStore } from './stores/editorStore'
 import { useConnectionStore } from './stores/connectionStore'
 import { useMetadataStore } from './stores/metadataStore'
 import i18n from './i18n'
+import { closeEditorTab } from './lib/closeEditorTab'
 
 const MIN_SPLASH_DURATION_MS = 250
 
@@ -156,7 +157,7 @@ export default function App() {
         }
         case 'new-connection':
         case 'manage-data-sources': openDataSources(); break
-        case 'close-tab': if (editor.activeTabId) editor.closeTab(editor.activeTabId); break
+        case 'close-tab': if (editor.activeTabId) void closeEditorTab(editor.activeTabId); break
         case 'command-palette': window.dispatchEvent(new Event('vaporlensdb:open-command-palette')); break
         case 'query-history': {
           const existing = editor.tabs.find((tab) => tab.kind === 'queryHistory')
