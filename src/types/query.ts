@@ -6,7 +6,8 @@ export interface ColumnMeta {
 
 export interface QueryResult {
   columns: ColumnMeta[]
-  /** Native drivers encode integers outside JS's safe range as decimal strings.
+  /** Native and JDBC drivers encode integers outside JS's safe range as decimal strings.
+   * JDBC DECIMAL/NUMERIC values are exact text, including their scale.
    * PostgreSQL NUMERIC and JSON/JSONB are text to preserve decimal/nested-number precision.
    * SQL NULL remains null; a PostgreSQL decode failure is a query error, never a fake null.
    */

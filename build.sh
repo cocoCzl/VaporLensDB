@@ -234,7 +234,7 @@ tauri_bundle_build() {
 
 build_jdbc_bridge() {
   log "Building JDBC bridge"
-  "$ROOT_DIR/tools/jdbc-bridge/build.sh"
+  "$ROOT_DIR/tools/jdbc-bridge/build.sh" "$@"
 }
 
 run_checks() {
@@ -470,7 +470,7 @@ case "$TARGET" in
     ;;
   check)
     ensure_dependencies
-    build_jdbc_bridge
+    build_jdbc_bridge --test
     run_checks
     ;;
   live-tests)

@@ -82,6 +82,44 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
     assert_eq!(result.row_count, 1);
     assert_eq!(result.rows[0][0], serde_json::json!("A-001"));
 
+    // Exercise the actual Java -> Rust JSON boundary in both result paths.
+    let exact_sql = "SELECT CAST(42 AS BIGINT), \
+        CAST(9007199254740991 AS BIGINT), CAST(9007199254740992 AS BIGINT), \
+        CAST(9007199254740993 AS BIGINT), CAST(-9007199254740993 AS BIGINT), \
+        CAST(9223372036854775807 AS BIGINT), CAST(-9223372036854775808 AS BIGINT), \
+        CAST(18446744073709551615 AS DECIMAL(20,0)), \
+        CAST(12345678901234567890.123456789012345678 AS DECIMAL(38,18)), \
+        CAST(1.2300 AS DECIMAL(8,4)), CAST(NULL AS DECIMAL(8,4))";
+    let expected = vec![
+        serde_json::json!(42),
+        serde_json::json!(9007199254740991_i64),
+        serde_json::json!("9007199254740992"),
+        serde_json::json!("9007199254740993"),
+        serde_json::json!("-9007199254740993"),
+        serde_json::json!("9223372036854775807"),
+        serde_json::json!("-9223372036854775808"),
+        serde_json::json!("18446744073709551615"),
+        serde_json::json!("12345678901234567890.123456789012345678"),
+        serde_json::json!("1.2300"),
+        serde_json::Value::Null,
+    ];
+    let exact = driver
+        .execute_query(exact_sql, None)
+        .await
+        .expect("exact JDBC values");
+    assert_eq!(exact.rows, vec![expected.clone()]);
+    let (exact_tx, mut exact_rx) = mpsc::channel(4);
+    let exact_summary = driver
+        .execute_query_stream(exact_sql, "h2-exact-values", 10, Some(10), exact_tx)
+        .await
+        .expect("stream exact JDBC values");
+    let mut exact_rows = Vec::new();
+    while let Some(chunk) = exact_rx.recv().await {
+        exact_rows.extend(chunk.expect("exact stream chunk").rows);
+    }
+    assert_eq!(exact_summary.row_count, 1);
+    assert_eq!(exact_rows, vec![expected]);
+
     let (chunk_tx, mut chunk_rx) = mpsc::channel(4);
     let summary = driver
         .execute_query_stream(

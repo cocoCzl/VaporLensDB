@@ -25,3 +25,9 @@ javac -encoding UTF-8 -d "$BUILD_DIR" \
 jar --create --file "$JAR_PATH" --main-class com.vaporlensdb.jdbcbridge.JdbcBridge -C "$BUILD_DIR" .
 
 echo "$JAR_PATH"
+
+if [[ "${1:-}" == "--test" ]]; then
+  javac -encoding UTF-8 -cp "$BUILD_DIR" -d "$BUILD_DIR/test" \
+    "$ROOT_DIR/test/com/vaporlensdb/jdbcbridge/JdbcBridgeValueTest.java"
+  java -cp "$BUILD_DIR:$BUILD_DIR/test" com.vaporlensdb.jdbcbridge.JdbcBridgeValueTest
+fi

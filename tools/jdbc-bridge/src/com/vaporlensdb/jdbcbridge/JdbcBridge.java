@@ -3,6 +3,8 @@ package com.vaporlensdb.jdbcbridge;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.sql.Clob;
 import java.sql.Blob;
@@ -32,6 +34,7 @@ public final class JdbcBridge {
     private static final int DEFAULT_QUERY_TIMEOUT_SECONDS = 60;
     private static final int MAX_INTERACTIVE_RESULT_ROWS = 50_000;
     private static final int MAX_STREAM_CHUNK_SIZE = 2_000;
+    private static final long MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991L;
     private static final Pattern STREAM_SQL_PATTERN = Pattern.compile("\\\"sql\\\"\\s*:\\s*\\\"([A-Za-z0-9+/=]+)\\\"");
     private static final Pattern STREAM_CHUNK_SIZE_PATTERN = Pattern.compile("\\\"chunkSize\\\"\\s*:\\s*(\\d+)");
     private static final Pattern STREAM_MAX_ROWS_PATTERN = Pattern.compile("\\\"maxRows\\\"\\s*:\\s*(\\d+)");
@@ -733,12 +736,33 @@ public final class JdbcBridge {
         }
     }
 
-    private static void appendJsonValue(StringBuilder output, Object value) {
+    static void appendJsonValue(StringBuilder output, Object value) {
         if (value == null) {
             output.append("null");
-        } else if (value instanceof Number || value instanceof Boolean) {
+        } else if (value instanceof BigDecimal) {
+            // Never round exact decimals through double. toString also preserves
+            // scale without expanding arbitrarily large scientific exponents.
+            output.append('"').append(value).append('"');
+        } else if (value instanceof BigInteger integer) {
+            if (integer.abs().compareTo(BigInteger.valueOf(MAX_SAFE_JSON_INTEGER)) <= 0) {
+                output.append(integer);
+            } else {
+                output.append('"').append(integer).append('"');
+            }
+        } else if (value instanceof Long integer) {
+            if (integer >= -MAX_SAFE_JSON_INTEGER && integer <= MAX_SAFE_JSON_INTEGER) {
+                output.append(integer);
+            } else {
+                output.append('"').append(integer).append('"');
+            }
+        } else if (value instanceof Byte || value instanceof Short || value instanceof Integer
+                || value instanceof Boolean
+                || (value instanceof Double number && Double.isFinite(number))
+                || (value instanceof Float floatNumber && Float.isFinite(floatNumber))) {
             output.append(value);
         } else {
+            // Includes non-finite floats and vendor-specific Number subclasses:
+            // preserve their text instead of emitting invalid/unsafe JSON numbers.
             output.append('"').append(json(String.valueOf(value))).append('"');
         }
     }
@@ -765,6 +789,9 @@ public final class JdbcBridge {
         // database-specific value was read.
         if (jdbcTypeName != null && jdbcTypeName.toUpperCase(Locale.ROOT).contains("XMLTYPE")) {
             return "XMLTYPE value (preview unavailable)";
+        }
+        if (jdbcType == Types.DECIMAL || jdbcType == Types.NUMERIC) {
+            return resultSet.getBigDecimal(index);
         }
         Object value = resultSet.getObject(index);
         if (value instanceof Number || value instanceof Boolean || value == null) {
