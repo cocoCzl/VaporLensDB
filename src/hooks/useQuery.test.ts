@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { containsLikelyDdl, useQuery } from '@/hooks/useQuery'
+import { classifyStatement, containsLikelyDdl, useQuery } from '@/hooks/useQuery'
 import { useEditorStore } from '@/stores/editorStore'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import { cancelQuery, executeQuery, explainQuery, getConsoleTransactionState } from '@/ipc/query'
@@ -120,5 +120,19 @@ describe('DDL metadata refresh classification', () => {
     expect(containsLikelyDdl('/* comment */ CREATE\nTABLE items(id INT)')).toBe(true)
     expect(containsLikelyDdl('SELECT $$; DROP TABLE items;$$')).toBe(false)
     expect(containsLikelyDdl('UPDATE child_items SET parent_id = parent_id WHERE id = 1')).toBe(false)
+  })
+})
+
+describe('query result statement classification', () => {
+  it.each([
+    ['WITH ids AS (SELECT id FROM source) UPDATE items SET value = 1', 'dml'],
+    ['WITH ids AS (SELECT id FROM source) DELETE FROM items WHERE id IN (SELECT id FROM ids)', 'dml'],
+    ['WITH RECURSIVE ids AS (SELECT 1) INSERT INTO items SELECT * FROM ids', 'dml'],
+    ['WITH changed AS (UPDATE items SET value = 1 RETURNING id) SELECT * FROM changed', 'other'],
+    ['CREATE TABLE items (id INTEGER)', 'ddl'],
+    ['COMMIT', 'commit'],
+    ['ROLLBACK', 'rollback'],
+  ] as const)('classifies %s as %s', (sql, kind) => {
+    expect(classifyStatement(sql)).toBe(kind)
   })
 })

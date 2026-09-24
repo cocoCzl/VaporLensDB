@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import cases from '@/shared/sql-lexer-cases.json'
-import { maskSql, splitSqlStatements, statementAtOffset } from './sqlLexer'
+import { leadingStatementKeyword, maskSql, splitSqlStatements, statementAtOffset } from './sqlLexer'
 
 describe('shared SQL lexical contract', () => {
   it.each(cases)('splits $sql consistently with Rust', ({ sql, statements }) => {
@@ -16,5 +16,17 @@ describe('shared SQL lexical contract', () => {
     const sql = "SELECT '😀中文;'; SELECT 2" // i18n-hardcoded-ok: Unicode SQL lexer fixture, not UI text.
     expect(maskSql(sql).length).toBe(sql.length)
     expect(statementAtOffset(sql, sql.indexOf('2'))).toBe('SELECT 2')
+  })
+  it.each([
+    ['SELECT 1', 'select'],
+    ['/* UPDATE hidden */ UPDATE items SET value = 1', 'update'],
+    ['WITH ids AS (SELECT id FROM source) UPDATE items SET value = 1 WHERE id IN (SELECT id FROM ids)', 'update'],
+    ['WITH ids AS (SELECT id FROM source), archived AS (DELETE FROM history RETURNING id) DELETE FROM items WHERE id IN (SELECT id FROM ids)', 'delete'],
+    ['WITH RECURSIVE ids AS (SELECT 1 UNION ALL SELECT 2) INSERT INTO items SELECT * FROM ids', 'insert'],
+    ['WITH changed AS (UPDATE items SET value = 1 RETURNING id) SELECT * FROM changed', 'select'],
+    [`WITH "update" AS MATERIALIZED (SELECT q'[DELETE FROM items]' AS value) SELECT * FROM "update"`, 'select'],
+    ['; WITH ids(id) AS NOT MATERIALIZED (SELECT 1) SELECT * FROM ids', 'select'],
+  ])('finds the result-owning command in %s', (sql, keyword) => {
+    expect(leadingStatementKeyword(sql)).toBe(keyword)
   })
 })

@@ -1,4 +1,4 @@
-import { maskSql, splitSqlStatements } from '@/lib/sqlLexer'
+import { leadingStatementKeyword, splitSqlStatements } from '@/lib/sqlLexer'
 import {
   cancelQuery,
   executeQuery,
@@ -250,18 +250,18 @@ function canStreamSql(sql: string) {
   return splitSqlStatements(sql).length === 1
 }
 
-function classifyStatement(sql: string): import('@/types/query').QueryResult['statementKind'] {
-  const statement = maskSql(sql).trim().toLowerCase()
-  if (/^(insert|update|delete|replace|merge)\b/u.test(statement)) return 'dml'
-  if (/^(create|alter|drop|rename|truncate)\b/u.test(statement)) return 'ddl'
-  if (/^commit\b/u.test(statement)) return 'commit'
-  if (/^rollback\b/u.test(statement)) return 'rollback'
+export function classifyStatement(sql: string): import('@/types/query').QueryResult['statementKind'] {
+  const keyword = leadingStatementKeyword(sql)
+  if (keyword && ['insert', 'update', 'delete', 'replace', 'merge'].includes(keyword)) return 'dml'
+  if (keyword && ['create', 'alter', 'drop', 'rename', 'truncate'].includes(keyword)) return 'ddl'
+  if (keyword === 'commit') return 'commit'
+  if (keyword === 'rollback') return 'rollback'
   return 'other'
 }
 
 export function containsLikelyDdl(sql: string) {
   return splitSqlStatements(sql).some((statement) => {
-    const normalized = maskSql(statement).trim().toLowerCase()
-    return /^(create|alter|drop|truncate|rename)\b/u.test(normalized)
+    const keyword = leadingStatementKeyword(statement)
+    return keyword !== undefined && ['create', 'alter', 'drop', 'truncate', 'rename'].includes(keyword)
   })
 }

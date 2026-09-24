@@ -46,6 +46,84 @@ export function maskSql(sql: string): string {
   return output.join('')
 }
 
+/** Returns the command that owns the statement result, including after a CTE list. */
+export function leadingStatementKeyword(sql: string): string | undefined {
+  const firstStatement = splitSqlStatements(sql)[0]
+  if (!firstStatement) return undefined
+  const masked = maskSql(firstStatement)
+  const first = readWord(masked, 0)
+  if (!first || first.word !== 'with') return first?.word
+
+  let index = first.end
+  const recursive = readWord(masked, index)
+  if (recursive?.word === 'recursive') index = recursive.end
+
+  while (index < masked.length) {
+    const asKeyword = findTopLevelWord(masked, index, 'as')
+    if (!asKeyword) return undefined
+    index = asKeyword.end
+
+    let modifier = readWord(masked, index)
+    if (modifier?.word === 'not') {
+      index = modifier.end
+      modifier = readWord(masked, index)
+    }
+    if (modifier?.word === 'materialized') index = modifier.end
+
+    index = skipWhitespace(masked, index)
+    if (masked[index] !== '(') return undefined
+    index = skipBalancedParentheses(masked, index)
+    if (index < 0) return undefined
+    index = skipWhitespace(masked, index)
+    if (masked[index] === ',') {
+      index += 1
+      continue
+    }
+    return readWord(masked, index)?.word
+  }
+  return undefined
+}
+
+function skipWhitespace(value: string, index: number) {
+  while (index < value.length && /\s/u.test(value[index])) index += 1
+  return index
+}
+
+function readWord(value: string, index: number) {
+  const start = skipWhitespace(value, index)
+  const match = /^[a-zA-Z_][a-zA-Z0-9_$]*/u.exec(value.slice(start))
+  return match ? { word: match[0].toLowerCase(), end: start + match[0].length } : undefined
+}
+
+function findTopLevelWord(value: string, index: number, expected: string) {
+  let depth = 0
+  while (index < value.length) {
+    const char = value[index]
+    if (char === '(') { depth += 1; index += 1; continue }
+    if (char === ')') { depth = Math.max(0, depth - 1); index += 1; continue }
+    if (depth === 0) {
+      const token = readWord(value, index)
+      if (token && token.end > index) {
+        if (token.word === expected) return token
+        index = token.end
+        continue
+      }
+    }
+    index += 1
+  }
+  return undefined
+}
+
+function skipBalancedParentheses(value: string, index: number) {
+  let depth = 0
+  while (index < value.length) {
+    if (value[index] === '(') depth += 1
+    else if (value[index] === ')' && --depth === 0) return index + 1
+    index += 1
+  }
+  return -1
+}
+
 function oracleQQuoteEnd(
   sql: string,
   index: number,

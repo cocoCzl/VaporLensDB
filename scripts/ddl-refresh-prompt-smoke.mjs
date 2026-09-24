@@ -34,10 +34,17 @@ includesAll(
     "title: i18n.t('notifications.objectStructureChanged')",
     "message: i18n.t('notifications.refreshObjectStructureHint')",
     'function containsLikelyDdl(sql: string)',
-    'maskSql(statement)',
-    '/^(create|alter|drop|truncate|rename)\\b/u.test(normalized)',
+    'leadingStatementKeyword(statement)',
+    "['create', 'alter', 'drop', 'truncate', 'rename'].includes(keyword)",
   ],
   'DDL success refresh prompt',
+)
+
+const sqlLexer = read('src/lib/sqlLexer.ts')
+includesAll(
+  sqlLexer,
+  ['export function leadingStatementKeyword(sql: string)', "first.word !== 'with'", "findTopLevelWord(masked, index, 'as')"],
+  'shared statement command classification',
 )
 excludesAll(
   useQuery,
