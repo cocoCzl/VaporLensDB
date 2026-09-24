@@ -21,6 +21,7 @@ pub struct ExecuteQueryInput {
     pub connection_id: Uuid,
     pub sql: String,
     pub query_id: Option<String>,
+    pub max_rows: Option<u64>,
     pub console_id: Option<String>,
     pub tab_id: Option<String>,
     pub connection_name: Option<String>,
@@ -223,7 +224,7 @@ pub async fn execute_query(
         let sql = input.sql.clone();
         let mut result = state
             .query_engine
-            .execute_query(driver, &input.sql, input.query_id)
+            .execute_query(driver, &input.sql, input.query_id, input.max_rows)
             .await;
         if result.is_err() {
             state.connection_manager.lock().await.set_console_phase(
@@ -275,7 +276,7 @@ pub async fn execute_query(
     let generation = operation.generation;
     let mut execution = state
         .query_engine
-        .execute_query(operation.driver, &input.sql, input.query_id)
+        .execute_query(operation.driver, &input.sql, input.query_id, input.max_rows)
         .await;
     if execution
         .as_ref()

@@ -90,6 +90,7 @@ export function useQuery() {
           connectionId,
           sql,
           queryId,
+          maxRows: options.maxRows ?? useUiStore.getState().queryMaxRows,
           consoleId,
           tabId,
           connectionName: options.connectionName,

@@ -68,9 +68,10 @@ describe('query execution snapshot', () => {
         'snapshot-tab',
         'source',
         'SELECT * FROM original_items; SELECT 1',
-        { database: 'app', schema: 'tenant_a' },
+        { database: 'app', schema: 'tenant_a', maxRows: 25 },
       )).toBe(true)
     })
+    expect(executeQuery).toHaveBeenCalledWith(expect.objectContaining({ maxRows: 25 }))
     const queryId = useEditorStore.getState().tabs[0].lastQueryId as string
     useEditorStore.getState().updateTabSql('snapshot-tab', 'SELECT * FROM edited_items')
     useEditorStore.getState().updateSqlTabContext('snapshot-tab', { schema: 'tenant_b' })

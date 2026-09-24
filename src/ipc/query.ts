@@ -16,6 +16,7 @@ export interface ExecuteQueryInput {
   connectionId: string
   sql: string
   queryId?: string
+  maxRows?: number
   consoleId?: string
   tabId?: string
   connectionName?: string
