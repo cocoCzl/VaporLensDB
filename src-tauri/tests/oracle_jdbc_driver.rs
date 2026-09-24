@@ -72,7 +72,7 @@ async fn connects_and_queries_oracle_with_jdbc_bridge() {
         .await
         .expect("execute oracle query");
     assert_eq!(result.row_count, 1);
-    assert_eq!(result.rows[0][0], serde_json::json!(1));
+    assert_eq!(result.rows[0][0], serde_json::json!("1"));
 }
 
 #[tokio::test]
