@@ -19,6 +19,7 @@ use crate::{
             QueryStreamSummary,
         },
     },
+    utils::query_budget::QueryChunkBuffer,
 };
 
 type MssqlClient = Client<Compat<TcpStream>>;
@@ -181,7 +182,7 @@ impl DatabaseDriver for MssqlDriver {
             .await
             .map_err(|error| map_mssql_query_error(sql, error))?;
         let mut columns = Vec::new();
-        let mut rows = Vec::with_capacity(chunk_size);
+        let mut rows = QueryChunkBuffer::new(chunk_size);
         let mut row_offset = 0_u64;
         let mut truncated = false;
 
@@ -199,9 +200,7 @@ impl DatabaseDriver for MssqlDriver {
                         truncated = true;
                         continue;
                     }
-                    rows.push(row_to_json_values(&row));
-                    if rows.len() == chunk_size {
-                        let chunk_rows = std::mem::take(&mut rows);
+                    if let Some(chunk_rows) = rows.push(row_to_json_values(&row))? {
                         let row_count = chunk_rows.len() as u64;
                         chunks
                             .send(Ok(QueryResultChunk {
@@ -222,6 +221,7 @@ impl DatabaseDriver for MssqlDriver {
         }
 
         if !rows.is_empty() || !columns.is_empty() {
+            let rows = rows.take();
             let row_count = rows.len() as u64;
             chunks
                 .send(Ok(QueryResultChunk {

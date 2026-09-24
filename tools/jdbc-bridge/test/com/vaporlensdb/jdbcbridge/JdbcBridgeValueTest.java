@@ -2,6 +2,7 @@ package com.vaporlensdb.jdbcbridge;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.List;
 
 /** Dependency-free contract test; runs even without any installed JDBC driver. */
 public final class JdbcBridgeValueTest {
@@ -34,6 +35,8 @@ public final class JdbcBridgeValueTest {
         check(Double.POSITIVE_INFINITY, "\"Infinity\"");
         check(Float.NEGATIVE_INFINITY, "\"-Infinity\"");
         check("quote\"\n", "\"quote\\\"\\n\"");
+        checkUtf8AndCellBudget();
+        checkStreamChunkBudget();
         System.out.println("JDBC scalar JSON contract tests passed.");
     }
 
@@ -42,6 +45,52 @@ public final class JdbcBridgeValueTest {
         JdbcBridge.appendJsonValue(output, value);
         if (!expected.contentEquals(output)) {
             throw new AssertionError("Expected " + expected + ", got " + output);
+        }
+    }
+
+    private static void checkUtf8AndCellBudget() {
+        if (JdbcBridge.utf8Length("A中😀") != 8) {
+            throw new AssertionError("UTF-8 byte estimator must count ASCII, BMP, and surrogate pairs");
+        }
+
+        String exact = "x".repeat(JdbcBridge.MAX_INTERACTIVE_CELL_BYTES - 2);
+        StringBuilder output = new StringBuilder();
+        JdbcBridge.appendBoundedJsonValue(output, exact, JdbcBridge.MAX_INTERACTIVE_CELL_BYTES);
+        if (JdbcBridge.utf8Length(output) != JdbcBridge.MAX_INTERACTIVE_CELL_BYTES) {
+            throw new AssertionError("exact-limit JDBC cell must be accepted");
+        }
+
+        output.setLength(0);
+        try {
+            JdbcBridge.appendBoundedJsonValue(
+                    output,
+                    "x".repeat(JdbcBridge.MAX_INTERACTIVE_CELL_BYTES - 1),
+                    JdbcBridge.MAX_INTERACTIVE_CELL_BYTES);
+            throw new AssertionError("oversized JDBC cell must be rejected");
+        } catch (IllegalArgumentException expected) {
+            if (output.length() != 0) {
+                throw new AssertionError("rejected JDBC cell must not remain in the row buffer");
+            }
+        }
+    }
+
+    private static void checkStreamChunkBudget() {
+        JdbcBridge.StreamChunkBuffer rowLimited = new JdbcBridge.StreamChunkBuffer(2, 1024);
+        if (rowLimited.add("[1]") != null || rowLimited.add("[2]") != null) {
+            throw new AssertionError("row-limited chunk flushed too early");
+        }
+        List<String> flushed = rowLimited.add("[3]");
+        if (flushed == null || flushed.size() != 2 || rowLimited.drain().size() != 1) {
+            throw new AssertionError("row-limited chunk did not retain the triggering row");
+        }
+
+        JdbcBridge.StreamChunkBuffer byteLimited = new JdbcBridge.StreamChunkBuffer(10, 12);
+        if (byteLimited.add("[123]") != null) {
+            throw new AssertionError("byte-limited chunk flushed too early");
+        }
+        flushed = byteLimited.add("[456]");
+        if (flushed == null || flushed.size() != 1 || byteLimited.drain().size() != 1) {
+            throw new AssertionError("byte-limited chunk did not retain the triggering row");
         }
     }
 }

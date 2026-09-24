@@ -17,6 +17,7 @@ use crate::{
             QueryStreamSummary,
         },
     },
+    utils::query_budget::QueryChunkBuffer,
 };
 
 pub struct MysqlDriver {
@@ -215,7 +216,7 @@ impl DatabaseDriver for MysqlDriver {
         let mut row_count = 0_u64;
         let mut row_offset = 0_u64;
         let mut truncated = false;
-        let mut rows = Vec::with_capacity(chunk_size);
+        let mut rows = QueryChunkBuffer::new(chunk_size);
 
         while let Some(row) = result
             .next()
@@ -227,13 +228,12 @@ impl DatabaseDriver for MysqlDriver {
                 break;
             }
 
-            rows.push(row_to_json_values(&row));
-            row_count += 1;
-
-            if rows.len() >= chunk_size {
-                send_query_chunk(&chunks, query_id, &columns, &mut rows, row_offset).await?;
-                row_offset = row_count;
+            if let Some(chunk_rows) = rows.push(row_to_json_values(&row))? {
+                let chunk_row_count = chunk_rows.len() as u64;
+                send_query_chunk(&chunks, query_id, &columns, chunk_rows, row_offset).await?;
+                row_offset += chunk_row_count;
             }
+            row_count += 1;
         }
         result
             .drop_result()
@@ -241,7 +241,7 @@ impl DatabaseDriver for MysqlDriver {
             .map_err(|error| map_mysql_query_error(sql, error))?;
 
         if !rows.is_empty() || !columns.is_empty() {
-            send_query_chunk(&chunks, query_id, &columns, &mut rows, row_offset).await?;
+            send_query_chunk(&chunks, query_id, &columns, rows.take(), row_offset).await?;
         }
 
         Ok(QueryStreamSummary {
@@ -596,13 +596,13 @@ async fn send_query_chunk(
     chunks: &mpsc::Sender<Result<QueryResultChunk, AppError>>,
     query_id: &str,
     columns: &[ColumnMeta],
-    rows: &mut Vec<Vec<serde_json::Value>>,
+    rows: Vec<Vec<serde_json::Value>>,
     row_offset: u64,
 ) -> Result<(), AppError> {
     let chunk = QueryResultChunk {
         query_id: query_id.to_string(),
         columns: columns.to_vec(),
-        rows: std::mem::take(rows),
+        rows,
         row_offset,
     };
 

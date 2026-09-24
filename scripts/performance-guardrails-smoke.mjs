@@ -32,6 +32,17 @@ const jdbc = read('src-tauri/src/drivers/jdbc.rs')
 assert(jdbc.includes('async fn cancel_stream'), 'JDBC stream cancellation is missing')
 assert(jdbc.includes('CANCEL\\t0\\t{}'), 'JDBC cancellation command is missing')
 assert(jdbc.includes('VAPORLENSDB_JDBC_MAX_HEAP_MB'), 'JDBC heap budget is missing')
+assert(jdbc.includes('"maxCellBytes": MAX_INTERACTIVE_CELL_BYTES'), 'JDBC cell budget is not sent to the bridge')
+assert(jdbc.includes('"maxChunkBytes": MAX_INTERACTIVE_SOURCE_CHUNK_BYTES'), 'JDBC chunk budget is not sent to the bridge')
+
+const jdbcBridge = read('tools/jdbc-bridge/src/com/vaporlensdb/jdbcbridge/JdbcBridge.java')
+assert(jdbcBridge.includes('appendBoundedJsonValue'), 'JDBC bridge cell budget is missing')
+assert(jdbcBridge.includes('StreamChunkBuffer'), 'JDBC bridge source chunk budget is missing')
+
+for (const driver of ['postgres', 'mysql', 'mssql', 'sqlite']) {
+  const source = read(`src-tauri/src/drivers/${driver}.rs`)
+  assert(source.includes('QueryChunkBuffer'), `${driver} source stream byte budget is missing`)
+}
 
 if (failures.length > 0) {
   console.error('Performance guardrail smoke failed:')

@@ -140,6 +140,37 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
     assert_eq!(summary.max_rows, Some(2));
     assert_eq!(streamed.len(), 2);
 
+    let (byte_tx, mut byte_rx) = mpsc::channel(4);
+    let byte_summary = driver
+        .execute_query_stream(
+            "SELECT REPEAT('x', 1048574) FROM SYSTEM_RANGE(1, 4)",
+            "h2-byte-chunks",
+            10,
+            Some(10),
+            byte_tx,
+        )
+        .await
+        .expect("stream H2 rows under the cell limit");
+    let mut byte_chunk_sizes = Vec::new();
+    while let Some(chunk) = byte_rx.recv().await {
+        byte_chunk_sizes.push(chunk.expect("byte-bounded stream chunk").rows.len());
+    }
+    assert_eq!(byte_summary.row_count, 4);
+    assert_eq!(byte_chunk_sizes, vec![3, 1]);
+
+    let (oversized_tx, mut oversized_rx) = mpsc::channel(1);
+    let oversized = driver
+        .execute_query_stream(
+            "SELECT REPEAT('x', 1048575)",
+            "h2-oversized-cell",
+            10,
+            Some(10),
+            oversized_tx,
+        )
+        .await;
+    assert!(oversized.is_err());
+    assert!(oversized_rx.recv().await.is_none());
+
     let (cancel_tx, _cancel_rx) = mpsc::channel(1);
     let running_driver = driver.clone();
     let running_query = tokio::spawn(async move {

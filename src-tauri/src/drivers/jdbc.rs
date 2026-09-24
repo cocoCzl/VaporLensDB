@@ -33,7 +33,12 @@ use crate::{
         },
     },
     services::external_driver::{resolve_jdbc_bridge_jar, validate_jdbc_prerequisites},
-    utils::error_redaction::sanitize_diagnostic_error,
+    utils::{
+        error_redaction::sanitize_diagnostic_error,
+        query_budget::{
+            row_json_bytes, MAX_INTERACTIVE_CELL_BYTES, MAX_INTERACTIVE_SOURCE_CHUNK_BYTES,
+        },
+    },
 };
 
 pub struct JdbcDriver {
@@ -451,6 +456,7 @@ impl JdbcBridgeSidecar {
             match status.as_str() {
                 "CHUNK" => {
                     let output: JdbcStreamChunkOutput = serde_json::from_str(&payload)?;
+                    validate_jdbc_stream_chunk(&output.rows)?;
                     let count = output.rows.len() as u64;
                     chunks
                         .send(Ok(QueryResultChunk {
@@ -636,6 +642,8 @@ impl JdbcBridgeCommand {
                     "sql": BASE64.encode(sql),
                     "chunkSize": chunk_size,
                     "maxRows": max_rows,
+                    "maxCellBytes": MAX_INTERACTIVE_CELL_BYTES,
+                    "maxChunkBytes": MAX_INTERACTIVE_SOURCE_CHUNK_BYTES,
                 });
                 format!(
                     "QUERY_STREAM\t{request_id}\t{}\n",
@@ -1368,6 +1376,19 @@ fn parse_sidecar_response(response: &str, expected_request_id: u64) -> Result<St
     }
 }
 
+fn validate_jdbc_stream_chunk(rows: &[Vec<serde_json::Value>]) -> Result<(), AppError> {
+    let mut chunk_bytes = 0_usize;
+    for row in rows {
+        chunk_bytes = chunk_bytes.saturating_add(row_json_bytes(row)?);
+        if chunk_bytes > MAX_INTERACTIVE_SOURCE_CHUNK_BYTES {
+            return Err(broken_sidecar(
+                "JDBC bridge stream chunk exceeded the interactive byte limit",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn parse_sidecar_frame(
     response: &str,
     expected_request_id: u64,
@@ -1509,7 +1530,8 @@ mod tests {
         clarify_metadata_error, clarify_oracle_explain_error, classify_jdbc_error,
         db_object_kind_from_value, db_object_kind_value, map_column_row, map_index_row,
         map_schema_object_row, normalize_jdbc_error_message, normalize_jdbc_sql,
-        parse_jdbc_max_heap_mb, parse_metadata_sql, parse_sidecar_response, JdbcBridgeCommand,
+        parse_jdbc_max_heap_mb, parse_metadata_sql, parse_sidecar_response,
+        validate_jdbc_stream_chunk, JdbcBridgeCommand,
     };
     use crate::models::{
         error::AppError,
@@ -1746,6 +1768,36 @@ mod tests {
         );
         assert_eq!(BASE64.decode(fields[4]).unwrap(), b"scott");
         assert_eq!(BASE64.decode(fields[5]).unwrap(), b"tiger");
+    }
+
+    #[test]
+    fn stream_request_carries_shared_byte_budgets() {
+        let request = JdbcBridgeCommand::QueryStream {
+            sql: "SELECT value FROM sample".to_string(),
+            chunk_size: 2_000,
+            max_rows: Some(50_000),
+        }
+        .encode(9);
+        let fields: Vec<_> = request.trim_end().split('\t').collect();
+        let payload = BASE64.decode(fields[2]).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(payload["maxCellBytes"], 1024 * 1024);
+        assert_eq!(payload["maxChunkBytes"], 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn rejects_jdbc_chunks_that_bypass_bridge_budgets() {
+        let oversized_cell = vec![vec![serde_json::json!("x".repeat(1024 * 1024))]];
+        assert!(validate_jdbc_stream_chunk(&oversized_cell).is_err());
+
+        let cell = "x".repeat(1024 * 1024 - 2);
+        let oversized_chunk = vec![
+            vec![serde_json::json!(&cell)],
+            vec![serde_json::json!(&cell)],
+            vec![serde_json::json!(&cell)],
+            vec![serde_json::json!(&cell)],
+        ];
+        assert!(validate_jdbc_stream_chunk(&oversized_chunk).is_err());
     }
 
     #[test]

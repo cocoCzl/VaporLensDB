@@ -12,7 +12,7 @@ use crate::{
             ExplainResult, QueryResult, QueryResultChunk, QueryStreamDone, QueryStreamError,
         },
     },
-    utils::sql_parser::split_sql_statements,
+    utils::{query_budget::row_json_bytes, sql_parser::split_sql_statements},
 };
 
 const QUERY_RESULT_CHUNK_EVENT: &str = "query_result_chunk";
@@ -385,50 +385,7 @@ async fn collect_interactive_result(
 }
 
 fn interactive_row_bytes(row: &[serde_json::Value]) -> Result<usize, AppError> {
-    let mut row_bytes = 2_usize;
-    for value in row {
-        let cell_bytes = estimated_json_bytes(value);
-        if cell_bytes > MAX_INTERACTIVE_CELL_BYTES {
-            return Err(AppError::ConfigError(format!(
-                "interactive result cell exceeds the {MAX_INTERACTIVE_CELL_BYTES} byte limit"
-            )));
-        }
-        row_bytes = row_bytes.saturating_add(cell_bytes).saturating_add(1);
-    }
-    Ok(row_bytes)
-}
-
-fn estimated_json_bytes(value: &serde_json::Value) -> usize {
-    match value {
-        serde_json::Value::Null => 4,
-        serde_json::Value::Bool(true) => 4,
-        serde_json::Value::Bool(false) => 5,
-        serde_json::Value::Number(number) => number.to_string().len(),
-        serde_json::Value::String(value) => estimated_json_string_bytes(value),
-        serde_json::Value::Array(values) => values.iter().fold(2_usize, |total, value| {
-            total
-                .saturating_add(estimated_json_bytes(value))
-                .saturating_add(1)
-        }),
-        serde_json::Value::Object(values) => values.iter().fold(2_usize, |total, (key, value)| {
-            total
-                .saturating_add(estimated_json_string_bytes(key))
-                .saturating_add(1)
-                .saturating_add(estimated_json_bytes(value))
-                .saturating_add(1)
-        }),
-    }
-}
-
-fn estimated_json_string_bytes(value: &str) -> usize {
-    value.chars().fold(2_usize, |total, ch| {
-        let encoded = match ch {
-            '"' | '\\' | '\u{08}' | '\u{0c}' | '\n' | '\r' | '\t' => 2,
-            ch if ch <= '\u{1f}' => 6,
-            ch => ch.len_utf8(),
-        };
-        total.saturating_add(encoded)
-    })
+    row_json_bytes(row)
 }
 
 fn stream_error_payload(query_id: &str, error: &AppError) -> QueryStreamError {
@@ -539,7 +496,10 @@ mod tests {
         );
         let oversized = "x".repeat(MAX_INTERACTIVE_CELL_BYTES - 1);
         assert!(interactive_row_bytes(&[serde_json::json!(oversized)]).is_err());
-        assert_eq!(estimated_json_string_bytes("\"\n中"), 9);
+        assert_eq!(
+            interactive_row_bytes(&[serde_json::json!("\"\n中")]).unwrap(),
+            12
+        );
 
         let driver = SqliteDriver::connect(":memory:").await.unwrap();
         let (result, retained_bytes) = collect_interactive_result(

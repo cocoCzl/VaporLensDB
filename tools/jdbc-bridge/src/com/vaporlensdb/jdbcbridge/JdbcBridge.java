@@ -34,10 +34,14 @@ public final class JdbcBridge {
     private static final int DEFAULT_QUERY_TIMEOUT_SECONDS = 60;
     private static final int MAX_INTERACTIVE_RESULT_ROWS = 50_000;
     private static final int MAX_STREAM_CHUNK_SIZE = 2_000;
+    static final int MAX_INTERACTIVE_CELL_BYTES = 1024 * 1024;
+    static final int MAX_INTERACTIVE_SOURCE_CHUNK_BYTES = 4 * 1024 * 1024;
     private static final long MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991L;
     private static final Pattern STREAM_SQL_PATTERN = Pattern.compile("\\\"sql\\\"\\s*:\\s*\\\"([A-Za-z0-9+/=]+)\\\"");
     private static final Pattern STREAM_CHUNK_SIZE_PATTERN = Pattern.compile("\\\"chunkSize\\\"\\s*:\\s*(\\d+)");
     private static final Pattern STREAM_MAX_ROWS_PATTERN = Pattern.compile("\\\"maxRows\\\"\\s*:\\s*(\\d+)");
+    private static final Pattern STREAM_MAX_CELL_BYTES_PATTERN = Pattern.compile("\\\"maxCellBytes\\\"\\s*:\\s*(\\d+)");
+    private static final Pattern STREAM_MAX_CHUNK_BYTES_PATTERN = Pattern.compile("\\\"maxChunkBytes\\\"\\s*:\\s*(\\d+)");
 
     private JdbcBridge() {
     }
@@ -317,7 +321,7 @@ public final class JdbcBridge {
                 ResultSetMetaData metaData = resultSet.getMetaData();
                 int columnCount = metaData.getColumnCount();
                 String columns = columnsJson(metaData, columnCount);
-                List<String> rows = new ArrayList<>(request.chunkSize());
+                StreamChunkBuffer rows = new StreamChunkBuffer(request.chunkSize(), request.maxChunkBytes());
                 long rowCount = 0;
                 boolean truncated = false;
                 while (resultSet.next()) {
@@ -328,18 +332,20 @@ public final class JdbcBridge {
                     StringBuilder row = new StringBuilder("[");
                     for (int index = 1; index <= columnCount; index += 1) {
                         if (index > 1) row.append(',');
-                        appendJsonValue(row, resultValue(resultSet, metaData, index, oracle));
+                        appendBoundedJsonValue(
+                                row,
+                                resultValue(resultSet, metaData, index, oracle),
+                                request.maxCellBytes());
                     }
                     row.append(']');
-                    rows.add(row.toString());
-                    rowCount += 1;
-                    if (rows.size() == request.chunkSize()) {
-                        respond("CHUNK", requestId, "{\"columns\":" + columns + ",\"rows\":[" + String.join(",", rows) + "]}");
-                        rows.clear();
+                    List<String> flushed = rows.add(row.toString());
+                    if (flushed != null) {
+                        respondChunk(requestId, columns, flushed);
                     }
+                    rowCount += 1;
                 }
                 if (!rows.isEmpty() || rowCount == 0) {
-                    respond("CHUNK", requestId, "{\"columns\":" + columns + ",\"rows\":[" + String.join(",", rows) + "]}");
+                    respondChunk(requestId, columns, rows.drain());
                 }
                 respondOk(requestId, "{\"rowCount\":" + rowCount + ",\"affectedRows\":0,\"elapsedMs\":"
                         + (System.currentTimeMillis() - start) + ",\"truncated\":" + truncated
@@ -373,7 +379,16 @@ public final class JdbcBridge {
         int chunkSize = parsePositiveInt(requiredJsonString(payload, STREAM_CHUNK_SIZE_PATTERN, "chunkSize"), 1);
         chunkSize = Math.min(chunkSize, MAX_STREAM_CHUNK_SIZE);
         Long maxRows = optionalPositiveLong(payload, STREAM_MAX_ROWS_PATTERN);
-        return new StreamQueryRequest(decode(encodedSql), chunkSize, maxRows);
+        int maxCellBytes = boundedPositiveInt(
+                requiredJsonString(payload, STREAM_MAX_CELL_BYTES_PATTERN, "maxCellBytes"),
+                MAX_INTERACTIVE_CELL_BYTES);
+        int maxChunkBytes = boundedPositiveInt(
+                requiredJsonString(payload, STREAM_MAX_CHUNK_BYTES_PATTERN, "maxChunkBytes"),
+                MAX_INTERACTIVE_SOURCE_CHUNK_BYTES);
+        if (maxChunkBytes < maxCellBytes + 5) {
+            throw new IllegalArgumentException("QUERY_STREAM maxChunkBytes must fit one maximum-size cell row");
+        }
+        return new StreamQueryRequest(decode(encodedSql), chunkSize, maxRows, maxCellBytes, maxChunkBytes);
     }
 
     private static String requiredJsonString(String payload, Pattern pattern, String field) {
@@ -404,7 +419,71 @@ public final class JdbcBridge {
         return maxRows == null ? "null" : maxRows.toString();
     }
 
-    private record StreamQueryRequest(String sql, int chunkSize, Long maxRows) {
+    private static int boundedPositiveInt(String value, int hardLimit) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 1) {
+                throw new IllegalArgumentException("QUERY_STREAM byte budgets must be positive");
+            }
+            return Math.min(parsed, hardLimit);
+        } catch (NumberFormatException error) {
+            throw new IllegalArgumentException("QUERY_STREAM byte budget is invalid", error);
+        }
+    }
+
+    private record StreamQueryRequest(
+            String sql,
+            int chunkSize,
+            Long maxRows,
+            int maxCellBytes,
+            int maxChunkBytes) {
+    }
+
+    private static void respondChunk(String requestId, String columns, List<String> rows) {
+        respond("CHUNK", requestId,
+                "{\"columns\":" + columns + ",\"rows\":[" + String.join(",", rows) + "]}");
+    }
+
+    static final class StreamChunkBuffer {
+        private final int maxRows;
+        private final int maxBytes;
+        private List<String> rows;
+        private long estimatedBytes;
+
+        StreamChunkBuffer(int maxRows, int maxBytes) {
+            this.maxRows = Math.max(maxRows, 1);
+            this.maxBytes = maxBytes;
+            this.rows = new ArrayList<>(this.maxRows);
+            this.estimatedBytes = 2;
+        }
+
+        List<String> add(String row) {
+            long rowBytes = utf8Length(row);
+            long framedRowBytes = rowBytes + 1;
+            if (framedRowBytes + 2 > maxBytes) {
+                throw new IllegalArgumentException(
+                        "interactive result row exceeds the " + maxBytes + " byte source chunk limit");
+            }
+            List<String> flushed = null;
+            if (!rows.isEmpty()
+                    && (rows.size() >= maxRows || framedRowBytes > maxBytes - estimatedBytes)) {
+                flushed = drain();
+            }
+            rows.add(row);
+            estimatedBytes += framedRowBytes;
+            return flushed;
+        }
+
+        boolean isEmpty() {
+            return rows.isEmpty();
+        }
+
+        List<String> drain() {
+            List<String> drained = rows;
+            rows = new ArrayList<>(maxRows);
+            estimatedBytes = 2;
+            return drained;
+        }
     }
 
     private static String columnsJson(ResultSetMetaData metaData, int columnCount) throws Exception {
@@ -765,6 +844,43 @@ public final class JdbcBridge {
             // preserve their text instead of emitting invalid/unsafe JSON numbers.
             output.append('"').append(json(String.valueOf(value))).append('"');
         }
+    }
+
+    static void appendBoundedJsonValue(StringBuilder output, Object value, int maxBytes) {
+        int start = output.length();
+        appendJsonValue(output, value);
+        if (utf8Length(output, start, output.length()) > maxBytes) {
+            output.setLength(start);
+            throw new IllegalArgumentException(
+                    "interactive result cell exceeds the " + maxBytes + " byte limit");
+        }
+    }
+
+    static long utf8Length(CharSequence value) {
+        return utf8Length(value, 0, value.length());
+    }
+
+    private static long utf8Length(CharSequence value, int start, int end) {
+        long bytes = 0;
+        for (int index = start; index < end; index += 1) {
+            char character = value.charAt(index);
+            if (character <= 0x7f) {
+                bytes += 1;
+            } else if (character <= 0x7ff) {
+                bytes += 2;
+            } else if (Character.isHighSurrogate(character)
+                    && index + 1 < end
+                    && Character.isLowSurrogate(value.charAt(index + 1))) {
+                bytes += 4;
+                index += 1;
+            } else {
+                // Count isolated surrogates conservatively. Java's UTF-8 encoder
+                // replaces them, but a future strict encoder must not make the
+                // budget estimate larger than the enforced value.
+                bytes += 3;
+            }
+        }
+        return bytes;
     }
 
     private static Object resultValue(
