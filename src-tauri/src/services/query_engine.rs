@@ -24,6 +24,9 @@ const DEFAULT_INTERACTIVE_MAX_ROWS: u64 = 50_000;
 /// to bypass this process-wide budget. Full exports use a separate streaming
 /// path and are not constrained by this value.
 pub const MAX_INTERACTIVE_RESULT_ROWS: u64 = 50_000;
+pub const MAX_INTERACTIVE_CELL_BYTES: usize = 1024 * 1024;
+pub const MAX_INTERACTIVE_RESULT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_INTERACTIVE_STREAM_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 const MAX_STREAM_CHUNK_SIZE: usize = 2_000;
 const MAX_INTERACTIVE_STATEMENTS: usize = 32;
 
@@ -49,6 +52,10 @@ pub struct StreamQueryRequest {
 struct StreamMetrics {
     first_row_ms: Option<u64>,
     received_bytes: u64,
+    emitted_rows: u64,
+    truncated: bool,
+    budget_error: Option<String>,
+    emitted_columns: bool,
 }
 
 impl QueryEngine {
@@ -79,18 +86,21 @@ impl QueryEngine {
 
         let mut results = Vec::with_capacity(statements.len());
         let mut remaining_rows = MAX_INTERACTIVE_RESULT_ROWS;
+        let mut remaining_bytes = MAX_INTERACTIVE_RESULT_BYTES;
         let execution_id = query_id
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         for statement in statements {
-            let mut result = collect_interactive_result(
+            let (mut result, retained_bytes) = collect_interactive_result(
                 driver.as_ref(),
                 &statement,
                 &execution_id,
                 remaining_rows,
+                remaining_bytes,
             )
             .await?;
             remaining_rows = remaining_rows.saturating_sub(result.row_count);
+            remaining_bytes = remaining_bytes.saturating_sub(retained_bytes);
             result.query_id = query_id.clone();
             results.push(result);
         }
@@ -119,15 +129,45 @@ impl QueryEngine {
             while let Some(chunk) = chunk_rx.recv().await {
                 match chunk {
                     Ok(chunk) => {
-                        if metrics.first_row_ms.is_none() && !chunk.rows.is_empty() {
-                            metrics.first_row_ms =
-                                Some(stream_started.elapsed().as_millis() as u64);
+                        if metrics.budget_error.is_some() || metrics.truncated {
+                            continue;
                         }
-                        metrics.received_bytes += serde_json::to_vec(&chunk)
-                            .map(|payload| payload.len() as u64)
-                            .unwrap_or(0);
-                        if emit_app.emit(QUERY_RESULT_CHUNK_EVENT, chunk).is_err() {
-                            break;
+                        match bounded_stream_chunks(
+                            chunk,
+                            metrics.emitted_rows,
+                            MAX_INTERACTIVE_RESULT_BYTES
+                                .saturating_sub(metrics.received_bytes as usize),
+                            MAX_INTERACTIVE_STREAM_CHUNK_BYTES,
+                            !metrics.emitted_columns,
+                        ) {
+                            Ok((chunks, truncated)) => {
+                                metrics.truncated |= truncated;
+                                for chunk in chunks {
+                                    if metrics.first_row_ms.is_none() && !chunk.rows.is_empty() {
+                                        metrics.first_row_ms =
+                                            Some(stream_started.elapsed().as_millis() as u64);
+                                    }
+                                    let payload_bytes = serde_json::to_vec(&chunk)
+                                        .map(|payload| payload.len() as u64)
+                                        .unwrap_or(0);
+                                    metrics.received_bytes =
+                                        metrics.received_bytes.saturating_add(payload_bytes);
+                                    metrics.emitted_rows = metrics
+                                        .emitted_rows
+                                        .saturating_add(chunk.rows.len() as u64);
+                                    metrics.emitted_columns |= !chunk.columns.is_empty();
+                                    if emit_app.emit(QUERY_RESULT_CHUNK_EVENT, chunk).is_err() {
+                                        return metrics;
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                let _ = emit_app.emit(
+                                    QUERY_RESULT_ERROR_EVENT,
+                                    stream_error_payload(&emit_query_id, &error),
+                                );
+                                metrics.budget_error = Some(error.to_string());
+                            }
                         }
                     }
                     Err(error) => {
@@ -162,14 +202,17 @@ impl QueryEngine {
         {
             Ok(summary) => {
                 let metrics = emit_task.await.unwrap_or_default();
+                if let Some(error) = metrics.budget_error {
+                    return Err(error);
+                }
                 app.emit(
                     QUERY_RESULT_DONE_EVENT,
                     QueryStreamDone {
                         query_id: summary.query_id,
-                        row_count: summary.row_count,
+                        row_count: metrics.emitted_rows,
                         affected_rows: summary.affected_rows,
                         elapsed_ms: summary.elapsed_ms,
-                        truncated: summary.truncated,
+                        truncated: summary.truncated || metrics.truncated,
                         max_rows: summary.max_rows,
                         first_row_ms: metrics.first_row_ms,
                         received_bytes: metrics.received_bytes,
@@ -205,6 +248,89 @@ impl QueryEngine {
     }
 }
 
+fn bounded_stream_chunks(
+    chunk: QueryResultChunk,
+    row_offset: u64,
+    remaining_bytes: usize,
+    max_chunk_bytes: usize,
+    include_columns: bool,
+) -> Result<(Vec<QueryResultChunk>, bool), AppError> {
+    let mut output = Vec::new();
+    let mut rows = Vec::new();
+    let mut estimated_rows_bytes = 0_usize;
+    let mut emitted_bytes = 0_usize;
+    let mut next_offset = row_offset;
+    let mut columns = if include_columns {
+        chunk.columns
+    } else {
+        Vec::new()
+    };
+    // Reserve space for the event envelope and the first chunk's column
+    // metadata. Exact serialization below remains the final authority.
+    let row_budget = max_chunk_bytes.saturating_sub(1024);
+
+    let flush = |rows: &mut Vec<Vec<serde_json::Value>>,
+                 columns: &mut Vec<crate::models::query_result::ColumnMeta>,
+                 output: &mut Vec<QueryResultChunk>,
+                 next_offset: &mut u64,
+                 emitted_bytes: &mut usize|
+     -> Result<bool, AppError> {
+        if rows.is_empty() && columns.is_empty() {
+            return Ok(false);
+        }
+        let outgoing = QueryResultChunk {
+            query_id: chunk.query_id.clone(),
+            columns: std::mem::take(columns),
+            rows: std::mem::take(rows),
+            row_offset: *next_offset,
+        };
+        let bytes = serde_json::to_vec(&outgoing)?.len();
+        if bytes > max_chunk_bytes {
+            return Err(AppError::ConfigError(format!(
+                "interactive result chunk exceeds the {max_chunk_bytes} byte limit"
+            )));
+        }
+        if bytes > remaining_bytes.saturating_sub(*emitted_bytes) {
+            return Ok(true);
+        }
+        *emitted_bytes += bytes;
+        *next_offset = next_offset.saturating_add(outgoing.rows.len() as u64);
+        output.push(outgoing);
+        Ok(false)
+    };
+
+    for row in chunk.rows {
+        let row_bytes = interactive_row_bytes(&row)?;
+        if row_bytes > max_chunk_bytes {
+            return Err(AppError::ConfigError(format!(
+                "interactive result row exceeds the {max_chunk_bytes} byte limit"
+            )));
+        }
+        if !rows.is_empty() && estimated_rows_bytes.saturating_add(row_bytes) > row_budget {
+            if flush(
+                &mut rows,
+                &mut columns,
+                &mut output,
+                &mut next_offset,
+                &mut emitted_bytes,
+            )? {
+                return Ok((output, true));
+            }
+            estimated_rows_bytes = 0;
+        }
+        estimated_rows_bytes = estimated_rows_bytes.saturating_add(row_bytes);
+        rows.push(row);
+    }
+    let truncated = flush(
+        &mut rows,
+        &mut columns,
+        &mut output,
+        &mut next_offset,
+        &mut emitted_bytes,
+    )?;
+    Ok((output, truncated))
+}
+
 /// Consume a bounded channel concurrently with the driver. No detached task can
 /// outlive the query operation lease. Even when the batch row budget is spent,
 /// execute remaining statements (including DML) and retain their metadata/status.
@@ -213,7 +339,8 @@ async fn collect_interactive_result(
     sql: &str,
     query_id: &str,
     max_rows: u64,
-) -> Result<QueryResult, AppError> {
+    max_bytes: usize,
+) -> Result<(QueryResult, usize), AppError> {
     let (tx, mut rx) = mpsc::channel::<Result<QueryResultChunk, AppError>>(2);
     let producer = driver.execute_query_stream(
         sql,
@@ -226,26 +353,82 @@ async fn collect_interactive_result(
     );
     let consumer = async move {
         let mut result = QueryResult::empty(0, 0);
+        let mut retained_bytes = 0_usize;
         while let Some(chunk) = rx.recv().await {
             let chunk = chunk?;
             if result.columns.is_empty() {
                 result.columns = chunk.columns;
             }
-            let available = max_rows.saturating_sub(result.rows.len() as u64) as usize;
-            result.truncated |= chunk.rows.len() > available;
-            result.rows.extend(chunk.rows.into_iter().take(available));
+            for row in chunk.rows {
+                let row_bytes = interactive_row_bytes(&row)?;
+                let row_available = (result.rows.len() as u64) < max_rows;
+                let bytes_available = row_bytes <= max_bytes.saturating_sub(retained_bytes);
+                if row_available && bytes_available {
+                    retained_bytes += row_bytes;
+                    result.rows.push(row);
+                } else {
+                    result.truncated = true;
+                }
+            }
         }
-        Ok::<_, AppError>(result)
+        Ok::<_, AppError>((result, retained_bytes))
     };
     let (summary, result) = tokio::join!(producer, consumer);
-    let mut result = result?;
+    let (mut result, retained_bytes) = result?;
     let summary = summary?;
     result.row_count = result.rows.len() as u64;
     result.affected_rows = summary.affected_rows;
     result.elapsed_ms = summary.elapsed_ms;
     result.truncated |= summary.truncated;
     result.max_rows = Some(max_rows);
-    Ok(result)
+    Ok((result, retained_bytes))
+}
+
+fn interactive_row_bytes(row: &[serde_json::Value]) -> Result<usize, AppError> {
+    let mut row_bytes = 2_usize;
+    for value in row {
+        let cell_bytes = estimated_json_bytes(value);
+        if cell_bytes > MAX_INTERACTIVE_CELL_BYTES {
+            return Err(AppError::ConfigError(format!(
+                "interactive result cell exceeds the {MAX_INTERACTIVE_CELL_BYTES} byte limit"
+            )));
+        }
+        row_bytes = row_bytes.saturating_add(cell_bytes).saturating_add(1);
+    }
+    Ok(row_bytes)
+}
+
+fn estimated_json_bytes(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Null => 4,
+        serde_json::Value::Bool(true) => 4,
+        serde_json::Value::Bool(false) => 5,
+        serde_json::Value::Number(number) => number.to_string().len(),
+        serde_json::Value::String(value) => estimated_json_string_bytes(value),
+        serde_json::Value::Array(values) => values.iter().fold(2_usize, |total, value| {
+            total
+                .saturating_add(estimated_json_bytes(value))
+                .saturating_add(1)
+        }),
+        serde_json::Value::Object(values) => values.iter().fold(2_usize, |total, (key, value)| {
+            total
+                .saturating_add(estimated_json_string_bytes(key))
+                .saturating_add(1)
+                .saturating_add(estimated_json_bytes(value))
+                .saturating_add(1)
+        }),
+    }
+}
+
+fn estimated_json_string_bytes(value: &str) -> usize {
+    value.chars().fold(2_usize, |total, ch| {
+        let encoded = match ch {
+            '"' | '\\' | '\u{08}' | '\u{0c}' | '\n' | '\r' | '\t' => 2,
+            ch if ch <= '\u{1f}' => 6,
+            ch => ch.len_utf8(),
+        };
+        total.saturating_add(encoded)
+    })
 }
 
 fn stream_error_payload(query_id: &str, error: &AppError) -> QueryStreamError {
@@ -314,20 +497,107 @@ mod tests {
     #[tokio::test]
     async fn exact_limit_and_empty_results_are_not_truncated() {
         let driver = SqliteDriver::connect(":memory:").await.unwrap();
-        let result = collect_interactive_result(&driver, "SELECT 1 UNION ALL SELECT 2", "exact", 2)
-            .await
-            .unwrap();
+        let (result, _) = collect_interactive_result(
+            &driver,
+            "SELECT 1 UNION ALL SELECT 2",
+            "exact",
+            2,
+            MAX_INTERACTIVE_RESULT_BYTES,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.row_count, 2);
         assert!(!result.truncated);
-        let empty = collect_interactive_result(&driver, "SELECT 1 AS x WHERE 0", "empty", 0)
-            .await
-            .unwrap();
+        let (empty, _) = collect_interactive_result(
+            &driver,
+            "SELECT 1 AS x WHERE 0",
+            "empty",
+            0,
+            MAX_INTERACTIVE_RESULT_BYTES,
+        )
+        .await
+        .unwrap();
         assert_eq!(empty.columns.len(), 1);
         assert!(!empty.truncated);
-        assert!(
-            collect_interactive_result(&driver, "SELECT * FROM missing", "error", 2)
-                .await
-                .is_err()
+        assert!(collect_interactive_result(
+            &driver,
+            "SELECT * FROM missing",
+            "error",
+            2,
+            MAX_INTERACTIVE_RESULT_BYTES,
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn interactive_results_enforce_cell_and_total_byte_budgets() {
+        let exact = "x".repeat(MAX_INTERACTIVE_CELL_BYTES - 2);
+        assert_eq!(
+            interactive_row_bytes(&[serde_json::json!(exact)]).unwrap(),
+            MAX_INTERACTIVE_CELL_BYTES + 3
         );
+        let oversized = "x".repeat(MAX_INTERACTIVE_CELL_BYTES - 1);
+        assert!(interactive_row_bytes(&[serde_json::json!(oversized)]).is_err());
+        assert_eq!(estimated_json_string_bytes("\"\n中"), 9);
+
+        let driver = SqliteDriver::connect(":memory:").await.unwrap();
+        let (result, retained_bytes) = collect_interactive_result(
+            &driver,
+            "SELECT printf('%060d', 1) UNION ALL SELECT printf('%060d', 2)",
+            "bytes",
+            10,
+            65,
+        )
+        .await
+        .unwrap();
+        assert_eq!(retained_bytes, 65);
+        assert_eq!(result.row_count, 1);
+        assert!(result.truncated);
+    }
+
+    #[test]
+    fn streamed_chunks_are_repartitioned_by_bytes_and_share_a_total_budget() {
+        let chunk = || QueryResultChunk {
+            query_id: "stream-budget".into(),
+            columns: vec![crate::models::query_result::ColumnMeta {
+                name: "value".into(),
+                data_type: "text".into(),
+                nullable: false,
+            }],
+            rows: (0..5)
+                .map(|index| vec![serde_json::json!(format!("{index}-{}", "x".repeat(40)))])
+                .collect(),
+            row_offset: 0,
+        };
+        let (chunks, truncated) = bounded_stream_chunks(chunk(), 0, usize::MAX, 220, true).unwrap();
+        assert!(!truncated);
+        assert!(chunks.len() > 1);
+        assert!(chunks
+            .iter()
+            .all(|chunk| serde_json::to_vec(chunk).unwrap().len() <= 220));
+        assert_eq!(
+            chunks.iter().map(|chunk| chunk.rows.len()).sum::<usize>(),
+            5
+        );
+        for pair in chunks.windows(2) {
+            assert_eq!(
+                pair[1].row_offset,
+                pair[0].row_offset + pair[0].rows.len() as u64
+            );
+            assert!(pair[1].columns.is_empty());
+        }
+
+        let first_bytes = serde_json::to_vec(&chunks[0]).unwrap().len();
+        let (limited, truncated) =
+            bounded_stream_chunks(chunk(), 7, first_bytes, 220, true).unwrap();
+        assert!(truncated);
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].row_offset, 7);
+
+        let (subsequent, truncated) =
+            bounded_stream_chunks(chunk(), 5, usize::MAX, 220, false).unwrap();
+        assert!(!truncated);
+        assert!(subsequent.iter().all(|chunk| chunk.columns.is_empty()));
     }
 }

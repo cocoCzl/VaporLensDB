@@ -10,6 +10,10 @@ const assert = (condition, message) => {
 
 const engine = read('src-tauri/src/services/query_engine.rs')
 assert(engine.includes('pub const MAX_INTERACTIVE_RESULT_ROWS: u64 = 50_000'), 'interactive result hard limit is missing')
+assert(engine.includes('pub const MAX_INTERACTIVE_CELL_BYTES: usize = 1024 * 1024'), 'interactive cell byte limit is missing')
+assert(engine.includes('pub const MAX_INTERACTIVE_RESULT_BYTES: usize = 64 * 1024 * 1024'), 'interactive batch byte limit is missing')
+assert(engine.includes('pub const MAX_INTERACTIVE_STREAM_CHUNK_BYTES: usize = 4 * 1024 * 1024'), 'interactive stream chunk byte limit is missing')
+assert(engine.includes('remaining_bytes = remaining_bytes.saturating_sub(retained_bytes)'), 'batch byte budget is not shared across statements')
 assert(engine.includes('const MAX_STREAM_CHUNK_SIZE: usize = 2_000'), 'stream chunk hard limit is missing')
 assert(engine.includes('mpsc::channel::<Result<QueryResultChunk, AppError>>(8)'), 'stream backpressure channel budget is missing')
 

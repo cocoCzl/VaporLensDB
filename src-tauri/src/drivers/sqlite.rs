@@ -22,6 +22,7 @@ use crate::{
             QueryStreamSummary,
         },
     },
+    utils::query_budget::row_json_bytes,
 };
 
 const SQLITE_SCHEMA_MAIN: &str = "main";
@@ -573,7 +574,9 @@ fn stream_sqlite_query(
             truncated = true;
             break;
         }
-        rows.push(sqlite_row_to_json_values(row, columns.len())?);
+        let values = sqlite_row_to_json_values(row, columns.len())?;
+        row_json_bytes(&values)?;
+        rows.push(values);
         row_count += 1;
         if rows.len() == chunk_size {
             send_sqlite_chunk(&chunks, query_id, &columns, &mut rows, row_offset)?;
@@ -822,5 +825,21 @@ mod tests {
         assert_eq!(received, ROW_LIMIT);
         assert_eq!(affected, 0);
         assert!(truncated);
+    }
+
+    #[test]
+    fn source_stream_rejects_an_oversized_json_cell_before_emitting_a_chunk() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let result = stream_sqlite_query(
+            &connection,
+            "SELECT quote(zeroblob(1048576))",
+            "oversized-cell",
+            10,
+            10,
+            sender,
+        );
+        assert!(result.is_err());
+        assert!(receiver.try_recv().is_err());
     }
 }
