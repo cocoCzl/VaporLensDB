@@ -6,6 +6,9 @@
   {"sql":"SELECT 1 /* outer /* inner */ ; still outer */; SELECT 2","statements":["SELECT 1 /* outer /* inner */ ; still outer */","SELECT 2"]},
   {"sql":"SELECT E'it\\'s; a string'; SELECT 2","statements":["SELECT E'it\\'s; a string'","SELECT 2"]},
   {"sql":"SELECT [a]];b], `a``;b`, \"a\"\";b\"; SELECT 2","statements":["SELECT [a]];b], `a``;b`, \"a\"\";b\"","SELECT 2"]},
+  {"sql":"SELECT q'[It\u0027s; safe]' FROM dual; SELECT 2","statements":["SELECT q'[It\u0027s; safe]' FROM dual","SELECT 2"]},
+  {"sql":"SELECT Q'!a\u0027b;c!' FROM dual; SELECT 2","statements":["SELECT Q'!a\u0027b;c!' FROM dual","SELECT 2"]},
+  {"sql":"SELECT q'{unterminated; DROP TABLE items","statements":["SELECT q'{unterminated; DROP TABLE items"]},
   {"sql":"SELECT $1, foo$tag$; SELECT 2","statements":["SELECT $1, foo$tag$","SELECT 2"]},
   {"sql":"SELECT 'abc; DELETE FROM t","statements":["SELECT 'abc; DELETE FROM t"]},
   {"sql":"select ';'; -- ;\r\nselect 2","statements":["select ';'","-- ;\r\nselect 2"]}

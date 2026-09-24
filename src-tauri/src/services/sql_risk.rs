@@ -277,6 +277,10 @@ mod tests {
             );
         }
         assert!(!analyze_sql_risk("SELECT $$DELETE FROM t; DROP TABLE t$$").dangerous);
+        assert!(
+            !analyze_sql_risk("SELECT q'[DELETE FROM t; DROP TABLE t; It\'s text]' FROM dual")
+                .dangerous
+        );
     }
 
     #[test]

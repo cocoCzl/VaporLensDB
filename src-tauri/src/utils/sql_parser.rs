@@ -23,6 +23,8 @@ pub fn mask_sql(sql: &str) -> String {
                     i += 1;
                 }
             }
+        } else if let Some(end) = oracle_q_quote_end(bytes, i) {
+            i = end;
         } else if matches!(bytes[i], b'\'' | b'"' | b'`' | b'[') {
             let quote = bytes[i];
             let end = if quote == b'[' { b']' } else { quote };
@@ -67,6 +69,34 @@ pub fn mask_sql(sql: &str) -> String {
 
 fn identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || byte >= 128
+}
+
+fn oracle_q_quote_end(bytes: &[u8], i: usize) -> Option<usize> {
+    if !matches!(bytes.get(i), Some(b'q' | b'Q'))
+        || bytes.get(i + 1) != Some(&b'\'')
+        || (i > 0 && identifier_byte(bytes[i - 1]))
+    {
+        return None;
+    }
+    let opening = *bytes.get(i + 2)?;
+    if opening.is_ascii_whitespace() || opening == b'\'' || !opening.is_ascii() {
+        return None;
+    }
+    let closing = match opening {
+        b'[' => b']',
+        b'{' => b'}',
+        b'(' => b')',
+        b'<' => b'>',
+        delimiter => delimiter,
+    };
+    let mut end = i + 3;
+    while end + 1 < bytes.len() {
+        if bytes[end] == closing && bytes[end + 1] == b'\'' {
+            return Some(end + 2);
+        }
+        end += 1;
+    }
+    Some(bytes.len())
 }
 
 fn dollar_delimiter(bytes: &[u8], i: usize) -> Option<usize> {
@@ -153,6 +183,8 @@ mod tests {
             "SELECT 1 /* outer /* inner */ ; still outer */",
             "SELECT [a]];b], \"a\"\";b\" FROM t",
             "SELECT E'it\\'s; a string'",
+            "SELECT q'[It\'s; an Oracle string]' FROM dual",
+            "SELECT Q'!a\'b;c!' FROM dual",
         ] {
             assert_eq!(
                 split_sql_statements(&format!("{sql}; SELECT 2")),
@@ -182,6 +214,7 @@ mod tests {
             "SELECT 'abc; DELETE FROM t",
             "DO $x$ BEGIN; DELETE FROM t",
             "SELECT 1 /* ; DELETE FROM t",
+            "SELECT q'{abc; DELETE FROM t",
         ] {
             assert_eq!(split_sql_statements(sql), vec![sql]);
         }

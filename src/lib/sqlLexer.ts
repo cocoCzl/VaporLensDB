@@ -5,6 +5,7 @@ export function maskSql(sql: string): string {
   let index = 0
   while (index < sql.length) {
     const start = index
+    const oracleQuoteEnd = oracleQQuoteEnd(sql, index, identifier)
     if (sql.startsWith('--', index)) {
       while (index < sql.length && !/[\r\n]/u.test(sql[index])) index += 1
     } else if (sql.startsWith('/*', index)) {
@@ -15,6 +16,8 @@ export function maskSql(sql: string): string {
         else if (sql.startsWith('*/', index)) { depth -= 1; index += 2 }
         else index += 1
       }
+    } else if (oracleQuoteEnd !== undefined) {
+      index = oracleQuoteEnd
     } else if (['\'', '"', '`', '['].includes(sql[index])) {
       const quote = sql[index]
       const end = quote === '[' ? ']' : quote
@@ -41,6 +44,19 @@ export function maskSql(sql: string): string {
     }
   }
   return output.join('')
+}
+
+function oracleQQuoteEnd(
+  sql: string,
+  index: number,
+  identifier: (char: string | undefined) => boolean,
+) {
+  if (!/[qQ]/u.test(sql[index] ?? '') || sql[index + 1] !== "'" || identifier(sql[index - 1])) return undefined
+  const opening = sql[index + 2]
+  if (!opening || /\s/u.test(opening) || opening === "'" || opening.charCodeAt(0) > 0x7f) return undefined
+  const closing = ({ '[': ']', '{': '}', '(': ')', '<': '>' } as Record<string, string>)[opening] ?? opening
+  const end = sql.indexOf(`${closing}'`, index + 3)
+  return end < 0 ? sql.length : end + 2
 }
 
 function statementRanges(sql: string) {
