@@ -202,6 +202,7 @@ impl JdbcDriver {
             .await
             .map_err(|error| clarify_metadata_error(operation, error))?;
         let output: JdbcQueryOutput = serde_json::from_str(&output)?;
+        validate_jdbc_query_output(&output)?;
         Ok(QueryResult {
             columns: output.columns,
             rows: output.rows,
@@ -683,6 +684,7 @@ impl JdbcBridgeCommand {
 const JDBC_CONNECT_TIMEOUT_SECS: u32 = 15;
 const JDBC_QUERY_TIMEOUT_SECS: u32 = 60;
 const JDBC_METADATA_TIMEOUT_SECS: u32 = 30;
+const MAX_JDBC_NON_STREAM_RESULT_BYTES: usize = 64 * 1024 * 1024;
 
 #[async_trait]
 impl DatabaseDriver for JdbcDriver {
@@ -752,6 +754,7 @@ impl DatabaseDriver for JdbcDriver {
                 }
             })?;
         let output: JdbcQueryOutput = serde_json::from_str(&output)?;
+        validate_jdbc_query_output(&output)?;
         Ok(QueryResult {
             columns: output.columns,
             rows: output.rows,
@@ -1389,6 +1392,32 @@ fn validate_jdbc_stream_chunk(rows: &[Vec<serde_json::Value>]) -> Result<(), App
     Ok(())
 }
 
+fn validate_jdbc_query_output(output: &JdbcQueryOutput) -> Result<(), AppError> {
+    validate_jdbc_query_output_with_limit(output, MAX_JDBC_NON_STREAM_RESULT_BYTES)
+}
+
+fn validate_jdbc_query_output_with_limit(
+    output: &JdbcQueryOutput,
+    max_result_bytes: usize,
+) -> Result<(), AppError> {
+    let mut result_bytes = 0_usize;
+    for row in &output.rows {
+        let row_bytes = row_json_bytes(row).map_err(|error| {
+            broken_sidecar(&format!(
+                "JDBC bridge query result violated its byte limit: {error}"
+            ))
+        })?;
+        let framed_bytes = row_bytes.saturating_add(usize::from(result_bytes > 0));
+        if framed_bytes > max_result_bytes.saturating_sub(result_bytes) {
+            return Err(broken_sidecar(
+                "JDBC bridge query result exceeded the interactive byte limit",
+            ));
+        }
+        result_bytes = result_bytes.saturating_add(framed_bytes);
+    }
+    Ok(())
+}
+
 fn parse_sidecar_frame(
     response: &str,
     expected_request_id: u64,
@@ -1531,7 +1560,8 @@ mod tests {
         db_object_kind_from_value, db_object_kind_value, map_column_row, map_index_row,
         map_schema_object_row, normalize_jdbc_error_message, normalize_jdbc_sql,
         parse_jdbc_max_heap_mb, parse_metadata_sql, parse_sidecar_response,
-        validate_jdbc_stream_chunk, JdbcBridgeCommand,
+        validate_jdbc_query_output_with_limit, validate_jdbc_stream_chunk, JdbcBridgeCommand,
+        JdbcQueryOutput,
     };
     use crate::models::{
         error::AppError,
@@ -1798,6 +1828,22 @@ mod tests {
             vec![serde_json::json!(&cell)],
         ];
         assert!(validate_jdbc_stream_chunk(&oversized_chunk).is_err());
+    }
+
+    #[test]
+    fn rejects_non_streaming_jdbc_results_that_bypass_bridge_budgets() {
+        let output = JdbcQueryOutput {
+            columns: Vec::new(),
+            rows: vec![
+                vec![serde_json::json!("123")],
+                vec![serde_json::json!("456")],
+            ],
+            row_count: 2,
+            affected_rows: 0,
+            elapsed_ms: 0,
+        };
+        assert!(validate_jdbc_query_output_with_limit(&output, 17).is_ok());
+        assert!(validate_jdbc_query_output_with_limit(&output, 16).is_err());
     }
 
     #[test]

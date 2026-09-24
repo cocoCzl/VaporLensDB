@@ -37,6 +37,7 @@ public final class JdbcBridgeValueTest {
         check("quote\"\n", "\"quote\\\"\\n\"");
         checkUtf8AndCellBudget();
         checkStreamChunkBudget();
+        checkNonStreamingResultBudget();
         System.out.println("JDBC scalar JSON contract tests passed.");
     }
 
@@ -91,6 +92,24 @@ public final class JdbcBridgeValueTest {
         flushed = byteLimited.add("[456]");
         if (flushed == null || flushed.size() != 1 || byteLimited.drain().size() != 1) {
             throw new AssertionError("byte-limited chunk did not retain the triggering row");
+        }
+    }
+
+    private static void checkNonStreamingResultBudget() {
+        StringBuilder output = new StringBuilder();
+        JdbcBridge.BoundedResultRows rows = new JdbcBridge.BoundedResultRows(output, 13);
+        rows.add("[123]");
+        rows.add("[456]");
+        if (!"[123],[456]".contentEquals(output) || rows.bytes() != 13) {
+            throw new AssertionError("exact-limit non-streaming JDBC result must be accepted");
+        }
+        try {
+            rows.add("[7]");
+            throw new AssertionError("oversized non-streaming JDBC result must be rejected");
+        } catch (IllegalArgumentException expected) {
+            if (!"[123],[456]".contentEquals(output)) {
+                throw new AssertionError("rejected JDBC row must not remain in the result buffer");
+            }
         }
     }
 }

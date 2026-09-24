@@ -36,6 +36,7 @@ public final class JdbcBridge {
     private static final int MAX_STREAM_CHUNK_SIZE = 2_000;
     static final int MAX_INTERACTIVE_CELL_BYTES = 1024 * 1024;
     static final int MAX_INTERACTIVE_SOURCE_CHUNK_BYTES = 4 * 1024 * 1024;
+    static final int MAX_INTERACTIVE_RESULT_BYTES = 64 * 1024 * 1024;
     private static final long MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991L;
     private static final Pattern STREAM_SQL_PATTERN = Pattern.compile("\\\"sql\\\"\\s*:\\s*\\\"([A-Za-z0-9+/=]+)\\\"");
     private static final Pattern STREAM_CHUNK_SIZE_PATTERN = Pattern.compile("\\\"chunkSize\\\"\\s*:\\s*(\\d+)");
@@ -257,19 +258,21 @@ public final class JdbcBridge {
                             .append('}');
                 }
                 output.append("],\"rows\":[");
+                BoundedResultRows rows = new BoundedResultRows(output, MAX_INTERACTIVE_RESULT_BYTES);
 
                 while (resultSet.next()) {
-                    if (rowCount > 0) {
-                        output.append(',');
-                    }
-                    output.append('[');
+                    StringBuilder row = new StringBuilder("[");
                     for (int index = 1; index <= columnCount; index += 1) {
                         if (index > 1) {
-                            output.append(',');
+                            row.append(',');
                         }
-                        appendJsonValue(output, resultValue(resultSet, metaData, index, oracle));
+                        appendBoundedJsonValue(
+                                row,
+                                resultValue(resultSet, metaData, index, oracle),
+                                MAX_INTERACTIVE_CELL_BYTES);
                     }
-                    output.append(']');
+                    row.append(']');
+                    rows.add(row);
                     rowCount += 1;
                 }
 
@@ -486,6 +489,38 @@ public final class JdbcBridge {
         }
     }
 
+    static final class BoundedResultRows {
+        private final StringBuilder output;
+        private final long maxBytes;
+        private long bytes;
+        private int rowCount;
+
+        BoundedResultRows(StringBuilder output, long maxBytes) {
+            this.output = output;
+            this.maxBytes = Math.max(maxBytes, 1);
+        }
+
+        void add(CharSequence row) {
+            // Match Rust's conservative row_json_bytes estimate: one byte of
+            // per-row framing plus the comma between subsequent rows.
+            long framedBytes = utf8Length(row) + 1 + (rowCount == 0 ? 0 : 1);
+            if (framedBytes > maxBytes - bytes) {
+                throw new IllegalArgumentException(
+                        "interactive JDBC result exceeds the " + maxBytes + " byte limit");
+            }
+            if (rowCount > 0) {
+                output.append(',');
+            }
+            output.append(row);
+            bytes += framedBytes;
+            rowCount += 1;
+        }
+
+        long bytes() {
+            return bytes;
+        }
+    }
+
     private static String columnsJson(ResultSetMetaData metaData, int columnCount) throws Exception {
         StringBuilder columns = new StringBuilder("[");
         for (int index = 1; index <= columnCount; index += 1) {
@@ -694,19 +729,17 @@ public final class JdbcBridge {
                     .append("\",\"dataType\":\"text\",\"nullable\":true}");
         }
         output.append("],\"rows\":[");
-        for (int rowIndex = 0; rowIndex < rows.size(); rowIndex += 1) {
-            if (rowIndex > 0) {
-                output.append(',');
-            }
-            output.append('[');
-            List<Object> row = rows.get(rowIndex);
-            for (int columnIndex = 0; columnIndex < row.size(); columnIndex += 1) {
+        BoundedResultRows boundedRows = new BoundedResultRows(output, MAX_INTERACTIVE_RESULT_BYTES);
+        for (List<Object> values : rows) {
+            StringBuilder row = new StringBuilder("[");
+            for (int columnIndex = 0; columnIndex < values.size(); columnIndex += 1) {
                 if (columnIndex > 0) {
-                    output.append(',');
+                    row.append(',');
                 }
-                appendJsonValue(output, row.get(columnIndex));
+                appendBoundedJsonValue(row, values.get(columnIndex), MAX_INTERACTIVE_CELL_BYTES);
             }
-            output.append(']');
+            row.append(']');
+            boundedRows.add(row);
         }
         output.append("],\"rowCount\":").append(rows.size())
                 .append(",\"affectedRows\":0,\"elapsedMs\":0}");
