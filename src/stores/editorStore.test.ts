@@ -96,6 +96,37 @@ describe('SQL workspace persistence', () => {
     })
   })
 
+  it('applies asynchronous transaction updates only to the original manual console', () => {
+    useEditorStore.setState({ tabs: [
+      {
+        id: 'manual-tab', title: 'Manual', sql: 'SELECT 1', connectionId: 'connection-1',
+        transactionMode: 'manual', transactionPhase: 'active',
+      },
+      {
+        id: 'auto-tab', title: 'Auto', sql: 'SELECT 1', connectionId: 'connection-1',
+        transactionMode: 'auto', transactionPhase: 'idle',
+      },
+    ] })
+
+    useEditorStore.getState().syncConsoleTransactionState({
+      connectionId: 'other-connection', consoleId: 'manual-tab', mode: 'manual', phase: 'failed',
+    })
+    useEditorStore.getState().syncConsoleTransactionState({
+      connectionId: 'connection-1', consoleId: 'auto-tab', mode: 'manual', phase: 'failed',
+    })
+    expect(useEditorStore.getState().tabs).toMatchObject([
+      { transactionMode: 'manual', transactionPhase: 'active' },
+      { transactionMode: 'auto', transactionPhase: 'idle' },
+    ])
+
+    useEditorStore.getState().syncConsoleTransactionState({
+      connectionId: 'connection-1', consoleId: 'manual-tab', mode: 'manual', phase: 'failed',
+    })
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({
+      transactionMode: 'manual', transactionPhase: 'failed',
+    })
+  })
+
   it('restores a SQL tab with its own data-source context instead of any global selection', () => {
     window.localStorage.setItem(storageKey, JSON.stringify({
       activeTabId: 'oracle-tab',

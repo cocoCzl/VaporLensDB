@@ -12,7 +12,11 @@ export interface ExportQueryResultCsvInput {
 
 export interface ExportQueryCsvInput {
   connectionId: string
+  connectionGeneration: number
   sql: string
+  database?: string | null
+  schema?: string | null
+  consoleId?: string | null
   path: string
   includeHeader?: boolean
 }

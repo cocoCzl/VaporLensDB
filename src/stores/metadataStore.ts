@@ -93,9 +93,15 @@ type MetadataSet = (
     | ((state: MetadataState) => Partial<MetadataState>),
 ) => void
 
-const pendingLoads = new Map<string, Promise<unknown>>()
+interface PendingMetadataLoad {
+  token: number
+  promise: Promise<unknown>
+}
+
+const pendingLoads = new Map<string, PendingMetadataLoad>()
 const MAX_FRONTEND_METADATA_KEYS = 256
 let latestIndexSearch = 0
+let nextLoadToken = 0
 
 export const useMetadataStore = create<MetadataState>()((set, get) => ({
   databases: {},
@@ -118,11 +124,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().databases[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, databaseLoadingKey(connectionId), async () => {
-      const databases = await getDatabases(connectionId)
-      set((state) => ({ databases: putBounded(state.databases, cacheKey, databases) }))
-      return databases
-    })
+    return withLoading(
+      set,
+      databaseLoadingKey(connectionId),
+      force,
+      () => getDatabases(connectionId),
+      (databases) => set((state) => ({ databases: putBounded(state.databases, cacheKey, databases) })),
+    )
   },
 
   loadSchemas: async (connectionId, database = null, force = false) => {
@@ -130,11 +138,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().schemas[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, metadataLoadingKey(cacheKey, 'schemas'), async () => {
-      const schemas = await getSchemas(connectionId, database)
-      set((state) => ({ schemas: putBounded(state.schemas, cacheKey, schemas) }))
-      return schemas
-    })
+    return withLoading(
+      set,
+      metadataLoadingKey(cacheKey, 'schemas'),
+      force,
+      () => getSchemas(connectionId, database),
+      (schemas) => set((state) => ({ schemas: putBounded(state.schemas, cacheKey, schemas) })),
+    )
   },
 
   loadTables: async (connectionId, schema, force = false) => {
@@ -142,11 +152,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().tables[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, metadataLoadingKey(cacheKey, 'tables'), async () => {
-      const tables = await getTables(connectionId, schema)
-      set((state) => ({ tables: putBounded(state.tables, cacheKey, tables) }))
-      return tables
-    })
+    return withLoading(
+      set,
+      metadataLoadingKey(cacheKey, 'tables'),
+      force,
+      () => getTables(connectionId, schema),
+      (tables) => set((state) => ({ tables: putBounded(state.tables, cacheKey, tables) })),
+    )
   },
 
   loadViews: async (connectionId, schema, force = false) => {
@@ -154,11 +166,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().views[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, metadataLoadingKey(cacheKey, 'views'), async () => {
-      const views = await getViews(connectionId, schema)
-      set((state) => ({ views: putBounded(state.views, cacheKey, views) }))
-      return views
-    })
+    return withLoading(
+      set,
+      metadataLoadingKey(cacheKey, 'views'),
+      force,
+      () => getViews(connectionId, schema),
+      (views) => set((state) => ({ views: putBounded(state.views, cacheKey, views) })),
+    )
   },
 
   loadFunctions: async (connectionId, schema, force = false) => {
@@ -166,11 +180,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().functions[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, metadataLoadingKey(cacheKey, 'functions'), async () => {
-      const functions = await getFunctions(connectionId, schema)
-      set((state) => ({ functions: putBounded(state.functions, cacheKey, functions) }))
-      return functions
-    })
+    return withLoading(
+      set,
+      metadataLoadingKey(cacheKey, 'functions'),
+      force,
+      () => getFunctions(connectionId, schema),
+      (functions) => set((state) => ({ functions: putBounded(state.functions, cacheKey, functions) })),
+    )
   },
 
   loadSchemaObjects: async (connectionId, schema, kind, force = false) => {
@@ -178,11 +194,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().schemaObjects[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, metadataLoadingKey(cacheKey, 'schemaObjects'), async () => {
-      const objects = await getSchemaObjects(connectionId, schema, kind)
-      set((state) => ({ schemaObjects: putBounded(state.schemaObjects, cacheKey, objects) }))
-      return objects
-    })
+    return withLoading(
+      set,
+      metadataLoadingKey(cacheKey, 'schemaObjects'),
+      force,
+      () => getSchemaObjects(connectionId, schema, kind),
+      (objects) => set((state) => ({ schemaObjects: putBounded(state.schemaObjects, cacheKey, objects) })),
+    )
   },
 
   loadColumns: async (connectionId, schema, table, force = false) => {
@@ -190,11 +208,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().columns[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, metadataLoadingKey(cacheKey, 'columns'), async () => {
-      const columns = await getColumns(connectionId, schema, table)
-      set((state) => ({ columns: putBounded(state.columns, cacheKey, columns) }))
-      return columns
-    })
+    return withLoading(
+      set,
+      metadataLoadingKey(cacheKey, 'columns'),
+      force,
+      () => getColumns(connectionId, schema, table),
+      (columns) => set((state) => ({ columns: putBounded(state.columns, cacheKey, columns) })),
+    )
   },
 
   loadIndexes: async (connectionId, schema, table, force = false) => {
@@ -202,11 +222,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().indexes[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, metadataLoadingKey(cacheKey, 'indexes'), async () => {
-      const indexes = await getIndexes(connectionId, schema, table)
-      set((state) => ({ indexes: putBounded(state.indexes, cacheKey, indexes) }))
-      return indexes
-    })
+    return withLoading(
+      set,
+      metadataLoadingKey(cacheKey, 'indexes'),
+      force,
+      () => getIndexes(connectionId, schema, table),
+      (indexes) => set((state) => ({ indexes: putBounded(state.indexes, cacheKey, indexes) })),
+    )
   },
 
   loadForeignKeys: async (connectionId, schema, table, force = false) => {
@@ -214,11 +236,13 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     const cached = get().foreignKeys[cacheKey]
     if (!force && cached) return cached
 
-    return withLoading(set, metadataLoadingKey(cacheKey, 'foreignKeys'), async () => {
-      const foreignKeys = await getForeignKeys(connectionId, schema, table)
-      set((state) => ({ foreignKeys: putBounded(state.foreignKeys, cacheKey, foreignKeys) }))
-      return foreignKeys
-    })
+    return withLoading(
+      set,
+      metadataLoadingKey(cacheKey, 'foreignKeys'),
+      force,
+      () => getForeignKeys(connectionId, schema, table),
+      (foreignKeys) => set((state) => ({ foreignKeys: putBounded(state.foreignKeys, cacheKey, foreignKeys) })),
+    )
   },
 
   setCatalogSchemaPath: (path) =>
@@ -237,9 +261,10 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       },
     })),
 
-  clearSchema: (connectionId, schema) =>
+  clearSchema: (connectionId, schema) => {
+    const schemaPrefix = schemaObjectKey(connectionId, schema)
+    invalidatePendingLoads(schemaPrefix)
     set((state) => {
-      const schemaPrefix = schemaObjectKey(connectionId, schema)
       return {
         tables: omitByPrefix(state.tables, schemaPrefix),
         views: omitByPrefix(state.views, schemaPrefix),
@@ -250,9 +275,23 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
         foreignKeys: omitByPrefix(state.foreignKeys, schemaPrefix),
         loading: omitByPrefix(state.loading, schemaPrefix),
       }
-    }),
+    })
+  },
 
-  clearSchemaObjectKind: (connectionId, schema, kind) =>
+  clearSchemaObjectKind: (connectionId, schema, kind) => {
+    const loadingKeys = [
+      metadataLoadingKey(schemaObjectKindKey(connectionId, schema, kind), 'schemaObjects'),
+    ]
+    if (kind === 'table') {
+      loadingKeys.push(metadataLoadingKey(schemaObjectKey(connectionId, schema), 'tables'))
+    }
+    if (kind === 'view' || kind === 'materializedView') {
+      loadingKeys.push(metadataLoadingKey(schemaObjectKey(connectionId, schema), 'views'))
+    }
+    if (kind === 'function') {
+      loadingKeys.push(metadataLoadingKey(schemaObjectKey(connectionId, schema), 'functions'))
+    }
+    loadingKeys.forEach(invalidatePendingLoad)
     set((state) => ({
       schemaObjects: omitByPrefix(state.schemaObjects, schemaObjectKindKey(connectionId, schema, kind)),
       tables:
@@ -265,7 +304,9 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
         kind === 'function'
           ? omitByPrefix(state.functions, schemaObjectKey(connectionId, schema))
           : state.functions,
-    })),
+      loading: omitKeys(state.loading, loadingKeys),
+    }))
+  },
 
   startIndexing: async (connectionId, force = true) => {
     set({ indexLoading: true })
@@ -304,7 +345,8 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
     }
   },
 
-  clearConnection: (connectionId) =>
+  clearConnection: (connectionId) => {
+    invalidatePendingLoads(connectionId)
     set((state) => ({
       databases: omitByPrefix(state.databases, connectionId),
       schemas: omitByPrefix(state.schemas, connectionId),
@@ -321,7 +363,8 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
         (result) => result.entry.connectionId !== connectionId,
       ),
       loading: omitByPrefix(state.loading, connectionId),
-    })),
+    }))
+  },
 }))
 
 export function schemaKey(connectionId: string, database?: string | null) {
@@ -351,22 +394,57 @@ function metadataLoadingKey(cacheKey: string, category: string) {
 async function withLoading<T>(
   set: MetadataSet,
   key: string,
+  force: boolean,
   task: () => Promise<T>,
+  commit: (value: T) => void,
 ): Promise<T> {
-  const pending = pendingLoads.get(key) as Promise<T> | undefined
-  if (pending) return pending
+  const pending = pendingLoads.get(key)
+  if (!force && pending) return pending.promise as Promise<T>
 
+  const token = ++nextLoadToken
   set((state) => ({ loading: { ...state.loading, [key]: true } }))
-  const promise = task().finally(() => {
-    pendingLoads.delete(key)
-    set((state) => ({ loading: { ...state.loading, [key]: false } }))
-  })
-  pendingLoads.set(key, promise)
+  const promise = Promise.resolve()
+    .then(task)
+    .then((value) => {
+      if (pendingLoads.get(key)?.token !== token) {
+        throw new MetadataLoadInvalidatedError()
+      }
+      commit(value)
+      return value
+    })
+    .finally(() => {
+      if (pendingLoads.get(key)?.token !== token) return
+      pendingLoads.delete(key)
+      set((state) => ({ loading: { ...state.loading, [key]: false } }))
+    })
+  pendingLoads.set(key, { token, promise })
   return promise
+}
+
+class MetadataLoadInvalidatedError extends Error {
+  constructor() {
+    super('metadata request was invalidated; retry the load')
+    this.name = 'MetadataLoadInvalidatedError'
+  }
+}
+
+function invalidatePendingLoad(key: string) {
+  pendingLoads.delete(key)
+}
+
+function invalidatePendingLoads(prefix: string) {
+  for (const key of pendingLoads.keys()) {
+    if (key.startsWith(prefix)) pendingLoads.delete(key)
+  }
 }
 
 function omitByPrefix<T>(record: Record<string, T>, prefix: string) {
   return Object.fromEntries(Object.entries(record).filter(([key]) => !key.startsWith(prefix)))
+}
+
+function omitKeys<T>(record: Record<string, T>, keys: string[]) {
+  const omitted = new Set(keys)
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !omitted.has(key)))
 }
 
 function putBounded<T>(record: Record<string, T>, key: string, value: T) {

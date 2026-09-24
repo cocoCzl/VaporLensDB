@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { containsLikelyDdl, useQuery } from '@/hooks/useQuery'
 import { useEditorStore } from '@/stores/editorStore'
+import { useQueryResultStore } from '@/stores/queryResultStore'
 import { cancelQuery, executeQuery, explainQuery, getConsoleTransactionState } from '@/ipc/query'
 
 vi.mock('@/ipc/query', async (importOriginal) => ({
@@ -40,6 +41,50 @@ describe('query cancellation state', () => {
       expect(await result.current.cancelRunningQuery('cancel-tab', 'source', 'running-query')).toBe(false)
     })
     expect(useEditorStore.getState().tabs[0]).toMatchObject({ running: true, runningQueryId: 'running-query', cancelling: false })
+    unmount()
+    useEditorStore.setState({ tabs: [], activeTabId: null })
+  })
+})
+
+describe('query execution snapshot', () => {
+  it('keeps the executed SQL and context after the editor changes', async () => {
+    useEditorStore.setState({ tabs: [{
+      id: 'snapshot-tab', title: 'SQL', sql: 'SELECT * FROM original_items; SELECT 1',
+      connectionId: 'source', database: 'app', schema: 'tenant_a',
+    }] })
+    useQueryResultStore.setState({ results: {}, explains: {}, sources: {} })
+    vi.mocked(executeQuery).mockResolvedValueOnce({
+      queryId: 'backend-query',
+      connectionGeneration: 7,
+      results: [{
+        queryId: 'backend-query', columns: [{ name: 'id', dataType: 'INTEGER', nullable: false }],
+        rows: [[1]], rowCount: 1, affectedRows: 0, elapsedMs: 1, truncated: false,
+      }],
+    })
+    const { result, unmount } = renderHook(() => useQuery())
+
+    await act(async () => {
+      expect(await result.current.runQuery(
+        'snapshot-tab',
+        'source',
+        'SELECT * FROM original_items; SELECT 1',
+        { database: 'app', schema: 'tenant_a' },
+      )).toBe(true)
+    })
+    const queryId = useEditorStore.getState().tabs[0].lastQueryId as string
+    useEditorStore.getState().updateTabSql('snapshot-tab', 'SELECT * FROM edited_items')
+    useEditorStore.getState().updateSqlTabContext('snapshot-tab', { schema: 'tenant_b' })
+
+    expect(useQueryResultStore.getState().sources[queryId]).toMatchObject({
+      queryId,
+      sql: 'SELECT * FROM original_items; SELECT 1',
+      connectionId: 'source',
+      connectionGeneration: 7,
+      database: 'app',
+      schema: 'tenant_a',
+      consoleId: null,
+      transactionMode: 'auto',
+    })
     unmount()
     useEditorStore.setState({ tabs: [], activeTabId: null })
   })

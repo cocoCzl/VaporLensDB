@@ -20,7 +20,13 @@ const MAX_METADATA_INDEX_ENTRIES_TOTAL: usize = 150_000;
 
 #[derive(Clone, Default)]
 pub struct MetadataIndexService {
-    entries: Arc<RwLock<HashMap<Uuid, Vec<MetadataIndexEntry>>>>,
+    state: Arc<RwLock<MetadataIndexState>>,
+}
+
+#[derive(Default)]
+struct MetadataIndexState {
+    entries: HashMap<Uuid, Vec<MetadataIndexEntry>>,
+    generations: HashMap<Uuid, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,15 +89,20 @@ impl MetadataIndexService {
     where
         F: FnMut(MetadataIndexProgress) -> bool + Send,
     {
-        if !force {
-            let entries = self.entries.read().await;
-            if let Some(existing) = entries.get(&connection.id) {
-                return Ok(MetadataIndexSummary {
-                    connection_id: connection.id,
-                    entry_count: existing.len(),
-                });
+        let generation = {
+            let mut state = self.state.write().await;
+            if !force {
+                if let Some(existing) = state.entries.get(&connection.id) {
+                    return Ok(MetadataIndexSummary {
+                        connection_id: connection.id,
+                        entry_count: existing.len(),
+                    });
+                }
             }
-        }
+            let generation = state.generations.entry(connection.id).or_default();
+            *generation = generation.wrapping_add(1);
+            *generation
+        };
 
         let mut entries = vec![connection_entry(connection)];
         let mut current = 1;
@@ -168,8 +179,14 @@ impl MetadataIndexService {
         }
 
         let entry_count = entries.len();
-        let mut indexed = self.entries.write().await;
+        let mut indexed = self.state.write().await;
+        if indexed.generations.get(&connection.id).copied() != Some(generation) {
+            return Err(AppError::ConfigError(
+                "metadata index invalidated; retry the index".to_string(),
+            ));
+        }
         while indexed
+            .entries
             .iter()
             .filter(|(id, _)| **id != connection.id)
             .map(|(_, values)| values.len())
@@ -177,12 +194,17 @@ impl MetadataIndexService {
             + entries.len()
             > MAX_METADATA_INDEX_ENTRIES_TOTAL
         {
-            let Some(evicted) = indexed.keys().copied().find(|id| *id != connection.id) else {
+            let Some(evicted) = indexed
+                .entries
+                .keys()
+                .copied()
+                .find(|id| *id != connection.id)
+            else {
                 break;
             };
-            indexed.remove(&evicted);
+            indexed.entries.remove(&evicted);
         }
-        indexed.insert(connection.id, entries);
+        indexed.entries.insert(connection.id, entries);
         Ok(MetadataIndexSummary {
             connection_id: connection.id,
             entry_count,
@@ -200,8 +222,9 @@ impl MetadataIndexService {
             return Vec::new();
         }
 
-        let entries = self.entries.read().await;
-        let candidates = entries
+        let state = self.state.read().await;
+        let candidates = state
+            .entries
             .iter()
             .filter(|(id, _)| connection_id.is_none_or(|target| target == **id))
             .flat_map(|(_, entries)| entries.iter());
@@ -235,11 +258,18 @@ impl MetadataIndexService {
     }
 
     pub async fn clear_connection(&self, connection_id: Uuid) {
-        self.entries.write().await.remove(&connection_id);
+        let mut state = self.state.write().await;
+        state.entries.remove(&connection_id);
+        let generation = state.generations.entry(connection_id).or_default();
+        *generation = generation.wrapping_add(1);
     }
 
     pub async fn clear_all(&self) {
-        self.entries.write().await.clear();
+        let mut state = self.state.write().await;
+        state.entries.clear();
+        for generation in state.generations.values_mut() {
+            *generation = generation.wrapping_add(1);
+        }
     }
 
     #[cfg(test)]
@@ -248,7 +278,27 @@ impl MetadataIndexService {
         connection_id: Uuid,
         entries: Vec<MetadataIndexEntry>,
     ) {
-        self.entries.write().await.insert(connection_id, entries);
+        let mut state = self.state.write().await;
+        state.entries.insert(connection_id, entries);
+    }
+
+    #[cfg(test)]
+    async fn reserve_generation_for_test(&self, connection_id: Uuid) -> u64 {
+        let mut state = self.state.write().await;
+        let generation = state.generations.entry(connection_id).or_default();
+        *generation = generation.wrapping_add(1);
+        *generation
+    }
+
+    #[cfg(test)]
+    async fn generation_is_current_for_test(&self, connection_id: Uuid, generation: u64) -> bool {
+        self.state
+            .read()
+            .await
+            .generations
+            .get(&connection_id)
+            .copied()
+            == Some(generation)
     }
 }
 
@@ -479,6 +529,43 @@ mod tests {
         assert_eq!(
             results[0].entry.path.join("."),
             "Local PostgreSQL.public.orders"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_invalidates_an_index_that_is_still_building() {
+        let service = MetadataIndexService::new();
+        let connection_id = Uuid::new_v4();
+        let old = service.reserve_generation_for_test(connection_id).await;
+        service.clear_connection(connection_id).await;
+        assert!(
+            !service
+                .generation_is_current_for_test(connection_id, old)
+                .await
+        );
+        let newest = service.reserve_generation_for_test(connection_id).await;
+        assert!(
+            service
+                .generation_is_current_for_test(connection_id, newest)
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn newer_force_index_cannot_be_overwritten_by_older_completion() {
+        let service = MetadataIndexService::new();
+        let connection_id = Uuid::new_v4();
+        let old = service.reserve_generation_for_test(connection_id).await;
+        let newest = service.reserve_generation_for_test(connection_id).await;
+        assert!(
+            !service
+                .generation_is_current_for_test(connection_id, old)
+                .await
+        );
+        assert!(
+            service
+                .generation_is_current_for_test(connection_id, newest)
+                .await
         );
     }
 }

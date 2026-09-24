@@ -6,6 +6,7 @@ const metadataMocks = vi.hoisted(() => ({
   getDatabases: vi.fn(),
   getForeignKeys: vi.fn(),
   getIndexes: vi.fn(),
+  getTables: vi.fn(),
   searchMetadataIndex: vi.fn(),
 }))
 
@@ -17,7 +18,7 @@ vi.mock('@/ipc/metadata', () => ({
   getIndexes: metadataMocks.getIndexes,
   getSchemaObjects: vi.fn(),
   getSchemas: vi.fn(),
-  getTables: vi.fn(),
+  getTables: metadataMocks.getTables,
   getViews: vi.fn(),
   searchMetadataIndex: metadataMocks.searchMetadataIndex,
   startMetadataIndexTask: vi.fn(),
@@ -50,6 +51,7 @@ describe('metadata store resource bounds', () => {
     metadataMocks.getDatabases.mockReset()
     metadataMocks.getForeignKeys.mockReset()
     metadataMocks.getIndexes.mockReset()
+    metadataMocks.getTables.mockReset()
     metadataMocks.searchMetadataIndex.mockReset()
     useMetadataStore.setState({
       databases: {},
@@ -89,6 +91,53 @@ describe('metadata store resource bounds', () => {
     await olderRequest
 
     expect(useMetadataStore.getState().indexResults).toEqual(searchResult('new_table'))
+  })
+
+  it('does not restore metadata after its connection is cleared in flight', async () => {
+    const request = deferred<{ name: string }[]>()
+    metadataMocks.getDatabases.mockReturnValueOnce(request.promise)
+
+    const load = useMetadataStore.getState().loadDatabases('connection-1')
+    useMetadataStore.getState().clearConnection('connection-1')
+    request.resolve([{ name: 'stale_database' }])
+
+    await expect(load).rejects.toThrow('metadata request was invalidated')
+    expect(useMetadataStore.getState().databases['connection-1']).toBeUndefined()
+    expect(useMetadataStore.getState().loading['connection-1::databases']).toBeUndefined()
+  })
+
+  it('lets force refresh supersede an in-flight load without clearing its loading state', async () => {
+    const older = deferred<{ name: string }[]>()
+    const newer = deferred<{ name: string }[]>()
+    metadataMocks.getDatabases
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise)
+
+    const olderLoad = useMetadataStore.getState().loadDatabases('connection-1')
+    const newerLoad = useMetadataStore.getState().loadDatabases('connection-1', true)
+    older.resolve([{ name: 'stale_database' }])
+
+    await expect(olderLoad).rejects.toThrow('metadata request was invalidated')
+    expect(useMetadataStore.getState().loading['connection-1::databases']).toBe(true)
+    expect(useMetadataStore.getState().databases['connection-1']).toBeUndefined()
+
+    newer.resolve([{ name: 'fresh_database' }])
+    await expect(newerLoad).resolves.toEqual([{ name: 'fresh_database' }])
+    expect(useMetadataStore.getState().databases['connection-1']).toEqual([{ name: 'fresh_database' }])
+    expect(useMetadataStore.getState().loading['connection-1::databases']).toBe(false)
+  })
+
+  it('clears scoped loading state when an object category invalidates its request', async () => {
+    const request = deferred<[]>()
+    metadataMocks.getTables.mockReturnValueOnce(request.promise)
+
+    const load = useMetadataStore.getState().loadTables('connection-1', 'main')
+    useMetadataStore.getState().clearSchemaObjectKind('connection-1', 'main', 'table')
+    request.resolve([])
+
+    await expect(load).rejects.toThrow('metadata request was invalidated')
+    expect(useMetadataStore.getState().tables['connection-1::schema::main']).toBeUndefined()
+    expect(useMetadataStore.getState().loading['connection-1::schema::main::tables']).toBeUndefined()
   })
 
   it('keeps columns and foreign keys isolated when structure metadata loads concurrently', async () => {

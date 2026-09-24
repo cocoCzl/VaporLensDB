@@ -30,6 +30,23 @@ export interface QueryResult {
 export interface ExecuteQueryResponse {
   queryId?: string | null
   results: QueryResult[]
+  connectionGeneration: number
+}
+
+export interface ExecutionSession {
+  connectionGeneration: number
+}
+
+export interface QueryExecutionSnapshot {
+  queryId: string
+  sql: string
+  connectionId: string
+  connectionGeneration: number
+  database: string | null
+  schema: string | null
+  consoleId: string | null
+  transactionMode: TransactionMode
+  executedAt: string
 }
 
 export type TransactionMode = 'auto' | 'manual'

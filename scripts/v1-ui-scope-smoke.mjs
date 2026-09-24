@@ -66,7 +66,19 @@ includesAll(dataGrid, ['copyToClipboard(value)', 'copyToClipboard(rowValue)'], '
 
 const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(mainPanel, ['analyzeSqlRisk', 'confirmDangerousSql', 'driverQueryCapabilities'], 'query controls')
+includesAll(
+  mainPanel,
+  ["risk.status === 'unknown'", "workbench.uncertainSqlTitle", "workbench.riskMerge", "workbench.riskProcedural", "workbench.riskUnclassified"],
+  'unknown and extended SQL risk confirmation',
+)
 includesAll(mainPanel, ['canCancel: false', 'canExplain: false', 'canComplete: false'], 'driver capability gates')
+
+const queryIpc = read('src/ipc/query.ts')
+includesAll(
+  queryIpc,
+  ["status: 'safe' | 'dangerous' | 'unknown'", "| 'mergeStatement'", "| 'proceduralStatement'", "| 'unclassifiedStatement'"],
+  'SQL risk IPC contract',
+)
 
 if (failures.length > 0) {
   console.error('V1 UI scope smoke failed:')

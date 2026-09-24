@@ -57,16 +57,18 @@ includesAll(
 )
 
 const metadataService = read('src-tauri/src/services/metadata_service.rs')
+// This smoke check covers API wiring only. Cache hits, invalidation races, and
+// forced refresh semantics are exercised by metadata_service Rust tests.
 includesAll(
   metadataService,
   [
     'force: bool',
-    'if !force',
-    'if let Some(cached)',
+    'pub async fn get_table_ddl(',
+    'pub async fn get_object_ddl(',
     '["schema", schema, "table", table, "ddl"]',
     '["schema", schema, "object", name, &kind_key, "ddl"]',
   ],
-  'definition cache and force refresh',
+  'definition cache API and force option',
 )
 
 const metadataCommand = read('src-tauri/src/commands/metadata.rs')

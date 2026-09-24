@@ -45,24 +45,28 @@ export function useQuery() {
     const queryId = crypto.randomUUID()
     const startedAt = new Date().toISOString()
     const startedMs = performance.now()
+    const transactionMode = tab.transactionMode === 'manual' ? 'manual' : 'auto'
+    const consoleId = transactionMode === 'manual' ? tabId : undefined
+    let connectionGeneration: number
     setTabRunning(tabId, true, queryId)
     try {
       if (canStreamSql(sql)) {
         startStreamResult(queryId, classifyStatement(sql))
         const streamState = await registerStreamListeners(tabId, queryId)
         try {
-          await executeQueryStream({
+          const session = await executeQueryStream({
             connectionId,
             sql,
             queryId,
             chunkSize: 1_000,
             maxRows: options.maxRows ?? useUiStore.getState().queryMaxRows,
-            consoleId: useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual' ? tabId : undefined,
+            consoleId,
             tabId,
             connectionName: options.connectionName,
             database: options.database,
             schema: options.schema,
           })
+          connectionGeneration = session.connectionGeneration
         } finally {
           streamState.unlisteners.forEach((unlisten) => unlisten())
         }
@@ -86,16 +90,27 @@ export function useQuery() {
           connectionId,
           sql,
           queryId,
-          consoleId: useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual' ? tabId : undefined,
+          consoleId,
           tabId,
           connectionName: options.connectionName,
           database: options.database,
           schema: options.schema,
         })
+        connectionGeneration = response.connectionGeneration
         setResults(queryId, response.results, classifyStatement(sql))
       }
-      setResultSource(queryId, connectionId, options)
-      if (useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual') {
+      setResultSource({
+        queryId,
+        sql,
+        connectionId,
+        connectionGeneration,
+        database: options.database ?? null,
+        schema: options.schema ?? null,
+        consoleId: consoleId ?? null,
+        transactionMode,
+        executedAt: startedAt,
+      })
+      if (transactionMode === 'manual') {
         useEditorStore.getState().setTabTransactionState(tabId, 'manual', 'active')
       }
       if (containsLikelyDdl(sql)) {

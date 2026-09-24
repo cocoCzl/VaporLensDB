@@ -3,6 +3,7 @@ import { COMMANDS } from '@/ipc/contracts'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
   ExecuteQueryResponse,
+  ExecutionSession,
   ExplainResult,
   QueryResultChunk,
   QueryStreamDone,
@@ -40,9 +41,13 @@ export type SqlRiskReason =
   | 'truncateStatement'
   | 'deleteWithoutWhere'
   | 'updateWithoutWhere'
+  | 'mergeStatement'
+  | 'proceduralStatement'
+  | 'unclassifiedStatement'
 
 export interface SqlRiskAnalysis {
   dangerous: boolean
+  status: 'safe' | 'dangerous' | 'unknown'
   reasons: SqlRiskReason[]
 }
 
@@ -51,7 +56,7 @@ export function executeQuery(input: ExecuteQueryInput) {
 }
 
 export function executeQueryStream(input: ExecuteQueryStreamInput) {
-  return invokeCommand<void>(COMMANDS.executeQueryStream, { input })
+  return invokeCommand<ExecutionSession>(COMMANDS.executeQueryStream, { input })
 }
 
 export interface ExplainQueryContext {
@@ -99,4 +104,10 @@ export function onQueryResultDone(handler: (done: QueryStreamDone) => void): Pro
 
 export function onQueryResultError(handler: (error: QueryStreamError) => void): Promise<UnlistenFn> {
   return listen<QueryStreamError>('query_result_error', (event) => handler(event.payload))
+}
+
+export function onConsoleTransactionUpdated(
+  handler: (transaction: ConsoleTransactionState) => void,
+): Promise<UnlistenFn> {
+  return listen<ConsoleTransactionState>('console_transaction_updated', (event) => handler(event.payload))
 }

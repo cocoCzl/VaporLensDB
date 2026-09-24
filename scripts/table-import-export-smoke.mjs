@@ -32,12 +32,30 @@ includesAll(
     'handle.is_cancel_requested()',
     'update_progress(',
     '.import-report.json',
+    'invalid_row_count',
+    'invalid_rows_omitted',
+    'failed_write_count',
+    'failed_writes_omitted',
     'failed_writes',
     'csv_parser_handles_quotes_commas_and_newlines',
     'import_preview_validation_reports_bad_headers_and_row_widths',
   ],
   'table import/export backend',
 )
+const importRows = exportCommand.slice(
+  exportCommand.indexOf('async fn import_csv_rows('),
+  exportCommand.indexOf('async fn write_query_result_csv('),
+)
+includesAll(
+  importRows,
+  [
+    'CsvRecordReader::new(file, IMPORT_MAX_RECORD_BYTES)',
+    'while let Some(row) = next',
+    'BoundedRowReports::default()',
+  ],
+  'streaming table CSV import',
+)
+assert(!importRows.includes('read_to_string'), 'table CSV import must not buffer the whole file')
 
 const exportIpc = read('src/ipc/export.ts')
 includesAll(

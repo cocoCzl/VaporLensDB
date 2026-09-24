@@ -339,7 +339,7 @@
     "name": "execute_query_stream",
     "namespace": "query",
     "args": "{ input: ExecuteQueryStreamInput }",
-    "response": "void",
+    "response": "ExecutionSession",
     "status": "active"
   },
   {

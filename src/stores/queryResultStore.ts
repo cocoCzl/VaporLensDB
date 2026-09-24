@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ExplainResult, QueryResult, QueryResultChunk, QueryStreamDone } from '@/types/query'
+import type { ExplainResult, QueryExecutionSnapshot, QueryResult, QueryResultChunk, QueryStreamDone } from '@/types/query'
 import { MAX_INTERACTIVE_RESULT_ROWS } from '@/stores/uiStore'
 
 // The database can stream more rows for counting/export, but the grid keeps a
@@ -10,10 +10,10 @@ const MAX_RETAINED_QUERY_RESULTS = 20
 interface QueryResultState {
   results: Record<string, QueryResult[]>
   explains: Record<string, ExplainResult>
-  sources: Record<string, { connectionId: string; database: string | null; schema: string | null; executedAt: string }>
+  sources: Record<string, QueryExecutionSnapshot>
   setResults: (queryId: string, results: QueryResult[], statementKind?: QueryResult['statementKind']) => void
   setExplain: (queryId: string, explain: ExplainResult) => void
-  setResultSource: (queryId: string, connectionId: string, context?: { database?: string | null; schema?: string | null }) => void
+  setResultSource: (snapshot: QueryExecutionSnapshot) => void
   startStreamResult: (queryId: string, statementKind?: QueryResult['statementKind']) => void
   appendResultChunk: (chunk: QueryResultChunk) => void
   finishStreamResult: (done: QueryStreamDone) => void
@@ -28,15 +28,10 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
     set((s) => ({ results: retainNewest({ ...s.results, [queryId]: results.map((result) => boundInteractiveResult({ ...result, streaming: false, statementKind })) }) })),
   setExplain: (queryId, explain) =>
     set((s) => ({ explains: retainNewest({ ...s.explains, [queryId]: explain }) })),
-  setResultSource: (queryId, connectionId, context = {}) =>
+  setResultSource: (snapshot) =>
     set((s) => ({ sources: retainNewest({
       ...s.sources,
-      [queryId]: {
-        connectionId,
-        database: context.database ?? null,
-        schema: context.schema ?? null,
-        executedAt: new Date().toISOString(),
-      },
+      [snapshot.queryId]: { ...snapshot },
     }) })),
   startStreamResult: (queryId, statementKind) =>
     set((s) => ({

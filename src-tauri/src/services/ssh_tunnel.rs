@@ -55,6 +55,13 @@ impl SshTunnel {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "127.0.0.1".to_string());
         let local_port = allocate_local_port(&local_host)?;
+        // Reject unsupported URLs before spawning SSH (and creating askpass
+        // helpers), so a rewrite error cannot leave a child process behind.
+        let mut runtime_config = config.clone();
+        runtime_config.host = Some(local_host.clone());
+        runtime_config.port = Some(local_port);
+        runtime_config.connection_url =
+            rewrite_connection_url(config.connection_url.as_deref(), &local_host, local_port)?;
         let mut args = ssh_args(
             tunnel_config,
             &local_host,
@@ -98,17 +105,6 @@ impl SshTunnel {
             let _ = child.start_kill();
             return Err(error);
         }
-
-        let mut runtime_config = config.clone();
-        runtime_config.host = Some(local_host.clone());
-        runtime_config.port = Some(local_port);
-        runtime_config.connection_url = rewrite_connection_url(
-            config.connection_url.as_deref(),
-            config.host.as_deref(),
-            config.port,
-            &local_host,
-            local_port,
-        )?;
 
         Ok(Some((
             Self {
@@ -266,25 +262,109 @@ fn write_askpass_script() -> Result<AskpassHelper, AppError> {
 
 fn rewrite_connection_url(
     connection_url: Option<&str>,
-    original_host: Option<&str>,
-    original_port: Option<u16>,
     local_host: &str,
     local_port: u16,
 ) -> Result<Option<String>, AppError> {
     let Some(url) = connection_url else {
         return Ok(None);
     };
-    let original_host = original_host.ok_or_else(|| AppError::SshTunnelError {
-        message: "database host is required to tunnel a URL connection".to_string(),
-    })?;
-    let original_port = original_port.ok_or_else(|| AppError::SshTunnelError {
-        message: "database port is required to tunnel a URL connection".to_string(),
-    })?;
-
-    let rewritten = url
-        .replace(original_host, local_host)
-        .replace(&original_port.to_string(), &local_port.to_string());
-    Ok(Some(rewritten))
+    // Never include the supplied URL or parser error: either may expose
+    // credentials embedded in userinfo, paths, or properties.
+    let invalid_url = || AppError::SshTunnelError {
+        message: concat!(
+            "SSH URL forwarding requires a single-host PostgreSQL/MySQL/MariaDB URI ",
+            "or Oracle thin @//host:port/service URL, without endpoint override parameters; ",
+            "use parameter connection settings for other formats"
+        )
+        .to_string(),
+    };
+    let prefixes = [
+        "postgresql://",
+        "postgres://",
+        "mysql://",
+        "mariadb://",
+        "jdbc:postgresql://",
+        "jdbc:mysql://",
+        "jdbc:mariadb://",
+        "jdbc:oracle:thin:@//",
+    ];
+    let prefix = prefixes
+        .iter()
+        .find(|prefix| url.starts_with(**prefix))
+        .ok_or_else(invalid_url)?;
+    let remainder = &url[prefix.len()..];
+    let authority_end = remainder.find(['/', '?', '#']).unwrap_or(remainder.len());
+    let authority = &remainder[..authority_end];
+    let suffix = &remainder[authority_end..];
+    // Use the URI parser for authority/port validation, but splice the original
+    // text so percent encoding, credentials, path and query remain byte-exact.
+    let parsed =
+        url::Url::parse(&format!("postgresql://{authority}{suffix}")).map_err(|_| invalid_url())?;
+    let host = parsed.host_str().ok_or_else(invalid_url)?;
+    if host.is_empty()
+        || host.contains([',', ';', '\\', '%'])
+        || url.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+        || authority.contains('\\')
+        || parsed.fragment().is_some()
+    {
+        return Err(invalid_url());
+    }
+    // These properties can override the authority or select a socket/alternate
+    // host in native and JDBC connectors, bypassing the local forward.
+    for (key, _) in parsed.query_pairs() {
+        if matches!(
+            key.to_ascii_lowercase().as_str(),
+            "host"
+                | "hostaddr"
+                | "port"
+                | "servername"
+                | "portnumber"
+                | "service"
+                | "servicefile"
+                | "socket"
+                | "unix_socket"
+                | "unixsocket"
+                | "localsocket"
+                | "socket_factory"
+                | "socketfactory"
+                | "socketfactoryarg"
+                | "namedpipepath"
+                | "pipe"
+                | "failoverpartner"
+                | "address"
+                | "propertiestransform"
+        ) {
+            return Err(invalid_url());
+        }
+    }
+    let userinfo_end = authority.rfind('@').map_or(0, |index| index + 1);
+    let endpoint = &authority[userinfo_end..];
+    // Reject a dangling port and non-URI authority syntax rather than guessing.
+    if endpoint.ends_with(':') || endpoint.contains(['(', ')', '=']) {
+        return Err(invalid_url());
+    }
+    let local_host = if local_host.eq_ignore_ascii_case("localhost") {
+        local_host.to_string()
+    } else {
+        let unbracketed = local_host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(local_host);
+        match unbracketed
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| invalid_url())?
+        {
+            std::net::IpAddr::V4(addr) => addr.to_string(),
+            std::net::IpAddr::V6(addr) => format!("[{addr}]"),
+        }
+    };
+    if local_port == 0 {
+        return Err(invalid_url());
+    }
+    Ok(Some(format!(
+        "{prefix}{}{local_host}:{local_port}{suffix}",
+        &authority[..userinfo_end]
+    )))
 }
 
 async fn wait_until_forward_ready(
@@ -390,8 +470,6 @@ mod tests {
     fn rewrites_url_to_local_forward() {
         let url = rewrite_connection_url(
             Some("jdbc:postgresql://db.internal:5432/app"),
-            Some("db.internal"),
-            Some(5432),
             "127.0.0.1",
             15432,
         )
@@ -399,5 +477,78 @@ mod tests {
         .expect("url");
 
         assert_eq!(url, "jdbc:postgresql://127.0.0.1:15432/app");
+    }
+
+    #[test]
+    fn rewrites_only_authority_preserving_credentials_path_and_query() {
+        let source = "postgresql://db.internal:p%405432@db.internal:5432/db.internal5432%2Fname?application_name=db.internal5432&sslmode=require";
+        let expected = "postgresql://db.internal:p%405432@127.0.0.1:15432/db.internal5432%2Fname?application_name=db.internal5432&sslmode=require";
+        assert_eq!(
+            rewrite_connection_url(Some(source), "127.0.0.1", 15432)
+                .unwrap()
+                .as_deref(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn handles_missing_ports_ipv6_and_supported_jdbc_dialects() {
+        for (source, expected) in [
+            ("postgres://db/app", "postgres://[::1]:15432/app"),
+            (
+                "mysql://[2001:db8::1]:3306/app?charset=utf8",
+                "mysql://[::1]:15432/app?charset=utf8",
+            ),
+            (
+                "jdbc:mysql://db/app3306",
+                "jdbc:mysql://[::1]:15432/app3306",
+            ),
+            (
+                "jdbc:mariadb://db:3306/app",
+                "jdbc:mariadb://[::1]:15432/app",
+            ),
+            (
+                "jdbc:oracle:thin:@//db:1521/service1521",
+                "jdbc:oracle:thin:@//[::1]:15432/service1521",
+            ),
+        ] {
+            assert_eq!(
+                rewrite_connection_url(Some(source), "::1", 15432)
+                    .unwrap()
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+        assert!(rewrite_connection_url(None, "127.0.0.1", 15432)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_unsupported_urls_without_leaking_them() {
+        for source in [
+            "jdbc:sqlserver://db:1433;database=app;password=secret",
+            "jdbc:oracle:thin:@db:1521:SID",
+            "jdbc:oracle:thin:@(DESCRIPTION=secret)",
+            "jdbc:mysql:loadbalance://db1,db2/app",
+            "postgresql://db1,db2/app",
+            "postgresql:///app",
+            "postgresql://db:/app",
+            "postgresql://db:99999/app",
+            "postgresql://db/app#secret",
+            "postgresql://db/app\n",
+            "postgresql://db/app?%68ost=secret",
+            "postgresql://db/app?hostaddr=secret",
+            "mysql://db/app?socket=secret",
+            "jdbc:mysql://db/app?socketFactory=secret",
+            "postgresql://db/app?service=secret",
+            "sqlite:///secret",
+        ] {
+            let error = rewrite_connection_url(Some(source), "127.0.0.1", 15432)
+                .unwrap_err()
+                .to_string();
+            assert!(!error.contains("secret"));
+            assert!(!error.contains(source));
+        }
     }
 }

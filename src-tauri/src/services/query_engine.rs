@@ -35,6 +35,7 @@ pub struct QueryEngine;
 pub struct ExecuteQueryResponse {
     pub query_id: Option<String>,
     pub results: Vec<QueryResult>,
+    pub connection_generation: Option<u64>,
 }
 
 pub struct StreamQueryRequest {
@@ -72,6 +73,7 @@ impl QueryEngine {
             return Ok(ExecuteQueryResponse {
                 query_id,
                 results: Vec::new(),
+                connection_generation: None,
             });
         }
 
@@ -93,7 +95,11 @@ impl QueryEngine {
             results.push(result);
         }
 
-        Ok(ExecuteQueryResponse { query_id, results })
+        Ok(ExecuteQueryResponse {
+            query_id,
+            results,
+            connection_generation: None,
+        })
     }
 
     pub async fn execute_query_stream(

@@ -5,7 +5,16 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct SqlRiskAnalysis {
     pub dangerous: bool,
+    pub status: SqlRiskStatus,
     pub reasons: Vec<SqlRiskReason>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SqlRiskStatus {
+    Safe,
+    Dangerous,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -15,6 +24,9 @@ pub enum SqlRiskReason {
     TruncateStatement,
     DeleteWithoutWhere,
     UpdateWithoutWhere,
+    MergeStatement,
+    ProceduralStatement,
+    UnclassifiedStatement,
 }
 
 pub fn analyze_sql_risk(sql: &str) -> SqlRiskAnalysis {
@@ -23,9 +35,27 @@ pub fn analyze_sql_risk(sql: &str) -> SqlRiskAnalysis {
         .flat_map(|statement| analyze_statement(&statement))
         .collect::<Vec<_>>();
 
+    let status = if reasons.iter().any(|reason| !reason.is_uncertain()) {
+        SqlRiskStatus::Dangerous
+    } else if reasons.is_empty() {
+        SqlRiskStatus::Safe
+    } else {
+        SqlRiskStatus::Unknown
+    };
+
     SqlRiskAnalysis {
-        dangerous: !reasons.is_empty(),
+        dangerous: status != SqlRiskStatus::Safe,
+        status,
         reasons,
+    }
+}
+
+impl SqlRiskReason {
+    fn is_uncertain(&self) -> bool {
+        matches!(
+            self,
+            Self::ProceduralStatement | Self::UnclassifiedStatement
+        )
     }
 }
 
@@ -45,14 +75,80 @@ fn analyze_statement(statement: &str) -> Vec<SqlRiskReason> {
     if command_present(&tokens, starts_with_cte, "truncate") {
         reasons.push(SqlRiskReason::TruncateStatement);
     }
+    if command_present(&tokens, starts_with_cte, "merge") {
+        reasons.push(SqlRiskReason::MergeStatement);
+    }
+    let procedural = procedural_statement(&tokens);
+    if procedural {
+        reasons.push(SqlRiskReason::ProceduralStatement);
+    }
     if dml_without_where(&tokens, starts_with_cte, "delete") {
         reasons.push(SqlRiskReason::DeleteWithoutWhere);
     }
     if dml_without_where(&tokens, starts_with_cte, "update") {
         reasons.push(SqlRiskReason::UpdateWithoutWhere);
     }
+    if !procedural && !known_statement(&tokens, starts_with_cte) {
+        reasons.push(SqlRiskReason::UnclassifiedStatement);
+    }
 
     reasons
+}
+
+fn procedural_statement(tokens: &[ScopeToken]) -> bool {
+    let first = tokens.first().map(|token| token.word.as_str());
+    matches!(first, Some("call" | "do" | "exec" | "execute" | "prepare"))
+        || (matches!(first, Some("create" | "alter" | "drop"))
+            && tokens.iter().any(|token| {
+                matches!(
+                    token.word.as_str(),
+                    "function" | "package" | "procedure" | "trigger"
+                )
+            }))
+}
+
+fn known_statement(tokens: &[ScopeToken], starts_with_cte: bool) -> bool {
+    const KNOWN: &[&str] = &[
+        "alter",
+        "analyze",
+        "attach",
+        "begin",
+        "commit",
+        "create",
+        "delete",
+        "desc",
+        "describe",
+        "detach",
+        "drop",
+        "explain",
+        "grant",
+        "insert",
+        "merge",
+        "pragma",
+        "release",
+        "revoke",
+        "rollback",
+        "savepoint",
+        "select",
+        "set",
+        "show",
+        "start",
+        "truncate",
+        "update",
+        "use",
+        "vacuum",
+        "with",
+    ];
+    tokens
+        .first()
+        .is_some_and(|token| KNOWN.contains(&token.word.as_str()))
+        && (!starts_with_cte
+            || tokens.iter().any(|token| {
+                matches!(
+                    token.word.as_str(),
+                    "delete" | "insert" | "merge" | "select" | "update"
+                )
+            }))
 }
 
 struct ScopeToken {
@@ -109,7 +205,7 @@ fn dml_without_where(tokens: &[ScopeToken], starts_with_cte: bool, keyword: &str
             .take_while(|next| {
                 !matches!(
                     next.word.as_str(),
-                    "returning" | "output" | "select" | "insert" | "update" | "delete"
+                    "returning" | "select" | "insert" | "update" | "delete" | "merge"
                 )
             })
             .any(|next| next.word == "where")
@@ -118,7 +214,7 @@ fn dml_without_where(tokens: &[ScopeToken], starts_with_cte: bool, keyword: &str
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze_sql_risk, SqlRiskReason};
+    use super::{analyze_sql_risk, SqlRiskReason, SqlRiskStatus};
 
     #[test]
     fn detects_drop_and_truncate() {
@@ -228,5 +324,43 @@ mod tests {
                 "{sql}"
             );
         }
+    }
+
+    #[test]
+    fn merge_is_dangerous_and_procedural_or_unknown_statements_are_uncertain() {
+        let merge = analyze_sql_risk(
+            "MERGE INTO target USING source ON target.id=source.id WHEN MATCHED THEN DELETE",
+        );
+        assert_eq!(merge.status, SqlRiskStatus::Dangerous);
+        assert_eq!(merge.reasons, vec![SqlRiskReason::MergeStatement]);
+
+        for sql in [
+            "CALL rebuild_accounts()",
+            "EXECUTE IMMEDIATE 'DELETE FROM accounts'",
+            "CREATE PROCEDURE p AS BEGIN DELETE FROM accounts; END",
+            "vendor_specific_command accounts",
+        ] {
+            let analysis = analyze_sql_risk(sql);
+            assert!(analysis.dangerous, "{sql}");
+            assert_eq!(analysis.status, SqlRiskStatus::Unknown, "{sql}");
+            assert!(analysis.reasons.iter().all(SqlRiskReason::is_uncertain));
+        }
+    }
+
+    #[test]
+    fn sql_server_output_does_not_hide_a_later_outer_where() {
+        for sql in [
+            "UPDATE accounts SET active=0 OUTPUT inserted.id WHERE tenant_id=7",
+            "DELETE FROM accounts OUTPUT deleted.id WHERE tenant_id=7",
+        ] {
+            assert_eq!(analyze_sql_risk(sql).status, SqlRiskStatus::Safe, "{sql}");
+        }
+        assert_eq!(
+            analyze_sql_risk(
+                "UPDATE accounts SET active=0 OUTPUT (SELECT id FROM audit WHERE id=1)"
+            )
+            .reasons,
+            vec![SqlRiskReason::UpdateWithoutWhere]
+        );
     }
 }

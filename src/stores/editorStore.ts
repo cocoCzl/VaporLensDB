@@ -3,7 +3,7 @@ import { isEmptySqlDraft } from '@/lib/sqlDraftPersistence'
 import { useQueryResultStore } from '@/stores/queryResultStore'
 import type { DataTabSortDirection } from '@/lib/dataTabSql'
 import type { DbObjectKind } from '@/types/metadata'
-import type { TransactionMode, TransactionPhase } from '@/types/query'
+import type { ConsoleTransactionState, TransactionMode, TransactionPhase } from '@/types/query'
 
 export interface EditorTab {
   id: string
@@ -131,6 +131,7 @@ interface EditorState {
   setTabCancelling: (id: string, cancelling: boolean) => void
   setTabQueryState: (id: string, queryId: string | null, error?: string | null) => void
   setTabTransactionState: (id: string, mode: TransactionMode, phase: TransactionPhase) => void
+  syncConsoleTransactionState: (transaction: ConsoleTransactionState) => void
   markConnectionUnavailable: (connectionId: string, name: string) => void
   closeTab: (id: string) => void
 }
@@ -278,6 +279,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })),
   setTabTransactionState: (id, transactionMode, transactionPhase) => set((state) => ({
     tabs: state.tabs.map((tab) => tab.id === id ? { ...tab, transactionMode, transactionPhase } : tab),
+  })),
+  syncConsoleTransactionState: (transaction) => set((state) => ({
+    tabs: state.tabs.map((tab) => tab.id === transaction.consoleId
+      && tab.connectionId === transaction.connectionId
+      && tab.transactionMode === 'manual'
+      ? { ...tab, transactionMode: transaction.mode, transactionPhase: transaction.phase }
+      : tab),
   })),
   markConnectionUnavailable: (connectionId, name) =>
     set((state) => ({

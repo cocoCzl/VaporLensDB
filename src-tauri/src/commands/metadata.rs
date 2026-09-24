@@ -1,14 +1,19 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 
 use crate::{
+    models::error::AppError,
     models::metadata::{
         ColumnInfo, DatabaseInfo, DbObjectInfo, DbObjectKind, ForeignKeyInfo, IndexInfo,
         SchemaInfo, TableInfo,
     },
-    services::metadata_index::{MetadataIndexProgress, MetadataSearchResult},
+    services::{
+        connection_manager::{ConnectionManager, QueryOperation, QueryOperationStart},
+        metadata_index::{MetadataIndexProgress, MetadataSearchResult},
+        task_manager::TaskHandle,
+    },
     AppState,
 };
 
@@ -19,10 +24,10 @@ pub async fn get_databases(
     state: State<'_, AppState>,
     connection_id: Uuid,
 ) -> Result<Vec<DatabaseInfo>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_databases(connection_id, driver)
+        .get_databases(connection_id, operation.driver.clone())
         .await
         .map_err(Into::into)
 }
@@ -33,10 +38,10 @@ pub async fn get_schemas(
     connection_id: Uuid,
     database: Option<String>,
 ) -> Result<Vec<SchemaInfo>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_schemas(connection_id, driver, database.as_deref())
+        .get_schemas(connection_id, operation.driver.clone(), database.as_deref())
         .await
         .map_err(Into::into)
 }
@@ -47,10 +52,10 @@ pub async fn get_tables(
     connection_id: Uuid,
     schema: String,
 ) -> Result<Vec<TableInfo>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_tables(connection_id, driver, &schema)
+        .get_tables(connection_id, operation.driver.clone(), &schema)
         .await
         .map_err(Into::into)
 }
@@ -62,10 +67,10 @@ pub async fn get_columns(
     schema: String,
     table: String,
 ) -> Result<Vec<ColumnInfo>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_columns(connection_id, driver, &schema, &table)
+        .get_columns(connection_id, operation.driver.clone(), &schema, &table)
         .await
         .map_err(Into::into)
 }
@@ -77,10 +82,10 @@ pub async fn get_indexes(
     schema: String,
     table: String,
 ) -> Result<Vec<IndexInfo>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_indexes(connection_id, driver, &schema, &table)
+        .get_indexes(connection_id, operation.driver.clone(), &schema, &table)
         .await
         .map_err(Into::into)
 }
@@ -92,10 +97,10 @@ pub async fn get_foreign_keys(
     schema: String,
     table: String,
 ) -> Result<Vec<ForeignKeyInfo>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_foreign_keys(connection_id, driver, &schema, &table)
+        .get_foreign_keys(connection_id, operation.driver.clone(), &schema, &table)
         .await
         .map_err(Into::into)
 }
@@ -106,10 +111,10 @@ pub async fn get_views(
     connection_id: Uuid,
     schema: String,
 ) -> Result<Vec<TableInfo>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_views(connection_id, driver, &schema)
+        .get_views(connection_id, operation.driver.clone(), &schema)
         .await
         .map_err(Into::into)
 }
@@ -120,10 +125,10 @@ pub async fn get_functions(
     connection_id: Uuid,
     schema: String,
 ) -> Result<Vec<String>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_functions(connection_id, driver, &schema)
+        .get_functions(connection_id, operation.driver.clone(), &schema)
         .await
         .map_err(Into::into)
 }
@@ -136,12 +141,12 @@ pub async fn get_table_ddl(
     table: String,
     force: Option<bool>,
 ) -> Result<String, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
         .get_table_ddl(
             connection_id,
-            driver,
+            operation.driver.clone(),
             &schema,
             &table,
             force.unwrap_or(false),
@@ -157,10 +162,10 @@ pub async fn get_schema_objects(
     schema: String,
     kind: DbObjectKind,
 ) -> Result<Vec<DbObjectInfo>, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
-        .get_schema_objects(connection_id, driver, &schema, kind)
+        .get_schema_objects(connection_id, operation.driver.clone(), &schema, kind)
         .await
         .map_err(Into::into)
 }
@@ -174,12 +179,12 @@ pub async fn get_object_ddl(
     kind: DbObjectKind,
     force: Option<bool>,
 ) -> Result<String, String> {
-    let driver = active_driver(&state, connection_id).await?;
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
     state
         .metadata_service
         .get_object_ddl(
             connection_id,
-            driver,
+            operation.driver.clone(),
             &schema,
             &name,
             kind,
@@ -221,7 +226,9 @@ pub async fn start_metadata_index_task(
         .get_connection(input.connection_id)
         .map_err(String::from)?
         .ok_or_else(|| format!("connection not found: {}", input.connection_id))?;
-    let driver = active_driver(&state, input.connection_id).await?;
+    let operation = begin_metadata_operation(&state.connection_manager, input.connection_id)
+        .await
+        .map_err(String::from)?;
     let task = state
         .task_manager
         .create_task(
@@ -263,12 +270,18 @@ pub async fn start_metadata_index_task(
             }
         });
 
-        let result = index
-            .index_connection(&connection, driver, force, |progress| {
-                let _ = progress_tx.send(progress);
-                !handle.is_cancel_requested()
-            })
-            .await;
+        let result = async {
+            // Waiting is cancellable without interrupting the operation currently
+            // using this connection. Keep the lease through the entire index walk.
+            let operation = wait_metadata_index_operation(operation, &handle).await?;
+            index
+                .index_connection(&connection, operation.driver.clone(), force, |progress| {
+                    let _ = progress_tx.send(progress);
+                    !handle.is_cancel_requested()
+                })
+                .await
+        }
+        .await;
         drop(progress_tx);
         let _ = progress_task.await;
 
@@ -331,10 +344,245 @@ fn emit_task_update(app: &AppHandle, task: &crate::services::task_manager::TaskI
     let _ = app.emit(TASK_UPDATED_EVENT, task);
 }
 
-async fn active_driver(
-    state: &State<'_, AppState>,
+async fn begin_metadata_operation(
+    connections: &Mutex<ConnectionManager>,
     connection_id: Uuid,
-) -> Result<std::sync::Arc<dyn crate::drivers::trait_def::DatabaseDriver>, String> {
-    let manager = state.connection_manager.lock().await;
-    manager.driver(connection_id).map_err(String::from)
+) -> Result<QueryOperationStart, AppError> {
+    connections.lock().await.begin_query_operation(
+        connection_id,
+        &format!("metadata-operation-{}", Uuid::new_v4()),
+    )
+}
+
+async fn metadata_operation(
+    connections: &Mutex<ConnectionManager>,
+    connection_id: Uuid,
+) -> Result<QueryOperation, String> {
+    // Release the manager lock before waiting for the serial permit or database.
+    begin_metadata_operation(connections, connection_id)
+        .await
+        .map_err(String::from)?
+        .wait()
+        .await
+        .map_err(Into::into)
+}
+
+async fn wait_metadata_index_operation(
+    operation: QueryOperationStart,
+    handle: &TaskHandle,
+) -> Result<QueryOperation, AppError> {
+    tokio::select! {
+        biased;
+        _ = handle.cancelled() => Err(AppError::ConfigError("metadata indexing cancelled".into())),
+        result = operation.wait() => result,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        models::connection::ConnectionConfig,
+        services::{
+            connection_manager::create_active_connection, metadata_index::MetadataIndexService,
+            metadata_service::MetadataService, task_manager::TaskManager,
+        },
+    };
+    use std::{sync::Arc, time::Duration};
+
+    async fn connection() -> (Arc<Mutex<ConnectionManager>>, ConnectionConfig) {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(), "name": "metadata lease test", "driverType": "sqlite",
+            "connectionUrl": ":memory:", "driverPaths": [],
+            "createdAt": "2026-09-22T00:00:00Z", "updatedAt": "2026-09-22T00:00:00Z"
+        }))
+        .unwrap();
+        let mut manager = ConnectionManager::new();
+        manager.begin_connect(config.id).unwrap();
+        manager
+            .finish_connect(
+                config.id,
+                create_active_connection(&config, None, None).await,
+            )
+            .unwrap();
+        (Arc::new(Mutex::new(manager)), config)
+    }
+
+    async fn task() -> (TaskManager, TaskHandle) {
+        let manager = TaskManager::new();
+        let info = manager.create_task("metadata-index", "test", None).await;
+        let handle = manager.handle(info.id).await.unwrap();
+        (manager, handle)
+    }
+
+    #[tokio::test]
+    async fn metadata_queue_releases_manager_lock_and_protects_connection() {
+        let (connections, config) = connection().await;
+        let running = metadata_operation(&connections, config.id).await.unwrap();
+        let mut waiting = Box::pin(metadata_operation(&connections, config.id));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err()
+        );
+        // The waiting future remains alive, but must not own the manager lock.
+        assert!(connections
+            .try_lock()
+            .unwrap()
+            .disconnect(config.id)
+            .is_err());
+        drop(running);
+        let operation = tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        let metadata = MetadataService::new();
+        assert!(!metadata
+            .get_schemas(config.id, operation.driver.clone(), None)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(connections.lock().await.disconnect(config.id).is_err());
+        drop(operation);
+        connections.lock().await.disconnect(config.id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn queued_index_cancel_does_not_cancel_the_active_query() {
+        let (connections, config) = connection().await;
+        let running = metadata_operation(&connections, config.id).await.unwrap();
+        let queued = begin_metadata_operation(&connections, config.id)
+            .await
+            .unwrap();
+        assert!(matches!(&queued, QueryOperationStart::Queued(_)));
+        let (manager, handle) = task().await;
+        let (result, ()) = tokio::join!(wait_metadata_index_operation(queued, &handle), async {
+            manager.request_cancel(handle.id).await.unwrap();
+        });
+        assert!(result.is_err());
+        assert!(connections.lock().await.disconnect(config.id).is_err());
+        assert!(running
+            .driver
+            .execute_query("SELECT 42", None)
+            .await
+            .is_ok());
+        drop(running);
+        connections.lock().await.disconnect(config.id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn index_start_rejects_pre_cancelled_and_retired_operations() {
+        let (connections, config) = connection().await;
+        let operation = begin_metadata_operation(&connections, config.id)
+            .await
+            .unwrap();
+        let (manager, handle) = task().await;
+        manager.request_cancel(handle.id).await.unwrap();
+        assert!(wait_metadata_index_operation(operation, &handle)
+            .await
+            .is_err());
+        connections.lock().await.disconnect(config.id).unwrap();
+
+        for queued in [false, true] {
+            let (connections, config) = connection().await;
+            let running = if queued {
+                Some(metadata_operation(&connections, config.id).await.unwrap())
+            } else {
+                None
+            };
+            let operation = begin_metadata_operation(&connections, config.id)
+                .await
+                .unwrap();
+            connections
+                .lock()
+                .await
+                .invalidate_connection(config.id, "retired");
+            let (_, handle) = task().await;
+            assert!(tokio::time::timeout(
+                Duration::from_secs(1),
+                wait_metadata_index_operation(operation, &handle)
+            )
+            .await
+            .unwrap()
+            .is_err());
+            drop(running);
+        }
+    }
+
+    #[tokio::test]
+    async fn dropped_metadata_waiter_releases_its_registration() {
+        let (connections, config) = connection().await;
+        let running = metadata_operation(&connections, config.id).await.unwrap();
+        let mut waiting = Box::pin(metadata_operation(&connections, config.id));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err()
+        );
+        drop(waiting);
+        drop(running);
+        connections.lock().await.disconnect(config.id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn metadata_error_releases_lease() {
+        let (connections, config) = connection().await;
+        let result: Result<String, String> = async {
+            let operation = metadata_operation(&connections, config.id).await?;
+            MetadataService::new()
+                .get_table_ddl(
+                    config.id,
+                    operation.driver.clone(),
+                    "main",
+                    "missing",
+                    false,
+                )
+                .await
+                .map_err(Into::into)
+        }
+        .await;
+        assert!(result.is_err());
+        connections.lock().await.disconnect(config.id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_index_holds_lease_through_progress_and_releases_after_return() {
+        let (connections, config) = connection().await;
+        let operation = begin_metadata_operation(&connections, config.id)
+            .await
+            .unwrap();
+        let (_, handle) = task().await;
+        let index = MetadataIndexService::new();
+        let mut progress_count = 0;
+        let summary = async {
+            let operation = wait_metadata_index_operation(operation, &handle)
+                .await
+                .unwrap();
+            operation
+                .driver
+                .execute_query("CREATE TABLE lease_items (id INTEGER PRIMARY KEY)", None)
+                .await
+                .unwrap();
+            index
+                .index_connection(&config, operation.driver.clone(), true, |_| {
+                    progress_count += 1;
+                    assert!(connections
+                        .try_lock()
+                        .unwrap()
+                        .disconnect(config.id)
+                        .is_err());
+                    true
+                })
+                .await
+                .unwrap()
+        }
+        .await;
+        assert!(progress_count > 1);
+        assert!(summary.entry_count > 1);
+        assert!(!index
+            .search("lease_items", Some(config.id), 20)
+            .await
+            .is_empty());
+        connections.lock().await.disconnect(config.id).unwrap();
+    }
 }

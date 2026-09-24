@@ -1,14 +1,8 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
 use crate::{models::error::AppError, utils::error_redaction::sanitize_diagnostic_error};
@@ -63,12 +57,12 @@ pub struct TaskInfo {
 #[derive(Clone)]
 pub struct TaskHandle {
     pub id: Uuid,
-    cancel_requested: Arc<AtomicBool>,
+    cancel_requested: watch::Sender<bool>,
 }
 
 struct TaskRecord {
     info: TaskInfo,
-    cancel_requested: Arc<AtomicBool>,
+    cancel_requested: watch::Sender<bool>,
 }
 
 impl TaskManager {
@@ -113,7 +107,7 @@ impl TaskManager {
             info.id,
             TaskRecord {
                 info: info.clone(),
-                cancel_requested: Arc::new(AtomicBool::new(false)),
+                cancel_requested: watch::channel(false).0,
             },
         );
 
@@ -151,6 +145,9 @@ impl TaskManager {
         message: impl Into<String>,
     ) -> Result<TaskInfo, AppError> {
         self.update_task(id, |info| {
+            if info.status != TaskStatus::Pending {
+                return;
+            }
             info.status = TaskStatus::Running;
             info.progress.message = Some(message.into());
             info.logs.push(TaskLogEntry {
@@ -181,7 +178,7 @@ impl TaskManager {
             id: id.to_string(),
         })?;
 
-        record.cancel_requested.store(true, Ordering::SeqCst);
+        record.cancel_requested.send_replace(true);
         if matches!(
             record.info.status,
             TaskStatus::Pending | TaskStatus::Running
@@ -292,13 +289,64 @@ impl TaskManager {
 
 impl TaskHandle {
     pub fn is_cancel_requested(&self) -> bool {
-        self.cancel_requested.load(Ordering::SeqCst)
+        *self.cancel_requested.borrow()
+    }
+
+    pub async fn cancelled(&self) {
+        // Subscribe before checking the value; wait_for also observes a cancel
+        // requested before subscription. Each waiter has its own receiver.
+        let mut receiver = self.cancel_requested.subscribe();
+        let _ = receiver.wait_for(|requested| *requested).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{TaskManager, TaskStatus};
+
+    #[tokio::test]
+    async fn cancellation_wakes_all_waiters_and_is_retained_for_late_subscribers() {
+        let manager = TaskManager::new();
+        let task = manager.create_task("test", "test", None).await;
+        let first = manager.handle(task.id).await.unwrap();
+        let second = first.clone();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(first.cancelled(), second.cancelled(), async {
+                manager.request_cancel(task.id).await.unwrap();
+            });
+            manager.handle(task.id).await.unwrap().cancelled().await;
+        })
+        .await
+        .expect("all cancellation observers must wake");
+        assert!(first.is_cancel_requested());
+    }
+
+    #[tokio::test]
+    async fn delayed_start_does_not_overwrite_cancelling_or_terminal_status() {
+        let manager = TaskManager::new();
+        let task = manager.create_task("test", "test", None).await;
+        manager.request_cancel(task.id).await.unwrap();
+        assert_eq!(
+            manager
+                .start_task(task.id, "late start")
+                .await
+                .unwrap()
+                .status,
+            TaskStatus::Cancelling
+        );
+        manager
+            .finish_cancelled(task.id, "cancelled")
+            .await
+            .unwrap();
+        assert_eq!(
+            manager
+                .start_task(task.id, "late start")
+                .await
+                .unwrap()
+                .status,
+            TaskStatus::Cancelled
+        );
+    }
 
     #[tokio::test]
     async fn task_lifecycle_transitions_to_success() {

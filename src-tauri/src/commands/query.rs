@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
@@ -41,6 +41,12 @@ pub struct ExecuteQueryStreamInput {
     pub connection_name: Option<String>,
     pub database: Option<String>,
     pub schema: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionSession {
+    pub connection_generation: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,7 +124,7 @@ async fn ensure_console_session(
 /// connections are shared in Auto mode, so the selected context must be sent
 /// to the driver for every execution rather than inherited from the sidebar
 /// or a prior tab's session state.
-async fn apply_execution_context(
+pub(crate) async fn apply_execution_context(
     driver: std::sync::Arc<dyn crate::drivers::trait_def::DatabaseDriver>,
     driver_type: DriverType,
     database: Option<&str>,
@@ -215,7 +221,7 @@ pub async fn execute_query(
             );
         }
         let sql = input.sql.clone();
-        let result = state
+        let mut result = state
             .query_engine
             .execute_query(driver, &input.sql, input.query_id)
             .await;
@@ -225,6 +231,9 @@ pub async fn execute_query(
                 console_id,
                 ConsoleTransactionPhase::Failed,
             );
+        }
+        if let Ok(response) = &mut result {
+            response.connection_generation = Some(operation.generation);
         }
         clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
         return result.map_err(Into::into);
@@ -242,34 +251,16 @@ pub async fn execute_query(
         QueryOperationStart::Ready(operation) => operation,
         QueryOperationStart::Queued(queued) => {
             emit_query_queue_state(&app, &input.query_id, input.connection_id, "queued");
-            let operation = queued.wait().await.map_err(String::from)?;
-            state
-                .connection_manager
-                .lock()
-                .await
-                .activate_queued_query(
-                    input.connection_id,
-                    input.query_id.as_deref().unwrap_or("anonymous-query"),
-                )
-                .map_err(String::from)?;
-            operation
+            queued.wait().await.map_err(String::from)?
         }
     };
-    if let Err(error) = apply_execution_context(
+    apply_execution_context(
         operation.driver.clone(),
         driver_type,
         input.database.as_deref(),
         input.schema.as_deref(),
     )
-    .await
-    {
-        state
-            .connection_manager
-            .lock()
-            .await
-            .release_operation(input.connection_id);
-        return Err(error);
-    }
+    .await?;
     log_execute_context(
         input.tab_id.as_deref(),
         input.connection_id,
@@ -281,7 +272,8 @@ pub async fn execute_query(
     );
     emit_query_queue_state(&app, &input.query_id, input.connection_id, "running");
     let sql = input.sql.clone();
-    let execution = state
+    let generation = operation.generation;
+    let mut execution = state
         .query_engine
         .execute_query(operation.driver, &input.sql, input.query_id)
         .await;
@@ -292,16 +284,15 @@ pub async fn execute_query(
         retire_stale_connection(
             &state,
             input.connection_id,
+            generation,
             "query detected a closed runtime session",
         )
         .await;
     }
+    if let Ok(response) = &mut execution {
+        response.connection_generation = Some(generation);
+    }
     clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &execution).await;
-    state
-        .connection_manager
-        .lock()
-        .await
-        .release_operation(input.connection_id);
     execution.map_err(Into::into)
 }
 
@@ -310,7 +301,7 @@ pub async fn execute_query_stream(
     app: AppHandle,
     state: State<'_, AppState>,
     input: ExecuteQueryStreamInput,
-) -> Result<(), String> {
+) -> Result<ExecutionSession, String> {
     let driver_type = execution_driver_type(&state, input.connection_id)?;
     if let Some(console_id) = input.console_id.as_deref() {
         let input_query_id = input.query_id.clone();
@@ -365,7 +356,9 @@ pub async fn execute_query_stream(
             );
         }
         clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
-        return result;
+        return result.map(|()| ExecutionSession {
+            connection_generation: operation.generation,
+        });
     }
     let operation_start = {
         let mut manager = state.connection_manager.lock().await;
@@ -382,31 +375,16 @@ pub async fn execute_query_stream(
                 input.connection_id,
                 "queued",
             );
-            let operation = queued.wait().await.map_err(String::from)?;
-            state
-                .connection_manager
-                .lock()
-                .await
-                .activate_queued_query(input.connection_id, &input.query_id)
-                .map_err(String::from)?;
-            operation
+            queued.wait().await.map_err(String::from)?
         }
     };
-    if let Err(error) = apply_execution_context(
+    apply_execution_context(
         operation.driver.clone(),
         driver_type,
         input.database.as_deref(),
         input.schema.as_deref(),
     )
-    .await
-    {
-        state
-            .connection_manager
-            .lock()
-            .await
-            .release_operation(input.connection_id);
-        return Err(error);
-    }
+    .await?;
     log_execute_context(
         input.tab_id.as_deref(),
         input.connection_id,
@@ -423,6 +401,7 @@ pub async fn execute_query_stream(
         "running",
     );
     let sql = input.sql.clone();
+    let generation = operation.generation;
     let result = state
         .query_engine
         .execute_query_stream(
@@ -443,17 +422,15 @@ pub async fn execute_query_stream(
         retire_stale_connection(
             &state,
             input.connection_id,
+            generation,
             "query stream detected a closed runtime session",
         )
         .await;
     }
     clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
-    state
-        .connection_manager
-        .lock()
-        .await
-        .release_operation(input.connection_id);
-    result
+    result.map(|()| ExecutionSession {
+        connection_generation: generation,
+    })
 }
 
 async fn clear_metadata_after_successful_ddl<T, E>(
@@ -522,7 +499,12 @@ fn should_retire_stale_connection_message(message: &str) -> bool {
     .any(|needle| message.contains(needle))
 }
 
-async fn retire_stale_connection(state: &State<'_, AppState>, connection_id: Uuid, reason: &str) {
+async fn retire_stale_connection(
+    state: &State<'_, AppState>,
+    connection_id: Uuid,
+    generation: u64,
+    reason: &str,
+) {
     log::debug!(
         "retiring stale execution session: connectionId={} reason={}",
         connection_id,
@@ -532,7 +514,7 @@ async fn retire_stale_connection(state: &State<'_, AppState>, connection_id: Uui
         .connection_manager
         .lock()
         .await
-        .invalidate_connection(connection_id, reason);
+        .invalidate_connection_generation(connection_id, generation, reason);
 }
 
 #[cfg(test)]
@@ -626,18 +608,11 @@ pub async fn explain_query(
         QueryOperationStart::Ready(operation) => operation,
         QueryOperationStart::Queued(queued) => {
             emit_query_queue_state(&app, &Some(query_id.clone()), connection_id, "queued");
-            let operation = queued.wait().await.map_err(String::from)?;
-            state
-                .connection_manager
-                .lock()
-                .await
-                .activate_queued_query(connection_id, &query_id)
-                .map_err(String::from)?;
-            operation
+            queued.wait().await.map_err(String::from)?
         }
     };
     emit_query_queue_state(&app, &Some(query_id), connection_id, "running");
-    let result = async {
+    async {
         apply_execution_context(
             operation.driver.clone(),
             driver_type,
@@ -651,13 +626,7 @@ pub async fn explain_query(
             .await
             .map_err(String::from)
     }
-    .await;
-    state
-        .connection_manager
-        .lock()
-        .await
-        .release_operation(connection_id);
-    result
+    .await
 }
 
 #[tauri::command]

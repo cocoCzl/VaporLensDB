@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, Loader2, LockKeyhole, Maximize2, PanelBottomClose, PanelBottomOpen, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react'
+import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, Loader2, LockKeyhole, Maximize2, PanelBottomClose, PanelBottomOpen, RefreshCw, Repeat2, Search, Trash2, Upload, X } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
@@ -22,6 +22,7 @@ import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useQuery } from '@/hooks/useQuery'
 import {
   exportQueryResultCsv,
+  exportQueryCsv,
   exportTableCsv,
   importTableCsv,
   previewTableCsvImport,
@@ -29,6 +30,7 @@ import {
 } from '@/ipc/export'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
+import { splitSqlStatements } from '@/lib/sqlLexer'
 import { persistDirtySqlDrafts } from '@/lib/sqlDraftPersistence'
 import { captureResultExport } from '@/lib/resultExport'
 import { runTabTransaction } from '@/lib/tabTransaction'
@@ -48,7 +50,7 @@ import { useUiStore } from '@/stores/uiStore'
 import type { ConnectionConfig, DriverType } from '@/types/connection'
 import type { AppError } from '@/types/error'
 import type { ColumnInfo, DbObjectInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
-import type { QueryResult } from '@/types/query'
+import type { QueryExecutionSnapshot, QueryResult } from '@/types/query'
 import type { QueryHistoryEntry, QueryHistoryStatus } from '@/types/queryHistory'
 import type { TaskInfo } from '@/types/task'
 import type { EditorTab } from '@/stores/editorStore'
@@ -972,6 +974,22 @@ export function MainPanel() {
             >
               <Download className="size-3.5" />
             </IconTooltipButton>
+            <IconTooltipButton
+              size="icon-xs"
+              label={t('workbench.exportAllRows')}
+              variant="ghost"
+              disabled={Boolean(activeExplain) || !activeResult || activeResult.columns.length === 0 || Boolean(activeTab.running) || !activeResultSource || splitSqlStatements(activeResultSource.sql).length !== 1}
+              onClick={() => activeResultSource && exportFullQueryResult(
+                activeResultSource,
+                activeTab.title,
+                notify,
+                notifyError,
+                upsertTask,
+                exportDirectory,
+              )}
+            >
+              <Repeat2 className="size-3.5" />
+            </IconTooltipButton>
             <IconTooltipButton size="icon-xs" label={workspaceView === 'results' ? t('editor.restoreSplit') : t('editor.maximizeResults')} variant="ghost" onClick={() => setWorkspaceView((view) => view === 'results' ? 'split' : 'results')}>
               <Maximize2 className="size-3.5" />
             </IconTooltipButton>
@@ -1786,7 +1804,7 @@ function DataTabPanel({
               {importPreview.validRows.toLocaleString()} valid /{' '}
               {importPreview.totalRows.toLocaleString()} rows
               {importPreview.invalidRows.length > 0
-                ? ` · ${importPreview.invalidRows.length} invalid`
+                ? ` · ${(importPreview.totalRows - importPreview.validRows).toLocaleString()} invalid`
                 : ''}
             </span>
           )}
@@ -2398,8 +2416,9 @@ function ResultViewTabs({
 }
 
 function confirmDangerousSql(risk: SqlRiskAnalysis) {
-  const title = i18n.t('workbench.dangerousSqlTitle')
-  const environmentLine = i18n.t('workbench.dangerousSqlBody')
+  const uncertain = risk.status === 'unknown'
+  const title = i18n.t(uncertain ? 'workbench.uncertainSqlTitle' : 'workbench.dangerousSqlTitle')
+  const environmentLine = i18n.t(uncertain ? 'workbench.uncertainSqlBody' : 'workbench.dangerousSqlBody')
   const reasons = risk.reasons.map(formatSqlRiskReason).join('\n')
 
   return window.confirm(`${title}\n\n${environmentLine}\n\n${i18n.t('workbench.dangerDetected')}\n${reasons}\n\n${i18n.t('workbench.continueExecute')}`)
@@ -2507,6 +2526,12 @@ function formatSqlRiskReason(reason: SqlRiskReason) {
       return i18n.t('workbench.riskDeleteWithoutWhere')
     case 'updateWithoutWhere':
       return i18n.t('workbench.riskUpdateWithoutWhere')
+    case 'mergeStatement':
+      return i18n.t('workbench.riskMerge')
+    case 'proceduralStatement':
+      return i18n.t('workbench.riskProcedural')
+    case 'unclassifiedStatement':
+      return i18n.t('workbench.riskUnclassified')
   }
 }
 
@@ -2650,6 +2675,42 @@ async function exportCurrentResult(
     })
   } catch (error) {
     notifyError(normalizeAppError(error), i18n.t('workbench.startCsvExportFailed'))
+  }
+}
+
+async function exportFullQueryResult(
+  snapshot: QueryExecutionSnapshot,
+  title: string,
+  notify: (notification: Omit<AppNotification, 'id'>) => void,
+  notifyError: (error: AppError, title?: string) => void,
+  upsertTask: (task: TaskInfo) => void,
+  exportDirectory: string | null,
+) {
+  if (!window.confirm(i18n.t('workbench.exportAllRowsConfirmation'))) return
+  try {
+    const directory = exportDirectory ?? await downloadDir()
+    const fileName = `${safeFileName(title || 'query-result')}-all-${new Date()
+      .toISOString()
+      .replace(/[:.]/g, '-')}.csv`
+    const path = await join(directory, fileName)
+    const task = await exportQueryCsv({
+      connectionId: snapshot.connectionId,
+      connectionGeneration: snapshot.connectionGeneration,
+      sql: snapshot.sql,
+      database: snapshot.database,
+      schema: snapshot.schema,
+      consoleId: snapshot.consoleId,
+      path,
+      includeHeader: true,
+    })
+    upsertTask(task)
+    notify({
+      kind: 'info',
+      title: i18n.t('workbench.fullQueryCsvExportStarted'),
+      message: fileName,
+    })
+  } catch (error) {
+    notifyError(normalizeAppError(error), i18n.t('workbench.startFullQueryCsvExportFailed'))
   }
 }
 

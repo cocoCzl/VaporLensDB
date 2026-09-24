@@ -19,6 +19,7 @@ import { useConnectionStore } from './stores/connectionStore'
 import { useMetadataStore } from './stores/metadataStore'
 import i18n from './i18n'
 import { closeEditorTab } from './lib/closeEditorTab'
+import { onConsoleTransactionUpdated } from './ipc/query'
 
 const MIN_SPLASH_DURATION_MS = 250
 
@@ -97,6 +98,25 @@ export default function App() {
       unlisten?.()
     }
   }, [loadTasks, upsertTask])
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+    onConsoleTransactionUpdated((transaction) => {
+      useEditorStore.getState().syncConsoleTransactionState(transaction)
+    })
+      .then((dispose) => {
+        if (cancelled) dispose()
+        else unlisten = dispose
+      })
+      .catch(() => {
+        // Browser preview does not expose native transaction events.
+      })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
