@@ -43,6 +43,7 @@ public final class JdbcBridge {
     private static final Pattern STREAM_MAX_ROWS_PATTERN = Pattern.compile("\\\"maxRows\\\"\\s*:\\s*(\\d+)");
     private static final Pattern STREAM_MAX_CELL_BYTES_PATTERN = Pattern.compile("\\\"maxCellBytes\\\"\\s*:\\s*(\\d+)");
     private static final Pattern STREAM_MAX_CHUNK_BYTES_PATTERN = Pattern.compile("\\\"maxChunkBytes\\\"\\s*:\\s*(\\d+)");
+    private static final Pattern STREAM_MAX_RESULT_BYTES_PATTERN = Pattern.compile("\\\"maxResultBytes\\\"\\s*:\\s*(\\d+)");
 
     private JdbcBridge() {
     }
@@ -325,6 +326,7 @@ public final class JdbcBridge {
                 int columnCount = metaData.getColumnCount();
                 String columns = columnsJson(metaData, columnCount);
                 StreamChunkBuffer rows = new StreamChunkBuffer(request.chunkSize(), request.maxChunkBytes());
+                ResultByteBudget resultBudget = new ResultByteBudget(request.maxResultBytes());
                 long rowCount = 0;
                 boolean truncated = false;
                 while (resultSet.next()) {
@@ -341,6 +343,10 @@ public final class JdbcBridge {
                                 request.maxCellBytes());
                     }
                     row.append(']');
+                    if (!resultBudget.tryAdd(row)) {
+                        truncated = true;
+                        break;
+                    }
                     List<String> flushed = rows.add(row.toString());
                     if (flushed != null) {
                         respondChunk(requestId, columns, flushed);
@@ -388,10 +394,14 @@ public final class JdbcBridge {
         int maxChunkBytes = boundedPositiveInt(
                 requiredJsonString(payload, STREAM_MAX_CHUNK_BYTES_PATTERN, "maxChunkBytes"),
                 MAX_INTERACTIVE_SOURCE_CHUNK_BYTES);
+        int maxResultBytes = boundedPositiveInt(
+                requiredJsonString(payload, STREAM_MAX_RESULT_BYTES_PATTERN, "maxResultBytes"),
+                MAX_INTERACTIVE_RESULT_BYTES);
         if (maxChunkBytes < maxCellBytes + 5) {
             throw new IllegalArgumentException("QUERY_STREAM maxChunkBytes must fit one maximum-size cell row");
         }
-        return new StreamQueryRequest(decode(encodedSql), chunkSize, maxRows, maxCellBytes, maxChunkBytes);
+        return new StreamQueryRequest(
+                decode(encodedSql), chunkSize, maxRows, maxCellBytes, maxChunkBytes, maxResultBytes);
     }
 
     private static String requiredJsonString(String payload, Pattern pattern, String field) {
@@ -439,7 +449,8 @@ public final class JdbcBridge {
             int chunkSize,
             Long maxRows,
             int maxCellBytes,
-            int maxChunkBytes) {
+            int maxChunkBytes,
+            int maxResultBytes) {
     }
 
     private static void respondChunk(String requestId, String columns, List<String> rows) {
@@ -489,35 +500,56 @@ public final class JdbcBridge {
         }
     }
 
-    static final class BoundedResultRows {
-        private final StringBuilder output;
+    static final class ResultByteBudget {
         private final long maxBytes;
         private long bytes;
         private int rowCount;
 
-        BoundedResultRows(StringBuilder output, long maxBytes) {
-            this.output = output;
+        ResultByteBudget(long maxBytes) {
             this.maxBytes = Math.max(maxBytes, 1);
         }
 
-        void add(CharSequence row) {
+        boolean tryAdd(CharSequence row) {
             // Match Rust's conservative row_json_bytes estimate: one byte of
             // per-row framing plus the comma between subsequent rows.
             long framedBytes = utf8Length(row) + 1 + (rowCount == 0 ? 0 : 1);
             if (framedBytes > maxBytes - bytes) {
+                return false;
+            }
+            bytes += framedBytes;
+            rowCount += 1;
+            return true;
+        }
+
+        long bytes() {
+            return bytes;
+        }
+    }
+
+    static final class BoundedResultRows {
+        private final StringBuilder output;
+        private final ResultByteBudget budget;
+        private int rowCount;
+
+        BoundedResultRows(StringBuilder output, long maxBytes) {
+            this.output = output;
+            this.budget = new ResultByteBudget(maxBytes);
+        }
+
+        void add(CharSequence row) {
+            if (!budget.tryAdd(row)) {
                 throw new IllegalArgumentException(
-                        "interactive JDBC result exceeds the " + maxBytes + " byte limit");
+                        "interactive JDBC result exceeds the byte limit");
             }
             if (rowCount > 0) {
                 output.append(',');
             }
             output.append(row);
-            bytes += framedBytes;
             rowCount += 1;
         }
 
         long bytes() {
-            return bytes;
+            return budget.bytes();
         }
     }
 

@@ -645,6 +645,7 @@ impl JdbcBridgeCommand {
                     "maxRows": max_rows,
                     "maxCellBytes": MAX_INTERACTIVE_CELL_BYTES,
                     "maxChunkBytes": MAX_INTERACTIVE_SOURCE_CHUNK_BYTES,
+                    "maxResultBytes": MAX_JDBC_RESULT_BYTES,
                 });
                 format!(
                     "QUERY_STREAM\t{request_id}\t{}\n",
@@ -684,7 +685,7 @@ impl JdbcBridgeCommand {
 const JDBC_CONNECT_TIMEOUT_SECS: u32 = 15;
 const JDBC_QUERY_TIMEOUT_SECS: u32 = 60;
 const JDBC_METADATA_TIMEOUT_SECS: u32 = 30;
-const MAX_JDBC_NON_STREAM_RESULT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_JDBC_RESULT_BYTES: usize = 64 * 1024 * 1024;
 
 #[async_trait]
 impl DatabaseDriver for JdbcDriver {
@@ -1393,7 +1394,7 @@ fn validate_jdbc_stream_chunk(rows: &[Vec<serde_json::Value>]) -> Result<(), App
 }
 
 fn validate_jdbc_query_output(output: &JdbcQueryOutput) -> Result<(), AppError> {
-    validate_jdbc_query_output_with_limit(output, MAX_JDBC_NON_STREAM_RESULT_BYTES)
+    validate_jdbc_query_output_with_limit(output, MAX_JDBC_RESULT_BYTES)
 }
 
 fn validate_jdbc_query_output_with_limit(
@@ -1813,6 +1814,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(payload["maxCellBytes"], 1024 * 1024);
         assert_eq!(payload["maxChunkBytes"], 4 * 1024 * 1024);
+        assert_eq!(payload["maxResultBytes"], 64 * 1024 * 1024);
     }
 
     #[test]
