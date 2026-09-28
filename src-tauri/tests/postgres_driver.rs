@@ -162,6 +162,186 @@ async fn cancels_running_postgres_query() {
 
 #[tokio::test]
 #[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn cancelling_one_query_does_not_cancel_the_next_query_on_the_shared_session() {
+    let url = test_pg_url().expect("TEST_PG_URL or TEST_PG_JDBC_URL must be set");
+    let driver = Arc::new(
+        PostgresDriver::connect(&url)
+            .await
+            .expect("connect postgres"),
+    );
+
+    let sleeping = {
+        let driver = Arc::clone(&driver);
+        tokio::spawn(async move {
+            driver
+                .execute_query("SELECT pg_sleep(10)", Some("cancel-isolation-sleep"))
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let queued = {
+        let driver = Arc::clone(&driver);
+        tokio::spawn(async move {
+            driver
+                .execute_query("SELECT 42::int4 AS value", Some("cancel-isolation-next"))
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    driver
+        .cancel_query("cancel-isolation-sleep")
+        .await
+        .expect("cancel only the sleeping query");
+
+    assert!(
+        sleeping.await.expect("join sleeping query").is_err(),
+        "the selected query should be cancelled"
+    );
+    let queued = queued
+        .await
+        .expect("join next query")
+        .expect("the next query must not be cancelled");
+    assert_eq!(queued.rows[0][0], serde_json::json!(42));
+
+    let follow_up = driver
+        .execute_query(
+            "SELECT 7::int4 AS value",
+            Some("cancel-isolation-follow-up"),
+        )
+        .await
+        .expect("the shared session remains usable after cancellation");
+    assert_eq!(follow_up.rows[0][0], serde_json::json!(7));
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn cancellation_stops_the_query_on_the_postgres_backend() {
+    let url = test_pg_url().expect("TEST_PG_URL or TEST_PG_JDBC_URL must be set");
+    let driver = Arc::new(
+        PostgresDriver::connect(&url)
+            .await
+            .expect("connect postgres query session"),
+    );
+    let observer = PostgresDriver::connect(&url)
+        .await
+        .expect("connect postgres observer session");
+    let backend = driver
+        .execute_query("SELECT pg_backend_pid()::int4", None)
+        .await
+        .expect("read query backend pid");
+    let backend_pid = backend.rows[0][0]
+        .as_i64()
+        .expect("backend pid is an integer");
+
+    let sleeping = {
+        let driver = Arc::clone(&driver);
+        tokio::spawn(async move {
+            driver
+                .execute_query(
+                    "SELECT pg_sleep(10) /* vaporlensdb-cancel-confirmation */",
+                    Some("cancel-confirmation"),
+                )
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    driver
+        .cancel_query("cancel-confirmation")
+        .await
+        .expect("send cancellation to postgres");
+    assert!(
+        sleeping.await.expect("join cancelled query").is_err(),
+        "cancelled query should return an error"
+    );
+
+    let activity = observer
+        .execute_query(
+            &format!("SELECT state FROM pg_stat_activity WHERE pid = {backend_pid}"),
+            None,
+        )
+        .await
+        .expect("observe cancelled backend");
+    assert_eq!(
+        activity.row_count, 1,
+        "query session should remain connected"
+    );
+    assert_eq!(activity.rows[0][0], serde_json::json!("idle"));
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn transaction_session_keeps_temp_and_uncommitted_data_for_query_explain_and_stream() {
+    let url = test_pg_url().expect("TEST_PG_URL or TEST_PG_JDBC_URL must be set");
+    let driver = PostgresDriver::connect(&url)
+        .await
+        .expect("connect postgres transaction session");
+    let observer = PostgresDriver::connect(&url)
+        .await
+        .expect("connect postgres observer session");
+
+    driver.begin_transaction().await.expect("begin transaction");
+    driver
+        .execute_query(
+            "CREATE TEMP TABLE vaporlensdb_transaction_scope(value INTEGER) ON COMMIT DROP",
+            None,
+        )
+        .await
+        .expect("create transaction-scoped temporary table");
+    driver
+        .execute_query(
+            "INSERT INTO vaporlensdb_transaction_scope VALUES (900719)",
+            None,
+        )
+        .await
+        .expect("insert uncommitted value");
+
+    let query = driver
+        .execute_query("SELECT value FROM vaporlensdb_transaction_scope", None)
+        .await
+        .expect("query sees transaction-scoped value");
+    assert_eq!(query.rows[0][0], serde_json::json!(900719));
+
+    let explain = driver
+        .explain_query("SELECT value FROM vaporlensdb_transaction_scope", None)
+        .await
+        .expect("explain resolves the transaction-scoped table");
+    assert!(explain.plan.as_array().is_some_and(|plan| !plan.is_empty()));
+
+    let (chunk_tx, mut chunk_rx) = mpsc::channel(4);
+    let summary = driver
+        .execute_query_stream(
+            "SELECT value FROM vaporlensdb_transaction_scope",
+            "transaction-scope-stream",
+            100,
+            Some(100),
+            chunk_tx,
+        )
+        .await
+        .expect("stream sees transaction-scoped value");
+    let chunk = chunk_rx
+        .recv()
+        .await
+        .expect("stream emits a chunk")
+        .expect("stream chunk succeeds");
+    assert_eq!(summary.row_count, 1);
+    assert_eq!(chunk.rows[0][0], serde_json::json!(900719));
+
+    assert!(
+        observer
+            .execute_query("SELECT value FROM vaporlensdb_transaction_scope", None)
+            .await
+            .is_err(),
+        "another physical session must not see the temporary table"
+    );
+    driver
+        .rollback_transaction()
+        .await
+        .expect("rollback transaction and drop temporary table");
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
 async fn streams_postgres_query_in_chunks() {
     let url = test_pg_url().expect("TEST_PG_URL or TEST_PG_JDBC_URL must be set");
     let driver = PostgresDriver::connect(&url)

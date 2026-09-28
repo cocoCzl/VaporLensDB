@@ -553,14 +553,18 @@ impl DatabaseDriver for MssqlDriver {
         ))
     }
 
-    async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError> {
+    async fn explain_query(
+        &self,
+        sql: &str,
+        query_id: Option<&str>,
+    ) -> Result<ExplainResult, AppError> {
         let start = Instant::now();
         let escaped = sql.replace('\'', "''");
         let plan_sql = format!(
             "SET SHOWPLAN_TEXT ON; EXEC sp_executesql N'{}'; SET SHOWPLAN_TEXT OFF;",
             escaped
         );
-        let result = self.execute_query(&plan_sql, None).await?;
+        let result = self.execute_query(&plan_sql, query_id).await?;
         Ok(ExplainResult {
             format: ExplainFormat::Table,
             plan: serde_json::Value::Null,

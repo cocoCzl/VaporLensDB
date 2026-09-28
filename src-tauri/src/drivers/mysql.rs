@@ -547,9 +547,15 @@ impl DatabaseDriver for MysqlDriver {
             })
     }
 
-    async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError> {
+    async fn explain_query(
+        &self,
+        sql: &str,
+        query_id: Option<&str>,
+    ) -> Result<ExplainResult, AppError> {
         let start = Instant::now();
-        let result = self.execute_query(&format!("EXPLAIN {sql}"), None).await?;
+        let result = self
+            .execute_query(&format!("EXPLAIN {sql}"), query_id)
+            .await?;
         Ok(ExplainResult {
             format: ExplainFormat::Table,
             plan: serde_json::Value::Null,

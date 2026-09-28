@@ -565,15 +565,13 @@ impl ConnectionManager {
         connection_id: Uuid,
         sql: &str,
     ) -> Result<ExplainResult, AppError> {
-        self.begin_query_operation(
-            connection_id,
-            &format!("manager-explain-{}", Uuid::new_v4()),
-        )?
-        .wait()
-        .await?
-        .driver
-        .explain_query(sql)
-        .await
+        let query_id = format!("manager-explain-{}", Uuid::new_v4());
+        self.begin_query_operation(connection_id, &query_id)?
+            .wait()
+            .await?
+            .driver
+            .explain_query(sql, Some(&query_id))
+            .await
     }
 
     pub async fn cancel_query(&self, connection_id: Uuid, query_id: &str) -> Result<(), AppError> {
@@ -1090,7 +1088,8 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use tokio::sync::Semaphore;
+    use chrono::Utc;
+    use tokio::sync::{Barrier, Mutex as AsyncMutex, Semaphore};
     use uuid::Uuid;
 
     use super::{
@@ -1098,12 +1097,60 @@ mod tests {
         QueryOperationStart,
     };
     use crate::{
+        commands::query::apply_execution_context,
         drivers::sqlite::SqliteDriver,
         models::{
-            connection::ConnectionRuntimeStatus,
+            connection::{ConnectionConfig, ConnectionRuntimeStatus, DriverType},
             error::{AppError, DisconnectBlockReason},
         },
     };
+
+    fn live_postgres_config() -> Option<(ConnectionConfig, String)> {
+        let jdbc_url = std::env::var("TEST_PG_JDBC_URL").ok()?;
+        let target = jdbc_url.strip_prefix("jdbc:postgresql://")?;
+        let (host_port, url_database) = target.split_once('/').unwrap_or((target, ""));
+        let (host, port) = host_port.split_once(':').unwrap_or((host_port, "5432"));
+        let database = std::env::var("TEST_PG_DATABASE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| {
+                url_database
+                    .split('?')
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("postgres")
+                    .to_string()
+            });
+        let username = std::env::var("TEST_PG_USER").ok()?;
+        let password = std::env::var("TEST_PG_PASSWORD").ok()?;
+        let now = Utc::now();
+        Some((
+            ConnectionConfig {
+                id: Uuid::new_v4(),
+                name: "PostgreSQL context integration".into(),
+                driver_definition_id: None,
+                driver_type: DriverType::Postgres,
+                driver_dialect: Some("postgresql".into()),
+                host: Some(host.to_string()),
+                port: Some(port.parse().ok()?),
+                database: Some(database),
+                connection_url: None,
+                username: Some(username),
+                password_encrypted: None,
+                has_saved_password: false,
+                driver_class: None,
+                driver_paths: Vec::new(),
+                ssl_mode: None,
+                group_id: None,
+                group: None,
+                color_tag: None,
+                ssh_tunnel: None,
+                created_at: now,
+                updated_at: now,
+            },
+            password,
+        ))
+    }
 
     async fn sqlite_connection(
         last_used: Instant,
@@ -1749,6 +1796,336 @@ mod tests {
                 .console_transaction_state(connection_id, first_tab_id)
                 .phase,
             ConsoleTransactionPhase::Idle
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires TEST_PG_JDBC_URL, TEST_PG_USER, and TEST_PG_PASSWORD"]
+    async fn real_postgres_serializes_schema_context_with_each_query() {
+        let (config, password) = live_postgres_config()
+            .expect("TEST_PG_JDBC_URL, TEST_PG_USER, and TEST_PG_PASSWORD must be set");
+        let connection_id = config.id;
+        let mut manager = ConnectionManager::new();
+        manager
+            .begin_connect(connection_id)
+            .expect("postgres connection attempt starts");
+        let active = super::create_active_connection(&config, Some(&password), None)
+            .await
+            .expect("connect real postgres runtime");
+        manager
+            .finish_connect(connection_id, Ok(active))
+            .expect("install real postgres runtime");
+
+        let suffix = Uuid::new_v4().simple().to_string();
+        let schema_a = format!("vaporlensdb_ctx_a_{suffix}");
+        let schema_b = format!("vaporlensdb_ctx_b_{suffix}");
+        let setup = manager
+            .begin_query_operation(connection_id, "context-setup")
+            .expect("register context setup")
+            .wait()
+            .await
+            .expect("start context setup");
+        for (schema, marker) in [(&schema_a, "schema-a"), (&schema_b, "schema-b")] {
+            setup
+                .driver
+                .execute_query(&format!(r#"CREATE SCHEMA "{schema}""#), None)
+                .await
+                .expect("create context schema");
+            setup
+                .driver
+                .execute_query(
+                    &format!(r#"CREATE TABLE "{schema}".context_probe(marker TEXT NOT NULL)"#),
+                    None,
+                )
+                .await
+                .expect("create context probe");
+            setup
+                .driver
+                .execute_query(
+                    &format!(r#"INSERT INTO "{schema}".context_probe VALUES ('{marker}')"#),
+                    None,
+                )
+                .await
+                .expect("insert context marker");
+        }
+        drop(setup);
+
+        let manager = Arc::new(AsyncMutex::new(manager));
+        let barrier = Arc::new(Barrier::new(3));
+        let run_schema = |schema: String, marker: &'static str| {
+            let manager = Arc::clone(&manager);
+            let barrier = Arc::clone(&barrier);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                for iteration in 0..20 {
+                    let start = manager.lock().await.begin_query_operation(
+                        connection_id,
+                        &format!("context-{marker}-{iteration}"),
+                    )?;
+                    let operation = start.wait().await?;
+                    apply_execution_context(
+                        operation.driver.clone(),
+                        DriverType::Postgres,
+                        None,
+                        Some(&schema),
+                    )
+                    .await
+                    .map_err(AppError::ConfigError)?;
+                    let result = operation
+                        .driver
+                        .execute_query(
+                            "SELECT marker FROM context_probe CROSS JOIN LATERAL pg_sleep(0.005)",
+                            None,
+                        )
+                        .await?;
+                    if result.rows[0][0] != serde_json::json!(marker) {
+                        return Err(AppError::ConfigError(format!(
+                            "schema context crossed into another tab: expected {marker}, got {}",
+                            result.rows[0][0]
+                        )));
+                    }
+                }
+                Ok::<(), AppError>(())
+            })
+        };
+        let task_a = run_schema(schema_a.clone(), "schema-a");
+        let task_b = run_schema(schema_b.clone(), "schema-b");
+        barrier.wait().await;
+        let result_a = task_a.await.expect("join schema-a task");
+        let result_b = task_b.await.expect("join schema-b task");
+
+        let cleanup = manager
+            .lock()
+            .await
+            .begin_query_operation(connection_id, "context-cleanup")
+            .expect("register context cleanup")
+            .wait()
+            .await
+            .expect("start context cleanup");
+        for schema in [&schema_a, &schema_b] {
+            cleanup
+                .driver
+                .execute_query(
+                    &format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#),
+                    None,
+                )
+                .await
+                .expect("drop context schema");
+        }
+
+        result_a.expect("schema-a always reads its own marker");
+        result_b.expect("schema-b always reads its own marker");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_PG_JDBC_URL, TEST_PG_USER, and TEST_PG_PASSWORD"]
+    async fn real_postgres_explain_can_be_cancelled_by_its_query_id() {
+        let (config, password) = live_postgres_config()
+            .expect("TEST_PG_JDBC_URL, TEST_PG_USER, and TEST_PG_PASSWORD must be set");
+        let connection_id = config.id;
+        let mut manager = ConnectionManager::new();
+        manager
+            .begin_connect(connection_id)
+            .expect("postgres connection attempt starts");
+        let active = super::create_active_connection(&config, Some(&password), None)
+            .await
+            .expect("connect real postgres runtime");
+        manager
+            .finish_connect(connection_id, Ok(active))
+            .expect("install real postgres runtime");
+
+        let schema = format!("vaporlensdb_explain_{}", Uuid::new_v4().simple());
+        let setup = manager
+            .begin_query_operation(connection_id, "explain-cancel-setup")
+            .expect("register explain setup")
+            .wait()
+            .await
+            .expect("start explain setup");
+        setup
+            .driver
+            .execute_query(&format!(r#"CREATE SCHEMA "{schema}""#), None)
+            .await
+            .expect("create explain schema");
+        setup
+            .driver
+            .execute_query(
+                &format!(
+                    r#"
+                    CREATE FUNCTION "{schema}".slow_plan() RETURNS integer
+                    LANGUAGE plpgsql IMMUTABLE
+                    AS $$ BEGIN PERFORM pg_sleep(3); RETURN 1; END $$
+                    "#
+                ),
+                None,
+            )
+            .await
+            .expect("create slow planning function");
+        drop(setup);
+
+        let operation = manager
+            .begin_query_operation(connection_id, "explain-cancel-live")
+            .expect("register explain query")
+            .wait()
+            .await
+            .expect("start explain query");
+        let explain_driver = operation.driver.clone();
+        let explain_sql = format!(r#"SELECT "{schema}".slow_plan()"#);
+        let started = Instant::now();
+        let running = tokio::spawn(async move {
+            let _operation = operation;
+            explain_driver
+                .explain_query(&explain_sql, Some("explain-cancel-live"))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let cancel_result = manager
+            .query_driver(connection_id, "explain-cancel-live")
+            .expect("route cancellation to explain driver")
+            .cancel_query("explain-cancel-live")
+            .await;
+        let explain_result = running.await.expect("join explain query");
+        let elapsed = started.elapsed();
+
+        let cleanup = manager
+            .begin_query_operation(connection_id, "explain-cancel-cleanup")
+            .expect("register explain cleanup")
+            .wait()
+            .await
+            .expect("start explain cleanup");
+        cleanup
+            .driver
+            .execute_query(
+                &format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#),
+                None,
+            )
+            .await
+            .expect("drop explain schema");
+
+        cancel_result.expect("cancel running explain by query id");
+        assert!(
+            explain_result.is_err(),
+            "the cancelled explain should finish with an error"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "cancellation should stop the three-second planning function promptly"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_PG_JDBC_URL, TEST_PG_USER, and TEST_PG_PASSWORD"]
+    async fn real_postgres_shutdown_closes_console_and_rolls_back_uncommitted_work() {
+        let (config, password) = live_postgres_config()
+            .expect("TEST_PG_JDBC_URL, TEST_PG_USER, and TEST_PG_PASSWORD must be set");
+        let connection_id = config.id;
+        let mut manager = ConnectionManager::new();
+        manager
+            .begin_connect(connection_id)
+            .expect("postgres connection attempt starts");
+        let active = super::create_active_connection(&config, Some(&password), None)
+            .await
+            .expect("connect real postgres runtime");
+        manager
+            .finish_connect(connection_id, Ok(active))
+            .expect("install real postgres runtime");
+        let console = super::create_active_connection(&config, Some(&password), None)
+            .await
+            .expect("connect real postgres console");
+        manager
+            .install_console_session(connection_id, "shutdown-console".into(), console)
+            .expect("install postgres console");
+        let observer = super::create_active_connection(&config, Some(&password), None)
+            .await
+            .expect("connect postgres observer");
+
+        let schema = format!("vaporlensdb_shutdown_{}", Uuid::new_v4().simple());
+        observer
+            .driver
+            .execute_query(&format!(r#"CREATE SCHEMA "{schema}""#), None)
+            .await
+            .expect("create shutdown schema");
+        observer
+            .driver
+            .execute_query(
+                &format!(r#"CREATE TABLE "{schema}".pending(value INTEGER)"#),
+                None,
+            )
+            .await
+            .expect("create shutdown table");
+
+        let operation = manager
+            .begin_console_operation(connection_id, "shutdown-console", Some("shutdown-insert"))
+            .expect("start console operation");
+        operation
+            .driver
+            .begin_transaction()
+            .await
+            .expect("begin console transaction");
+        let backend = operation
+            .driver
+            .execute_query("SELECT pg_backend_pid()::int4", None)
+            .await
+            .expect("read console backend pid");
+        let backend_pid = backend.rows[0][0]
+            .as_i64()
+            .expect("console backend pid is an integer");
+        operation
+            .driver
+            .execute_query(
+                &format!(r#"INSERT INTO "{schema}".pending VALUES (1)"#),
+                None,
+            )
+            .await
+            .expect("insert uncommitted console row");
+        drop(operation);
+        manager.set_console_phase(
+            connection_id,
+            "shutdown-console",
+            ConsoleTransactionPhase::Active,
+        );
+
+        manager.shutdown_all().await;
+
+        let mut backend_closed = false;
+        for _ in 0..20 {
+            let activity = observer
+                .driver
+                .execute_query(
+                    &format!(
+                        "SELECT count(*)::int4 FROM pg_stat_activity WHERE pid = {backend_pid}"
+                    ),
+                    None,
+                )
+                .await
+                .expect("observe shutdown console backend");
+            if activity.rows[0][0] == serde_json::json!(0) {
+                backend_closed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let rows = observer
+            .driver
+            .execute_query(
+                &format!(r#"SELECT count(*)::int4 FROM "{schema}".pending"#),
+                None,
+            )
+            .await
+            .expect("read rows after shutdown rollback");
+        observer
+            .driver
+            .execute_query(
+                &format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#),
+                None,
+            )
+            .await
+            .expect("drop shutdown schema");
+
+        assert!(backend_closed, "shutdown should close the console backend");
+        assert_eq!(
+            rows.rows[0][0],
+            serde_json::json!(0),
+            "shutdown should roll back the uncommitted console row"
         );
     }
 }

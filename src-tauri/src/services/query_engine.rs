@@ -241,8 +241,9 @@ impl QueryEngine {
         &self,
         driver: Arc<dyn DatabaseDriver>,
         sql: &str,
+        query_id: Option<&str>,
     ) -> Result<ExplainResult, AppError> {
-        driver.explain_query(sql).await
+        driver.explain_query(sql, query_id).await
     }
 
     pub async fn cancel_query(

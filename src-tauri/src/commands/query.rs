@@ -585,7 +585,7 @@ pub async fn explain_query(
             .await?;
             state
                 .query_engine
-                .explain_query(operation.driver.clone(), &sql)
+                .explain_query(operation.driver.clone(), &sql, Some(&query_id))
                 .await
                 .map_err(String::from)
         }
@@ -612,7 +612,7 @@ pub async fn explain_query(
             queued.wait().await.map_err(String::from)?
         }
     };
-    emit_query_queue_state(&app, &Some(query_id), connection_id, "running");
+    emit_query_queue_state(&app, &Some(query_id.clone()), connection_id, "running");
     async {
         apply_execution_context(
             operation.driver.clone(),
@@ -623,7 +623,7 @@ pub async fn explain_query(
         .await?;
         state
             .query_engine
-            .explain_query(operation.driver.clone(), &sql)
+            .explain_query(operation.driver.clone(), &sql, Some(&query_id))
             .await
             .map_err(String::from)
     }

@@ -139,7 +139,7 @@ async fn connects_queries_and_streams_sqlite() {
     );
 
     let explain = driver
-        .explain_query("SELECT * FROM customers WHERE account_id = 1")
+        .explain_query("SELECT * FROM customers WHERE account_id = 1", None)
         .await
         .expect("explain sqlite query");
     assert!(matches!(

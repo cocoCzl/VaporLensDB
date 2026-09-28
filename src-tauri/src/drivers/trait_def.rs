@@ -74,7 +74,11 @@ pub trait DatabaseDriver: Send + Sync {
             })
         }
     }
-    async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError>;
+    async fn explain_query(
+        &self,
+        sql: &str,
+        query_id: Option<&str>,
+    ) -> Result<ExplainResult, AppError>;
     async fn cancel_query(&self, query_id: &str) -> Result<(), AppError>;
     /// Transaction control is intentionally expressed by the driver so a Console
     /// can keep one physical session without leaking SQL dialect details to UI.

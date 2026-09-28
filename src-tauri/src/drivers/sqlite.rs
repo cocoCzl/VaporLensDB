@@ -420,9 +420,13 @@ impl DatabaseDriver for SqliteDriver {
         .await
     }
 
-    async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError> {
+    async fn explain_query(
+        &self,
+        sql: &str,
+        query_id: Option<&str>,
+    ) -> Result<ExplainResult, AppError> {
         let plan_sql = format!("EXPLAIN QUERY PLAN {}", sql.trim().trim_end_matches(';'));
-        let result = self.execute_query(&plan_sql, None).await?;
+        let result = self.execute_query(&plan_sql, query_id).await?;
         let elapsed_ms = result.elapsed_ms;
         Ok(ExplainResult {
             format: ExplainFormat::Table,

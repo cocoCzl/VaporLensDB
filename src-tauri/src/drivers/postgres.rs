@@ -741,7 +741,12 @@ impl DatabaseDriver for PostgresDriver {
         Ok(ddl)
     }
 
-    async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError> {
+    async fn explain_query(
+        &self,
+        sql: &str,
+        query_id: Option<&str>,
+    ) -> Result<ExplainResult, AppError> {
+        let _query_registration = self.register_query(query_id);
         let explain_sql = format!("EXPLAIN (FORMAT JSON) {sql}");
         let start = Instant::now();
         let rows = self

@@ -1019,7 +1019,11 @@ impl DatabaseDriver for JdbcDriver {
             })
     }
 
-    async fn explain_query(&self, sql: &str) -> Result<ExplainResult, AppError> {
+    async fn explain_query(
+        &self,
+        sql: &str,
+        query_id: Option<&str>,
+    ) -> Result<ExplainResult, AppError> {
         if self.driver_type != DriverType::Oracle {
             return Err(unsupported("explain_query"));
         }
@@ -1029,7 +1033,7 @@ impl DatabaseDriver for JdbcDriver {
         let statement_sql = normalize_jdbc_sql(sql);
         let explain_sql =
             format!("EXPLAIN PLAN SET STATEMENT_ID = '{statement_id}' FOR {statement_sql}");
-        self.execute_query(&explain_sql, None)
+        self.execute_query(&explain_sql, query_id)
             .await
             .map_err(clarify_oracle_explain_error)?;
 
@@ -1037,7 +1041,7 @@ impl DatabaseDriver for JdbcDriver {
             "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY('PLAN_TABLE', '{statement_id}', 'TYPICAL'))"
         );
         let result = self
-            .execute_query(&display_sql, None)
+            .execute_query(&display_sql, query_id)
             .await
             .map_err(clarify_oracle_explain_error)?;
 

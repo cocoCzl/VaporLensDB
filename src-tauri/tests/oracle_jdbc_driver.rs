@@ -189,7 +189,7 @@ async fn explains_oracle_query_with_tabular_plan() {
         .expect("connect oracle jdbc");
 
     let explain = driver
-        .explain_query("SELECT 1 AS value FROM dual")
+        .explain_query("SELECT 1 AS value FROM dual", None)
         .await
         .expect("explain oracle query");
 
