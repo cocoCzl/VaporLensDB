@@ -23,6 +23,10 @@ assert(resultStore.includes('const MAX_RETAINED_QUERY_RESULTS = 20'), 'query res
 assert(resultStore.includes('displayTruncated'), 'grid must distinguish retained-window truncation')
 assert(!resultStore.includes('rows: [...current.rows, ...chunk.rows]'), 'stream append must not copy every prior row')
 
+const app = read('src/App.tsx')
+assert(app.includes('subscribeSqlWorkspacePersistence()'), 'workspace persistence must use a non-rendering store subscription')
+assert(!app.includes('useEditorStore((state) => state.tabs)'), 'application root must not subscribe to the complete editor tab collection')
+
 const metadata = read('src-tauri/src/services/metadata_service.rs')
 assert(metadata.includes('const MAX_METADATA_CACHE_ENTRIES: usize = 256'), 'metadata cache entry budget is missing')
 const metadataIndex = read('src-tauri/src/services/metadata_index.rs')

@@ -14,7 +14,7 @@ import { listen } from '@tauri-apps/api/event'
 import { normalizedApplicationMenuLanguage, setApplicationMenuLanguage } from './ipc/settings'
 import { setConnectionSessionPolicy } from './ipc/connection'
 import { useTaskStore } from './stores/taskStore'
-import { persistSqlWorkspace, useEditorStore } from './stores/editorStore'
+import { persistSqlWorkspace, subscribeSqlWorkspacePersistence, useEditorStore } from './stores/editorStore'
 import { useConnectionStore } from './stores/connectionStore'
 import { useMetadataStore } from './stores/metadataStore'
 import i18n from './i18n'
@@ -32,8 +32,6 @@ export default function App() {
   const idleReclaimMinutes = useUiStore((state) => state.idleReclaimMinutes)
   const loadTasks = useTaskStore((state) => state.loadTasks)
   const upsertTask = useTaskStore((state) => state.upsertTask)
-  const editorTabs = useEditorStore((state) => state.tabs)
-  const activeEditorTabId = useEditorStore((state) => state.activeTabId)
 
   useEffect(() => {
     let cancelled = false
@@ -134,11 +132,8 @@ export default function App() {
   }, [setResolvedTheme, theme])
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      persistSqlWorkspace(editorTabs, activeEditorTabId)
-    }, 800)
-    return () => window.clearTimeout(timer)
-  }, [editorTabs, activeEditorTabId])
+    return subscribeSqlWorkspacePersistence()
+  }, [])
 
   useEffect(() => {
     const flushWorkspace = () => {

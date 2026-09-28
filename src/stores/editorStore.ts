@@ -54,6 +54,7 @@ export interface EditorTab {
 }
 
 const SQL_WORKSPACE_STORAGE_KEY = 'vaporlensdb.sqlWorkspace.v1'
+const SQL_WORKSPACE_PERSIST_DELAY_MS = 800
 
 export interface DataTabContext {
   database?: string | null
@@ -326,6 +327,38 @@ export function persistSqlWorkspace(tabs: EditorTab[], activeTabId: string | nul
     }))
   } catch {
     // Workspace restoration is best-effort and must never block the editor.
+  }
+}
+
+/**
+ * Persist editor changes without subscribing the React application root to the
+ * complete tab collection. SQL input and transient query state change often;
+ * neither should force unrelated application chrome to render again.
+ */
+export function subscribeSqlWorkspacePersistence(
+  delayMs = SQL_WORKSPACE_PERSIST_DELAY_MS,
+) {
+  let timer: ReturnType<typeof window.setTimeout> | undefined
+
+  const schedule = () => {
+    if (timer !== undefined) window.clearTimeout(timer)
+    timer = window.setTimeout(() => {
+      timer = undefined
+      const { tabs, activeTabId } = useEditorStore.getState()
+      persistSqlWorkspace(tabs, activeTabId)
+    }, delayMs)
+  }
+
+  schedule()
+  const unsubscribe = useEditorStore.subscribe((state, previousState) => {
+    if (state.tabs !== previousState.tabs || state.activeTabId !== previousState.activeTabId) {
+      schedule()
+    }
+  })
+
+  return () => {
+    unsubscribe()
+    if (timer !== undefined) window.clearTimeout(timer)
   }
 }
 

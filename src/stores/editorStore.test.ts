@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { persistSqlWorkspace, readStoredSqlWorkspace, type EditorTab, useEditorStore } from '@/stores/editorStore'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  persistSqlWorkspace,
+  readStoredSqlWorkspace,
+  subscribeSqlWorkspacePersistence,
+  type EditorTab,
+  useEditorStore,
+} from '@/stores/editorStore'
 
 const storageKey = 'vaporlensdb.sqlWorkspace.v1'
 
@@ -212,5 +218,33 @@ describe('SQL workspace persistence', () => {
       activeTabId: 'cleared-tab',
       tabs: [{ sql: '', draftId: null, dirty: false, pinned: true }],
     })
+  })
+
+  it('debounces store-driven persistence without requiring a React subscription', () => {
+    vi.useFakeTimers()
+    window.localStorage.removeItem(storageKey)
+    useEditorStore.setState({
+      tabs: [{ id: 'first', title: 'First', sql: 'SELECT 1', connectionId: null }],
+      activeTabId: 'first',
+    })
+
+    const unsubscribe = subscribeSqlWorkspacePersistence(800)
+    vi.advanceTimersByTime(700)
+    useEditorStore.getState().updateTabSql('first', 'SELECT 2')
+    vi.advanceTimersByTime(799)
+    expect(window.localStorage.getItem(storageKey)).toBeNull()
+
+    vi.advanceTimersByTime(1)
+    expect(readStoredSqlWorkspace()).toMatchObject({
+      activeTabId: 'first',
+      tabs: [{ id: 'first', sql: 'SELECT 2' }],
+    })
+
+    window.localStorage.removeItem(storageKey)
+    useEditorStore.getState().updateTabSql('first', 'SELECT 3')
+    unsubscribe()
+    vi.advanceTimersByTime(800)
+    expect(window.localStorage.getItem(storageKey)).toBeNull()
+    vi.useRealTimers()
   })
 })
