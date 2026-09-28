@@ -102,6 +102,8 @@ const pendingLoads = new Map<string, PendingMetadataLoad>()
 const MAX_FRONTEND_METADATA_KEYS = 256
 let latestIndexSearch = 0
 let nextLoadToken = 0
+const connectionEpochs = new Map<string, number>()
+let globalMetadataEpoch = 0
 
 export const useMetadataStore = create<MetadataState>()((set, get) => ({
   databases: {},
@@ -328,6 +330,9 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
   searchIndex: async (query, connectionId = null) => {
     const requestId = ++latestIndexSearch
+    const searchEpoch = connectionId
+      ? (connectionEpochs.get(connectionId) ?? 0)
+      : globalMetadataEpoch
     const normalized = query.trim()
     if (normalized.length < 2) {
       set({ indexResults: [] })
@@ -336,7 +341,12 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     try {
       const results = await searchMetadataIndex({ query: normalized, connectionId, limit: 40 })
-      if (requestId !== latestIndexSearch) return get().indexResults
+      if (
+        requestId !== latestIndexSearch
+        || (connectionId
+          ? (connectionEpochs.get(connectionId) ?? 0) !== searchEpoch
+          : globalMetadataEpoch !== searchEpoch)
+      ) return get().indexResults
       set({ indexResults: results })
       return results
     } catch (error) {
@@ -346,6 +356,8 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
   },
 
   clearConnection: (connectionId) => {
+    connectionEpochs.set(connectionId, (connectionEpochs.get(connectionId) ?? 0) + 1)
+    globalMetadataEpoch += 1
     invalidatePendingLoads(connectionId)
     set((state) => ({
       databases: omitByPrefix(state.databases, connectionId),

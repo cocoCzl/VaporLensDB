@@ -93,6 +93,30 @@ describe('metadata store resource bounds', () => {
     expect(useMetadataStore.getState().indexResults).toEqual(searchResult('new_table'))
   })
 
+  it('does not let a search from before connection clear restore stale results', async () => {
+    const request = deferred<MetadataSearchResult[]>()
+    metadataMocks.searchMetadataIndex.mockReturnValueOnce(request.promise)
+
+    const search = useMetadataStore.getState().searchIndex('old', 'connection-1')
+    useMetadataStore.getState().clearConnection('connection-1')
+    request.resolve(searchResult('stale_table'))
+
+    await expect(search).resolves.toEqual([])
+    expect(useMetadataStore.getState().indexResults).toEqual([])
+  })
+
+  it('invalidates an in-flight global search when any connection is cleared', async () => {
+    const request = deferred<MetadataSearchResult[]>()
+    metadataMocks.searchMetadataIndex.mockReturnValueOnce(request.promise)
+
+    const search = useMetadataStore.getState().searchIndex('all')
+    useMetadataStore.getState().clearConnection('connection-1')
+    request.resolve(searchResult('stale_global_table'))
+
+    await expect(search).resolves.toEqual([])
+    expect(useMetadataStore.getState().indexResults).toEqual([])
+  })
+
   it('does not restore metadata after its connection is cleared in flight', async () => {
     const request = deferred<{ name: string }[]>()
     metadataMocks.getDatabases.mockReturnValueOnce(request.promise)

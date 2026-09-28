@@ -4,7 +4,7 @@ use std::{
     io::SeekFrom,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,7 @@ const IMPORT_MAX_RECORD_BYTES: usize = 1024 * 1024;
 const IMPORT_PREVIEW_SAMPLE_BYTES: usize = 4 * 1024 * 1024;
 const IMPORT_REPORT_MAX_ROWS_PER_KIND: usize = 1_000;
 const IMPORT_REPORT_MAX_BYTES_PER_KIND: usize = 4 * 1024 * 1024;
+const IMPORT_BATCH_SIZE: usize = 100;
 const STALE_EXPORT_PART_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const EXPORT_PART_PREFIX: &str = ".vaporlensdb-export-";
 const EXPORT_PART_SUFFIX: &str = ".part";
@@ -160,6 +161,34 @@ struct BoundedRowReports {
     total: u64,
     retained_bytes: usize,
     reports: Vec<RowReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImportFileSnapshot {
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+async fn import_file_snapshot(path: &Path) -> Result<ImportFileSnapshot, AppError> {
+    let metadata = tokio::fs::metadata(path).await.map_err(AppError::from)?;
+    Ok(ImportFileSnapshot {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+async fn ensure_import_file_unchanged(
+    path: &Path,
+    expected: &ImportFileSnapshot,
+) -> Result<(), ExportTaskError> {
+    let current = import_file_snapshot(path).await?;
+    if &current != expected {
+        return Err(AppError::ConfigError(
+            "CSV file changed while it was being imported; no further rows were written".into(),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 impl BoundedRowReports {
@@ -1121,6 +1150,7 @@ async fn import_csv_rows(
     }
     let driver = operation.driver.clone();
     let target_columns = importable_column_names(&columns);
+    let file_snapshot = import_file_snapshot(Path::new(&input.path)).await?;
     let file = File::open(&input.path).await.map_err(AppError::from)?;
     let mut reader = CsvRecordReader::new(file, IMPORT_MAX_RECORD_BYTES);
     let first = reader.next_row().await?;
@@ -1174,6 +1204,7 @@ async fn import_csv_rows(
     // Validate the complete stream before the first database write. This
     // preserves the prior all-parse-first behavior without retaining every
     // valid row in memory when a malformed quoted record occurs near EOF.
+    ensure_import_file_unchanged(Path::new(&input.path), &file_snapshot).await?;
     let mut file = reader.into_inner();
     file.seek(SeekFrom::Start(0))
         .await
@@ -1185,29 +1216,99 @@ async fn import_csv_rows(
     let mut inserted_rows = 0_u64;
     let mut failed_writes = BoundedRowReports::default();
     let mut current = 0_u64;
+    let supports_multi_row_insert = matches!(
+        input.driver_type,
+        DriverType::Postgres | DriverType::Mysql | DriverType::Sqlite | DriverType::Mssql
+    );
+    let mut batch: Vec<(u64, Vec<String>)> = Vec::with_capacity(IMPORT_BATCH_SIZE);
+
+    #[allow(clippy::too_many_arguments)]
+    async fn flush_import_batch(
+        driver: &Arc<dyn crate::drivers::trait_def::DatabaseDriver>,
+        driver_type: DriverType,
+        table: &str,
+        columns: &[String],
+        empty_as_null: bool,
+        batch: &mut Vec<(u64, Vec<String>)>,
+        handle: &TaskHandle,
+        failed_writes: &mut BoundedRowReports,
+        inserted_rows: &mut u64,
+    ) -> Result<(), ExportTaskError> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let query_id = format!("table-import-{}", handle.id);
+        let sql = build_insert_batch_sql(driver_type, table, columns, batch, empty_as_null);
+        if driver.execute_query(&sql, Some(&query_id)).await.is_ok() {
+            *inserted_rows += batch.len() as u64;
+        } else {
+            for (row_number, row) in batch.drain(..) {
+                match driver
+                    .execute_query(
+                        &build_insert_sql(driver_type, table, columns, &row, empty_as_null),
+                        Some(&query_id),
+                    )
+                    .await
+                {
+                    Ok(_) => *inserted_rows += 1,
+                    Err(error) => failed_writes.push(RowReport {
+                        row_number,
+                        message: error.to_string(),
+                        values: row,
+                    }),
+                }
+            }
+            return Ok(());
+        }
+        batch.clear();
+        Ok(())
+    }
+
     while let Some(row) = reader.next_row().await? {
         current += 1;
         if handle.is_cancel_requested() {
             return Err(ExportTaskError::Cancelled);
         }
+        if current == 1 || current.is_multiple_of(100) {
+            ensure_import_file_unchanged(Path::new(&input.path), &file_snapshot).await?;
+        }
         if row.len() == import_columns.len() {
-            let sql = build_insert_sql(
-                input.driver_type,
-                &table,
-                &import_columns,
-                &row,
-                input.empty_as_null,
-            );
-            match driver
-                .execute_query(&sql, Some(&format!("table-import-{}", handle.id)))
-                .await
-            {
-                Ok(_) => inserted_rows += 1,
-                Err(error) => failed_writes.push(RowReport {
-                    row_number: first_data_row + current - 1,
-                    message: error.to_string(),
-                    values: row,
-                }),
+            let row_number = first_data_row + current - 1;
+            if supports_multi_row_insert {
+                batch.push((row_number, row));
+                if batch.len() >= IMPORT_BATCH_SIZE {
+                    flush_import_batch(
+                        &driver,
+                        input.driver_type,
+                        &table,
+                        &import_columns,
+                        input.empty_as_null,
+                        &mut batch,
+                        handle,
+                        &mut failed_writes,
+                        &mut inserted_rows,
+                    )
+                    .await?;
+                }
+            } else {
+                let sql = build_insert_sql(
+                    input.driver_type,
+                    &table,
+                    &import_columns,
+                    &row,
+                    input.empty_as_null,
+                );
+                match driver
+                    .execute_query(&sql, Some(&format!("table-import-{}", handle.id)))
+                    .await
+                {
+                    Ok(_) => inserted_rows += 1,
+                    Err(error) => failed_writes.push(RowReport {
+                        row_number,
+                        message: error.to_string(),
+                        values: row,
+                    }),
+                }
             }
         }
         if current == total_rows || current.is_multiple_of(100) {
@@ -1223,6 +1324,18 @@ async fn import_csv_rows(
             yield_now().await;
         }
     }
+    flush_import_batch(
+        &driver,
+        input.driver_type,
+        &table,
+        &import_columns,
+        input.empty_as_null,
+        &mut batch,
+        handle,
+        &mut failed_writes,
+        &mut inserted_rows,
+    )
+    .await?;
 
     let report_path = format!("{}.import-report.json", input.path);
     let report = ImportReport {
@@ -1569,6 +1682,35 @@ fn build_insert_sql(
     )
 }
 
+fn build_insert_batch_sql(
+    driver_type: DriverType,
+    table: &str,
+    columns: &[String],
+    rows: &[(u64, Vec<String>)],
+    empty_as_null: bool,
+) -> String {
+    format!(
+        "INSERT INTO {table} ({}) VALUES {};",
+        columns
+            .iter()
+            .map(|column| quote_identifier(driver_type, column))
+            .collect::<Vec<_>>()
+            .join(", "),
+        rows.iter()
+            .map(|(_, row)| {
+                format!(
+                    "({})",
+                    row.iter()
+                        .map(|value| sql_literal(value, empty_as_null))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 fn sql_literal(value: &str, empty_as_null: bool) -> String {
     if empty_as_null && value.is_empty() {
         "NULL".to_string()
@@ -1701,7 +1843,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        build_insert_sql, parse_csv, qualified_table, query_result_to_csv, validate_import_rows,
+        build_insert_batch_sql, build_insert_sql, parse_csv, qualified_table, query_result_to_csv,
+        validate_import_rows,
     };
     use crate::models::connection::DriverType;
     use crate::models::query_result::{ColumnMeta, QueryResult};
@@ -2093,11 +2236,52 @@ mod tests {
             "INSERT INTO \"public\".\"people\" (\"name\", \"note\") VALUES ('Ada', 'it''s ok');"
         );
     }
+
+    #[test]
+    fn batch_insert_sql_preserves_row_order_and_null_literals() {
+        let sql = build_insert_batch_sql(
+            DriverType::Postgres,
+            "\"public\".\"people\"",
+            &["name".into(), "note".into()],
+            &[
+                (1, vec!["Ada".into(), String::new()]),
+                (2, vec!["Bob".into(), "hi".into()]),
+            ],
+            true,
+        );
+        assert_eq!(
+            sql,
+            "INSERT INTO \"public\".\"people\" (\"name\", \"note\") VALUES ('Ada', NULL), ('Bob', 'hi');"
+        );
+    }
 }
 
 #[cfg(test)]
 mod stream_lifecycle_tests {
     use super::*;
+    use std::time::Duration as StdDuration;
+
+    #[tokio::test]
+    async fn import_rejects_a_file_that_changes_between_passes() {
+        let path = std::env::temp_dir().join(format!(
+            "vaporlensdb-import-snapshot-{}.csv",
+            Uuid::new_v4()
+        ));
+        tokio::fs::write(&path, "id\n1\n").await.unwrap();
+        let snapshot = import_file_snapshot(&path).await.unwrap();
+        tokio::time::sleep(StdDuration::from_millis(2)).await;
+        tokio::fs::write(&path, "id\n1\n2\n").await.unwrap();
+        let error = ensure_import_file_unchanged(&path, &snapshot)
+            .await
+            .expect_err("modified CSV must be rejected");
+        match error {
+            ExportTaskError::Failed(AppError::ConfigError(message)) => {
+                assert!(message.contains("CSV file changed"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        let _ = tokio::fs::remove_file(path).await;
+    }
     use crate::services::connection_manager::{create_active_connection, ConnectionManager};
     use crate::services::task_manager::TaskManager;
     use tokio::sync::oneshot;
