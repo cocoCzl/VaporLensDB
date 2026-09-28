@@ -14,6 +14,7 @@ import { normalizeConnectionEndpoint } from '@/lib/connectionEndpoint'
 import { normalizeConnectionUrl } from '@/lib/connectionUrlNormalization'
 import { defaultConnectionName, nextConnectionName } from '@/lib/defaultConnectionName'
 import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
+import { supportedSslModes } from '@/lib/connectionSslModes'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
 import type { DriverDefinition } from '@/types/driver'
@@ -109,6 +110,7 @@ export function ConnectionForm({
     driverDefinitions.find((driver) => driver.id === form.driverDefinitionId) ??
     driverDefinitions.find((driver) => driver.driverType === form.driverType)
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
+  const sslModes = supportedSslModes(form.driverType, form.sslMode)
   const readinessIssue = connectionReadinessIssue(form, driverProfile, selectedDriver, t)
   const databaseTypes = databaseTypeOptions(selectableDrivers, t)
   const activeDatabaseType = databaseTypes.find((option) => option.driverType === form.driverType)
@@ -181,6 +183,7 @@ export function ConnectionForm({
       connectionUrl: profile.defaultUrl(current, nextVariant),
       driverClass: profile.driverClass ?? '',
       driverPaths: definition?.driverArtifacts ?? [],
+      sslMode: supportedSslModes(driverType).includes(current.sslMode ?? '') ? current.sslMode : null,
     }))
   }
 
@@ -360,7 +363,7 @@ export function ConnectionForm({
             <DisclosureSection title={t('connectionForm.sslSection')} icon={<ShieldCheck />} defaultOpen={Boolean(form.sslMode)}>
               <div className="pt-3">
                 <FormRow label={t('connectionForm.sslMode')}>
-                  <AppSelect value={form.sslMode ?? ''} onValueChange={(value) => update('sslMode', value || null)} options={['', 'disable', 'prefer', 'require', 'verify-ca', 'verify-full'].map((value) => ({ value, label: value || t('common.default') }))} />
+                  <AppSelect value={form.sslMode ?? ''} onValueChange={(value) => update('sslMode', value || null)} options={sslModes.map((value) => ({ value, label: value || t('common.default') }))} />
                 </FormRow>
               </div>
             </DisclosureSection>
