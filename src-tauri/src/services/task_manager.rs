@@ -60,9 +60,17 @@ pub struct TaskHandle {
     cancel_requested: watch::Sender<bool>,
 }
 
+pub struct ScopedTaskRegistration {
+    manager: TaskManager,
+    handle: TaskHandle,
+    registration_id: Uuid,
+    cleaned: bool,
+}
+
 struct TaskRecord {
     info: TaskInfo,
     cancel_requested: watch::Sender<bool>,
+    registration_id: Uuid,
 }
 
 impl TaskManager {
@@ -108,10 +116,76 @@ impl TaskManager {
             TaskRecord {
                 info: info.clone(),
                 cancel_requested: watch::channel(false).0,
+                registration_id: Uuid::new_v4(),
             },
         );
 
         info
+    }
+
+    pub async fn register_scoped_task(
+        &self,
+        id: Uuid,
+        kind: &str,
+        title: &str,
+    ) -> Result<ScopedTaskRegistration, AppError> {
+        let now = Utc::now();
+        let registration_id = Uuid::new_v4();
+        let cancel_requested = watch::channel(false).0;
+        let info = TaskInfo {
+            id,
+            kind: kind.to_string(),
+            title: title.to_string(),
+            status: TaskStatus::Running,
+            progress: TaskProgress {
+                current: 0,
+                total: None,
+                message: Some("Running".to_string()),
+            },
+            logs: vec![TaskLogEntry {
+                at: now,
+                message: "Task started".to_string(),
+            }],
+            error: None,
+            output_path: None,
+            created_at: now,
+            updated_at: now,
+            finished_at: None,
+        };
+        let mut tasks = self.inner.lock().await;
+        if tasks.contains_key(&id) {
+            return Err(AppError::ConfigError(format!(
+                "Task ID is already active: {id}"
+            )));
+        }
+        tasks.insert(
+            id,
+            TaskRecord {
+                info,
+                cancel_requested: cancel_requested.clone(),
+                registration_id,
+            },
+        );
+        drop(tasks);
+        Ok(ScopedTaskRegistration {
+            manager: self.clone(),
+            handle: TaskHandle {
+                id,
+                cancel_requested,
+            },
+            registration_id,
+            cleaned: false,
+        })
+    }
+
+    async fn remove_registration(&self, id: Uuid, registration_id: Uuid) {
+        let mut tasks = self.inner.lock().await;
+        if tasks
+            .get(&id)
+            .is_some_and(|record| record.registration_id == registration_id)
+        {
+            tasks.remove(&id);
+        }
     }
 
     pub async fn handle(&self, id: Uuid) -> Result<TaskHandle, AppError> {
@@ -300,9 +374,39 @@ impl TaskHandle {
     }
 }
 
+impl ScopedTaskRegistration {
+    pub fn handle(&self) -> &TaskHandle {
+        &self.handle
+    }
+
+    pub async fn cleanup(mut self) {
+        self.manager
+            .remove_registration(self.handle.id, self.registration_id)
+            .await;
+        self.cleaned = true;
+    }
+}
+
+impl Drop for ScopedTaskRegistration {
+    fn drop(&mut self) {
+        if self.cleaned {
+            return;
+        }
+        let manager = self.manager.clone();
+        let id = self.handle.id;
+        let registration_id = self.registration_id;
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                manager.remove_registration(id, registration_id).await;
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{TaskManager, TaskStatus};
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn cancellation_wakes_all_waiters_and_is_retained_for_late_subscribers() {
@@ -319,6 +423,81 @@ mod tests {
         .await
         .expect("all cancellation observers must wake");
         assert!(first.is_cancel_requested());
+    }
+
+    #[tokio::test]
+    async fn scoped_task_cleanup_removes_registration_and_allows_id_reuse() {
+        let manager = TaskManager::new();
+        let id = Uuid::new_v4();
+        let registration = manager
+            .register_scoped_task(id, "preview.csv.import", "preview")
+            .await
+            .unwrap();
+        registration.cleanup().await;
+        assert!(manager.handle(id).await.is_err());
+        let next = manager
+            .register_scoped_task(id, "preview.csv.import", "preview")
+            .await
+            .unwrap();
+        assert!(!next.handle().is_cancel_requested());
+        next.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn scoped_task_rejects_duplicate_active_id() {
+        let manager = TaskManager::new();
+        let id = Uuid::new_v4();
+        let registration = manager
+            .register_scoped_task(id, "preview.csv.import", "preview")
+            .await
+            .unwrap();
+        let error = manager
+            .register_scoped_task(id, "preview.csv.import", "duplicate")
+            .await
+            .err()
+            .expect("duplicate registration must fail");
+        assert!(error.to_string().contains("already active"));
+        registration.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn dropped_scoped_task_cleans_up_without_removing_a_new_generation() {
+        let manager = TaskManager::new();
+        let id = Uuid::new_v4();
+        let registration = manager
+            .register_scoped_task(id, "preview.csv.import", "preview")
+            .await
+            .unwrap();
+        drop(registration);
+        tokio::task::yield_now().await;
+        let next = manager
+            .register_scoped_task(id, "preview.csv.import", "preview again")
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert!(manager.handle(id).await.is_ok());
+        next.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn aborting_future_does_not_leak_scoped_registration() {
+        let manager = TaskManager::new();
+        let id = Uuid::new_v4();
+        let manager_for_task = manager.clone();
+        let task = tokio::spawn(async move {
+            let _registration = manager_for_task
+                .register_scoped_task(id, "preview.csv.import", "preview")
+                .await
+                .unwrap();
+            std::future::pending::<()>().await;
+        });
+        while manager.handle(id).await.is_err() {
+            tokio::task::yield_now().await;
+        }
+        task.abort();
+        let _ = task.await;
+        tokio::task::yield_now().await;
+        assert!(manager.handle(id).await.is_err());
     }
 
     #[tokio::test]

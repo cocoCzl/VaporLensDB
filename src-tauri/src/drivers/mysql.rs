@@ -1,11 +1,13 @@
 use std::time::Instant;
 
 use async_trait::async_trait;
-use mysql_async::{prelude::Queryable, Column, Conn, Opts, OptsBuilder, Row, SslOpts, Value};
+use mysql_async::{
+    prelude::Queryable, Column, Conn, Opts, OptsBuilder, Params, Row, SslOpts, Value,
+};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
-    drivers::trait_def::DatabaseDriver,
+    drivers::trait_def::{DatabaseDriver, DbParameter},
     models::{
         error::AppError,
         metadata::{
@@ -130,6 +132,10 @@ impl DatabaseDriver for MysqlDriver {
         "mysql"
     }
 
+    fn supports_parameterized_import(&self) -> bool {
+        true
+    }
+
     fn capabilities(&self) -> DriverCapabilities {
         DriverCapabilities {
             has_database: true,
@@ -184,6 +190,51 @@ impl DatabaseDriver for MysqlDriver {
             .await
             .map_err(|error| map_mysql_query_error(sql, error))?;
 
+        Ok(QueryResult {
+            row_count: rows.len() as u64,
+            columns,
+            rows,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+            affected_rows,
+            query_id: query_id.map(str::to_string),
+            truncated: false,
+            max_rows: None,
+        })
+    }
+
+    async fn execute_parameterized(
+        &self,
+        sql: &str,
+        params: &[DbParameter],
+        query_id: Option<&str>,
+    ) -> Result<QueryResult, AppError> {
+        let start = Instant::now();
+        let values = params
+            .iter()
+            .map(|param| match param {
+                DbParameter::Null => Value::NULL,
+                DbParameter::Text(value) => Value::Bytes(value.as_bytes().to_vec()),
+            })
+            .collect::<Vec<_>>();
+        let mut conn = self.conn.lock().await;
+        let mut result = conn
+            .exec_iter(sql, Params::Positional(values))
+            .await
+            .map_err(|error| map_mysql_query_error(sql, error))?;
+        let affected_rows = result.affected_rows();
+        let columns = columns_from_mysql(result.columns_ref());
+        let mut rows = Vec::new();
+        while let Some(row) = result
+            .next()
+            .await
+            .map_err(|error| map_mysql_query_error(sql, error))?
+        {
+            rows.push(row_to_json_values(&row));
+        }
+        result
+            .drop_result()
+            .await
+            .map_err(|error| map_mysql_query_error(sql, error))?;
         Ok(QueryResult {
             row_count: rows.len() as u64,
             columns,

@@ -77,7 +77,9 @@ includesAll(
   mainPanel,
   [
     'exportTableCsv({',
-    'previewTableCsvImport({',
+    'useCsvPreview({',
+    'csvPreview.start({',
+    'csvPreview.cancel()',
     'importTableCsv({',
     "t('workbench.exportTable')",
     'CSV import path',
@@ -85,6 +87,20 @@ includesAll(
     "t('workbench.runImport')",
   ],
   'Data tab table import/export UI',
+)
+
+const previewHook = read('src/hooks/useCsvPreview.ts')
+includesAll(
+  previewHook,
+  [
+    'crypto.randomUUID()',
+    'previewTableCsvImport({ ...input, taskId })',
+    'await cancelTask(taskId)',
+    "setStatus('cancelling')",
+    'if (!result.cancelled)',
+    'generation.current !== requestGeneration',
+  ],
+  'CSV Preview cancellation hook',
 )
 
 const contracts = read('src/shared/command-contracts.json')

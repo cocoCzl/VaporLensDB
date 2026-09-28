@@ -38,6 +38,7 @@ export interface PreviewTableCsvImportInput {
   path: string
   hasHeader?: boolean
   previewRows?: number
+  taskId?: string
 }
 
 export interface ImportTableCsvInput {
@@ -65,6 +66,7 @@ export interface ImportPreview {
   validRows: number
   invalidRows: RowReport[]
   canImport: boolean
+  cancelled: boolean
 }
 
 export function exportQueryResultCsv(input: ExportQueryResultCsvInput) {

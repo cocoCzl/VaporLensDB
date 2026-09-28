@@ -7,12 +7,41 @@ use postgres_native_tls::MakeTlsConnector;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_postgres::{
     config::SslMode,
-    types::{Json, ToSql},
+    types::{Format, IsNull, Json, ToSql, Type},
     CancelToken, Client, Config, Row, Statement,
 };
 
+#[derive(Debug)]
+struct CsvParameter<'a>(&'a DbParameter);
+
+impl ToSql for CsvParameter<'_> {
+    fn to_sql(
+        &self,
+        _ty: &Type,
+        out: &mut tokio_postgres::types::private::BytesMut,
+    ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        match self.0 {
+            DbParameter::Null => Ok(IsNull::Yes),
+            DbParameter::Text(value) => {
+                out.extend_from_slice(value.as_bytes());
+                Ok(IsNull::No)
+            }
+        }
+    }
+
+    fn accepts(_ty: &Type) -> bool {
+        true
+    }
+
+    tokio_postgres::types::to_sql_checked!();
+
+    fn encode_format(&self, _ty: &Type) -> Format {
+        Format::Text
+    }
+}
+
 use crate::{
-    drivers::trait_def::DatabaseDriver,
+    drivers::trait_def::{DatabaseDriver, DbParameter},
     models::{
         error::AppError,
         metadata::{
@@ -192,6 +221,10 @@ impl DatabaseDriver for PostgresDriver {
         "postgres"
     }
 
+    fn supports_parameterized_import(&self) -> bool {
+        true
+    }
+
     fn capabilities(&self) -> DriverCapabilities {
         DriverCapabilities {
             has_database: true,
@@ -244,6 +277,43 @@ impl DatabaseDriver for PostgresDriver {
             .await
             .map_err(|error| self.map_query_error(sql, error))?;
 
+        rows_to_query_result(rows, start.elapsed().as_millis() as u64)
+    }
+
+    async fn execute_parameterized(
+        &self,
+        sql: &str,
+        params: &[DbParameter],
+        query_id: Option<&str>,
+    ) -> Result<QueryResult, AppError> {
+        let start = Instant::now();
+        let _query_registration = self.register_query(query_id);
+        // CSV cells arrive as text. Send PostgreSQL text-format parameters so
+        // the server parses each value using the prepared statement's inferred
+        // target type (integer, date, UUID, etc.) while NULL remains protocol
+        // NULL. A Rust String encoded in binary format only accepts TEXT-like
+        // targets and rejects valid CSV values for typed columns client-side.
+        let values = params.iter().map(CsvParameter).collect::<Vec<_>>();
+        let references = values
+            .iter()
+            .map(|value| value as &(dyn ToSql + Sync))
+            .collect::<Vec<_>>();
+        if !returns_rows(sql) {
+            let affected_rows = self
+                .client
+                .execute(sql, &references)
+                .await
+                .map_err(|error| self.map_query_error(sql, error))?;
+            return Ok(QueryResult::empty(
+                start.elapsed().as_millis() as u64,
+                affected_rows,
+            ));
+        }
+        let rows = self
+            .client
+            .query(sql, &references)
+            .await
+            .map_err(|error| self.map_query_error(sql, error))?;
         rows_to_query_result(rows, start.elapsed().as_millis() as u64)
     }
 
@@ -995,6 +1065,21 @@ fn returns_rows(sql: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn csv_parameters_use_server_parsed_text_format_for_typed_columns() {
+        use super::{CsvParameter, DbParameter, Format, IsNull, ToSql, Type};
+        let value = DbParameter::Text("42".into());
+        let parameter = CsvParameter(&value);
+        let mut encoded = tokio_postgres::types::private::BytesMut::new();
+        assert!(matches!(
+            parameter.to_sql(&Type::INT4, &mut encoded).unwrap(),
+            IsNull::No
+        ));
+        assert_eq!(&encoded[..], b"42");
+        assert!(matches!(parameter.encode_format(&Type::INT4), Format::Text));
+        assert!(CsvParameter::accepts(&Type::INT4));
+    }
+
     #[test]
     fn tls_policy_distinguishes_encryption_ca_and_hostname_checks() {
         use super::{PostgresTlsPolicy, SslMode};

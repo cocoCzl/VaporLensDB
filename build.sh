@@ -286,6 +286,9 @@ run_selected_live_tests() {
         log "Running MySQL JDBC metadata integration (isolated fixture schema)"
         (cd "$ROOT_DIR/src-tauri" && cargo test --test jdbc_template_driver \
           mysql_jdbc_template_queries_and_reads_metadata -- --ignored)
+        log "Running native MySQL parameterized CSV import acceptance"
+        (cd "$ROOT_DIR/src-tauri" && cargo test --lib \
+          real_mysql_parameterized_csv_import_uses_production_pipeline -- --ignored)
         ;;
       --oracle)
         require_live_env "Oracle JDBC" \
@@ -302,6 +305,9 @@ run_selected_live_tests() {
         log "Running PostgreSQL JDBC metadata integration (isolated fixture schema)"
         (cd "$ROOT_DIR/src-tauri" && cargo test --test jdbc_template_driver \
           postgres_jdbc_template_queries_and_reads_metadata -- --ignored)
+        log "Running native PostgreSQL parameterized CSV import acceptance"
+        (cd "$ROOT_DIR/src-tauri" && cargo test --lib \
+          real_postgres_parameterized_csv_import_uses_production_pipeline -- --ignored)
         ;;
       *)
         printf 'Unknown RC live integration target: %s\n' "$target" >&2

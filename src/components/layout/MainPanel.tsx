@@ -25,9 +25,8 @@ import {
   exportQueryCsv,
   exportTableCsv,
   importTableCsv,
-  previewTableCsvImport,
-  type ImportPreview,
 } from '@/ipc/export'
+import { useCsvPreview } from '@/hooks/useCsvPreview'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
 import { splitSqlStatements } from '@/lib/sqlLexer'
@@ -1507,7 +1506,6 @@ function DataTabPanel({
   const [limitText, setLimitText] = useState(String(tab.dataContext.limit))
   const [whereText, setWhereText] = useState(tab.dataContext.wherePredicate ?? '')
   const [importPath, setImportPath] = useState('')
-  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
   const [importBusy, setImportBusy] = useState(false)
   const page = Math.floor(tab.dataContext.offset / tab.dataContext.limit) + 1
   const displayResult = result ? dataTabDisplayResult(result, tab.dataContext.limit) : undefined
@@ -1516,6 +1514,15 @@ function DataTabPanel({
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length > 0
   const hasNoStableOrder =
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length === 0
+  const csvPreview = useCsvPreview({
+    onCompleted: (preview) => notify({
+      kind: preview.canImport && preview.invalidRows.length === 0 ? 'info' : 'warning',
+      title: t('workbench.csvImportPreviewComplete'),
+      message: `${preview.validRows.toLocaleString()} valid / ${preview.totalRows.toLocaleString()} rows`,
+    }),
+    onError: (error) => notifyError(normalizeAppError(error), t('workbench.csvImportPreviewFailed')),
+  })
+  const importPreview = csvPreview.preview
 
   function applyLimit() {
     const value = Number(limitText)
@@ -1578,28 +1585,14 @@ function DataTabPanel({
       return
     }
 
-    setImportBusy(true)
-    try {
-      const preview = await previewTableCsvImport({
-        connectionId: tab.connectionId,
-        schema: tab.dataContext.schema,
-        table: tab.dataContext.object,
-        path: importPath.trim(),
-        hasHeader: true,
-        previewRows: 20,
-      })
-      setImportPreview(preview)
-      notify({
-        kind: preview.canImport && preview.invalidRows.length === 0 ? 'info' : 'warning',
-        title: t('workbench.csvImportPreviewComplete'),
-        message: `${preview.validRows.toLocaleString()} valid / ${preview.totalRows.toLocaleString()} rows`,
-      })
-    } catch (previewError) {
-      setImportPreview(null)
-      notifyError(normalizeAppError(previewError), t('workbench.csvImportPreviewFailed'))
-    } finally {
-      setImportBusy(false)
-    }
+    await csvPreview.start({
+      connectionId: tab.connectionId,
+      schema: tab.dataContext.schema,
+      table: tab.dataContext.object,
+      path: importPath.trim(),
+      hasHeader: true,
+      previewRows: 20,
+    })
   }
 
   async function startCsvImport() {
@@ -1773,23 +1766,34 @@ function DataTabPanel({
             value={importPath}
             onChange={(event) => {
               setImportPath(event.target.value)
-              setImportPreview(null)
+              csvPreview.clear()
             }}
           />
           <Button
             type="button"
             size="xs"
             variant="secondary"
-            disabled={importBusy || !importPath.trim()}
+            disabled={importBusy || csvPreview.status !== 'idle' || !importPath.trim()}
             onClick={() => void previewCsvImport()}
           >
             {t('workbench.previewImport')}
           </Button>
+          {csvPreview.status !== 'idle' && (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={csvPreview.status === 'cancelling'}
+              onClick={() => void csvPreview.cancel()}
+            >
+              {csvPreview.status === 'cancelling' ? t('workbench.cancelRequested') : t('common.cancel')}
+            </Button>
+          )}
           <Button
             type="button"
             size="xs"
             variant="outline"
-            disabled={importBusy || !importPreview?.canImport}
+            disabled={importBusy || csvPreview.status !== 'idle' || !importPreview?.canImport}
             onClick={() => void startCsvImport()}
           >
             {t('workbench.runImport')}

@@ -6,11 +6,14 @@ use std::{
 };
 
 use async_trait::async_trait;
-use rusqlite::{types::ValueRef, Connection, OpenFlags};
+use rusqlite::{
+    types::{Value, ValueRef},
+    Connection, OpenFlags,
+};
 use tokio::{sync::mpsc, task};
 
 use crate::{
-    drivers::trait_def::DatabaseDriver,
+    drivers::trait_def::{DatabaseDriver, DbParameter},
     models::{
         error::AppError,
         metadata::{
@@ -84,6 +87,10 @@ impl DatabaseDriver for SqliteDriver {
         "sqlite"
     }
 
+    fn supports_parameterized_import(&self) -> bool {
+        true
+    }
+
     fn capabilities(&self) -> DriverCapabilities {
         DriverCapabilities {
             has_database: true,
@@ -114,6 +121,21 @@ impl DatabaseDriver for SqliteDriver {
         let query_id = query_id.map(str::to_string);
         self.with_connection("query", move |connection| {
             execute_sqlite_query(connection, &sql, query_id)
+        })
+        .await
+    }
+
+    async fn execute_parameterized(
+        &self,
+        sql: &str,
+        params: &[DbParameter],
+        query_id: Option<&str>,
+    ) -> Result<QueryResult, AppError> {
+        let sql = sql.to_string();
+        let query_id = query_id.map(str::to_string);
+        let params = params.to_vec();
+        self.with_connection("parameterized query", move |connection| {
+            execute_sqlite_parameterized_query(connection, &sql, &params, query_id)
         })
         .await
     }
@@ -518,6 +540,71 @@ fn execute_sqlite_query(
         columns,
         row_count: values.len() as u64,
         rows: values,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+        affected_rows: 0,
+        query_id,
+        truncated: false,
+        max_rows: None,
+    })
+}
+
+fn execute_sqlite_parameterized_query(
+    connection: &Connection,
+    sql: &str,
+    params: &[DbParameter],
+    query_id: Option<String>,
+) -> Result<QueryResult, AppError> {
+    let start = Instant::now();
+    let mut statement = connection
+        .prepare(sql)
+        .map_err(|error| AppError::QueryFailed {
+            sql: sql.to_string(),
+            message: error.to_string(),
+        })?;
+    let values = params
+        .iter()
+        .map(|param| match param {
+            DbParameter::Null => Value::Null,
+            DbParameter::Text(value) => Value::Text(value.clone()),
+        })
+        .collect::<Vec<_>>();
+    if statement.column_count() == 0 {
+        let affected_rows = statement
+            .execute(rusqlite::params_from_iter(values.iter()))
+            .map_err(|error| AppError::QueryFailed {
+                sql: sql.to_string(),
+                message: error.to_string(),
+            })? as u64;
+        let mut result = QueryResult::empty(start.elapsed().as_millis() as u64, affected_rows);
+        result.query_id = query_id;
+        return Ok(result);
+    }
+    let columns = statement
+        .column_names()
+        .into_iter()
+        .map(|name| ColumnMeta {
+            name: name.to_string(),
+            data_type: "UNKNOWN".to_string(),
+            nullable: true,
+        })
+        .collect::<Vec<_>>();
+    let mut rows = statement
+        .query(rusqlite::params_from_iter(values.iter()))
+        .map_err(|error| AppError::QueryFailed {
+            sql: sql.to_string(),
+            message: error.to_string(),
+        })?;
+    let mut output = Vec::new();
+    while let Some(row) = rows.next().map_err(|error| AppError::QueryFailed {
+        sql: sql.to_string(),
+        message: error.to_string(),
+    })? {
+        output.push(sqlite_row_to_json_values(row, columns.len())?);
+    }
+    Ok(QueryResult {
+        columns,
+        row_count: output.len() as u64,
+        rows: output,
         elapsed_ms: start.elapsed().as_millis() as u64,
         affected_rows: 0,
         query_id,

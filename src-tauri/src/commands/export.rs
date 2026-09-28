@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use crate::{
     commands::task::emit_task_update,
+    drivers::trait_def::DbParameter,
     models::{
         connection::DriverType,
         error::AppError,
@@ -47,6 +48,7 @@ const IMPORT_REPORT_MAX_ROWS_PER_KIND: usize = 1_000;
 const IMPORT_REPORT_MAX_BYTES_PER_KIND: usize = 4 * 1024 * 1024;
 const IMPORT_BATCH_SIZE: usize = 100;
 const IMPORT_BATCH_MAX_BYTES: usize = 4 * 1024 * 1024;
+const IMPORT_MAX_PARAMETERS: usize = 32_000;
 const STALE_EXPORT_PART_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const EXPORT_PART_PREFIX: &str = ".vaporlensdb-export-";
 const EXPORT_PART_SUFFIX: &str = ".part";
@@ -100,6 +102,8 @@ pub struct PreviewTableCsvImportInput {
     #[serde(default = "default_has_header")]
     pub has_header: bool,
     pub preview_rows: Option<usize>,
+    #[serde(default)]
+    pub task_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -135,6 +139,7 @@ pub struct ImportPreview {
     pub valid_rows: u64,
     pub invalid_rows: Vec<RowReport>,
     pub can_import: bool,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -511,17 +516,49 @@ pub async fn preview_table_csv_import(
     state: State<'_, AppState>,
     input: PreviewTableCsvImportInput,
 ) -> Result<ImportPreview, AppError> {
-    let columns = {
-        let operation = begin_csv_operation(&state, input.connection_id)
-            .await?
-            .wait()
-            .await?;
-        operation
-            .driver
-            .get_columns(&input.schema, &input.table)
-            .await?
+    let registration = if let Some(task_id) = input.task_id {
+        Some(
+            state
+                .task_manager
+                .register_scoped_task(task_id, "preview.csv.import", "Preview CSV import")
+                .await?,
+        )
+    } else {
+        None
     };
-    preview_csv_import(&input, &columns).await
+    let result = preview_table_csv_import_inner(
+        &state,
+        &input,
+        registration.as_ref().map(|task| task.handle()),
+    )
+    .await;
+    if let Some(registration) = registration {
+        registration.cleanup().await;
+    }
+    match result {
+        Ok(preview) => Ok(preview),
+        Err(PreviewCsvError::Cancelled) => Ok(cancelled_import_preview(&input.path)),
+        Err(PreviewCsvError::Failed(error)) => Err(error),
+    }
+}
+
+async fn preview_table_csv_import_inner(
+    state: &State<'_, AppState>,
+    input: &PreviewTableCsvImportInput,
+    handle: Option<&TaskHandle>,
+) -> Result<ImportPreview, PreviewCsvError> {
+    ensure_preview_not_cancelled(handle)?;
+    let operation = begin_csv_operation(state, input.connection_id)
+        .await?
+        .wait()
+        .await?;
+    ensure_preview_not_cancelled(handle)?;
+    let columns = operation
+        .driver
+        .get_columns(&input.schema, &input.table)
+        .await?;
+    ensure_preview_not_cancelled(handle)?;
+    preview_csv_import_with_cancel(input, &columns, handle).await
 }
 
 #[tauri::command]
@@ -548,6 +585,7 @@ pub async fn import_table_csv(
             path: input.path.clone(),
             has_header: input.has_header,
             preview_rows: Some(IMPORT_PREVIEW_ROWS),
+            task_id: None,
         },
         &columns,
     )
@@ -1054,11 +1092,72 @@ async fn preview_csv_import(
     preview_csv_reader(input, file, importable_column_names(columns)).await
 }
 
+#[derive(Debug)]
+enum PreviewCsvError {
+    Cancelled,
+    Failed(AppError),
+}
+
+impl From<AppError> for PreviewCsvError {
+    fn from(value: AppError) -> Self {
+        Self::Failed(value)
+    }
+}
+
+fn ensure_preview_not_cancelled(handle: Option<&TaskHandle>) -> Result<(), PreviewCsvError> {
+    if handle.is_some_and(TaskHandle::is_cancel_requested) {
+        Err(PreviewCsvError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn cancelled_import_preview(path: &str) -> ImportPreview {
+    ImportPreview {
+        path: path.to_string(),
+        headers: Vec::new(),
+        target_columns: Vec::new(),
+        rows: Vec::new(),
+        total_rows: 0,
+        valid_rows: 0,
+        invalid_rows: Vec::new(),
+        can_import: false,
+        cancelled: true,
+    }
+}
+
+async fn preview_csv_import_with_cancel(
+    input: &PreviewTableCsvImportInput,
+    columns: &[ColumnInfo],
+    handle: Option<&TaskHandle>,
+) -> Result<ImportPreview, PreviewCsvError> {
+    ensure_preview_not_cancelled(handle)?;
+    let file = File::open(&input.path).await.map_err(AppError::from)?;
+    preview_csv_reader_with_cancel(input, file, importable_column_names(columns), handle).await
+}
+
 async fn preview_csv_reader<R: AsyncRead + Unpin>(
     input: &PreviewTableCsvImportInput,
     reader: R,
     target_columns: Vec<String>,
 ) -> Result<ImportPreview, AppError> {
+    preview_csv_reader_with_cancel(input, reader, target_columns, None)
+        .await
+        .map_err(|error| match error {
+            PreviewCsvError::Failed(error) => error,
+            PreviewCsvError::Cancelled => {
+                AppError::ConfigError("CSV preview cancelled unexpectedly".into())
+            }
+        })
+}
+
+async fn preview_csv_reader_with_cancel<R: AsyncRead + Unpin>(
+    input: &PreviewTableCsvImportInput,
+    reader: R,
+    target_columns: Vec<String>,
+    handle: Option<&TaskHandle>,
+) -> Result<ImportPreview, PreviewCsvError> {
+    ensure_preview_not_cancelled(handle)?;
     let mut reader = CsvRecordReader::new(reader, IMPORT_MAX_RECORD_BYTES);
     let first = reader.next_row().await?;
     let headers = match &first {
@@ -1086,6 +1185,7 @@ async fn preview_csv_reader<R: AsyncRead + Unpin>(
         valid_rows: 0,
         invalid_rows: validation.reports,
         can_import: false,
+        cancelled: false,
     };
     let mut next = if input.has_header {
         reader.next_row().await?
@@ -1121,6 +1221,7 @@ async fn preview_csv_reader<R: AsyncRead + Unpin>(
         }
         if preview.total_rows.is_multiple_of(100) {
             yield_now().await;
+            ensure_preview_not_cancelled(handle)?;
         }
         next = reader.next_row().await?;
     }
@@ -1165,6 +1266,7 @@ fn build_import_preview(
         valid_rows,
         invalid_rows: validation.reports,
         can_import: valid_rows > 0,
+        cancelled: false,
     }
 }
 
@@ -1182,6 +1284,13 @@ async fn import_csv_rows(
     // collected by the inner function and intentionally produce a partial
     // success report; callers can decide whether that policy is acceptable.
     let driver = operation.driver.clone();
+    if !driver.supports_parameterized_import() {
+        return Err(AppError::UnsupportedOperation {
+            driver: driver.driver_name().to_string(),
+            operation: "parameterized CSV import".to_string(),
+        }
+        .into());
+    }
     driver
         .begin_transaction()
         .await
@@ -1292,6 +1401,15 @@ async fn import_csv_rows_in_transaction(
         input.driver_type,
         DriverType::Postgres | DriverType::Mysql | DriverType::Sqlite | DriverType::Mssql
     );
+    if import_columns.len() > IMPORT_MAX_PARAMETERS {
+        return Err(AppError::ConfigError(format!(
+            "CSV target has {} columns, exceeding the {} parameter limit",
+            import_columns.len(),
+            IMPORT_MAX_PARAMETERS
+        ))
+        .into());
+    }
+    let max_parameter_rows = (IMPORT_MAX_PARAMETERS / import_columns.len().max(1)).max(1);
     let mut batch: Vec<(u64, Vec<String>)> = Vec::with_capacity(IMPORT_BATCH_SIZE);
     let mut batch_bytes = 0_usize;
 
@@ -1311,27 +1429,96 @@ async fn import_csv_rows_in_transaction(
             return Ok(());
         }
         let query_id = format!("table-import-{}", handle.id);
-        let sql = build_insert_batch_sql(driver_type, table, columns, batch, empty_as_null);
-        if driver.execute_query(&sql, Some(&query_id)).await.is_ok() {
+        let (sql, params) =
+            build_parameterized_insert_batch_sql(driver_type, table, columns, batch, empty_as_null);
+        let postgres = driver_type == DriverType::Postgres;
+        if postgres {
+            driver
+                .execute_query("SAVEPOINT vaporlensdb_csv_batch", Some(&query_id))
+                .await
+                .map_err(ExportTaskError::DatabaseFailed)?;
+        }
+        let batch_result = driver
+            .execute_parameterized(&sql, &params, Some(&query_id))
+            .await;
+        if batch_result.is_ok() {
+            if postgres {
+                driver
+                    .execute_query("RELEASE SAVEPOINT vaporlensdb_csv_batch", Some(&query_id))
+                    .await
+                    .map_err(ExportTaskError::DatabaseFailed)?;
+            }
             *inserted_rows += batch.len() as u64;
         } else {
+            if postgres {
+                driver
+                    .execute_query(
+                        "ROLLBACK TO SAVEPOINT vaporlensdb_csv_batch",
+                        Some(&query_id),
+                    )
+                    .await
+                    .map_err(ExportTaskError::DatabaseFailed)?;
+                driver
+                    .execute_query("RELEASE SAVEPOINT vaporlensdb_csv_batch", Some(&query_id))
+                    .await
+                    .map_err(ExportTaskError::DatabaseFailed)?;
+            }
             for (row_number, row) in batch.drain(..) {
                 if handle.is_cancel_requested() {
                     return Err(ExportTaskError::Cancelled);
                 }
+                if postgres {
+                    driver
+                        .execute_query("SAVEPOINT vaporlensdb_csv_row", Some(&query_id))
+                        .await
+                        .map_err(ExportTaskError::DatabaseFailed)?;
+                }
+                let (sql, params) = build_parameterized_insert_sql(
+                    driver_type,
+                    table,
+                    columns,
+                    &row,
+                    empty_as_null,
+                );
                 match driver
-                    .execute_query(
-                        &build_insert_sql(driver_type, table, columns, &row, empty_as_null),
-                        Some(&query_id),
-                    )
+                    .execute_parameterized(&sql, &params, Some(&query_id))
                     .await
                 {
-                    Ok(_) => *inserted_rows += 1,
-                    Err(error) => failed_writes.push(RowReport {
-                        row_number,
-                        message: error.to_string(),
-                        values: row,
-                    }),
+                    Ok(_) => {
+                        if postgres {
+                            driver
+                                .execute_query(
+                                    "RELEASE SAVEPOINT vaporlensdb_csv_row",
+                                    Some(&query_id),
+                                )
+                                .await
+                                .map_err(ExportTaskError::DatabaseFailed)?;
+                        }
+                        *inserted_rows += 1;
+                    }
+                    Err(error) => {
+                        if postgres {
+                            driver
+                                .execute_query(
+                                    "ROLLBACK TO SAVEPOINT vaporlensdb_csv_row",
+                                    Some(&query_id),
+                                )
+                                .await
+                                .map_err(ExportTaskError::DatabaseFailed)?;
+                            driver
+                                .execute_query(
+                                    "RELEASE SAVEPOINT vaporlensdb_csv_row",
+                                    Some(&query_id),
+                                )
+                                .await
+                                .map_err(ExportTaskError::DatabaseFailed)?;
+                        }
+                        failed_writes.push(RowReport {
+                            row_number,
+                            message: error.to_string(),
+                            values: row,
+                        });
+                    }
                 }
             }
             return Ok(());
@@ -1353,7 +1540,10 @@ async fn import_csv_rows_in_transaction(
             if supports_multi_row_insert {
                 batch_bytes = batch_bytes.saturating_add(row_storage_bytes(&row));
                 batch.push((row_number, row));
-                if batch.len() >= IMPORT_BATCH_SIZE || batch_bytes >= IMPORT_BATCH_MAX_BYTES {
+                if batch.len() >= IMPORT_BATCH_SIZE
+                    || batch.len() >= max_parameter_rows
+                    || batch_bytes >= IMPORT_BATCH_MAX_BYTES
+                {
                     flush_import_batch(
                         &driver,
                         input.driver_type,
@@ -1369,7 +1559,7 @@ async fn import_csv_rows_in_transaction(
                     batch_bytes = 0;
                 }
             } else {
-                let sql = build_insert_sql(
+                let (sql, params) = build_parameterized_insert_sql(
                     input.driver_type,
                     &table,
                     &import_columns,
@@ -1377,7 +1567,11 @@ async fn import_csv_rows_in_transaction(
                     input.empty_as_null,
                 );
                 match driver
-                    .execute_query(&sql, Some(&format!("table-import-{}", handle.id)))
+                    .execute_parameterized(
+                        &sql,
+                        &params,
+                        Some(&format!("table-import-{}", handle.id)),
+                    )
                     .await
                 {
                     Ok(_) => inserted_rows += 1,
@@ -1739,62 +1933,83 @@ fn generated_column_default(default_value: &Option<String>) -> bool {
         .is_some_and(|value| value.to_lowercase().contains("generated"))
 }
 
-fn build_insert_sql(
+fn parameter_placeholder(driver_type: DriverType, index: usize) -> String {
+    if matches!(driver_type, DriverType::Postgres) {
+        format!("${}", index + 1)
+    } else {
+        "?".to_string()
+    }
+}
+
+fn csv_parameter(value: &str, empty_as_null: bool) -> DbParameter {
+    if empty_as_null && value.is_empty() {
+        DbParameter::Null
+    } else {
+        DbParameter::Text(value.to_string())
+    }
+}
+
+fn build_parameterized_insert_sql(
     driver_type: DriverType,
     table: &str,
     columns: &[String],
     row: &[String],
     empty_as_null: bool,
-) -> String {
-    format!(
-        "INSERT INTO {table} ({}) VALUES ({});",
-        columns
-            .iter()
-            .map(|column| quote_identifier(driver_type, column))
-            .collect::<Vec<_>>()
-            .join(", "),
-        row.iter()
-            .map(|value| sql_literal(value, empty_as_null))
-            .collect::<Vec<_>>()
-            .join(", ")
+) -> (String, Vec<DbParameter>) {
+    let placeholders = (0..row.len())
+        .map(|index| parameter_placeholder(driver_type, index))
+        .collect::<Vec<_>>();
+    let params = row
+        .iter()
+        .map(|value| csv_parameter(value, empty_as_null))
+        .collect::<Vec<_>>();
+    (
+        format!(
+            "INSERT INTO {table} ({}) VALUES ({});",
+            columns
+                .iter()
+                .map(|column| quote_identifier(driver_type, column))
+                .collect::<Vec<_>>()
+                .join(", "),
+            placeholders.join(", ")
+        ),
+        params,
     )
 }
 
-fn build_insert_batch_sql(
+fn build_parameterized_insert_batch_sql(
     driver_type: DriverType,
     table: &str,
     columns: &[String],
     rows: &[(u64, Vec<String>)],
     empty_as_null: bool,
-) -> String {
-    format!(
-        "INSERT INTO {table} ({}) VALUES {};",
-        columns
-            .iter()
-            .map(|column| quote_identifier(driver_type, column))
-            .collect::<Vec<_>>()
-            .join(", "),
-        rows.iter()
-            .map(|(_, row)| {
-                format!(
-                    "({})",
-                    row.iter()
-                        .map(|value| sql_literal(value, empty_as_null))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+) -> (String, Vec<DbParameter>) {
+    let mut parameter_index = 0;
+    let mut values = Vec::with_capacity(rows.len());
+    let mut params = Vec::new();
+    for (_, row) in rows {
+        let placeholders = (0..row.len())
+            .map(|_| {
+                let placeholder = parameter_placeholder(driver_type, parameter_index);
+                parameter_index += 1;
+                placeholder
             })
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-fn sql_literal(value: &str, empty_as_null: bool) -> String {
-    if empty_as_null && value.is_empty() {
-        "NULL".to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "''"))
+            .collect::<Vec<_>>();
+        values.push(format!("({})", placeholders.join(", ")));
+        params.extend(row.iter().map(|value| csv_parameter(value, empty_as_null)));
     }
+    (
+        format!(
+            "INSERT INTO {table} ({}) VALUES {};",
+            columns
+                .iter()
+                .map(|column| quote_identifier(driver_type, column))
+                .collect::<Vec<_>>()
+                .join(", "),
+            values.join(", ")
+        ),
+        params,
+    )
 }
 
 fn qualified_table(driver_type: DriverType, schema: &str, table: &str) -> String {
@@ -1918,14 +2133,71 @@ fn default_empty_as_null() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        pin::Pin,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        task::{Context, Poll},
+    };
+
     use serde_json::json;
+    use tokio::io::{AsyncRead, ReadBuf};
 
     use super::{
-        build_insert_batch_sql, build_insert_sql, parse_csv, qualified_table, query_result_to_csv,
-        validate_import_rows,
+        build_parameterized_insert_batch_sql, build_parameterized_insert_sql, parse_csv,
+        qualified_table, query_result_to_csv, validate_import_rows,
     };
+    use crate::drivers::trait_def::DbParameter;
     use crate::models::connection::DriverType;
     use crate::models::query_result::{ColumnMeta, QueryResult};
+
+    struct CountingReader {
+        bytes: Vec<u8>,
+        position: usize,
+        read_bytes: Arc<AtomicUsize>,
+    }
+
+    impl CountingReader {
+        fn new(content: String, read_bytes: Arc<AtomicUsize>) -> Self {
+            Self {
+                bytes: content.into_bytes(),
+                position: 0,
+                read_bytes,
+            }
+        }
+    }
+
+    impl AsyncRead for CountingReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buffer: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let remaining = self.bytes.len().saturating_sub(self.position);
+            let count = remaining.min(buffer.remaining()).min(32);
+            if count > 0 {
+                let end = self.position + count;
+                buffer.put_slice(&self.bytes[self.position..end]);
+                self.position = end;
+                self.read_bytes.fetch_add(count, Ordering::SeqCst);
+            }
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn preview_input() -> super::PreviewTableCsvImportInput {
+        super::PreviewTableCsvImportInput {
+            connection_id: uuid::Uuid::nil(),
+            schema: "public".into(),
+            table: "items".into(),
+            path: "preview.csv".into(),
+            has_header: true,
+            preview_rows: Some(20),
+            task_id: None,
+        }
+    }
 
     fn preview(content: &str, has_header: bool) -> super::ImportPreview {
         super::build_import_preview(
@@ -1936,10 +2208,24 @@ mod tests {
                 path: "preview.csv".into(),
                 has_header,
                 preview_rows: Some(500),
+                task_id: None,
             },
             parse_csv(content).unwrap(),
             vec!["id".into(), "name".into()],
         )
+    }
+
+    #[test]
+    fn preview_input_keeps_task_id_optional_for_existing_callers() {
+        let input: super::PreviewTableCsvImportInput = serde_json::from_value(json!({
+            "connectionId": uuid::Uuid::nil(),
+            "schema": "public",
+            "table": "items",
+            "path": "preview.csv"
+        }))
+        .unwrap();
+        assert!(input.task_id.is_none());
+        assert!(input.has_header);
     }
 
     #[test]
@@ -2071,6 +2357,7 @@ mod tests {
                         path: "preview.csv".into(),
                         has_header,
                         preview_rows: Some(sample_limit),
+                        task_id: None,
                     };
                     let columns = vec!["id".into(), "name".into()];
                     let expected = super::build_import_preview(
@@ -2099,6 +2386,7 @@ mod tests {
             path: "preview.csv".into(),
             has_header: true,
             preview_rows: Some(1),
+            task_id: None,
         };
         let content = format!("id,name\n{}\"unterminated", "1,Ada\n".repeat(150));
         assert!(super::preview_csv_reader(
@@ -2119,6 +2407,7 @@ mod tests {
             path: "preview.csv".into(),
             has_header: true,
             preview_rows: Some(100),
+            task_id: None,
         };
         let wide = "x".repeat(100_000);
         let content = format!("id,name\n{}", format!("{wide}\n").repeat(100));
@@ -2146,6 +2435,114 @@ mod tests {
                 .sum::<usize>()
                 <= super::IMPORT_PREVIEW_SAMPLE_BYTES
         );
+    }
+
+    #[tokio::test]
+    async fn streamed_preview_observes_pre_cancel_before_reading() {
+        let manager = crate::services::task_manager::TaskManager::new();
+        let task = manager
+            .create_task("preview.csv.import", "preview", None)
+            .await;
+        let handle = manager.handle(task.id).await.unwrap();
+        manager.request_cancel(task.id).await.unwrap();
+        let read_bytes = Arc::new(AtomicUsize::new(0));
+        let result = super::preview_csv_reader_with_cancel(
+            &preview_input(),
+            CountingReader::new("id,name\n1,Ada\n".into(), read_bytes.clone()),
+            vec!["id".into(), "name".into()],
+            Some(&handle),
+        )
+        .await;
+        assert!(matches!(result, Err(super::PreviewCsvError::Cancelled)));
+        assert_eq!(read_bytes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn streamed_preview_cancel_stops_before_eof_and_next_preview_succeeds() {
+        let manager = crate::services::task_manager::TaskManager::new();
+        let id = uuid::Uuid::new_v4();
+        let registration = manager
+            .register_scoped_task(id, "preview.csv.import", "preview")
+            .await
+            .unwrap();
+        let handle = registration.handle().clone();
+        let content = format!("id,name\n{}", "1,Ada\n".repeat(100_000));
+        let total_bytes = content.len();
+        let read_bytes = Arc::new(AtomicUsize::new(0));
+        let read_for_task = read_bytes.clone();
+        let input = preview_input();
+        let scan = tokio::spawn(async move {
+            super::preview_csv_reader_with_cancel(
+                &input,
+                CountingReader::new(content, read_for_task),
+                vec!["id".into(), "name".into()],
+                Some(&handle),
+            )
+            .await
+        });
+        while read_bytes.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        manager.request_cancel(id).await.unwrap();
+        let result = scan.await.unwrap();
+        assert!(matches!(result, Err(super::PreviewCsvError::Cancelled)));
+        assert!(read_bytes.load(Ordering::SeqCst) < total_bytes);
+        registration.cleanup().await;
+
+        let next_id = uuid::Uuid::new_v4();
+        let next = manager
+            .register_scoped_task(next_id, "preview.csv.import", "next preview")
+            .await
+            .unwrap();
+        let result = super::preview_csv_reader_with_cancel(
+            &preview_input(),
+            "id,name\n2,Grace\n".as_bytes(),
+            vec!["id".into(), "name".into()],
+            Some(next.handle()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.total_rows, 1);
+        assert!(!result.cancelled);
+        next.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn completed_preview_wins_over_late_cancel_and_error_path_cleans_up() {
+        let manager = crate::services::task_manager::TaskManager::new();
+        let id = uuid::Uuid::new_v4();
+        let registration = manager
+            .register_scoped_task(id, "preview.csv.import", "preview")
+            .await
+            .unwrap();
+        let result = super::preview_csv_reader_with_cancel(
+            &preview_input(),
+            "id,name\n1,Ada\n".as_bytes(),
+            vec!["id".into(), "name".into()],
+            Some(registration.handle()),
+        )
+        .await
+        .unwrap();
+        manager.request_cancel(id).await.unwrap();
+        assert_eq!(result.total_rows, 1);
+        registration.cleanup().await;
+        assert!(manager.handle(id).await.is_err());
+
+        let error_id = uuid::Uuid::new_v4();
+        let error_registration = manager
+            .register_scoped_task(error_id, "preview.csv.import", "error preview")
+            .await
+            .unwrap();
+        let error = super::preview_csv_reader_with_cancel(
+            &preview_input(),
+            &b"id,name\n\xff\n"[..],
+            vec!["id".into(), "name".into()],
+            Some(error_registration.handle()),
+        )
+        .await;
+        assert!(matches!(error, Err(super::PreviewCsvError::Failed(_))));
+        error_registration.cleanup().await;
+        assert!(manager.handle(error_id).await.is_err());
     }
 
     #[test]
@@ -2301,23 +2698,31 @@ mod tests {
     }
 
     #[test]
-    fn insert_sql_quotes_identifiers_and_string_values() {
+    fn parameterized_insert_separates_sql_structure_from_values() {
         let table = qualified_table(DriverType::Postgres, "public", "people");
+        let (sql, params) = build_parameterized_insert_sql(
+            DriverType::Postgres,
+            &table,
+            &["name".to_string(), "note".to_string()],
+            &["Ada".to_string(), "it's ok".to_string()],
+            true,
+        );
         assert_eq!(
-            build_insert_sql(
-                DriverType::Postgres,
-                &table,
-                &["name".to_string(), "note".to_string()],
-                &["Ada".to_string(), "it's ok".to_string()],
-                true,
-            ),
-            "INSERT INTO \"public\".\"people\" (\"name\", \"note\") VALUES ('Ada', 'it''s ok');"
+            sql,
+            "INSERT INTO \"public\".\"people\" (\"name\", \"note\") VALUES ($1, $2);"
+        );
+        assert_eq!(
+            params,
+            vec![
+                DbParameter::Text("Ada".into()),
+                DbParameter::Text("it's ok".into())
+            ]
         );
     }
 
     #[test]
-    fn batch_insert_sql_preserves_row_order_and_null_literals() {
-        let sql = build_insert_batch_sql(
+    fn parameterized_batch_preserves_row_order_and_null_parameters() {
+        let (sql, params) = build_parameterized_insert_batch_sql(
             DriverType::Postgres,
             "\"public\".\"people\"",
             &["name".into(), "note".into()],
@@ -2329,7 +2734,16 @@ mod tests {
         );
         assert_eq!(
             sql,
-            "INSERT INTO \"public\".\"people\" (\"name\", \"note\") VALUES ('Ada', NULL), ('Bob', 'hi');"
+            "INSERT INTO \"public\".\"people\" (\"name\", \"note\") VALUES ($1, $2), ($3, $4);"
+        );
+        assert_eq!(
+            params,
+            vec![
+                DbParameter::Text("Ada".into()),
+                DbParameter::Null,
+                DbParameter::Text("Bob".into()),
+                DbParameter::Text("hi".into()),
+            ]
         );
     }
 }
@@ -2337,6 +2751,8 @@ mod tests {
 #[cfg(test)]
 mod stream_lifecycle_tests {
     use super::*;
+    use serde_json::json;
+    use std::fmt::Write as _;
     use std::time::Duration as StdDuration;
 
     #[tokio::test]
@@ -2363,6 +2779,321 @@ mod stream_lifecycle_tests {
     use crate::services::connection_manager::{create_active_connection, ConnectionManager};
     use crate::services::task_manager::TaskManager;
     use tokio::sync::oneshot;
+
+    fn live_csv_config(
+        driver_type: DriverType,
+    ) -> Option<(crate::models::connection::ConnectionConfig, String, String)> {
+        use chrono::Utc;
+        let (url_name, user_name, password_name, database_name, prefix, default_port) =
+            match driver_type {
+                DriverType::Postgres => (
+                    "TEST_PG_JDBC_URL",
+                    "TEST_PG_USER",
+                    "TEST_PG_PASSWORD",
+                    "TEST_PG_DATABASE",
+                    "jdbc:postgresql://",
+                    5432,
+                ),
+                DriverType::Mysql => (
+                    "TEST_MYSQL_JDBC_URL",
+                    "TEST_MYSQL_USER",
+                    "TEST_MYSQL_PASSWORD",
+                    "TEST_MYSQL_DATABASE",
+                    "jdbc:mysql://",
+                    3306,
+                ),
+                _ => return None,
+            };
+        let url = std::env::var(url_name).ok()?;
+        let target = url.strip_prefix(prefix)?;
+        let (authority, url_database) = target.split_once('/').unwrap_or((target, ""));
+        let (host, port) = authority.rsplit_once(':').unwrap_or((authority, ""));
+        let database = std::env::var(database_name)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| url_database.split('?').next().map(str::to_string))?;
+        let username = std::env::var(user_name).ok()?;
+        let password = std::env::var(password_name).ok()?;
+        let now = Utc::now();
+        Some((
+            crate::models::connection::ConnectionConfig {
+                id: Uuid::new_v4(),
+                name: "CSV import live acceptance".into(),
+                driver_definition_id: None,
+                driver_type,
+                driver_dialect: None,
+                host: Some(host.to_string()),
+                port: Some(if port.is_empty() {
+                    default_port
+                } else {
+                    port.parse().ok()?
+                }),
+                database: Some(database.clone()),
+                connection_url: None,
+                username: Some(username),
+                password_encrypted: None,
+                has_saved_password: false,
+                driver_class: None,
+                driver_paths: Vec::new(),
+                ssl_mode: None,
+                group_id: None,
+                group: None,
+                color_tag: None,
+                ssh_tunnel: None,
+                created_at: now,
+                updated_at: now,
+            },
+            password,
+            if driver_type == DriverType::Postgres {
+                "public".into()
+            } else {
+                database
+            },
+        ))
+    }
+
+    async fn live_parameterized_csv_import(driver_type: DriverType) {
+        assert_eq!(
+            std::env::var("VAPORLENSDB_QA_ENVIRONMENT").as_deref(),
+            Ok("1"),
+            "refusing CSV fixture mutation without VAPORLENSDB_QA_ENVIRONMENT=1"
+        );
+        let (config, password, schema) = live_csv_config(driver_type)
+            .expect("live native CSV environment variables must be set");
+        let id = config.id;
+        let mut connections = ConnectionManager::new();
+        connections.begin_connect(id).unwrap();
+        let active = create_active_connection(&config, Some(&password), None)
+            .await
+            .expect("connect native CSV acceptance driver");
+        connections.finish_connect(id, Ok(active)).unwrap();
+        let marker = connections
+            .driver(id)
+            .unwrap()
+            .execute_query(
+                "SELECT environment, fixture_version FROM vaporlensdb_qa_marker",
+                None,
+            )
+            .await
+            .expect("disposable QA marker must exist");
+        assert_eq!(marker.rows.len(), 1);
+        assert_eq!(marker.rows[0][0], json!("disposable_qa"));
+        assert!(
+            marker.rows[0][1] == json!(1) || marker.rows[0][1] == json!("1"),
+            "unexpected disposable QA fixture version: {}",
+            marker.rows[0][1]
+        );
+        let suffix = Uuid::new_v4().simple().to_string();
+        let table_name = format!("vaporlensdb_csv_{suffix}");
+        let victim_name = format!("vaporlensdb_victim_{suffix}");
+        let table = qualified_table(driver_type, &schema, &table_name);
+        let victim = qualified_table(driver_type, &schema, &victim_name);
+        let setup = connections
+            .begin_query_operation(id, "csv-live-setup")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        setup
+            .driver
+            .execute_query(&format!("CREATE TABLE {victim} (marker INTEGER)"), None)
+            .await
+            .unwrap();
+        setup
+            .driver
+            .execute_query(
+                &format!("CREATE TABLE {table} (id INTEGER PRIMARY KEY, note TEXT NULL)"),
+                None,
+            )
+            .await
+            .unwrap();
+        drop(setup);
+
+        let path = ExportTestPath::new();
+        let mut csv = String::from("id,note\n1,plain\n2,O'Reilly\n3,\"double \"\"quote\"\"\"\n4,back\\slash\n5,semi;colon\n6,\"line\nbreak\"\n7,中文\n8,emoji😀\n9,\n10,\"'); DROP TABLE victim; --\"\n");
+        for row in 11..=205 {
+            writeln!(&mut csv, "{row},batch-{row}").unwrap();
+        }
+        csv.push_str("1,constraint-fallback\n");
+        tokio::fs::write(&path.0, csv).await.unwrap();
+        let operation = connections
+            .begin_query_operation(id, "csv-live-import")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        let columns = operation
+            .driver
+            .get_columns(&schema, &table_name)
+            .await
+            .unwrap();
+        let (manager, handle) = task().await;
+        let report = import_csv_rows(
+            &ImportTableCsvInput {
+                connection_id: id,
+                driver_type,
+                schema: schema.clone(),
+                table: table_name.clone(),
+                path: path.0.to_string_lossy().into_owned(),
+                has_header: true,
+                empty_as_null: true,
+            },
+            operation,
+            columns,
+            &manager,
+            &handle,
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.inserted_rows, 205, "{report:?}");
+        assert_eq!(report.failed_write_count, 1);
+
+        let empty_path = ExportTestPath::new();
+        tokio::fs::write(&empty_path.0, "id,note\n206,\n")
+            .await
+            .unwrap();
+        let operation = connections
+            .begin_query_operation(id, "csv-live-empty")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        let columns = operation
+            .driver
+            .get_columns(&schema, &table_name)
+            .await
+            .unwrap();
+        let (manager, handle) = task().await;
+        import_csv_rows(
+            &ImportTableCsvInput {
+                connection_id: id,
+                driver_type,
+                schema: schema.clone(),
+                table: table_name.clone(),
+                path: empty_path.0.to_string_lossy().into_owned(),
+                has_header: true,
+                empty_as_null: false,
+            },
+            operation,
+            columns,
+            &manager,
+            &handle,
+        )
+        .await
+        .unwrap();
+
+        let verify = connections
+            .driver(id)
+            .unwrap()
+            .execute_query(
+                &format!("SELECT id, note FROM {table} WHERE id <= 10 OR id = 206 ORDER BY id"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(verify.rows[1][1], json!("O'Reilly"));
+        assert_eq!(verify.rows[5][1], json!("line\nbreak"));
+        assert_eq!(verify.rows[6][1], json!("中文"));
+        assert_eq!(verify.rows[7][1], json!("emoji😀"));
+        assert_eq!(verify.rows[8][1], serde_json::Value::Null);
+        assert_eq!(verify.rows[9][1], json!("'); DROP TABLE victim; --"));
+        assert_eq!(verify.rows[10][1], json!(""));
+        connections
+            .driver(id)
+            .unwrap()
+            .execute_query(&format!("SELECT COUNT(*) FROM {victim}"), None)
+            .await
+            .unwrap();
+        if driver_type == DriverType::Postgres {
+            let wide_name = format!("vaporlensdb_csv_wide_{suffix}");
+            let wide_table = qualified_table(driver_type, &schema, &wide_name);
+            let columns = (1..=321)
+                .map(|index| format!("c{index}"))
+                .collect::<Vec<_>>();
+            let ddl_columns = columns
+                .iter()
+                .map(|column| format!("\"{column}\" TEXT"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            connections
+                .driver(id)
+                .unwrap()
+                .execute_query(&format!("CREATE TABLE {wide_table} ({ddl_columns})"), None)
+                .await
+                .unwrap();
+            let wide_path = ExportTestPath::new();
+            let mut wide_csv = format!("{}\n", columns.join(","));
+            let row = (1..=321)
+                .map(|index| format!("v{index}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            for _ in 0..101 {
+                writeln!(&mut wide_csv, "{row}").unwrap();
+            }
+            tokio::fs::write(&wide_path.0, wide_csv).await.unwrap();
+            let operation = connections
+                .begin_query_operation(id, "csv-live-wide")
+                .unwrap()
+                .wait()
+                .await
+                .unwrap();
+            let metadata = operation
+                .driver
+                .get_columns(&schema, &wide_name)
+                .await
+                .unwrap();
+            let (manager, handle) = task().await;
+            let report = import_csv_rows(
+                &ImportTableCsvInput {
+                    connection_id: id,
+                    driver_type,
+                    schema: schema.clone(),
+                    table: wide_name,
+                    path: wide_path.0.to_string_lossy().into_owned(),
+                    has_header: true,
+                    empty_as_null: true,
+                },
+                operation,
+                metadata,
+                &manager,
+                &handle,
+            )
+            .await
+            .unwrap();
+            assert_eq!(report.inserted_rows, 101);
+            connections
+                .driver(id)
+                .unwrap()
+                .execute_query(&format!("DROP TABLE {wide_table}"), None)
+                .await
+                .unwrap();
+        }
+        connections
+            .driver(id)
+            .unwrap()
+            .execute_query(&format!("DROP TABLE {table}"), None)
+            .await
+            .unwrap();
+        connections
+            .driver(id)
+            .unwrap()
+            .execute_query(&format!("DROP TABLE {victim}"), None)
+            .await
+            .unwrap();
+        connections.disconnect(id).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires native PostgreSQL live CSV environment"]
+    async fn real_postgres_parameterized_csv_import_uses_production_pipeline() {
+        live_parameterized_csv_import(DriverType::Postgres).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires native MySQL live CSV environment"]
+    async fn real_mysql_parameterized_csv_import_uses_production_pipeline() {
+        live_parameterized_csv_import(DriverType::Mysql).await;
+    }
 
     struct DropSignal(Option<oneshot::Sender<()>>);
     impl Drop for DropSignal {
@@ -2687,6 +3418,7 @@ mod stream_lifecycle_tests {
                     path: path.0.to_string_lossy().into_owned(),
                     has_header: true,
                     preview_rows: None,
+                    task_id: None,
                 },
                 &columns,
             )
@@ -2737,6 +3469,136 @@ mod stream_lifecycle_tests {
             );
             connections.disconnect(id).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn sqlite_parameterized_import_preserves_sql_looking_values() {
+        let (mut connections, id) = connection().await;
+        let operation = connections
+            .begin_query_operation(id, "parameterized-import")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        operation
+            .driver
+            .execute_query("CREATE TABLE victim (marker TEXT)", None)
+            .await
+            .unwrap();
+        operation
+            .driver
+            .execute_query("CREATE TABLE items (id INTEGER, note TEXT)", None)
+            .await
+            .unwrap();
+        let columns = operation.driver.get_columns("main", "items").await.unwrap();
+        let path = ExportTestPath::new();
+        tokio::fs::write(
+            &path.0,
+            "id,note\n1,\"O'Reilly\"\n2,\"\"\"a\"\"\"\n3,\"back\\slash\"\n4,\"semi;colon\"\n5,\"line\nbreak\"\n6,\"中文 😀\"\n7,\"'); DROP TABLE victim; --\"\n8,\n",
+        )
+        .await
+        .unwrap();
+        let (manager, handle) = task().await;
+        let report = import_csv_rows(
+            &ImportTableCsvInput {
+                connection_id: id,
+                driver_type: DriverType::Sqlite,
+                schema: "main".into(),
+                table: "items".into(),
+                path: path.0.to_string_lossy().into_owned(),
+                has_header: true,
+                empty_as_null: true,
+            },
+            operation,
+            columns,
+            &manager,
+            &handle,
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.inserted_rows, 8);
+        let values = connections
+            .driver(id)
+            .unwrap()
+            .execute_query("SELECT note FROM items ORDER BY id", None)
+            .await
+            .unwrap();
+        assert_eq!(values.rows.len(), 8);
+        assert_eq!(values.rows[0][0], json!("O'Reilly"));
+        assert_eq!(values.rows[1][0], json!("\"a\""));
+        assert_eq!(values.rows[2][0], json!("back\\slash"));
+        assert_eq!(values.rows[3][0], json!("semi;colon"));
+        assert_eq!(values.rows[4][0], json!("line\nbreak"));
+        assert_eq!(values.rows[5][0], json!("中文 😀"));
+        assert_eq!(values.rows[6][0], json!("'); DROP TABLE victim; --"));
+        assert_eq!(values.rows[7][0], serde_json::Value::Null);
+        assert_eq!(
+            connections
+                .driver(id)
+                .unwrap()
+                .execute_query("SELECT COUNT(*) FROM victim", None)
+                .await
+                .unwrap()
+                .rows[0][0],
+            json!(0)
+        );
+        connections.disconnect(id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_parameterized_import_batches_rows_and_respects_nulls() {
+        let (mut connections, id) = connection().await;
+        let operation = connections
+            .begin_query_operation(id, "parameterized-batch-import")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        operation
+            .driver
+            .execute_query("CREATE TABLE items (id INTEGER, note TEXT)", None)
+            .await
+            .unwrap();
+        let columns = operation.driver.get_columns("main", "items").await.unwrap();
+        let mut csv = String::from("id,note\n");
+        for id in 1..=250 {
+            writeln!(&mut csv, "{id},note-{id}").unwrap();
+        }
+        csv.push_str("251,\n");
+        let path = ExportTestPath::new();
+        tokio::fs::write(&path.0, csv).await.unwrap();
+        let (manager, handle) = task().await;
+        let report = import_csv_rows(
+            &ImportTableCsvInput {
+                connection_id: id,
+                driver_type: DriverType::Sqlite,
+                schema: "main".into(),
+                table: "items".into(),
+                path: path.0.to_string_lossy().into_owned(),
+                has_header: true,
+                empty_as_null: true,
+            },
+            operation,
+            columns,
+            &manager,
+            &handle,
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.inserted_rows, 251);
+        let result = connections
+            .driver(id)
+            .unwrap()
+            .execute_query(
+                "SELECT COUNT(*), MAX(id), SUM(note IS NULL) FROM items",
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0][0], json!(251));
+        assert_eq!(result.rows[0][1], json!(251));
+        assert_eq!(result.rows[0][2], json!(1));
+        connections.disconnect(id).unwrap();
     }
 
     #[tokio::test]

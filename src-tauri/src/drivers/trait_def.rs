@@ -10,10 +10,22 @@ use crate::models::{
     query_result::{ExplainResult, QueryResult, QueryResultChunk, QueryStreamSummary},
 };
 
+/// Values supplied separately from SQL text for data-import operations.
+/// CSV deliberately exposes only text and NULL; the destination column type
+/// remains responsible for database-side conversion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DbParameter {
+    Null,
+    Text(String),
+}
+
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
     fn driver_name(&self) -> &'static str;
     fn capabilities(&self) -> DriverCapabilities;
+    fn supports_parameterized_import(&self) -> bool {
+        false
+    }
     /// Whether this driver can safely execute more than one query at a time
     /// using the same saved Data Source session.
     fn supports_concurrent_queries(&self) -> bool {
@@ -25,6 +37,20 @@ pub trait DatabaseDriver: Send + Sync {
         sql: &str,
         query_id: Option<&str>,
     ) -> Result<QueryResult, AppError>;
+    /// Execute a statement with values bound through the driver's native
+    /// parameter API. Drivers without this capability must return an explicit
+    /// unsupported-operation error rather than interpolating values.
+    async fn execute_parameterized(
+        &self,
+        _sql: &str,
+        _params: &[DbParameter],
+        _query_id: Option<&str>,
+    ) -> Result<QueryResult, AppError> {
+        Err(AppError::UnsupportedOperation {
+            driver: self.driver_name().to_string(),
+            operation: "parameterized import".to_string(),
+        })
+    }
     async fn execute_query_stream(
         &self,
         sql: &str,
