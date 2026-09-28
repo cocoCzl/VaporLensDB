@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     future::Future,
+    hash::{Hash, Hasher},
     io::SeekFrom,
     path::{Path, PathBuf},
     sync::Arc,
@@ -11,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
     fs::File,
-    io::{AsyncBufReadExt, AsyncRead, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter},
+    io::{
+        AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter,
+    },
     sync::mpsc,
     task::{yield_now, JoinHandle},
     time::timeout,
@@ -168,13 +171,25 @@ struct BoundedRowReports {
 struct ImportFileSnapshot {
     len: u64,
     modified: Option<SystemTime>,
+    content_hash: u64,
 }
 
 async fn import_file_snapshot(path: &Path) -> Result<ImportFileSnapshot, AppError> {
     let metadata = tokio::fs::metadata(path).await.map_err(AppError::from)?;
+    let mut file = File::open(path).await.map_err(AppError::from)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).await.map_err(AppError::from)?;
+        if read == 0 {
+            break;
+        }
+        buffer[..read].hash(&mut hasher);
+    }
     Ok(ImportFileSnapshot {
         len: metadata.len(),
         modified: metadata.modified().ok(),
+        content_hash: hasher.finish(),
     })
 }
 
@@ -182,10 +197,24 @@ async fn ensure_import_file_unchanged(
     path: &Path,
     expected: &ImportFileSnapshot,
 ) -> Result<(), ExportTaskError> {
+    let metadata = tokio::fs::metadata(path).await.map_err(AppError::from)?;
+    if metadata.len() != expected.len || metadata.modified().ok() != expected.modified {
+        return Err(AppError::ConfigError(
+            "CSV file changed while it was being imported; no further rows were written".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+async fn ensure_import_file_content_unchanged(
+    path: &Path,
+    expected: &ImportFileSnapshot,
+) -> Result<(), ExportTaskError> {
     let current = import_file_snapshot(path).await?;
     if &current != expected {
         return Err(AppError::ConfigError(
-            "CSV file changed while it was being imported; no further rows were written".into(),
+            "CSV file contents changed while it was being imported; no rows were written from the changed snapshot".into(),
         )
         .into());
     }
@@ -1146,6 +1175,44 @@ async fn import_csv_rows(
     manager: &crate::services::task_manager::TaskManager,
     handle: &TaskHandle,
 ) -> Result<ImportReport, ExportTaskError> {
+    // Imports are a single logical write job.  Keep the connection in an
+    // explicit transaction while the two-pass validation/write pipeline runs
+    // so cancellation or an unrecoverable write error cannot leave an
+    // unreported prefix of the file committed.  Row-level errors are still
+    // collected by the inner function and intentionally produce a partial
+    // success report; callers can decide whether that policy is acceptable.
+    let driver = operation.driver.clone();
+    driver
+        .begin_transaction()
+        .await
+        .map_err(ExportTaskError::from)?;
+
+    let result = import_csv_rows_in_transaction(input, operation, columns, manager, handle).await;
+    match result {
+        Ok(report) => {
+            if let Err(error) = driver.commit_transaction().await {
+                let _ = driver.rollback_transaction().await;
+                Err(ExportTaskError::from(error))
+            } else {
+                Ok(report)
+            }
+        }
+        Err(error) => {
+            // Rollback is best effort here: preserve the original parse,
+            // cancellation, or driver error for the task report.
+            let _ = driver.rollback_transaction().await;
+            Err(error)
+        }
+    }
+}
+
+async fn import_csv_rows_in_transaction(
+    input: &ImportTableCsvInput,
+    operation: QueryOperation,
+    columns: Vec<ColumnInfo>,
+    manager: &crate::services::task_manager::TaskManager,
+    handle: &TaskHandle,
+) -> Result<ImportReport, ExportTaskError> {
     if handle.is_cancel_requested() {
         return Err(ExportTaskError::Cancelled);
     }
@@ -1206,6 +1273,10 @@ async fn import_csv_rows(
     // preserves the prior all-parse-first behavior without retaining every
     // valid row in memory when a malformed quoted record occurs near EOF.
     ensure_import_file_unchanged(Path::new(&input.path), &file_snapshot).await?;
+    // Metadata checks during the scan are cheap and catch normal rewrites.
+    // Before the first write, also compare the content hash so an in-place
+    // rewrite that preserves length and mtime cannot be imported silently.
+    ensure_import_file_content_unchanged(Path::new(&input.path), &file_snapshot).await?;
     let mut file = reader.into_inner();
     file.seek(SeekFrom::Start(0))
         .await
