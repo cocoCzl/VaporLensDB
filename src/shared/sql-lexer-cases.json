@@ -5,6 +5,7 @@
   {"sql":"DO $body$ BEGIN RAISE NOTICE '$other$;'; END $body$;","statements":["DO $body$ BEGIN RAISE NOTICE '$other$;'; END $body$"]},
   {"sql":"SELECT 1 /* outer /* inner */ ; still outer */; SELECT 2","statements":["SELECT 1 /* outer /* inner */ ; still outer */","SELECT 2"]},
   {"sql":"SELECT E'it\\'s; a string'; SELECT 2","statements":["SELECT E'it\\'s; a string'","SELECT 2"]},
+  {"sql":"SELECT 'a\\\\'; SELECT 2","statements":["SELECT 'a\\\\'","SELECT 2"]},
   {"sql":"SELECT [a]];b], `a``;b`, \"a\"\";b\"; SELECT 2","statements":["SELECT [a]];b], `a``;b`, \"a\"\";b\"","SELECT 2"]},
   {"sql":"SELECT q'[It\u0027s; safe]' FROM dual; SELECT 2","statements":["SELECT q'[It\u0027s; safe]' FROM dual","SELECT 2"]},
   {"sql":"SELECT Q'!a\u0027b;c!' FROM dual; SELECT 2","statements":["SELECT Q'!a\u0027b;c!' FROM dual","SELECT 2"]},

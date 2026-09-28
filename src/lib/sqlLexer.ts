@@ -21,10 +21,14 @@ export function maskSql(sql: string): string {
     } else if (['\'', '"', '`', '['].includes(sql[index])) {
       const quote = sql[index]
       const end = quote === '[' ? ']' : quote
-      const escaped = quote === "'" && index > 0 && /[eE]/u.test(sql[index - 1]) && !identifier(sql[index - 2])
+      // MySQL treats backslashes as string escapes by default. Treat them as
+      // escapes for all single-quoted strings so the shared lexer never splits
+      // a valid MySQL string at an escaped quote. PostgreSQL E-strings remain
+      // covered as well; dialect-specific NO_BACKSLASH_ESCAPES is handled by
+      // the server and cannot be inferred from SQL text alone.
       index += 1
       while (index < sql.length) {
-        if (escaped && sql[index] === '\\') index = Math.min(index + 2, sql.length)
+        if (quote === "'" && sql[index] === '\\') index = Math.min(index + 2, sql.length)
         else if (sql[index] === end) {
           index += 1
           if (sql[index] === end) index += 1

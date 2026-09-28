@@ -28,13 +28,12 @@ pub fn mask_sql(sql: &str) -> String {
         } else if matches!(bytes[i], b'\'' | b'"' | b'`' | b'[') {
             let quote = bytes[i];
             let end = if quote == b'[' { b']' } else { quote };
-            let escaped = quote == b'\''
-                && i > 0
-                && matches!(bytes[i - 1], b'e' | b'E')
-                && (i < 2 || !identifier_byte(bytes[i - 2]));
             i += 1;
             while i < bytes.len() {
-                if escaped && bytes[i] == b'\\' {
+                // MySQL treats backslashes as string escapes by default. Keep
+                // the shared lexer conservative for every single-quoted
+                // string; NO_BACKSLASH_ESCAPES cannot be inferred from SQL.
+                if quote == b'\'' && bytes[i] == b'\\' {
                     i = (i + 2).min(bytes.len());
                 } else if bytes[i] == end {
                     i += 1;
