@@ -320,6 +320,7 @@
     "externalDriverValidated": "External driver validation passed",
     "queryStreamFailed": "Streaming query failed",
     "queryFailed": "Query execution failed",
+    "unsupportedClientDirective": "Client directive {{directive}} is not supported; remove it before execution.",
     "objectStructureChanged": "Object structure may have changed",
     "refreshObjectStructureHint": "Refresh the object tree, Structure tab, or DDL/Source tab manually.",
     "explainFailed": "Explain failed",

@@ -320,6 +320,7 @@
     "externalDriverValidated": "外部驱动校验通过",
     "queryStreamFailed": "流式查询失败",
     "queryFailed": "查询执行失败",
+    "unsupportedClientDirective": "客户端指令 {{directive}} 暂不支持，请删除后再执行。",
     "objectStructureChanged": "对象结构可能已变化",
     "refreshObjectStructureHint": "可手动刷新对象树、Structure tab 或 DDL/Source tab。",
     "explainFailed": "执行计划失败",

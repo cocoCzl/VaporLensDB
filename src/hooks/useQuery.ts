@@ -1,4 +1,4 @@
-import { leadingStatementKeyword, splitSqlStatements } from '@/lib/sqlLexer'
+import { leadingStatementKeyword, splitSqlStatements, unsupportedClientDirective } from '@/lib/sqlLexer'
 import {
   cancelQuery,
   executeQuery,
@@ -47,6 +47,11 @@ export function useQuery() {
     const startedMs = performance.now()
     const transactionMode = tab.transactionMode === 'manual' ? 'manual' : 'auto'
     const consoleId = transactionMode === 'manual' ? tabId : undefined
+    const unsupportedDirective = unsupportedClientDirective(sql)
+    if (unsupportedDirective) {
+      notify({ kind: 'error', title: i18n.t('notifications.queryFailed'), message: i18n.t('notifications.unsupportedClientDirective', { directive: unsupportedDirective }) })
+      return false
+    }
     let connectionGeneration: number
     setTabRunning(tabId, true, queryId)
     try {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import cases from '@/shared/sql-lexer-cases.json'
-import { leadingStatementKeyword, maskSql, splitSqlStatements, statementAtOffset } from './sqlLexer'
+import { leadingStatementKeyword, maskSql, splitSqlStatements, statementAtOffset, unsupportedClientDirective } from './sqlLexer'
 
 describe('shared SQL lexical contract', () => {
   it.each(cases)('splits $sql consistently with Rust', ({ sql, statements }) => {
@@ -23,6 +23,11 @@ describe('shared SQL lexical contract', () => {
     expect(splitSqlStatements('SELECT 1\nGO 2\nSELECT 2')).toEqual(['SELECT 1\nGO 2\nSELECT 2'])
     const script = 'SELECT 1\nGO\nSELECT 2'
     expect(statementAtOffset(script, script.indexOf('2'))).toBe('SELECT 2')
+  })
+  it('detects unsupported client directives outside literals and comments', () => {
+    expect(unsupportedClientDirective('DELIMITER //\nSELECT 1')).toBe('DELIMITER')
+    expect(unsupportedClientDirective("SELECT 'DELIMITER //';")).toBeUndefined()
+    expect(unsupportedClientDirective('-- DELIMITER //\nSELECT 1')).toBeUndefined()
   })
   it.each([
     ['SELECT 1', 'select'],

@@ -171,6 +171,16 @@ export function splitSqlStatements(sql: string): string[] {
   return statementRanges(normalized).map(({ start, end }) => normalized.slice(start, end).trim())
 }
 
+/** Client directives are not SQL and must be handled before IPC execution. */
+export function unsupportedClientDirective(sql: string): 'DELIMITER' | undefined {
+  const masked = maskSql(sql)
+  for (const line of masked.split(/\r?\n/u)) {
+    const trimmed = line.trim()
+    if (/^delimiter\s/iu.test(trimmed)) return 'DELIMITER'
+  }
+  return undefined
+}
+
 export function statementAtOffset(sql: string, offset: number): string {
   const normalized = normalizeGoBatchSeparators(sql)
   const statements = statementRanges(normalized)
