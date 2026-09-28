@@ -77,10 +77,11 @@ VAPORLENSDB_LIVE_TEST_ENV_FILE=.env.qa \
   ./build.sh live-tests --mysql --postgresql
 ```
 
-The live JDBC metadata tests fail closed unless both
-`VAPORLENSDB_QA_ENVIRONMENT=1` and the `vaporlensdb_qa_marker` row are present
-in the selected database. The marker also verifies that the current database
-is exactly `vaporlensdb_qa`; hostname alone is never treated as a safety proof.
+The live JDBC metadata tests and native PostgreSQL/MySQL CSV import acceptance
+tests fail closed unless both `VAPORLENSDB_QA_ENVIRONMENT=1` and the
+`vaporlensdb_qa_marker` row are present in the selected database. The marker
+also verifies that the current database is exactly `vaporlensdb_qa`; hostname
+alone is never treated as a safety proof.
 
 The CREATE/DROP DATABASE tests remain separate:
 

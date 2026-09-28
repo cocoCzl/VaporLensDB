@@ -49,6 +49,13 @@ SQLite do not promise cancellation, while PostgreSQL supports its native
 cancellation path. This does not imply a generalized cancellation guarantee
 for every driver.
 
+Parameterized CSV import is a Tier-A native-driver capability for PostgreSQL,
+MySQL, and SQLite only. SQL Server and all JDBC paths do not support
+parameterized CSV import in 1.0. Full-query export accepts one SQL statement;
+multi-statement, multi-result export is unsupported. MySQL CLI `DELIMITER`
+directives and PostgreSQL exotic or multidimensional types are also outside the
+1.0 support scope.
+
 ## Pre-1.0 feature freeze
 
 The macOS Tier-A product scope is frozen. Before 1.0, accepted behavior may

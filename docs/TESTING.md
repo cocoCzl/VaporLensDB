@@ -120,7 +120,10 @@ configuration and never loads this repository's `.env`.
 
 ## Explicit Live Integration
 
-Run selected live JDBC integrations explicitly:
+Run selected live integrations explicitly. The MySQL and PostgreSQL selectors
+run both the JDBC metadata fixture and the native production CSV import
+acceptance; the latter is mutation-capable and fails closed unless the
+disposable QA environment variable and database marker are both valid:
 
 ```bash
 ./build.sh live-tests --mysql --oracle
@@ -129,8 +132,9 @@ Run selected live JDBC integrations explicitly:
 
 ## Explicit Destructive Integration
 
-The MySQL and PostgreSQL JDBC metadata tests use uniquely named, short-lived
-fixture schemas. Product-level CREATE/DROP DATABASE verification is a separate
+The MySQL and PostgreSQL JDBC metadata and native CSV acceptance tests use
+uniquely named, short-lived fixture objects in the marked disposable QA
+database. Product-level CREATE/DROP DATABASE verification is a separate
 destructive suite and requires both a disposable environment and an explicit
 confirmation variable:
 

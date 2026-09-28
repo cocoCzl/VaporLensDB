@@ -53,11 +53,14 @@ validation is still pending.
 - A grouped, searchable Data Source explorer with clear connection states and
   independently scoped SQL execution targets.
 - SQL drafts and query history, a command palette, compact read-only result
-  grids, import/export tasks, SSH tunnels, diagnostics export, and
-  English/Chinese UI switching.
+  grids, Tier-A native parameterized CSV import, result export tasks, SSH
+  tunnels, diagnostics export, and English/Chinese UI switching.
 
 The result grid is intentionally read-only. ODBC and a full configurable
-dangerous-SQL policy are outside the current scope.
+dangerous-SQL policy are outside the current scope. Parameterized CSV import
+is not supported for SQL Server or JDBC drivers, and full-query export accepts
+one statement rather than multi-statement, multi-result scripts. See the
+[support matrix](docs/SUPPORT.md) for the complete 1.0 limits.
 
 ## Source-first quick start
 
