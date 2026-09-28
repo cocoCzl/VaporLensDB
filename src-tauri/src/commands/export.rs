@@ -43,6 +43,7 @@ const IMPORT_PREVIEW_SAMPLE_BYTES: usize = 4 * 1024 * 1024;
 const IMPORT_REPORT_MAX_ROWS_PER_KIND: usize = 1_000;
 const IMPORT_REPORT_MAX_BYTES_PER_KIND: usize = 4 * 1024 * 1024;
 const IMPORT_BATCH_SIZE: usize = 100;
+const IMPORT_BATCH_MAX_BYTES: usize = 4 * 1024 * 1024;
 const STALE_EXPORT_PART_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const EXPORT_PART_PREFIX: &str = ".vaporlensdb-export-";
 const EXPORT_PART_SUFFIX: &str = ".part";
@@ -1221,6 +1222,7 @@ async fn import_csv_rows(
         DriverType::Postgres | DriverType::Mysql | DriverType::Sqlite | DriverType::Mssql
     );
     let mut batch: Vec<(u64, Vec<String>)> = Vec::with_capacity(IMPORT_BATCH_SIZE);
+    let mut batch_bytes = 0_usize;
 
     #[allow(clippy::too_many_arguments)]
     async fn flush_import_batch(
@@ -1278,8 +1280,9 @@ async fn import_csv_rows(
         if row.len() == import_columns.len() {
             let row_number = first_data_row + current - 1;
             if supports_multi_row_insert {
+                batch_bytes = batch_bytes.saturating_add(row_storage_bytes(&row));
                 batch.push((row_number, row));
-                if batch.len() >= IMPORT_BATCH_SIZE {
+                if batch.len() >= IMPORT_BATCH_SIZE || batch_bytes >= IMPORT_BATCH_MAX_BYTES {
                     flush_import_batch(
                         &driver,
                         input.driver_type,
@@ -1292,6 +1295,7 @@ async fn import_csv_rows(
                         &mut inserted_rows,
                     )
                     .await?;
+                    batch_bytes = 0;
                 }
             } else {
                 let sql = build_insert_sql(
