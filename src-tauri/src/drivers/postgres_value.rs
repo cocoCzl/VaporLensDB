@@ -110,9 +110,11 @@ fn decode_numeric(raw: &[u8]) -> Result<String, DecodeError> {
         0 | 0x4000 => {}
         _ => return Err("invalid PostgreSQL numeric sign".into()),
     }
-    let digits = raw[8..]
-        .chunks_exact(2)
-        .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
+    let (digit_bytes, remainder) = raw[8..].as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    let digits = digit_bytes
+        .iter()
+        .map(|bytes| u16::from_be_bytes(*bytes))
         .collect::<Vec<_>>();
     if digits.iter().any(|digit| *digit >= 10000) {
         return Err("invalid PostgreSQL numeric digit".into());
