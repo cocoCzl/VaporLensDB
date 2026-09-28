@@ -10,7 +10,7 @@ use services::{
     external_driver::configure_bundled_jdbc_bridge_jar, metadata_index::MetadataIndexService,
     metadata_service::MetadataService, query_engine::QueryEngine, task_manager::TaskManager,
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
 pub struct AppState {
@@ -21,6 +21,8 @@ pub struct AppState {
     pub query_engine: QueryEngine,
     pub task_manager: TaskManager,
 }
+
+pub const APPLICATION_CLOSE_REQUEST_EVENT: &str = "vaporlensdb:request-application-close";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -54,17 +56,15 @@ pub fn run() {
             task_manager: TaskManager::new(),
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                let state = window.state::<AppState>();
-                tauri::async_runtime::block_on(async {
-                    state.connection_manager.lock().await.shutdown_all().await;
-                    state.metadata_index.clear_all().await;
-                });
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.emit(APPLICATION_CLOSE_REQUEST_EVENT, ());
             }
         })
         .invoke_handler(tauri::generate_handler![
             commands::contract::list_command_contracts,
             commands::health::health_check,
+            commands::lifecycle::shutdown_application,
             commands::config::export_diagnostics_package,
             commands::connection::create_connection,
             commands::connection::update_connection,

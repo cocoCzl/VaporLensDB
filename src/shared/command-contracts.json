@@ -474,5 +474,12 @@
     "args": "{ taskId: string }",
     "response": "void",
     "status": "active"
+  },
+  {
+    "name": "shutdown_application",
+    "namespace": "lifecycle",
+    "args": "void",
+    "response": "void",
+    "status": "active"
   }
 ]

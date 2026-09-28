@@ -14,29 +14,36 @@ function warn(key: 'closeTabBusy' | 'closeTabChanged') {
 }
 
 /** Shared by tab buttons, bulk actions and the native menu. False stops a batch. */
-export function closeEditorTab(id: string): Promise<boolean> {
+export function closeEditorTab(id: string, options?: { confirmTransaction?: boolean }): Promise<boolean> {
   const pending = closingTabs.get(id)
   if (pending) return pending
   // Start on a microtask so the deduplication entry exists before any work.
-  const operation = Promise.resolve().then(() => closeTab(id)).finally(() => closingTabs.delete(id))
+  const operation = Promise.resolve()
+    .then(() => closeTab(id, options))
+    .finally(() => closingTabs.delete(id))
   closingTabs.set(id, operation)
   return operation
 }
 
-export async function closeEditorTabs(ids: string[]): Promise<void> {
+export async function closeEditorTabs(
+  ids: string[],
+  options?: { confirmTransaction?: boolean },
+): Promise<boolean> {
   for (const id of ids) {
-    if (!(await closeEditorTab(id))) break
+    if (!(await closeEditorTab(id, options))) return false
   }
+  return true
 }
 
-async function closeTab(id: string): Promise<boolean> {
+async function closeTab(id: string, options?: { confirmTransaction?: boolean }): Promise<boolean> {
   const initial = getTab(id)
   if (!initial) return true
   if (initial.running || initial.transactionBusy) {
     warn('closeTabBusy')
     return false
   }
-  if (initial.connectionId && initial.transactionMode === 'manual' && initial.transactionPhase !== 'idle'
+  if (options?.confirmTransaction !== false
+    && initial.connectionId && initial.transactionMode === 'manual' && initial.transactionPhase !== 'idle'
     && !window.confirm(i18n.t('workbench.closeTabRollbackConfirm'))) return false
 
   useEditorStore.getState().setTabClosing(id, true)

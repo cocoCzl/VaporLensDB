@@ -21,6 +21,7 @@ const DATABASE_CONNECT_ID: &str = "vaporlensdb-database-connect";
 const VIEW_COMMAND_PALETTE_ID: &str = "vaporlensdb-view-command-palette";
 const VIEW_QUERY_HISTORY_ID: &str = "vaporlensdb-view-query-history";
 const VIEW_SETTINGS_ID: &str = "vaporlensdb-view-settings";
+const APP_QUIT_ID: &str = "vaporlensdb-app-quit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMenuLanguage {
@@ -44,6 +45,7 @@ pub fn set_application_menu<R: Runtime>(
 ) -> tauri::Result<()> {
     let labels = labels(language);
     let about_metadata = about_metadata(app);
+    let quit = menu_item(app, APP_QUIT_ID, labels.quit, "CmdOrCtrl+Q")?;
     let app_menu = SubmenuBuilder::new(app, "VaporLensDB")
         .about_with_text(labels.about, Some(about_metadata.clone()))
         .separator()
@@ -51,7 +53,7 @@ pub fn set_application_menu<R: Runtime>(
         .hide_others_with_text(labels.hide_others)
         .show_all_with_text(labels.show_all)
         .separator()
-        .quit_with_text(labels.quit)
+        .item(&quit)
         .build()?;
     let file_new_sql = menu_item(app, FILE_NEW_SQL_ID, labels.new_sql, "CmdOrCtrl+N")?;
     let file_new_connection = menu_item(
@@ -168,6 +170,9 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
         VIEW_COMMAND_PALETTE_ID => emit_workspace_command(app, "command-palette"),
         VIEW_QUERY_HISTORY_ID => emit_workspace_command(app, "query-history"),
         VIEW_SETTINGS_ID => emit_workspace_command(app, "settings"),
+        APP_QUIT_ID => {
+            let _ = app.emit(crate::APPLICATION_CLOSE_REQUEST_EVENT, ());
+        }
         WINDOW_MINIMIZE_ID => {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.minimize();

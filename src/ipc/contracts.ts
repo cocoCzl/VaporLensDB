@@ -7,6 +7,7 @@ export type CommandNamespace =
   | 'driver'
   | 'export'
   | 'history'
+  | 'lifecycle'
   | 'metadata'
   | 'query'
   | 'settings'
@@ -28,6 +29,7 @@ export const COMMAND_CONTRACTS = commandContracts as CommandContract[]
 export const COMMANDS = {
   listCommandContracts: 'list_command_contracts',
   healthCheck: 'health_check',
+  shutdownApplication: 'shutdown_application',
   exportDiagnosticsPackage: 'export_diagnostics_package',
   setApplicationMenuLanguage: 'set_application_menu_language',
   createConnection: 'create_connection',

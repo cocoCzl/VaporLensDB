@@ -19,6 +19,7 @@ import { useConnectionStore } from './stores/connectionStore'
 import { useMetadataStore } from './stores/metadataStore'
 import i18n from './i18n'
 import { closeEditorTab } from './lib/closeEditorTab'
+import { requestApplicationClose } from './lib/applicationClose'
 import { onConsoleTransactionUpdated } from './ipc/query'
 
 const MIN_SPLASH_DURATION_MS = 250
@@ -32,6 +33,20 @@ export default function App() {
   const idleReclaimMinutes = useUiStore((state) => state.idleReclaimMinutes)
   const loadTasks = useTaskStore((state) => state.loadTasks)
   const upsertTask = useTaskStore((state) => state.upsertTask)
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let disposed = false
+    listen('vaporlensdb:request-application-close', () => {
+      void requestApplicationClose()
+    }).then((dispose) => {
+      if (disposed) dispose()
+      else unlisten = dispose
+    }).catch(() => {
+      // Browser preview does not expose Tauri's event bridge.
+    })
+    return () => { disposed = true; unlisten?.() }
+  }, [])
 
   useEffect(() => {
     let cancelled = false

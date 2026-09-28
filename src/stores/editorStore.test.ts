@@ -10,6 +10,23 @@ import {
 const storageKey = 'vaporlensdb.sqlWorkspace.v1'
 
 describe('SQL workspace persistence', () => {
+  it('distinguishes a cancellation request from a terminal cancellation confirmation', () => {
+    useEditorStore.setState({ tabs: [{
+      id: 'cancel-state', title: 'SQL', sql: 'select 1', connectionId: 'source',
+      running: true, runningQueryId: 'query-1', cancelling: true,
+    }] })
+
+    useEditorStore.getState().setTabQueryState('cancel-state', 'query-1', 'cancelled')
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({
+      running: false,
+      cancelling: false,
+      cancellationConfirmed: true,
+    })
+
+    useEditorStore.getState().setTabRunning('cancel-state', true, 'query-2')
+    expect(useEditorStore.getState().tabs[0].cancellationConfirmed).toBe(false)
+  })
+
   it('acknowledges a saved ID without marking newer SQL or context as saved', () => {
     useEditorStore.setState({ tabs: [{
       id: 'editing', title: 'SQL', sql: 'select 1', connectionId: null, dirty: true,

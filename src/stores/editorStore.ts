@@ -39,6 +39,8 @@ export interface EditorTab {
   closing?: boolean
   transactionBusy?: boolean
   cancelling?: boolean
+  /** The backend/driver delivered a terminal event after a cancellation request. */
+  cancellationConfirmed?: boolean
   error?: string | null
   draftId?: string | null
   dirty?: boolean
@@ -258,6 +260,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               ...t,
               running,
               cancelling: false,
+              cancellationConfirmed: running ? false : t.cancellationConfirmed,
               error: running ? null : t.error,
               lastQueryId: queryId ?? t.lastQueryId,
               runningQueryId: running ? queryId ?? null : null,
@@ -274,7 +277,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === id
-          ? { ...t, lastQueryId: queryId, runningQueryId: null, error, running: false, cancelling: false }
+          ? {
+              ...t,
+              lastQueryId: queryId,
+              runningQueryId: null,
+              error,
+              running: false,
+              cancellationConfirmed: Boolean(t.cancelling),
+              cancelling: false,
+            }
           : t,
       ),
     })),

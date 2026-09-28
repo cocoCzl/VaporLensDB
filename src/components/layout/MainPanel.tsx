@@ -940,6 +940,8 @@ export function MainPanel() {
           height={resultPanelHeight}
           status={activeTab.running ? (
             <span className="inline-flex items-center gap-1.5 text-muted-foreground" aria-live="polite"><Loader2 className="size-3 animate-spin" />{activeTab.cancelling ? t('workbench.cancelRequested') : t('workbench.queryRunning')}</span>
+          ) : activeTab.cancellationConfirmed ? (
+            <span className="inline-flex min-w-0 items-center gap-1 text-muted-foreground" aria-live="polite">{t('workbench.cancelConfirmed')}</span>
           ) : activeTab.error ? (
             <span className="inline-flex min-w-0 items-center gap-1 text-destructive"><AlertCircle className="size-3.5 shrink-0" />{t('workbench.queryFailed')}</span>
           ) : undefined}

@@ -3,8 +3,9 @@
 // TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//<oracle-host>:1521/<oracle-service>' TEST_ORACLE_USER=<oracle-user> TEST_ORACLE_PASSWORD=<oracle-password> TEST_ORACLE_JDBC_DRIVER_PATH=/path/to/ojdbc11.jar cargo test --test oracle_jdbc_driver -- --ignored
 
 use chrono::Utc;
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Duration};
+use tokio::time::{sleep, timeout, Duration};
 use uuid::Uuid;
 use vapor_lens_db_lib::{
     drivers::{jdbc::JdbcDriver, trait_def::DatabaseDriver},
@@ -135,6 +136,52 @@ async fn streams_oracle_jdbc_rows_with_an_exact_limit() {
     assert!(summary.truncated);
     assert_eq!(summary.max_rows, Some(2));
     assert_eq!(row_count, 2);
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH"]
+async fn cancellation_stops_a_real_oracle_jdbc_statement_and_keeps_the_sidecar_usable() {
+    let (config, password) = test_oracle_config()
+        .expect("TEST_ORACLE_JDBC_URL and TEST_ORACLE_JDBC_DRIVER_PATH must be set");
+    let definition = driver_definitions()
+        .into_iter()
+        .find(|definition| definition.id == "oracle")
+        .expect("oracle driver definition");
+    let driver = Arc::new(
+        JdbcDriver::connect(&config, Some(&password), Some(&definition))
+            .await
+            .expect("connect oracle jdbc"),
+    );
+    let (chunk_tx, _chunk_rx) = mpsc::channel(1);
+    let running_driver = driver.clone();
+    let running = tokio::spawn(async move {
+        running_driver
+            .execute_query_stream(
+                "SELECT COUNT(*) AS value FROM all_objects a CROSS JOIN all_objects b CROSS JOIN all_objects c",
+                "oracle-cancel-live",
+                100,
+                None,
+                chunk_tx,
+            )
+            .await
+    });
+
+    sleep(Duration::from_millis(250)).await;
+    driver
+        .cancel_query("oracle-cancel-live")
+        .await
+        .expect("send Oracle JDBC statement cancellation");
+    let cancelled = timeout(Duration::from_secs(10), running)
+        .await
+        .expect("cancelled Oracle statement should return promptly")
+        .expect("join Oracle cancellation task");
+    assert!(cancelled.is_err(), "cancelled Oracle statement must fail");
+
+    let recovered = driver
+        .execute_query("SELECT 42 AS value FROM dual", None)
+        .await
+        .expect("Oracle JDBC sidecar remains usable after cancellation");
+    assert_eq!(recovered.rows[0][0], serde_json::json!("42"));
 }
 
 #[tokio::test]

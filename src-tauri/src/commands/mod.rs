@@ -5,6 +5,7 @@ pub mod data_source_group;
 pub mod driver;
 pub mod export;
 pub mod health;
+pub mod lifecycle;
 pub mod metadata;
 pub mod query;
 pub mod query_history;
