@@ -1243,6 +1243,9 @@ async fn import_csv_rows(
             *inserted_rows += batch.len() as u64;
         } else {
             for (row_number, row) in batch.drain(..) {
+                if handle.is_cancel_requested() {
+                    return Err(ExportTaskError::Cancelled);
+                }
                 match driver
                     .execute_query(
                         &build_insert_sql(driver_type, table, columns, &row, empty_as_null),

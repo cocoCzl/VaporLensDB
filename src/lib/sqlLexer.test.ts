@@ -17,6 +17,13 @@ describe('shared SQL lexical contract', () => {
     expect(maskSql(sql).length).toBe(sql.length)
     expect(statementAtOffset(sql, sql.indexOf('2'))).toBe('SELECT 2')
   })
+  it('splits standalone GO batches without treating literals or GO counts as separators', () => {
+    expect(splitSqlStatements("SELECT 'GO';\nGO\nSELECT 2")).toEqual(["SELECT 'GO'", 'SELECT 2'])
+    expect(splitSqlStatements('SELECT 1 -- GO\n  go\r\nSELECT 2')).toEqual(['SELECT 1 -- GO', 'SELECT 2'])
+    expect(splitSqlStatements('SELECT 1\nGO 2\nSELECT 2')).toEqual(['SELECT 1\nGO 2\nSELECT 2'])
+    const script = 'SELECT 1\nGO\nSELECT 2'
+    expect(statementAtOffset(script, script.indexOf('2'))).toBe('SELECT 2')
+  })
   it.each([
     ['SELECT 1', 'select'],
     ['/* UPDATE hidden */ UPDATE items SET value = 1', 'update'],

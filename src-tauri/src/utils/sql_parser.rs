@@ -125,21 +125,59 @@ fn dollar_delimiter(bytes: &[u8], i: usize) -> Option<usize> {
 }
 
 pub fn split_sql_statements(sql: &str) -> Vec<String> {
-    let mask = mask_sql(sql);
+    let normalized = normalize_go_batch_separators(sql);
+    let mask = mask_sql(&normalized).into_bytes();
     let mut statements = Vec::new();
     let mut start = 0;
     for end in mask
-        .match_indices(';')
-        .map(|(i, _)| i)
-        .chain(std::iter::once(sql.len()))
+        .iter()
+        .enumerate()
+        .filter_map(|(index, byte)| (*byte == b';').then_some(index))
+        .chain(std::iter::once(normalized.len()))
     {
-        let statement = sql[start..end].trim();
+        let statement = normalized[start..end].trim();
         if !statement.is_empty() {
             statements.push(statement.to_string());
         }
         start = end + 1;
     }
     statements
+}
+
+fn normalize_go_batch_separators(sql: &str) -> String {
+    let mut source = sql.as_bytes().to_vec();
+    let mask = mask_sql(sql).into_bytes();
+    let mut line_start = 0;
+    for index in 0..=mask.len() {
+        if index != mask.len() && mask[index] != b'\n' {
+            continue;
+        }
+        let line_end = index.saturating_sub(usize::from(
+            index > 0 && mask.get(index - 1) == Some(&b'\r'),
+        ));
+        let line = &mask[line_start..line_end];
+        let trimmed = trim_ascii(line);
+        if trimmed.eq_ignore_ascii_case(b"go") {
+            if let Some(separator) = source.get_mut(line_start..line_end) {
+                separator.fill(b' ');
+                if let Some(first) = separator.first_mut() {
+                    *first = b';';
+                }
+            }
+        }
+        line_start = index.saturating_add(1);
+    }
+    String::from_utf8(source).expect("SQL source is valid UTF-8")
+}
+
+fn trim_ascii(mut value: &[u8]) -> &[u8] {
+    while value.first().is_some_and(u8::is_ascii_whitespace) {
+        value = &value[1..];
+    }
+    while value.last().is_some_and(u8::is_ascii_whitespace) {
+        value = &value[..value.len() - 1];
+    }
+    value
 }
 
 #[cfg(test)]
@@ -166,6 +204,19 @@ mod tests {
             split_sql_statements("select 1; select 2;"),
             vec!["select 1", "select 2"]
         );
+    }
+
+    #[test]
+    fn splits_standalone_go_batches_without_touching_literals_or_comments() {
+        assert_eq!(
+            split_sql_statements("SELECT 'GO';\nGO\nSELECT 2"),
+            vec!["SELECT 'GO'".to_string(), "SELECT 2".to_string()]
+        );
+        assert_eq!(
+            split_sql_statements("SELECT 1 -- GO\n  go\r\nSELECT 2"),
+            vec!["SELECT 1 -- GO".to_string(), "SELECT 2".to_string()]
+        );
+        assert_eq!(split_sql_statements("SELECT 1\nGO 2\nSELECT 2").len(), 1);
     }
     #[test]
     fn keeps_semicolon_inside_strings_and_comments() {

@@ -138,7 +138,7 @@ function oracleQQuoteEnd(
 }
 
 function statementRanges(sql: string) {
-  const mask = maskSql(sql)
+  const mask = maskSql(normalizeGoBatchSeparators(sql))
   const ranges: Array<{ start: number; end: number }> = []
   let start = 0
   for (let end = 0; end <= sql.length; end += 1) {
@@ -149,13 +149,32 @@ function statementRanges(sql: string) {
   return ranges
 }
 
+function normalizeGoBatchSeparators(sql: string) {
+  const source = sql.split('')
+  const mask = maskSql(sql).split('')
+  let lineStart = 0
+  for (let index = 0; index <= mask.length; index += 1) {
+    if (index !== mask.length && mask[index] !== '\n') continue
+    const lineEnd = index > 0 && mask[index - 1] === '\r' ? index - 1 : index
+    const trimmed = mask.slice(lineStart, lineEnd).join('').trim()
+    if (trimmed.toLowerCase() === 'go') {
+      source.fill(' ', lineStart, lineEnd)
+      if (lineStart < lineEnd) source[lineStart] = ';'
+    }
+    lineStart = index + 1
+  }
+  return source.join('')
+}
+
 export function splitSqlStatements(sql: string): string[] {
-  return statementRanges(sql).map(({ start, end }) => sql.slice(start, end).trim())
+  const normalized = normalizeGoBatchSeparators(sql)
+  return statementRanges(normalized).map(({ start, end }) => normalized.slice(start, end).trim())
 }
 
 export function statementAtOffset(sql: string, offset: number): string {
-  const statements = statementRanges(sql)
+  const normalized = normalizeGoBatchSeparators(sql)
+  const statements = statementRanges(normalized)
   const statement = statements.find((item) => offset >= item.start && offset <= item.end)
-    ?? statements.filter((item) => item.end < offset && /^[\s;]*$/u.test(sql.slice(item.end, offset))).at(-1)
-  return statement ? sql.slice(statement.start, statement.end).trim() : ''
+    ?? statements.filter((item) => item.end < offset && /^[\s;]*$/u.test(normalized.slice(item.end, offset))).at(-1)
+  return statement ? normalized.slice(statement.start, statement.end).trim() : ''
 }
