@@ -12,7 +12,10 @@ use crate::{
             ExplainResult, QueryResult, QueryResultChunk, QueryStreamDone, QueryStreamError,
         },
     },
-    utils::{query_budget::row_json_bytes, sql_parser::split_sql_statements},
+    utils::{
+        query_budget::row_json_bytes,
+        sql_parser::{split_sql_statements, unsupported_client_directive},
+    },
 };
 
 const QUERY_RESULT_CHUNK_EVENT: &str = "query_result_chunk";
@@ -70,6 +73,11 @@ impl QueryEngine {
         query_id: Option<String>,
         max_rows: Option<u64>,
     ) -> Result<ExecuteQueryResponse, AppError> {
+        if let Some(directive) = unsupported_client_directive(sql) {
+            return Err(AppError::ConfigError(format!(
+                "client directive {directive} is not supported; remove it before execution"
+            )));
+        }
         let statements = split_sql_statements(sql);
         // Reject the entire batch before executing any statement, including DML.
         if statements.len() > MAX_INTERACTIVE_STATEMENTS {
@@ -124,6 +132,11 @@ impl QueryEngine {
         driver: Arc<dyn DatabaseDriver>,
         request: StreamQueryRequest,
     ) -> Result<(), String> {
+        if let Some(directive) = unsupported_client_directive(&request.sql) {
+            return Err(format!(
+                "client directive {directive} is not supported; remove it before execution"
+            ));
+        }
         let (chunk_tx, mut chunk_rx) = mpsc::channel::<Result<QueryResultChunk, AppError>>(8);
         let query_id = request.query_id.clone();
         let emit_app = app.clone();

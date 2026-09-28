@@ -144,6 +144,27 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
     statements
 }
 
+/// Returns a client-side directive that must be handled before SQL reaches a
+/// database server. We intentionally reject DELIMITER for now instead of
+/// sending it as SQL or silently splitting procedure bodies incorrectly.
+pub fn unsupported_client_directive(sql: &str) -> Option<&'static str> {
+    let mask = mask_sql(sql);
+    for line in mask.lines() {
+        let trimmed = line.trim();
+        if trimmed
+            .get(..9)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("delimiter"))
+            && trimmed
+                .as_bytes()
+                .get(9)
+                .is_some_and(u8::is_ascii_whitespace)
+        {
+            return Some("DELIMITER");
+        }
+    }
+    None
+}
+
 fn normalize_go_batch_separators(sql: &str) -> String {
     let mut source = sql.as_bytes().to_vec();
     let mask = mask_sql(sql).into_bytes();
@@ -217,6 +238,19 @@ mod tests {
             vec!["SELECT 1 -- GO".to_string(), "SELECT 2".to_string()]
         );
         assert_eq!(split_sql_statements("SELECT 1\nGO 2\nSELECT 2").len(), 1);
+    }
+
+    #[test]
+    fn identifies_delimiter_directives_but_not_literals_or_comments() {
+        assert_eq!(
+            unsupported_client_directive("SELECT 1\nDELIMITER //\n"),
+            Some("DELIMITER")
+        );
+        assert_eq!(unsupported_client_directive("SELECT 'DELIMITER //';"), None);
+        assert_eq!(
+            unsupported_client_directive("-- DELIMITER //\nSELECT 1"),
+            None
+        );
     }
     #[test]
     fn keeps_semicolon_inside_strings_and_comments() {
