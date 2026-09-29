@@ -24,6 +24,11 @@ export function ResultPanel({
   fillAvailableSpace = false,
   height,
 }: ResultPanelProps) {
+  // A maximized result panel must always expose its body. `collapsed` is a
+  // persisted split-view preference and used to suppress the grid even after
+  // the workspace had switched to the results-only view.
+  const contentVisible = !collapsed || fillAvailableSpace
+
   return (
     <section
       className={[
@@ -41,7 +46,7 @@ export function ResultPanel({
         </div>
         <div className="ml-auto flex h-full shrink-0 items-center gap-1">{actions}</div>
       </header>
-      {!collapsed && <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>}
+      {contentVisible && <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>}
     </section>
   )
 }

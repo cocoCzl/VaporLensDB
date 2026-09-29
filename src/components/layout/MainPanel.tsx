@@ -151,6 +151,11 @@ export function MainPanel() {
   const draftSaveTimer = useRef<number | null>(null)
   const handledHistoryRequest = useRef(0)
 
+  function revealQueryResults() {
+    setBottomPanelCollapsed(false)
+    setWorkspaceView((view) => view === 'editor' ? 'split' : view)
+  }
+
   function startResultResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (bottomPanelCollapsed) return
     event.preventDefault()
@@ -408,6 +413,7 @@ export function MainPanel() {
       return
     }
 
+    revealQueryResults()
     runQuery(activeTab.id, connectionId, sql, {
       database: selectedDatabase,
       schema: selectedSchema,
@@ -429,6 +435,7 @@ export function MainPanel() {
         return
       }
     }
+    revealQueryResults()
     await runExplain(activeTab.id, connectionId, sql, {
       database: selectedDatabase,
       schema: selectedSchema,
@@ -991,7 +998,19 @@ export function MainPanel() {
             >
               <Repeat2 className="size-3.5" />
             </IconTooltipButton>
-            <IconTooltipButton size="icon-xs" label={workspaceView === 'results' ? t('editor.restoreSplit') : t('editor.maximizeResults')} variant="ghost" onClick={() => setWorkspaceView((view) => view === 'results' ? 'split' : 'results')}>
+            <IconTooltipButton
+              size="icon-xs"
+              label={workspaceView === 'results' ? t('editor.restoreSplit') : t('editor.maximizeResults')}
+              variant="ghost"
+              onClick={() => {
+                if (workspaceView === 'results') {
+                  setWorkspaceView('split')
+                  return
+                }
+                setBottomPanelCollapsed(false)
+                setWorkspaceView('results')
+              }}
+            >
               <Maximize2 className="size-3.5" />
             </IconTooltipButton>
           </>}
