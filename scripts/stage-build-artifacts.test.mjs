@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 
@@ -78,4 +79,45 @@ test('fails before replacing output when an artifact is missing or ambiguous', a
   await assert.rejects(stageArtifacts({ platform: 'windows', ...missing }), /exactly one \.exe artifact, found 0/)
   await assert.rejects(stageArtifacts({ platform: 'windows', ...duplicate }), /exactly one \.msi artifact, found 2/)
   assert.equal(await readFile(join(missing.artifactDir, 'stale-installer.bin'), 'utf8'), 'stale')
+})
+
+test('macOS packaging stages complete QA artifacts before removing the raw App', async () => {
+  const root = resolve(import.meta.dirname, '..')
+  const buildPath = join(root, 'build.sh')
+  const buildScript = await readFile(buildPath, 'utf8')
+  const buildMac = buildScript.slice(
+    buildScript.indexOf('build_mac() {'),
+    buildScript.indexOf('\nbuild_windows() {'),
+  )
+  const orderedSteps = [
+    'tauri_bundle_build --bundles app',
+    'bash "$ROOT_DIR/scripts/create-macos-dmg.sh" "$app_path" "$dmg_path"',
+    'ditto "$app_path" "$artifact_dir/VaporLensDB.app"',
+    'cp "$dmg_path" "$artifact_dir/VaporLensDB.dmg"',
+    'shasum -a 256 "VaporLensDB.dmg" > SHA256SUMS.txt',
+    'rm -rf "$app_path"',
+    'register_macos_app "$artifact_dir/VaporLensDB.app"',
+  ]
+
+  let previousIndex = -1
+  for (const step of orderedSteps) {
+    const index = buildMac.indexOf(step)
+    assert.notEqual(index, -1, `missing macOS packaging step: ${step}`)
+    assert.ok(index > previousIndex, `macOS packaging step is out of order: ${step}`)
+    previousIndex = index
+  }
+
+  const help = spawnSync('bash', [buildPath, '--help'], { encoding: 'utf8' })
+  assert.equal(help.status, 0, help.stderr)
+  assert.match(help.stdout, /macOS staged app: artifacts\/macos\/<architecture>\/VaporLensDB\.app/)
+  assert.match(help.stdout, /macOS staged dmg: artifacts\/macos\/<architecture>\/VaporLensDB\.dmg/)
+  assert.match(help.stdout, /macOS checksum: artifacts\/macos\/<architecture>\/SHA256SUMS\.txt/)
+  assert.doesNotMatch(help.stdout, /macOS app: src-tauri\/target\/release\/bundle\/macos/)
+
+  const cleanup = buildScript.slice(
+    buildScript.indexOf('clean_macos_app_index() {'),
+    buildScript.indexOf('\nlog() {'),
+  )
+  assert.match(cleanup, /rm -rf "\$debug_bundle" "\$debug_deps_bundle" "\$raw_release_bundle"/)
+  assert.doesNotMatch(cleanup, /lsregister[^\n]*-kill|rm -rf[^\n]*\/Applications/)
 })

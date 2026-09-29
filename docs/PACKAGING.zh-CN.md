@@ -76,7 +76,6 @@ Oracle 和自定义 JDBC 的厂商驱动仍由用户从本地选择，绝不会�
 产物：
 
 ```text
-src-tauri/target/release/bundle/macos/VaporLensDB.app
 src-tauri/target/release/bundle/dmg/VaporLensDB.dmg
 artifacts/macos/<架构>/VaporLensDB.app
 artifacts/macos/<架构>/VaporLensDB.dmg
@@ -84,10 +83,19 @@ artifacts/macos/<架构>/SHA256SUMS.txt
 ```
 
 `dist/` 是 Vite 生成的前端资源，Tauri 会将其打进 App；它不是安装包目录，可删除后由
-`pnpm build` 重新生成。`src-tauri/target/` 是 Cargo/Tauri 的原始构建目录；`artifacts/`
-则是便于本地取用的汇总目录，已被 Git 忽略。每次构建都会替换当前架构目录，其中只保留
-最新的 App、DMG 和校验和。`.app` 可在 macOS 上直接运行，`.dmg` 是包含 App 和“应用程序”
-快捷方式的安装镜像。在 Pre-1.0 Development 阶段，两者都只是本地 QA artifact。
+`pnpm build` 重新生成。`src-tauri/target/` 是 Cargo/Tauri 的原始构建目录。执行
+`./build.sh mac` 或 `./build.sh current` 时，Tauri 会先生成
+`src-tauri/target/release/bundle/macos/VaporLensDB.app`，但它只是临时打包中间产物。
+脚本会先创建 DMG、将 App 和 DMG 复制到 staging，并生成校验和；以上步骤全部成功后才
+删除 raw App。若构建中途失败，允许该中间产物暂时残留，之后可由
+`./build.sh clean-macos-app-index` 安全清理。
+
+`artifacts/` 是便于本地取用的汇总目录，已被 Git 忽略。每次成功构建都会替换当前架构目录，
+其中只保留最新的 App、DMG 和校验和。staged App 是 canonical 本地 QA App，也是唯一长期
+注册到 LaunchServices 的 `com.vaporlens.db` bundle，从而避免 raw intermediate 与 staged
+copy 同时显示为重复应用。已挂载 DMG 只作为临时安装介质，不作为长期本地 identity。
+`.app` 可在 macOS 上直接运行，`.dmg` 是包含 App 和“应用程序”快捷方式的安装镜像。
+在 Pre-1.0 Development 阶段，两者都只是本地 QA artifact。
 
 Apple Silicon 的 `<架构>` 为 `aarch64`，Intel Mac 为 `x86_64`。打包前脚本会校验
 `package.json`、`src-tauri/tauri.conf.json` 与 `src-tauri/Cargo.toml` 的版本是否一致。
@@ -187,7 +195,9 @@ release entitlement plist 现在只显式保留
 
 macOS 打包会通过 `scripts/tauri-release-build.sh`，由当前构建机动态生成 Rust
 source-path remapping，避免将本机 workspace、Cargo 或 Rustup 路径留在可分发
-executable string 中。只检查本地 `.app` 时使用 `pnpm build:release:macos`。
+executable string 中。只检查本地 `.app` 时使用 `pnpm build:release:macos`；该 focused
+命令会有意保留 Tauri raw App，只有 `./build.sh mac` 和 `./build.sh current` 会把它作为
+临时打包中间产物消费并删除。
 
 正式流程见[macOS 签名与公证清单](release/macos-signing.md)。本仓库配置仍未实际启用
 Developer ID 签名或 notarization。

@@ -84,7 +84,6 @@ Run on macOS:
 Artifacts:
 
 ```text
-src-tauri/target/release/bundle/macos/VaporLensDB.app
 src-tauri/target/release/bundle/dmg/VaporLensDB.dmg
 artifacts/macos/<architecture>/VaporLensDB.app
 artifacts/macos/<architecture>/VaporLensDB.dmg
@@ -93,9 +92,19 @@ artifacts/macos/<architecture>/SHA256SUMS.txt
 
 `dist/` contains Vite's generated frontend assets and is embedded into the App
 by Tauri; it is not an installer directory and is recreated by `pnpm build`.
-`src-tauri/target/` is Cargo/Tauri's raw build directory. `artifacts/` is the
-Git-ignored local staging directory. Each build replaces the current
-architecture directory, so it contains only the latest App, DMG, and checksum.
+`src-tauri/target/` is Cargo/Tauri's raw build directory. During `./build.sh mac`
+or `./build.sh current`, Tauri first creates
+`src-tauri/target/release/bundle/macos/VaporLensDB.app` as a temporary packaging
+intermediate. The script creates the DMG, copies the App and DMG into staging,
+and writes the checksum before removing that raw App. A failed build may leave
+the intermediate for `./build.sh clean-macos-app-index` to remove safely.
+
+`artifacts/` is the Git-ignored local staging directory. Each successful build
+replaces the current architecture directory, so it contains only the latest
+App, DMG, and checksum. The staged App is the canonical local QA App and the
+only long-lived `com.vaporlens.db` bundle registered with LaunchServices; this
+prevents the raw intermediate and staged copy from appearing as duplicate apps.
+A mounted DMG is temporary installation media, not a long-lived local identity.
 An `.app` runs directly on macOS; a `.dmg` contains the App and an Applications
 shortcut. During Pre-1.0 Development, both remain local QA artifacts.
 
@@ -212,7 +221,9 @@ release-mode builds and runtime launch checks.
 macOS packaging runs through `scripts/tauri-release-build.sh`, which derives
 Rust source-path remapping from the active build machine. This keeps local
 workspace, Cargo, and Rustup paths out of distributable executable strings;
-use `pnpm build:release:macos` for the focused local `.app` check.
+use `pnpm build:release:macos` for the focused local `.app` check. That focused
+command intentionally retains Tauri's raw App; only `./build.sh mac` and
+`./build.sh current` consume it as a temporary packaging intermediate.
 
 See [the macOS signing and notarization checklist](release/macos-signing.md)
 for the formal-release procedure. Developer ID signing/notarization itself is

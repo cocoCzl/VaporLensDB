@@ -25,9 +25,10 @@ Targets:
                 targeted macOS LaunchServices registrations. macOS only.
 
 Outputs:
-  macOS app: src-tauri/target/release/bundle/macos/VaporLensDB.app
-  macOS dmg: src-tauri/target/release/bundle/dmg/VaporLensDB.dmg
-  macOS local staging: artifacts/macos/<architecture>/
+  macOS staged app: artifacts/macos/<architecture>/VaporLensDB.app
+  macOS staged dmg: artifacts/macos/<architecture>/VaporLensDB.dmg
+  macOS checksum: artifacts/macos/<architecture>/SHA256SUMS.txt
+  macOS retained raw dmg: src-tauri/target/release/bundle/dmg/VaporLensDB.dmg
   Windows msi: src-tauri/target/release/bundle/msi/*.msi
   Windows nsis: src-tauri/target/release/bundle/nsis/*.exe
   Windows local staging: artifacts/windows/<architecture>/
@@ -101,11 +102,15 @@ clean_macos_app_index() {
   fi
 
   log "Removing approved obsolete project build bundles"
-  rm -rf "$debug_bundle" "$debug_deps_bundle"
+  rm -rf "$debug_bundle" "$debug_deps_bundle" "$raw_release_bundle"
+
+  # Unregister once more after removal. On current macOS releases an existing
+  # app can be rediscovered immediately even after a targeted `lsregister -u`.
+  unregister_macos_app "$raw_release_bundle"
 
   # These are the only two local application-search identities intended for
-  # development and release-like QA. The raw release bundle stays on disk but
-  # is deliberately not registered.
+  # development and release-like QA. The raw release app is only a packaging
+  # intermediate and is removed above so LaunchServices cannot rediscover it.
   register_macos_app "$active_dev_bundle"
   register_macos_app "$staged_qa_bundle"
 }
@@ -411,14 +416,16 @@ build_mac() {
   )
 
   # The staged artifact is the designated manually launched QA application.
-  # Keep it registered, but do not let Tauri's raw build intermediate appear as
-  # a second user-facing VaporLensDB application.
+  # The raw app has already served its only purposes (DMG creation and staging),
+  # so remove it rather than relying on unregistering an existing bundle: modern
+  # macOS releases can rediscover it and create a duplicate application result.
+  unregister_macos_app "$app_path"
+  rm -rf "$app_path"
   unregister_macos_app "$app_path"
   register_macos_app "$artifact_dir/VaporLensDB.app"
 
   log "Build artifacts"
-  printf '%s\n%s\n%s\n' \
-    "$app_path" \
+  printf '%s\n%s\n' \
     "$dmg_path" \
     "$artifact_dir"
 }
