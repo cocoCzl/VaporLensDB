@@ -529,6 +529,8 @@
     "closeApplicationFailed": "无法安全关闭 VaporLensDB",
     "transactionAuto": "事务：自动",
     "transactionManual": "事务：手动",
+    "transactionAutoShort": "自动",
+    "transactionManualShort": "手动",
     "commit": "提交事务",
     "rollback": "回滚事务",
     "transactionActive": "未提交",

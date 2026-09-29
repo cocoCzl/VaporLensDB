@@ -529,6 +529,8 @@
     "closeApplicationFailed": "Failed to close VaporLensDB safely",
     "transactionAuto": "Tx: Auto",
     "transactionManual": "Tx: Manual",
+    "transactionAutoShort": "Auto",
+    "transactionManualShort": "Manual",
     "commit": "Commit transaction",
     "rollback": "Rollback transaction",
     "transactionActive": "Uncommitted",

@@ -202,7 +202,7 @@ function SqlMoreActions({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={<IconTooltipButton label={t('editor.moreActions')} variant={open ? 'secondary' : 'ghost'}><MoreHorizontal /></IconTooltipButton>} />
-      <PopoverContent align="end" className="w-56 gap-0 p-1.5">
+      <PopoverContent align="end" className="w-60 gap-0 p-1.5">
         <div className="grid gap-0.5">
           <button type="button" className={itemClass} disabled={explainDisabled} onClick={() => onExplain()}><ChartNoAxesCombined className="size-3.5" />{explainTitle}</button>
           <button type="button" className={itemClass} disabled={formatDisabled} onClick={() => onFormat()}><Wand2 className="size-3.5" />{t('editor.format')}</button>
@@ -217,9 +217,9 @@ function SqlMoreActions({
         <div className="flex items-center justify-between gap-2 px-2 py-1">
           <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{t('editor.transactionMode')}</span>
           <div className="flex items-center gap-0.5">
-            <TransactionModeMenu mode={transactionMode} phase={transactionPhase} disabled={transactionDisabled} disabledLabel={t('editor.transactionConnectRequired')} label={t('editor.transactionMode')} autoLabel={t('editor.transactionAuto')} manualLabel={t('editor.transactionManual')} activeLabel={t('editor.transactionActive')} failedLabel={t('editor.transactionFailed')} onChange={onTransactionModeChange} />
-            <IconTooltipButton label={t('editor.commit')} size="icon-xs" variant="ghost" disabled={transactionDisabled || transactionMode !== 'manual' || transactionPhase !== 'active'} onClick={() => onCommit?.()}><Check /></IconTooltipButton>
-            <IconTooltipButton label={t('editor.rollback')} size="icon-xs" variant="ghost" disabled={transactionDisabled || transactionMode !== 'manual' || !['active', 'failed'].includes(transactionPhase)} onClick={() => onRollback?.()}><Undo2 /></IconTooltipButton>
+            <TransactionModeMenu mode={transactionMode} phase={transactionPhase} disabled={transactionDisabled} disabledLabel={t('editor.transactionConnectRequired')} label={t('editor.transactionMode')} autoLabel={t('editor.transactionAuto')} manualLabel={t('editor.transactionManual')} autoShortLabel={t('editor.transactionAutoShort')} manualShortLabel={t('editor.transactionManualShort')} activeLabel={t('editor.transactionActive')} failedLabel={t('editor.transactionFailed')} onChange={onTransactionModeChange} />
+            <IconTooltipButton label={t('editor.commit')} title={t('editor.commit')} size="icon-xs" variant="outline" className="border-border/70 bg-surface disabled:border-border/55 disabled:bg-surface-secondary/65 disabled:opacity-60" disabled={transactionDisabled || transactionMode !== 'manual' || transactionPhase !== 'active'} onClick={() => onCommit?.()}><Check /></IconTooltipButton>
+            <IconTooltipButton label={t('editor.rollback')} title={t('editor.rollback')} size="icon-xs" variant="outline" className="border-border/70 bg-surface disabled:border-border/55 disabled:bg-surface-secondary/65 disabled:opacity-60" disabled={transactionDisabled || transactionMode !== 'manual' || !['active', 'failed'].includes(transactionPhase)} onClick={() => onRollback?.()}><Undo2 /></IconTooltipButton>
           </div>
         </div>
         <div className="my-1 border-t" />
@@ -237,9 +237,10 @@ function SqlMoreActions({
 function RowLimitMenu({ maxRows, onChange, label }: { maxRows: number; onChange: (value: number) => void; label: string }) {
   const [open, setOpen] = useState(false)
   const options = [100, 500, 1000, 5000, 10000, 50000]
+  const currentValue = maxRows >= 1000 ? `${maxRows / 1000}k` : `${maxRows}`
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={label} title={label}><ListFilter /></Button>} />
+      <PopoverTrigger render={<Button type="button" size="xs" variant="outline" aria-label={`${label}: ${currentValue}`} title={`${label}: ${currentValue}`} className="h-6 gap-1 border-border/70 bg-surface px-1.5 font-mono text-[10px]"><ListFilter className="size-3" /><span>{currentValue}</span><ChevronDown className="size-3 text-muted-foreground" /></Button>} />
       <PopoverContent align="start" className="w-36 p-1.5">
         <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
         <div className="grid grid-cols-2 gap-0.5">
@@ -253,7 +254,7 @@ function RowLimitMenu({ maxRows, onChange, label }: { maxRows: number; onChange:
   )
 }
 
-function TransactionModeMenu({ mode, phase, disabled, disabledLabel, label, autoLabel, manualLabel, activeLabel, failedLabel, onChange }: {
+function TransactionModeMenu({ mode, phase, disabled, disabledLabel, label, autoLabel, manualLabel, autoShortLabel, manualShortLabel, activeLabel, failedLabel, onChange }: {
   mode: TransactionMode
   phase: TransactionPhase
   disabled: boolean
@@ -261,16 +262,18 @@ function TransactionModeMenu({ mode, phase, disabled, disabledLabel, label, auto
   label: string
   autoLabel: string
   manualLabel: string
+  autoShortLabel: string
+  manualShortLabel: string
   activeLabel: string
   failedLabel: string
   onChange?: (mode: TransactionMode) => void
 }) {
   const [open, setOpen] = useState(false)
   const stateLabel = phase === 'failed' ? failedLabel : phase === 'active' ? activeLabel : mode === 'manual' ? manualLabel : autoLabel
-  const statusClass = phase === 'failed' ? 'bg-destructive' : phase === 'active' ? 'bg-warning' : mode === 'manual' ? 'bg-primary' : 'bg-muted-foreground/45'
+  const modeLabel = mode === 'manual' ? manualShortLabel : autoShortLabel
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={label} title={disabled ? disabledLabel : `${label} · ${stateLabel}`} disabled={disabled} className="relative"><GitBranch /><span className={['absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-background', statusClass].join(' ')} /></Button>} />
+      <PopoverTrigger render={<Button type="button" size="xs" variant="outline" aria-label={`${label}: ${modeLabel}`} title={disabled ? disabledLabel : `${label} · ${stateLabel}`} disabled={disabled} className="h-6 gap-1 border-border/70 bg-surface px-1.5 text-[10px] disabled:border-border/55 disabled:bg-surface-secondary/65 disabled:opacity-60"><GitBranch className="size-3" /><span>{modeLabel}</span><ChevronDown className="size-3 text-muted-foreground" /></Button>} />
       <PopoverContent align="end" className="w-44 p-1.5">
         <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
         {(['auto', 'manual'] as const).map((value) => {
