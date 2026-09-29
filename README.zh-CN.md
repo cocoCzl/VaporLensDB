@@ -10,14 +10,17 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 
 ## 项目状态
 
-**Pre-1.0 Development。** VaporLensDB 当前以源码开发和验证为主。在 1.0.0 之前，
-不会提供 official downloadable binary releases、GitHub Release 或 Pre-release。本地构建的
-App 与安装包仅用于 QA，不是公开发布版本。
+**Pre-1.0 Development / RC testing。** VaporLensDB 仍处于开发阶段，不是 stable 或
+production-ready 软件，源码构建仍是主要验证方式。对于已经有 runtime evidence 的平台，
+项目可以提供明确标记为 GitHub Pre-release 的 RC 测试产物；它们是公开测试构建，不是
+稳定版本。
 
 ## 分发方式
 
-**Source Build Only。** 如需体验 VaporLensDB，请 clone 本仓库并在本地运行。请阅读
-[安装指南](docs/INSTALL.zh-CN.md)，其中区分当前源码运行、本地 QA 包与未来正式安装包。
+如需从源码体验 VaporLensDB，请 clone 本仓库并在本地运行。若已有获准发布的 RC，只能从
+项目 GitHub Releases 页面获取，并确认 GitHub 将其标记为 **Pre-release**。请阅读
+[安装指南](docs/INSTALL.zh-CN.md)，其中区分本地 QA artifact、RC 测试 artifact 与未来
+stable release。
 
 ## 平台与数据库状态
 
@@ -106,8 +109,9 @@ PostgreSQL、MySQL、Oracle 与 JDBC 联网测试是独立的显式 opt-in suite
 将 `.env.example` 复制为已被 Git 忽略的 `.env`，再明确选择要执行的数据库集成测试；普通
 校验和打包不会加载私密数据库配置。所需权限和安全说明见测试文档。
 
-在 Pre-1.0 阶段，这些输出均为本地 QA artifact。未来正式分发流程保留在
-[打包与发布指南](docs/PACKAGING.zh-CN.md)，供 1.0 Release Preparation 使用。
+这些输出默认是本地 QA artifact。只有经过[打包与发布指南](docs/PACKAGING.zh-CN.md)
+中明确批准的 clean build、checksum、tag 和 GitHub Pre-release 流程，才会成为公开 RC
+测试 artifact。
 
 ## Road to 1.0
 

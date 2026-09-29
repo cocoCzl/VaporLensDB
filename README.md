@@ -11,16 +11,19 @@ Current version: **0.9.1**
 
 ## Project status
 
-**Pre-1.0 Development.** VaporLensDB is currently developed and evaluated
-from source. It has no official downloadable binary releases, GitHub Releases,
-or pre-releases before 1.0.0. Locally built App bundles and installers are QA
-artifacts only, not public releases.
+**Pre-1.0 Development / RC testing.** VaporLensDB is still under development
+and is not stable or production-ready. Source builds remain the primary way to
+evaluate it. Explicitly marked GitHub Pre-releases may provide release-candidate
+artifacts for platforms with recorded runtime evidence; they are public test
+builds, not stable releases.
 
 ## Distribution
 
-**Source Build Only.** To try VaporLensDB, clone this repository and run it
-locally. See the [installation guide](docs/INSTALL.md) for the distinction
-between current source builds, local QA packages, and future formal installers.
+To build from source, clone this repository and run it locally. When an approved
+RC is available, obtain it only from the project's GitHub Releases page and
+confirm that GitHub marks it as a **Pre-release**. See the
+[installation guide](docs/INSTALL.md) for the distinction between local QA
+artifacts, RC test artifacts, and future stable releases.
 
 ## Platform and database status
 
@@ -125,9 +128,9 @@ Copy `.env.example` to the Git-ignored `.env`, then explicitly select the
 database integrations to run. Ordinary checks and packaging never load private
 database configuration. See the testing guide for permissions and safety.
 
-These outputs are local QA artifacts while VaporLensDB is pre-1.0. Future
-formal-distribution procedures are retained in the
-[packaging guide](docs/PACKAGING.md) for 1.0 release preparation.
+These outputs are local QA artifacts. They become public RC artifacts only
+through the explicitly approved clean-build, checksum, tag, and GitHub
+Pre-release process in the [packaging guide](docs/PACKAGING.md).
 
 ## Road to 1.0
 

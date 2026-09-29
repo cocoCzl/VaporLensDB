@@ -3,18 +3,26 @@
 [English](PACKAGING.md) · [返回 README](../README.zh-CN.md)
 
 VaporLensDB 必须在目标操作系统上构建对应安装包。当前仓库不自动发布，也不包含
-代码签名或 macOS 公证流程。在 Pre-1.0 Development 阶段，VaporLensDB 为
-**Source Build Only**：打包成功只会生成本地 QA artifact，并不代表存在 official
-downloadable release。
+代码签名或 macOS 公证流程。VaporLensDB 仍处于 **Pre-1.0 Development / RC testing**。
+普通打包成功只会生成本地 QA artifact；经过明确批准的 release-candidate 流程可以将测试
+artifact 发布为 GitHub Pre-release。
 
-在正式版本获准发布前，所有安装包均为本地或临时测试产物；不得将安装包或校验和提交到
-仓库、附加到 Pull Request 或发布为 GitHub Release。手动打包工作流生成的 Actions 产物
-保留 7 天。
+不得将安装包或校验和提交到仓库或附加到 Pull Request，也不得把本地 QA artifact 直接
+上传到 GitHub Release。手动打包工作流生成的 Actions 产物保留 7 天。
 
 ## 本地 QA 打包
 
 开发期间可用本地打包验证目标平台行为。不得将生成的 DMG、MSI、NSIS、AppImage、DEB
-或 RPM 描述为可公开获取的软件，也不得上传到 GitHub Release 或 Pre-release。
+或 RPM 直接描述为可公开获取的软件；公开 RC artifact 必须经过下文独立的批准流程。
+
+## Artifact 类型
+
+- **本地 QA artifact：**由 `./build.sh current` 生成，用于本地测试；构建成功本身不使其
+  成为公开发布。
+- **GitHub Pre-release / RC artifact：**基于获准的 release commit，在 tag 方案、clean
+  build、平台证据与 checksum 均通过后生成；GitHub 必须将其标记为 Pre-release。
+- **Stable release：**需要独立 stable-release gate；RC 不得描述为 stable 或
+  production-ready。
 
 ## 前提条件
 
@@ -154,10 +162,31 @@ Windows 和 Linux 根据 Rust 原生 host 使用 `x86_64` 或 `aarch64`，脚本
 `macos-latest`、Ubuntu 22.04 和 `windows-latest` 执行同一套校验与打包。工作流不使用真实数据库凭据，固定名称的测试产物
 保留 7 天；它不会创建 tag 或 GitHub Release。原生 `aarch64` 包仍需对应架构的构建机器。
 
-## 未来正式分发：1.0 Release Preparation
+## Pre-1.0 RC 测试分发
 
-仅在 1.0 Release Preparation 阶段、正式版本获准发布后才能执行本节；Pre-1.0
-开发构建不得执行 tag、上传、公开校验和或 GitHub Release 步骤。
+Pre-1.0 RC 只有在获得明确批准后才能发布。0.9.1 RC 的规则为：
+
+1. 应用内部版本保持 `0.9.1`，候选 tag 使用 `v0.9.1-rc.1`。RC 后缀是分发标识，不是
+   应用版本变更。
+2. 使用获准的 release commit 和 clean checkout，运行确定性 gate 与
+   `./build.sh current`，再验证 staged App、DMG、checksum，以及临时 raw App 已不存在。
+3. 只发布已有当前 runtime evidence 的平台。本次 0.9.1 RC **仅限 macOS arm64**；Windows
+   和 Linux 仍为 **NOT EXECUTED**，不提供 RC asset。
+4. 只上传 `VaporLensDB.dmg` 与 `SHA256SUMS.txt`。不得上传 App 目录、`target/`、`dist/`、
+   整个 `artifacts/` 目录、vendor JDBC JAR、`.env`、QA credential、QA log 或内部 review
+   文档。
+5. 创建明确标记为 **Pre-release** 的 GitHub Release，将其说明为 RC 测试构建，并写明
+   支持平台、已知限制、签名状态与 checksum 验证方式。
+6. 在公开 Pre-release 前重新下载 draft asset 并验证已发布 checksum。
+
+当前 macOS RC artifact 使用 ad hoc 签名，且**未经过 Apple notarization**。Gatekeeper
+可能警告或阻止从互联网下载的 DMG/App；这是已接受的 RC 测试限制，不代表 Developer ID
+正式签名。不得关闭 Gatekeeper、自动绕过安全机制或声称已经 notarized。
+
+## 未来 Stable 分发：1.0 Release Preparation
+
+仅在 1.0 Release Preparation 阶段、正式版本获准 stable 发布后才能执行本节；此前的 RC
+Pre-release 不能替代此 gate。
 
 1. 确认 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 中的版本号一致。
 2. 分别在 macOS、Windows 和 Linux 上使用以上命令完成校验与构建。

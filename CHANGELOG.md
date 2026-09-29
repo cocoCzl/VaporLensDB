@@ -26,6 +26,10 @@ All notable changes to VaporLensDB are documented in this file.
 - Clarified the frozen 1.0 Tier-A scope and explicit unsupported boundaries.
 - Added PostgreSQL and MySQL native CSV runtime acceptance to the opt-in QA
   tooling while retaining the disposable-environment safety gate.
+- Made the staged macOS QA App the sole long-lived release-like application
+  identity by removing Tauri's raw App after DMG creation and staging succeed.
+- Defined an explicitly marked pre-1.0 GitHub Pre-release policy for RC test
+  artifacts without changing the stable 1.0 release gate.
 
 ### Testing
 

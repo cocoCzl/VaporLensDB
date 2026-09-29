@@ -4,20 +4,30 @@
 
 VaporLensDB packages must be built on their target operating system. This
 repository does not currently automate releases, code signing, or macOS
-notarization. During Pre-1.0 Development, VaporLensDB is **Source Build Only**:
-a successful package build creates a local QA artifact, not an official
-downloadable release.
+notarization. VaporLensDB remains in **Pre-1.0 Development / RC testing**. A
+normal package build creates a local QA artifact, while an explicitly approved
+release-candidate flow may publish test artifacts as a GitHub Pre-release.
 
-Until a formal version is approved for release, all installers are local or
-temporary test artifacts. Do not commit installers or checksums, attach them to
-pull requests, or publish them as GitHub Releases. The manually triggered
-packaging workflow retains its Actions artifacts for seven days.
+Do not commit installers or checksums or attach them to pull requests. Local QA
+artifacts must not be uploaded directly to a GitHub Release. The manually
+triggered packaging workflow retains its Actions artifacts for seven days.
 
 ## Local QA Packaging
 
 Use local packaging to validate target-platform behavior during development.
 Do not present its DMG, MSI, NSIS, AppImage, DEB, or RPM output as publicly
-available software, and do not upload it to a GitHub Release or pre-release.
+available software. Public RC artifacts require the separate approved process
+below.
+
+## Artifact classes
+
+- **Local QA artifact:** produced by `./build.sh current` for local testing. It
+  is not public merely because the build succeeded.
+- **GitHub Pre-release / RC artifact:** produced from the approved release
+  commit after the tag plan, clean build, platform evidence, and checksum have
+  been verified. GitHub must mark it as a Pre-release.
+- **Stable release:** requires a separate stable-release gate. An RC is never
+  described as stable or production-ready.
 
 ## Prerequisites
 
@@ -171,11 +181,36 @@ validation and packaging steps without live database credentials, then retains
 fixed-name test artifacts for seven days. It does not create a tag or GitHub
 Release. Native `aarch64` packages still require a matching build machine.
 
-## Future Formal Distribution: 1.0 Release Preparation
+## Pre-1.0 RC test distribution
+
+A pre-1.0 RC may be published only after explicit approval. For the 0.9.1 RC:
+
+1. Keep the application version `0.9.1`; use `v0.9.1-rc.1` as the candidate
+   tag. The RC suffix is a distribution identifier, not an application-version
+   change.
+2. Use the approved release commit and a clean checkout, run the deterministic
+   gate and `./build.sh current`, then verify the staged App, DMG, checksum, and
+   absence of the temporary raw App.
+3. Publish only platforms with current runtime evidence. The 0.9.1 RC scope is
+   **macOS arm64 only**; Windows and Linux remain **NOT EXECUTED** and receive no
+   RC assets.
+4. Upload only `VaporLensDB.dmg` and `SHA256SUMS.txt`. Do not upload an App
+   directory, `target/`, `dist/`, the `artifacts/` directory, vendor JDBC JARs,
+   `.env`, QA credentials, QA logs, or internal review documents.
+5. Create a GitHub Release marked **Pre-release**, label it as an RC test build,
+   and include supported-platform, known-limit, signing, and checksum details.
+6. Download the draft assets and verify the published checksum before making
+   the Pre-release visible.
+
+The current macOS RC artifact is ad hoc signed and **not Apple notarized**.
+Gatekeeper may warn about or block a DMG/App downloaded from the internet. This
+is an accepted RC-testing limitation, not a Developer ID signed distribution.
+Do not disable Gatekeeper, automate a security bypass, or claim notarization.
+
+## Future Stable Distribution: 1.0 Release Preparation
 
 Run this section only during 1.0 Release Preparation after a formal version is
-approved for release. Do not perform its tag, upload, checksum-publication, or
-GitHub Release steps for pre-1.0 development builds.
+approved for stable release. A prior RC Pre-release does not satisfy this gate.
 
 1. Confirm `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`
    use the same release version.

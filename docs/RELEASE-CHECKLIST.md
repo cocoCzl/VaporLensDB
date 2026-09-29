@@ -1,9 +1,10 @@
-# VaporLensDB 1.0 Release Candidate Checklist
+# VaporLensDB Release Candidate Checklist
 
 This checklist records release-candidate evidence without expanding the frozen
-1.0 scope. `SUPPORT.md` is the canonical capability matrix. Re-run an expensive
-or mutation-capable acceptance test only when its affected implementation has
-changed.
+1.0 scope. It applies to explicitly marked pre-1.0 RC testing as well as later
+1.0 candidates; an RC is not a stable release. `SUPPORT.md` is the canonical
+capability matrix. Re-run an expensive or mutation-capable acceptance test only
+when its affected implementation has changed.
 
 ## Source quality
 
@@ -84,6 +85,21 @@ Cargo's package version. Packaging fixture tests also contain the current
 version in expected artifact names. Update them together only after release
 approval; `build.sh` rejects a mismatch among the three primary sources.
 
+## Approved 0.9.1 RC distribution plan
+
+- Application version remains `0.9.1`; the planned RC tag is `v0.9.1-rc.1`.
+- GitHub distribution must be marked **Pre-release** and described as RC testing,
+  never stable or production-ready.
+- Platform scope is macOS arm64 only. Windows and Linux remain **NOT EXECUTED**
+  and must not have assets attached to this RC.
+- Assets are exactly `VaporLensDB.dmg` and `SHA256SUMS.txt`; raw App directories,
+  build trees, vendor JDBC JARs, local configuration, credentials, logs, and
+  internal review documents are excluded.
+- The macOS App is ad hoc signed and not Apple notarized. Release notes must
+  warn that Gatekeeper may block or warn about the internet-downloaded artifact
+  and must not provide an automated security bypass.
+- Stable 1.0 still requires its own release gate; this RC does not satisfy it.
+
 ## Current RC audit record
 
 On 2026-09-28, `./build.sh current` passed both in the working candidate and in
@@ -93,3 +109,8 @@ deterministic checks, macOS arm64 release compilation, App/DMG creation,
 resource embedding, staging, and SHA-256 verification all passed. The generated
 App is ad hoc signed and not notarized. Upgrade behavior remains pending the
 formal 1.0 version decision.
+
+On 2026-09-29, the macOS packaging lifecycle fix passed `./build.sh check` and
+two consecutive `./build.sh current` runs. The staged App, DMG, and checksum
+were complete, the raw App was removed, and LaunchServices retained exactly the
+canonical QA and Dev identities.

@@ -2,11 +2,11 @@
 
 [English](INSTALL.md) · [返回 README](../README.zh-CN.md)
 
-## 当前 Pre-1.0 使用方式：从源码运行
+## 当前 Pre-1.0 使用方式：源码运行与 RC 测试
 
-VaporLensDB 0.9.1 处于 **Pre-1.0 Development**，当前分发方式为
-**Source Build Only**。在 1.0.0 之前，没有可供公开下载的 official DMG、MSI、NSIS、
-AppImage、DEB 或 RPM。使用当前项目请 clone 源码并运行：
+VaporLensDB 0.9.1 处于 **Pre-1.0 Development / RC testing**，不是 stable 或
+production-ready 软件。开发期间仍可从源码运行；对于已有 runtime evidence 的平台，
+明确标记为 GitHub Pre-release 的版本可以提供 RC 测试 artifact。从源码运行：
 
 ```bash
 pnpm install
@@ -36,12 +36,13 @@ Windows 和 Linux 的构建前提与目标已文档化，但真实桌面运行�
 native-host 前提请见 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。JDK 21 在使用 JDBC 时需要；
 Linux 凭据持久化还需要一个活动的 Secret Service 会话。
 
-## 未来正式安装包与本地 QA 包
+## 本地 QA、RC 与未来 stable 安装包
 
-以下安装包说明仅面向未来正式发布或本地生成的 QA 包。当前尚未发布正式安装包。正式版本发布后，请只从项目的
-[GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) 页面下载 VaporLensDB。
-开发和测试阶段生成的安装包不会发布到 GitHub Releases；手动打包验证可临时保留 7 天的
-GitHub Actions 产物。每个正式 Release 都会提供 `SHA256SUMS.txt`，请在打开安装包前校验：
+`./build.sh current` 生成本地 QA artifact，不等同于公开发布。获准的 RC 会在 release
+commit、tag、clean build 和 checksum 验证后，单独发布为 GitHub **Pre-release**；stable
+release 仍需独立 release gate。任何公开 package 都只能从项目
+[GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases) 页面获取，并使用同时提供的
+`SHA256SUMS.txt` 校验：
 
 ```bash
 # macOS
@@ -58,12 +59,14 @@ sha256sum VaporLensDB.AppImage VaporLensDB.deb VaporLensDB.rpm
 
 ## macOS
 
-1. 正式发布后，下载与 Mac 芯片匹配的 DMG（如果同时提供 Apple Silicon 和 Intel 版本）。
+1. RC 测试或未来 stable release 只应下载该 Release 明确列出的 CPU 架构对应 DMG。
 2. 打开 DMG，将 **VaporLensDB** 拖到“应用程序”。
 3. 从“应用程序”中打开 VaporLensDB。
 
-仅在确认下载自正式 Release、且 SHA-256 校验通过后再打开安装包。若 macOS 显示安全提示，
-请不要绕过来源未验证文件的警告。
+当前 0.9.1 RC 计划只覆盖 macOS arm64。App 使用 ad hoc 签名，且**未经过 Apple
+notarization**，因此 Gatekeeper 可能警告或阻止从互联网下载的 DMG/App。这是 RC 测试分发
+的已知限制，不代表 Developer ID 正式签名。请先确认 Release 来源并校验 SHA-256；不要关闭
+Gatekeeper，也不要使用自动绕过安全机制的脚本。
 
 ## Windows
 

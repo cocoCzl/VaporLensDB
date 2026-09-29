@@ -2,12 +2,12 @@
 
 [简体中文](INSTALL.zh-CN.md) · [Back to README](../README.md)
 
-## Current pre-1.0 use: build from source
+## Current pre-1.0 use: source builds and RC testing
 
-VaporLensDB 0.9.1 is in **Pre-1.0 Development** and is distributed as
-**Source Build Only**. There is no official downloadable DMG, MSI, NSIS,
-AppImage, DEB, or RPM before 1.0.0. To use the current project, clone it and
-run:
+VaporLensDB 0.9.1 is in **Pre-1.0 Development / RC testing**. It is not stable
+or production-ready. Source builds remain available for development, and an
+explicitly marked GitHub Pre-release may provide an RC test artifact for a
+platform with recorded runtime evidence. To run from source:
 
 ```bash
 pnpm install
@@ -39,15 +39,14 @@ real desktop runtime validation is still pending. See [PACKAGING.md](PACKAGING.m
 for the exact native-host requirements. JDK 21 is required where JDBC is used;
 Linux credential persistence additionally needs an active Secret Service session.
 
-## Future packaged releases and local QA packages
+## Local QA, RC, and future stable packages
 
-The following installer guidance is for future formal releases or a locally
-created QA package. No production installer has been released yet. After a
-formal release, download VaporLensDB only from the project's
-[GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases/latest) page.
-Development and test installers are not published as GitHub Releases. A manual
-packaging check may retain temporary GitHub Actions artifacts for seven days.
-Each formal release provides a `SHA256SUMS.txt` file.
+`./build.sh current` creates local QA artifacts; those files are not public
+releases. An approved RC is published separately as a GitHub **Pre-release**
+after a release commit, tag, clean build, and checksum verification. A stable
+release requires its own release gate. Obtain any published package only from
+the project's [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases)
+page and use the accompanying `SHA256SUMS.txt`.
 Verify the downloaded installer before opening it:
 
 ```bash
@@ -65,13 +64,16 @@ Compare the resulting hash with the matching entry in `SHA256SUMS.txt`.
 
 ## macOS
 
-1. After a formal release, download the DMG that matches your Mac (Apple Silicon or Intel, when both
-   are available).
+1. For an RC test or future stable release, download only the DMG whose CPU
+   architecture is explicitly listed by that release.
 2. Open the DMG and drag **VaporLensDB** to **Applications**.
 3. Open VaporLensDB from Applications.
 
-Open an installer only after verifying its SHA-256 and formal release source.
-Do not bypass a warning for an unverified file.
+The current 0.9.1 RC plan is macOS arm64 only. Its App is ad hoc signed and is
+**not Apple notarized**, so Gatekeeper may warn about or block the downloaded
+DMG/App. This is a known RC-testing limitation, not evidence of a Developer ID
+signed release. Verify the SHA-256 and release source; do not disable Gatekeeper
+or use an automated security-bypass script.
 
 ## Windows
 
