@@ -20,6 +20,7 @@ assert(panel.includes("setWorkspaceView('results')"), 'maximizing results must u
 assert(panel.includes('<EmptyState className="h-full"'), 'unexecuted SQL tabs must use the compact empty state')
 assert(panel.includes("className={resultResizing ? 'ide-splitter ide-splitter--dragging'"), 'splitter must distinguish dragging from resting state')
 assert(toolbar.includes('<SqlMoreActions'), 'secondary SQL actions must be consolidated into More')
+assert(toolbar.includes('<PopoverContent align="end" className="w-56 gap-0 p-1.5">'), 'SQL More Actions must override the shared popover gap without changing nested popovers')
 assert(toolbar.includes("<Button type=\"button\" size=\"sm\" disabled={disabled}"), 'Run must remain an explicit primary action')
 assert(toolbar.includes("t('editor.maximizeResults')") && toolbar.includes("t('editor.restoreSplit')"), 'More must expose workspace layout controls')
 assert(workspace.includes('SqlWorkspaceView') && workspace.includes('editor/results spatial relationship'), 'workspace frame must own the editor/result layout contract')

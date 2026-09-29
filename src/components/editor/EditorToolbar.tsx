@@ -202,14 +202,14 @@ function SqlMoreActions({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={<IconTooltipButton label={t('editor.moreActions')} variant={open ? 'secondary' : 'ghost'}><MoreHorizontal /></IconTooltipButton>} />
-      <PopoverContent align="end" className="w-56 p-1.5">
+      <PopoverContent align="end" className="w-56 gap-0 p-1.5">
         <div className="grid gap-0.5">
           <button type="button" className={itemClass} disabled={explainDisabled} onClick={() => onExplain()}><ChartNoAxesCombined className="size-3.5" />{explainTitle}</button>
           <button type="button" className={itemClass} disabled={formatDisabled} onClick={() => onFormat()}><Wand2 className="size-3.5" />{t('editor.format')}</button>
           <button type="button" className={itemClass} aria-pressed={historyOpen} onClick={() => { onHistoryToggle?.(); setOpen(false) }}><History className="size-3.5" />{t('sql.history')}</button>
         </div>
         <div className="my-1 border-t" />
-        <div className="flex items-center justify-between px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="flex items-center justify-between gap-2 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {t('editor.rowLimit')}
           <RowLimitMenu maxRows={maxRows} onChange={onMaxRowsChange} label={t('editor.rowLimit')} />
         </div>
