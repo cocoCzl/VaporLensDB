@@ -10,6 +10,37 @@ artifact 发布为 GitHub Pre-release。
 不得将安装包或校验和提交到仓库或附加到 Pull Request，也不得把本地 QA artifact 直接
 上传到 GitHub Release。手动打包工作流生成的 Actions 产物保留 7 天。
 
+## 常用打包流程
+
+在 macOS 上执行：
+
+```bash
+./build.sh current
+```
+
+Apple Silicon 的 canonical 本地 QA 产物为：
+
+```text
+artifacts/macos/aarch64/
+├── VaporLensDB.app
+├── VaporLensDB.dmg
+└── SHA256SUMS.txt
+```
+
+Intel Mac 使用 `artifacts/macos/x86_64/`。校验 DMG：
+
+```bash
+cd artifacts/macos/aarch64
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+预期输出为 `VaporLensDB.dmg: OK`。Windows 和 Linux 的固定名称 QA 产物分别位于
+`artifacts/windows/<架构>/` 和 `artifacts/linux/<架构>/`。
+
+日常 QA 和 release staging 应从 `artifacts/` 取用产物，不要从 `target/` 挑选文件发布：
+`src-tauri/target/` 是 Cargo/Tauri 构建工作区，`artifacts/` 才是 VaporLensDB 整理后的
+canonical staging 目录。
+
 ## 本地 QA 打包
 
 开发期间可用本地打包验证目标平台行为。不得将生成的 DMG、MSI、NSIS、AppImage、DEB
@@ -69,7 +100,9 @@ Oracle 和自定义 JDBC 的厂商驱动仍由用户从本地选择，绝不会�
 ```
 
 该命令会构建 JDBC bridge，执行前端 lint 与构建，并以禁止警告的方式执行 Rust clippy
-和 Rust 测试。已配置的真实数据库测试会一并执行，未配置的数据库组会明确显示为跳过。
+和确定性 Rust 测试。它不会读取 `.env`，也不会自动运行 PostgreSQL、MySQL、Oracle 等
+真实数据库测试或 live integration tests；需要通过 `./build.sh live-tests ...` 或
+`./build.sh destructive-live-tests ...` 显式选择相应测试。
 
 ## 构建产物
 
@@ -97,11 +130,14 @@ artifacts/macos/<架构>/SHA256SUMS.txt
 脚本会先创建 DMG、将 App 和 DMG 复制到 staging，并生成校验和；以上步骤全部成功后才
 删除 raw App。若构建中途失败，允许该中间产物暂时残留，之后可由
 `./build.sh clean-macos-app-index` 安全清理。
+raw DMG 会保留在 `src-tauri/target/release/bundle/dmg/VaporLensDB.dmg`。
 
 `artifacts/` 是便于本地取用的汇总目录，已被 Git 忽略。每次成功构建都会替换当前架构目录，
 其中只保留最新的 App、DMG 和校验和。staged App 是 canonical 本地 QA App，也是唯一长期
 注册到 LaunchServices 的 `com.vaporlens.db` bundle，从而避免 raw intermediate 与 staged
 copy 同时显示为重复应用。已挂载 DMG 只作为临时安装介质，不作为长期本地 identity。
+因此重复成功执行 `./build.sh current` 不会累积多个普通 VaporLensDB identity。开发态继续
+使用独立的 `src-tauri/target/debug/VaporLensDB-dev.app` identity。
 `.app` 可在 macOS 上直接运行，`.dmg` 是包含 App 和“应用程序”快捷方式的安装镜像。
 在 Pre-1.0 Development 阶段，两者都只是本地 QA artifact。
 
@@ -158,60 +194,73 @@ Windows 和 Linux 根据 Rust 原生 host 使用 `x86_64` 或 `aarch64`，脚本
 
 ## 手动云端打包验证
 
-在 GitHub Actions 页面手动运行 **Package smoke test**，会分别使用 Ubuntu 22.04 和
-`macos-latest`、Ubuntu 22.04 和 `windows-latest` 执行同一套校验与打包。工作流不使用真实数据库凭据，固定名称的测试产物
-保留 7 天；它不会创建 tag 或 GitHub Release。原生 `aarch64` 包仍需对应架构的构建机器。
+在 GitHub Actions 页面手动运行 **Package smoke test**，会使用 `macos-latest`、
+Ubuntu 22.04 和 `windows-latest` 执行同一套校验与打包。工作流不使用真实数据库凭据，
+固定名称的测试产物保留 7 天；它不会创建 tag 或 GitHub Release。原生 `aarch64` 包仍需
+对应架构的构建机器。
 
 ## Pre-1.0 RC 测试分发
 
-Pre-1.0 RC 只有在获得明确批准后才能发布。0.9.1 RC 的规则为：
+Pre-1.0 RC 只有在获得明确批准后才能发布：
 
-1. 应用内部版本保持 `0.9.1`，候选 tag 使用 `v0.9.1-rc.1`。RC 后缀是分发标识，不是
-   应用版本变更。
-2. 使用获准的 release commit 和 clean checkout，运行确定性 gate 与
-   `./build.sh current`，再验证 staged App、DMG、checksum，以及临时 raw App 已不存在。
-3. 只发布已有当前 runtime evidence 的平台。本次 0.9.1 RC **仅限 macOS arm64**；Windows
-   和 Linux 仍为 **NOT EXECUTED**，不提供 RC asset。
-4. 只上传 `VaporLensDB.dmg` 与 `SHA256SUMS.txt`。不得上传 App 目录、`target/`、`dist/`、
-   整个 `artifacts/` 目录、vendor JDBC JAR、`.env`、QA credential、QA log 或内部 review
-   文档。
-5. 创建明确标记为 **Pre-release** 的 GitHub Release，将其说明为 RC 测试构建，并写明
-   支持平台、已知限制、签名状态与 checksum 验证方式。
-6. 在公开 Pre-release 前重新下载 draft asset 并验证已发布 checksum。
+1. 批准 release commit 并确定 RC tag；不能只为加入 RC 后缀而修改应用内部版本。
+2. 在 clean workspace 中 checkout tag，安装 lockfile 固定的依赖，运行确定性 gate 并构建
+   对应平台安装包。
+3. 只发布具备当前 runtime evidence 的平台；每个候选版本的平台和 asset 集合由当次
+   release plan 决定。
+4. 上传前验证 artifact metadata 与 checksum。不得上传 raw build 目录、secret、
+   credential、log、vendor JDBC JAR 或内部 review 文档。
+5. 创建明确标记为 **Pre-release** 的 GitHub Release，并写明支持平台、已知限制、签名状态
+   与 checksum 验证方式。
+6. 在公开 Pre-release 前，将已上传 asset 下载到新目录并重新验证 checksum。
 
-当前 macOS RC artifact 使用 ad hoc 签名，且**未经过 Apple notarization**。Gatekeeper
-可能警告或阻止从互联网下载的 DMG/App；这是已接受的 RC 测试限制，不代表 Developer ID
-正式签名。不得关闭 Gatekeeper、自动绕过安全机制或声称已经 notarized。
+RC 是测试分发，不是 stable 或 production-ready release。当前候选版本获准的计划及具体
+事实记录在 [0.9.1 RC 1 release plan](release/0.9.1-rc.1.md)；后续候选版本应维护各自的
+release-specific plan，不应把该文件中的 tag 或平台范围复制为本通用指南的永久规则。
 
-## 未来 Stable 分发：1.0 Release Preparation
+## 手动上传 GitHub Release asset
 
-仅在 1.0 Release Preparation 阶段、正式版本获准 stable 发布后才能执行本节；此前的 RC
-Pre-release 不能替代此 gate。
+安装包和 checksum 是 Release asset，不是 Git 源文件。尤其不要执行
+`git add VaporLensDB.dmg`，也不要把生成的安装包提交到仓库。
+
+通过 GitHub 网页手动上传时：
+
+1. 打开 **Releases**，选择 **Draft a new release**。
+2. 选择已经批准的 tag，填写 release title 和 notes。
+3. RC 必须勾选 **Set as a pre-release**，不得标记为 latest stable release。
+4. 只上传当次 release plan 指定的 asset；macOS RC 通常为 `VaporLensDB.dmg` 和
+   `SHA256SUMS.txt`。
+5. 发布前将已上传 asset 下载到新目录，并使用下载的 checksum manifest 重新验证。
+
+已安装且完成认证时，可选择使用 `gh` CLI 完成等价操作；发布流程不依赖 `gh` CLI。
+
+## Stable 分发
+
+仅在版本正式获准 stable 发布后才能执行本节；此前的 RC Pre-release 不能替代
+stable-release gate。
 
 1. 确认 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 中的版本号一致。
-2. 分别在 macOS、Windows 和 Linux 上使用以上命令完成校验与构建。
-3. 收集 DMG、MSI、NSIS EXE、AppImage、DEB 和 RPM。仅在确实需要独立分发时才上传
-   macOS App bundle。
-4. 将安装包复制到同一个发布暂存目录，再在该目录生成校验和清单：
+2. 对当前 stable support matrix 中的每个平台完成校验与构建；每个发布平台都必须有
+   当前 runtime evidence。
+3. 只收集当次 release plan 与 `SUPPORT.md` 定义的 asset；仅在确实需要独立分发时才
+   上传 macOS App bundle。
+4. 将获准的安装包复制到同一个发布暂存目录，再只为这些 asset 生成校验和清单。例如，
+   macOS-only release 可以使用：
 
    ```bash
-   # macOS（先将所有发布附件复制到当前目录）
-   shasum -a 256 VaporLensDB.dmg VaporLensDB.msi VaporLensDB-Setup.exe \
-     VaporLensDB.AppImage VaporLensDB.deb VaporLensDB.rpm > SHA256SUMS.txt
-
-   # Windows PowerShell（先将所有发布附件复制到当前目录）
-   Get-ChildItem VaporLensDB.dmg,VaporLensDB.msi,VaporLensDB-Setup.exe,`
-       VaporLensDB.AppImage,VaporLensDB.deb,VaporLensDB.rpm |
-     Get-FileHash -Algorithm SHA256 |
-     ForEach-Object { '{0}  {1}' -f $_.Hash.ToLower(), $_.Path.Split('\\')[-1] } |
-     Set-Content SHA256SUMS.txt
+   shasum -a 256 VaporLensDB.dmg > SHA256SUMS.txt
    ```
+
+   其他 asset 集合应使用对应平台的 SHA-256 工具，并确保 manifest 中的文件名与实际上传
+   的 asset 文件名完全一致。
 
 5. 更新 `CHANGELOG.md`，创建对应 Git tag 和 GitHub Release，上传安装包与
    `SHA256SUMS.txt`，并说明用户可见的变更和已知限制。
 6. 在发布前从草稿 Release 下载每个附件并再次校验其 SHA-256。
 
-在真正启用并验证签名或公证前，不要在 Release 中声称安装包已经签名或已公证。
+在真正启用并验证 Developer ID 签名或公证前，不要在 Release 中声称安装包已经正式签名
+或已公证。当前候选版本的具体签名与公证状态应记录在 release-specific plan 中，不能根据
+打包成功自行推断。不得添加自动 Gatekeeper bypass。
 
 ## 未来签名阶段的 macOS entitlement 审查
 

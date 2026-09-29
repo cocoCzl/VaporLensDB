@@ -12,6 +12,39 @@ Do not commit installers or checksums or attach them to pull requests. Local QA
 artifacts must not be uploaded directly to a GitHub Release. The manually
 triggered packaging workflow retains its Actions artifacts for seven days.
 
+## Quick start
+
+On macOS, run:
+
+```bash
+./build.sh current
+```
+
+The canonical local QA artifacts on Apple Silicon are:
+
+```text
+artifacts/macos/aarch64/
+├── VaporLensDB.app
+├── VaporLensDB.dmg
+└── SHA256SUMS.txt
+```
+
+Intel Macs use `artifacts/macos/x86_64/`. Verify the DMG checksum with:
+
+```bash
+cd artifacts/macos/aarch64
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+The expected result is `VaporLensDB.dmg: OK`. Windows and Linux stage their
+fixed-name QA artifacts under `artifacts/windows/<architecture>/` and
+`artifacts/linux/<architecture>/` respectively.
+
+Use `artifacts/` for day-to-day QA and release staging. Do not select files for
+publication from `target/`: `src-tauri/target/` is Cargo/Tauri's build
+workspace, while `artifacts/` is VaporLensDB's canonical, curated staging
+directory.
+
 ## Local QA Packaging
 
 Use local packaging to validate target-platform behavior during development.
@@ -108,6 +141,8 @@ or `./build.sh current`, Tauri first creates
 intermediate. The script creates the DMG, copies the App and DMG into staging,
 and writes the checksum before removing that raw App. A failed build may leave
 the intermediate for `./build.sh clean-macos-app-index` to remove safely.
+The raw DMG is retained at
+`src-tauri/target/release/bundle/dmg/VaporLensDB.dmg`.
 
 `artifacts/` is the Git-ignored local staging directory. Each successful build
 replaces the current architecture directory, so it contains only the latest
@@ -115,6 +150,9 @@ App, DMG, and checksum. The staged App is the canonical local QA App and the
 only long-lived `com.vaporlens.db` bundle registered with LaunchServices; this
 prevents the raw intermediate and staged copy from appearing as duplicate apps.
 A mounted DMG is temporary installation media, not a long-lived local identity.
+Repeated successful `./build.sh current` runs therefore do not accumulate
+ordinary VaporLensDB identities. Development remains a separate identity at
+`src-tauri/target/debug/VaporLensDB-dev.app`.
 An `.app` runs directly on macOS; a `.dmg` contains the App and an Applications
 shortcut. During Pre-1.0 Development, both remain local QA artifacts.
 
@@ -183,55 +221,69 @@ Release. Native `aarch64` packages still require a matching build machine.
 
 ## Pre-1.0 RC test distribution
 
-A pre-1.0 RC may be published only after explicit approval. For the 0.9.1 RC:
+A pre-1.0 RC may be published only after explicit approval:
 
-1. Keep the application version `0.9.1`; use `v0.9.1-rc.1` as the candidate
-   tag. The RC suffix is a distribution identifier, not an application-version
-   change.
-2. Use the approved release commit and a clean checkout, run the deterministic
-   gate and `./build.sh current`, then verify the staged App, DMG, checksum, and
-   absence of the temporary raw App.
-3. Publish only platforms with current runtime evidence. The 0.9.1 RC scope is
-   **macOS arm64 only**; Windows and Linux remain **NOT EXECUTED** and receive no
-   RC assets.
-4. Upload only `VaporLensDB.dmg` and `SHA256SUMS.txt`. Do not upload an App
-   directory, `target/`, `dist/`, the `artifacts/` directory, vendor JDBC JARs,
-   `.env`, QA credentials, QA logs, or internal review documents.
-5. Create a GitHub Release marked **Pre-release**, label it as an RC test build,
-   and include supported-platform, known-limit, signing, and checksum details.
-6. Download the draft assets and verify the published checksum before making
-   the Pre-release visible.
+1. Approve the release commit and determine the RC tag without changing the
+   application version merely to add an RC suffix.
+2. Check out the tag in a clean workspace, install locked dependencies, run the
+   deterministic gate, and build the platform packages.
+3. Publish only platforms backed by current runtime evidence. The release plan
+   defines the supported platform and asset set for that candidate.
+4. Verify artifact metadata and checksums before upload. Do not upload raw
+   build directories, secrets, credentials, logs, vendor JDBC JARs, or internal
+   review documents.
+5. Create a GitHub Release marked **Pre-release** with its supported platforms,
+   known limits, signing status, and checksum instructions.
+6. Download the uploaded assets into a new directory and verify their checksums
+   before making the Pre-release visible.
 
-The current macOS RC artifact is ad hoc signed and **not Apple notarized**.
-Gatekeeper may warn about or block a DMG/App downloaded from the internet. This
-is an accepted RC-testing limitation, not a Developer ID signed distribution.
-Do not disable Gatekeeper, automate a security bypass, or claim notarization.
+An RC is a test distribution, not a stable or production-ready release. The
+approved plan and release-specific facts for the current candidate are recorded
+in [the 0.9.1 RC 1 release plan](release/0.9.1-rc.1.md); future candidates must
+use their own release-specific plan rather than copying its tag or platform
+scope into this general guide.
 
-## Future Stable Distribution: 1.0 Release Preparation
+## Upload GitHub Release assets manually
 
-Run this section only during 1.0 Release Preparation after a formal version is
-approved for stable release. A prior RC Pre-release does not satisfy this gate.
+Installers and checksums are release assets, not Git source files. In
+particular, do not run `git add VaporLensDB.dmg` or commit generated packages.
+
+For a manual GitHub upload:
+
+1. Open **Releases** and choose **Draft a new release**.
+2. Select the already approved tag and enter the release title and notes.
+3. For an RC, enable **Set as a pre-release**; do not mark it as the latest
+   stable release.
+4. Upload only the assets named by the current release plan. A macOS RC commonly
+   uses `VaporLensDB.dmg` and `SHA256SUMS.txt`.
+5. Before publishing, download the uploaded assets into a new directory and
+   verify them against the downloaded checksum manifest.
+
+The `gh` CLI may be used as an optional equivalent when it is installed and
+authenticated, but the release process does not depend on it.
+
+## Stable distribution
+
+Run this section only after a version is formally approved for stable release.
+A prior RC Pre-release does not satisfy the stable-release gate.
 
 1. Confirm `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`
    use the same release version.
-2. Build and validate on macOS, Windows, and Linux using the commands above.
-3. Collect the DMG, MSI, NSIS EXE, AppImage, DEB, and RPM. Include a macOS App
-   bundle only when it is intentionally distributed outside the DMG.
-4. Copy the installers into one release staging directory, then generate
-   a checksum manifest there:
+2. Build and validate each platform in the current stable support matrix. Every
+   published platform requires current runtime evidence.
+3. Collect only the asset set defined by the current release plan and
+   `SUPPORT.md`. Include a macOS App bundle only when it is intentionally
+   distributed outside the DMG.
+4. Copy the approved installers into one release staging directory, then
+   generate a checksum manifest for exactly those assets. For example, a
+   macOS-only release can use:
 
    ```bash
-   # macOS (run after all release assets have been copied into this directory)
-   shasum -a 256 VaporLensDB.dmg VaporLensDB.msi VaporLensDB-Setup.exe \
-     VaporLensDB.AppImage VaporLensDB.deb VaporLensDB.rpm > SHA256SUMS.txt
-
-   # Windows PowerShell (run after all release assets have been copied into this directory)
-   Get-ChildItem VaporLensDB.dmg,VaporLensDB.msi,VaporLensDB-Setup.exe,`
-       VaporLensDB.AppImage,VaporLensDB.deb,VaporLensDB.rpm |
-     Get-FileHash -Algorithm SHA256 |
-     ForEach-Object { '{0}  {1}' -f $_.Hash.ToLower(), $_.Path.Split('\\')[-1] } |
-     Set-Content SHA256SUMS.txt
+   shasum -a 256 VaporLensDB.dmg > SHA256SUMS.txt
    ```
+
+   Use the platform's SHA-256 tooling for other asset sets, and keep the
+   manifest filenames identical to the uploaded asset filenames.
 
 5. Update `CHANGELOG.md`, create the matching Git tag and a GitHub Release.
    Upload the installers and `SHA256SUMS.txt`, then describe the user-visible
@@ -239,8 +291,11 @@ approved for stable release. A prior RC Pre-release does not satisfy this gate.
 6. Download every uploaded asset from the draft release and verify its checksum
    before publishing the release.
 
-Do not claim that an artifact is signed or notarized until that process is
-actually enabled and verified.
+Do not claim that an artifact is Developer ID signed or notarized until that
+process is actually enabled and verified. The current candidate's concrete
+signing and notarization status belongs in its release-specific plan; do not
+infer it from a successful package build. Never add an automated Gatekeeper
+bypass.
 
 ## macOS entitlement review for future signing
 
