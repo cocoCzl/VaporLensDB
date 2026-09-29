@@ -81,7 +81,7 @@ export function TabBar() {
   }
 
   return (
-    <div className="ide-tab-strip flex h-10 items-center border-b">
+    <div className="ide-tab-strip flex h-9 items-center border-b">
       <div className="tab-strip-scroll flex min-w-0 flex-1 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId
@@ -99,9 +99,9 @@ export function TabBar() {
                 }
               }}
               className={[
-                'group flex h-10 min-w-32 max-w-52 shrink-0 items-center border-r border-border/45 text-xs transition-colors',
+                'group flex h-9 min-w-24 max-w-48 shrink-0 items-center border-r border-border/25 text-xs transition-colors',
                 active
-                  ? 'bg-surface text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary)),inset_0_1px_0_hsl(var(--foreground)/0.035)]'
+                  ? 'bg-surface text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary))]'
                   : 'text-muted-foreground hover:bg-accent-hover hover:text-foreground',
               ].join(' ')}
               onContextMenu={(event) => {
@@ -110,7 +110,7 @@ export function TabBar() {
               }}
             >
               {editing ? (
-                <div className="flex min-w-32 flex-1 items-center gap-1 px-3">
+                <div className="flex min-w-24 flex-1 items-center gap-1 px-2">
                   <input
                     className="h-6 min-w-0 flex-1 rounded border bg-background px-1.5 text-xs outline-none"
                     value={editingTitle}
@@ -134,7 +134,7 @@ export function TabBar() {
               ) : (
                 <button
                   type="button"
-                  className="flex min-w-0 flex-1 items-center gap-1.5 px-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35"
                   onClick={() => {
                     setActiveTab(tab.id)
                     if (tab.connectionId) {

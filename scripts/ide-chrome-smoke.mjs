@@ -18,7 +18,10 @@ assert(styles.includes('.ide-splitter'), 'result panel needs a lightweight IDE s
 assert(!styles.includes('box-shadow: inset 0 1px hsl(0 0% 100% / 0.58)'), 'dark IDE chrome must not use a fixed white top highlight')
 
 const tabBar = readFileSync(resolve(root, 'src/components/layout/TabBar.tsx'), 'utf8')
-assert(tabBar.includes('ide-tab-strip flex h-10'), 'tab strip must use the breathable 40px workspace density')
+assert(tabBar.includes('ide-tab-strip flex h-9'), 'tab strip must use the compact 36px workspace density')
+assert(tabBar.includes('h-9 min-w-24 max-w-48 shrink-0'), 'workspace tabs must keep content-driven 96px to 192px sizing')
+assert(tabBar.includes('border-r border-border/25'), 'workspace tabs must retain only a subtle separator')
+assert(tabBar.includes('shadow-[inset_0_-2px_0_hsl(var(--primary))]'), 'active workspace tabs must use a single primary indicator')
 
 const sidebar = readFileSync(resolve(root, 'src/components/layout/Sidebar.tsx'), 'utf8')
 assert(sidebar.includes('ide-chrome relative flex shrink-0 border-r'), 'sidebar must share the IDE chrome surface')
