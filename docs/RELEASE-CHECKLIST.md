@@ -71,10 +71,10 @@ remain **NOT EXECUTED** and must not be inferred from successful package builds.
 - [x] Signing/notarization status is described accurately; an ad hoc or unsigned
   QA artifact is never presented as signed or notarized.
 
-Current sources remain at version `0.9.0`. Change every version source together
-only after `1.0.0` is formally approved. Windows/Linux runtime evidence and
-formal signing/notarization are separate release decisions, not implicit PASS
-items in this checklist.
+Current sources are version `0.9.1`. Change every version source together only
+after a release version is formally approved. Windows/Linux runtime evidence
+and formal signing/notarization are separate release decisions, not implicit
+PASS items in this checklist.
 
 The synchronized current-version locations are `package.json`,
 `src-tauri/Cargo.toml`, the root package entry in `src-tauri/Cargo.lock`,

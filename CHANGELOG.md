@@ -2,6 +2,39 @@
 
 All notable changes to VaporLensDB are documented in this file.
 
+## [0.9.1]
+
+### Added
+
+- Added cancellable CSV Preview using the existing task cancellation lifecycle.
+- Added an RC release checklist for the frozen 1.0 scope.
+
+### Fixed
+
+- Switched Tier-A native PostgreSQL, MySQL, and SQLite CSV imports from SQL
+  literal construction to database parameter binding in batch and fallback
+  paths.
+- Fixed PostgreSQL CSV batch fallback after constraint failures by recovering
+  through savepoints.
+- Fixed PostgreSQL CSV parameters to use text wire format so the server can
+  parse values using the prepared statement's target column types.
+- Fixed SQL statement splitting for backslash-escaped strings under the
+  supported default MySQL lexer behavior.
+
+### Changed
+
+- Clarified the frozen 1.0 Tier-A scope and explicit unsupported boundaries.
+- Added PostgreSQL and MySQL native CSV runtime acceptance to the opt-in QA
+  tooling while retaining the disposable-environment safety gate.
+
+### Testing
+
+- Verified PostgreSQL and MySQL native parameterized CSV imports through the
+  production import path against disposable QA databases.
+- Verified multi-batch imports, transaction behavior, constraint fallback,
+  NULL, Unicode, special-character and SQL-looking values, victim-table
+  survival, and PostgreSQL wide-table parameter budgeting.
+
 ## [0.9.0]
 
 ### Changed
