@@ -32,6 +32,9 @@ interface ConnectionState {
   connections: ConnectionConfig[]
   dataSourceGroups: DataSourceGroup[]
   statuses: Record<string, ConnectionStatus>
+  statusRevisions: Record<string, number>
+  lifecycleEpochs: Record<string, number>
+  reclaimRequestTokens: Record<string, number>
   /** The Data Source selected for object navigation. */
   browsingConnectionId: string | null
   /** @deprecated use browsingConnectionId; retained while existing panels migrate. */
@@ -57,6 +60,7 @@ interface ConnectionState {
   setConnections: (connections: ConnectionConfig[]) => void
   setActiveConnection: (id: string | null) => void
   toggleFavoriteDataSource: (id: string) => void
+  synchronizeIdleReclaim: (status: ConnectionStatus, revision: number) => Promise<void>
 }
 
 function errorMessage(error: unknown) {
@@ -103,6 +107,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connections: [],
   dataSourceGroups: [],
   statuses: {},
+  statusRevisions: {},
+  lifecycleEpochs: {},
+  reclaimRequestTokens: {},
   browsingConnectionId: null,
   activeConnectionId: null,
   recentDataSourceIds: readStoredRecentDataSourceIds(),
@@ -201,6 +208,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     })
   },
   saveConnection: async (input) => {
+    if (input.id) advanceLifecycle(input.id)
     set({ loading: true, error: null })
     try {
       const saved = input.id ? await updateConnection(input) : await createConnection(input)
@@ -214,6 +222,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       set({ error: errorMessage(error), loading: false })
       notifyError(error, i18n.t('notifications.saveConnectionFailed'))
       throw error
+    } finally {
+      if (input.id) advanceLifecycle(input.id)
     }
   },
   renameConnection: async (id, name) => {
@@ -229,6 +239,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   removeConnection: async (id) => {
+    advanceLifecycle(id)
     set((state) => ({
       busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
       error: null,
@@ -255,6 +266,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       notifyError(error, i18n.t('notifications.deleteConnectionFailed'))
       throw error
     } finally {
+      advanceLifecycle(id)
       set((state) => ({ busyConnectionIds: clearConnectionBusy(state.busyConnectionIds, id) }))
     }
   },
@@ -278,6 +290,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   connectConnection: async (id, options = {}) => {
+    advanceLifecycle(id)
     set((state) => ({
       busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
       error: null,
@@ -312,11 +325,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       notifyError(error, i18n.t('notifications.connectFailed'))
       throw error
     } finally {
+      advanceLifecycle(id)
       set((state) => ({ busyConnectionIds: clearConnectionBusy(state.busyConnectionIds, id) }))
     }
   },
   disconnectConnection: async (id) => {
     if (get().busyConnectionIds[id] || get().statuses[id]?.status === 'disconnected') return
+    advanceLifecycle(id)
     set((state) => ({
       busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
       error: null,
@@ -345,6 +360,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       }
       throw error
     } finally {
+      advanceLifecycle(id)
       set((state) => ({ busyConnectionIds: clearConnectionBusy(state.busyConnectionIds, id) }))
     }
   },
@@ -361,7 +377,33 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set((state) => ({
       favoriteDataSourceIds: toggleFavoriteDataSource(state.favoriteDataSourceIds, id),
     })),
+  synchronizeIdleReclaim: async (eventStatus, revision) => {
+    const id = eventStatus.connectionId
+    if (revision <= (get().statusRevisions[id] ?? 0)) return
+    const epoch = get().lifecycleEpochs[id] ?? 0
+    const token = (get().reclaimRequestTokens[id] ?? 0) + 1
+    set((state) => ({ reclaimRequestTokens: { ...state.reclaimRequestTokens, [id]: token } }))
+    const snapshot = await listConnectionStatuses()
+    const current = get()
+    if ((current.lifecycleEpochs[id] ?? 0) !== epoch
+      || current.reclaimRequestTokens[id] !== token
+      || current.busyConnectionIds[id]
+      || !current.connections.some((connection) => connection.id === id)) return
+    const status = snapshot.find((item) => item.connectionId === id)
+    if (!status || status.status !== 'disconnected') return
+    set((state) => ({
+      statuses: { ...state.statuses, [id]: status },
+      statusRevisions: { ...state.statusRevisions, [id]: revision },
+    }))
+    useMetadataStore.getState().clearConnection(id)
+  },
 }))
+
+function advanceLifecycle(id: string) {
+  useConnectionStore.setState((state) => ({
+    lifecycleEpochs: { ...state.lifecycleEpochs, [id]: (state.lifecycleEpochs[id] ?? 0) + 1 },
+  }))
+}
 
 function markConnectionBusy(current: Record<string, true>, id: string): Record<string, true> {
   return { ...current, [id]: true }

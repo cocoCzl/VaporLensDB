@@ -1,5 +1,7 @@
 import i18n from '@/i18n'
 import type { ConnectionInput, DriverType } from '@/types/connection'
+import type { DriverBackend } from '@/types/driver'
+import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
 
 export interface DbeaverImportPreview {
   sourceName: string
@@ -62,12 +64,13 @@ const DRIVER_MAPPINGS: Array<{
   driverType: DriverType
   driverDefinitionId: string
   defaultPort?: number
+  backend: DriverBackend
 }> = [
-  { match: /postgres|postgresql|pg/i, driverType: 'postgres', driverDefinitionId: 'postgres', defaultPort: 5432 },
-  { match: /mysql|maria/i, driverType: 'mysql', driverDefinitionId: 'mysql', defaultPort: 3306 },
-  { match: /oracle/i, driverType: 'oracle', driverDefinitionId: 'oracle', defaultPort: 1521 },
-  { match: /sqlite/i, driverType: 'sqlite', driverDefinitionId: 'sqlite' },
-  { match: /sqlserver|mssql|microsoft/i, driverType: 'mssql', driverDefinitionId: 'mssql', defaultPort: 1433 },
+  { match: /postgres|postgresql|pg/i, driverType: 'postgres', driverDefinitionId: 'postgres', backend: 'nativeRust', defaultPort: 5432 },
+  { match: /mysql|maria/i, driverType: 'mysql', driverDefinitionId: 'mysql', backend: 'nativeRust', defaultPort: 3306 },
+  { match: /oracle/i, driverType: 'oracle', driverDefinitionId: 'oracle', backend: 'jdbc', defaultPort: 1521 },
+  { match: /sqlite/i, driverType: 'sqlite', driverDefinitionId: 'sqlite', backend: 'nativeRust' },
+  { match: /sqlserver|mssql|microsoft/i, driverType: 'mssql', driverDefinitionId: 'mssql', backend: 'nativeRust', defaultPort: 1433 },
 ]
 
 export async function previewDbeaverConfiguration(files: File[]) {
@@ -122,7 +125,8 @@ function parseDbeaverJson(source: string): RawDbeaverConnection[] {
     const configuration = (item.configuration as Record<string, unknown> | undefined) ?? {}
     const folderId = stringValue(item.folder) ?? stringValue(item.folderId) ?? stringValue(configuration.folder)
     const driver = stringValue(item.driver) ?? stringValue(item.provider) ?? ''
-    const url = stringValue(configuration.url)
+    const credentials = extractUrlCredentials(stringValue(configuration.url) ?? '')
+    const url = credentials.connectionUrl || null
     const parsedUrl = url ? parseJdbcUrl(url, driver) : {}
     return {
       id,
@@ -140,11 +144,12 @@ function parseDbeaverJson(source: string): RawDbeaverConnection[] {
         stringValue(configuration.user) ??
         stringValue(configuration.username) ??
         stringValue(configuration.userName) ??
+        credentials.username ??
         null,
       hasPasswordReference:
         Boolean(configuration.password) ||
         Boolean(configuration.auth) ||
-        Boolean(configuration.credentials),
+        Boolean(configuration.credentials) || credentials.password !== undefined,
       groupPath: folderId ? folderPaths.get(folderId) ?? null : null,
     }
   })
@@ -157,34 +162,38 @@ function parseDbeaverXml(source: string): RawDbeaverConnection[] {
     throw new Error(i18n.t('dbeaver.xmlParseFailed'))
   }
 
-  return Array.from(document.querySelectorAll('data-source, datasource, connection')).map((node, index) => {
+  const sources = document.querySelectorAll('data-source, datasource')
+  return Array.from(sources.length ? sources : document.querySelectorAll('connection')).map((node, index) => {
+    const configuration = node.querySelector('connection') ?? node
     const id = attr(node, 'id') ?? attr(node, 'uuid') ?? `xml-${index + 1}`
     const driver = attr(node, 'driver') ?? attr(node, 'provider') ?? attr(node, 'driver-id') ?? ''
-    const url = attr(node, 'url') ?? textChild(node, 'url')
+    const credentials = extractUrlCredentials(attr(configuration, 'url') ?? attr(node, 'url') ?? textChild(node, 'url') ?? '')
+    const url = credentials.connectionUrl || null
     const parsedUrl = url ? parseJdbcUrl(url, driver) : {}
     return {
       id,
       name: attr(node, 'name') ?? textChild(node, 'name') ?? id,
       sourceDriver: driver,
       url,
-      host: attr(node, 'host') ?? textChild(node, 'host') ?? parsedUrl.host ?? null,
-      port: numberValue(attr(node, 'port') ?? textChild(node, 'port')) ?? parsedUrl.port ?? null,
+      host: attr(configuration, 'host') ?? attr(node, 'host') ?? textChild(node, 'host') ?? parsedUrl.host ?? null,
+      port: numberValue(attr(configuration, 'port') ?? attr(node, 'port') ?? textChild(node, 'port')) ?? parsedUrl.port ?? null,
       database:
-        attr(node, 'database') ??
+        attr(configuration, 'database') ?? attr(configuration, 'databaseName') ?? attr(node, 'database') ??
         attr(node, 'databaseName') ??
         textChild(node, 'database') ??
         parsedUrl.database ??
         null,
       username:
-        attr(node, 'user') ??
+        attr(configuration, 'user') ?? attr(configuration, 'username') ?? attr(node, 'user') ??
         attr(node, 'username') ??
         textChild(node, 'user') ??
         textChild(node, 'username') ??
+        credentials.username ??
         null,
       hasPasswordReference:
         Boolean(attr(node, 'password')) ||
         Boolean(textChild(node, 'password')) ||
-        Boolean(node.querySelector('credentials')),
+        Boolean(node.querySelector('credentials')) || Boolean(attr(configuration, 'password')) || credentials.password !== undefined,
       groupPath: attr(node, 'folder') ?? attr(node, 'folder-id') ?? null,
     }
   })
@@ -229,7 +238,8 @@ function buildPreview(sourceName: string, rawConnections: RawDbeaverConnection[]
       port: raw.port ?? mapping.defaultPort ?? null,
       database: raw.database ?? null,
       username: raw.username ?? null,
-      connectionUrl: raw.url ?? null,
+      connectionUrl: mapping.backend === 'jdbc' ? raw.url ?? null
+        : mapping.driverType === 'sqlite' ? raw.url?.replace(/^jdbc:sqlite:/i, '') ?? null : null,
       passwordStatus: raw.hasPasswordReference ? 'manualEntryRequired' : 'notPresent',
       sourceDriver: raw.sourceDriver || 'unknown',
       groupPath: raw.groupPath ?? null,
@@ -306,7 +316,8 @@ function parseHostDatabaseUrl(value: string, defaultPort: number) {
 }
 
 function parseSqlServerUrl(value: string) {
-  const [hostPort, params = ''] = value.split(';', 2)
+  const [hostPort, ...properties] = value.split(';')
+  const params = properties.join(';')
   const [host, portText] = hostPort.split(':', 2)
   const database = params.match(/database(?:Name)?=([^;]+)/i)?.[1] ?? null
   return {
@@ -345,6 +356,7 @@ function stringValue(value: unknown) {
 }
 
 function numberValue(value: unknown) {
+  if (value == null || value === '') return null
   const number = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(number) ? number : null
 }

@@ -1,5 +1,10 @@
 use async_trait::async_trait;
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::models::{
     error::AppError,
@@ -17,6 +22,83 @@ use crate::models::{
 pub enum DbParameter {
     Null,
     Text(String),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StreamTransactionMode {
+    Auto,
+    Manual,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum StreamStopReason {
+    MaxRows = 1,
+    ResultBytes,
+    CellOrChunkLimit,
+    ReceiverUnavailable,
+}
+
+#[derive(Clone)]
+pub struct StreamControl {
+    pub mode: StreamTransactionMode,
+    reason: Arc<AtomicU8>,
+    stopped: CancellationToken,
+}
+
+impl StreamControl {
+    pub fn new(mode: StreamTransactionMode) -> Self {
+        Self {
+            mode,
+            reason: Arc::new(AtomicU8::new(0)),
+            stopped: CancellationToken::new(),
+        }
+    }
+
+    pub fn stop(&self, reason: StreamStopReason) {
+        if self
+            .reason
+            .compare_exchange(0, reason as u8, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            self.stopped.cancel();
+        }
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.reason.load(Ordering::Acquire) != 0
+    }
+
+    pub fn stop_reason(&self) -> Option<StreamStopReason> {
+        match self.reason.load(Ordering::Acquire) {
+            1 => Some(StreamStopReason::MaxRows),
+            2 => Some(StreamStopReason::ResultBytes),
+            3 => Some(StreamStopReason::CellOrChunkLimit),
+            4 => Some(StreamStopReason::ReceiverUnavailable),
+            _ => None,
+        }
+    }
+
+    pub fn can_abort_select(&self, sql: &str) -> bool {
+        if self.mode != StreamTransactionMode::Auto {
+            return false;
+        }
+        crate::utils::sql_parser::mask_sql(sql)
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .find(|word| !word.is_empty())
+            .is_some_and(|word| word.eq_ignore_ascii_case("select"))
+    }
+
+    pub async fn stopped(&self) {
+        self.stopped.cancelled().await;
+    }
+}
+
+pub struct DriverStreamRequest<'request> {
+    pub sql: &'request str,
+    pub query_id: &'request str,
+    pub chunk_size: usize,
+    pub max_rows: Option<u64>,
 }
 
 #[async_trait]
@@ -59,6 +141,21 @@ pub trait DatabaseDriver: Send + Sync {
         max_rows: Option<u64>,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError>;
+    async fn execute_query_stream_controlled(
+        &self,
+        request: DriverStreamRequest<'_>,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        _control: StreamControl,
+    ) -> Result<QueryStreamSummary, AppError> {
+        self.execute_query_stream(
+            request.sql,
+            request.query_id,
+            request.chunk_size,
+            request.max_rows,
+            chunks,
+        )
+        .await
+    }
     async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, AppError>;
     async fn get_schemas(&self, database: Option<&str>) -> Result<Vec<SchemaInfo>, AppError>;
     async fn get_tables(&self, schema: &str) -> Result<Vec<TableInfo>, AppError>;

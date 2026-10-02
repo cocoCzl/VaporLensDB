@@ -52,44 +52,35 @@ export function useQuery() {
       notify({ kind: 'error', title: i18n.t('notifications.queryFailed'), message: i18n.t('notifications.unsupportedClientDirective', { directive: unsupportedDirective }) })
       return false
     }
-    let connectionGeneration: number
+    let connectionGeneration: number | undefined
     setTabRunning(tabId, true, queryId)
     try {
       if (canStreamSql(sql)) {
         startStreamResult(queryId, classifyStatement(sql))
-        const streamState = await registerStreamListeners(tabId, queryId)
+        const streamState = await registerStreamListeners(queryId)
         try {
-          const session = await executeQueryStream({
-            connectionId,
-            sql,
-            queryId,
-            chunkSize: 1_000,
-            maxRows: options.maxRows ?? useUiStore.getState().queryMaxRows,
-            consoleId,
-            tabId,
-            connectionName: options.connectionName,
-            database: options.database,
-            schema: options.schema,
-          })
-          connectionGeneration = session.connectionGeneration
+          try {
+            const session = await executeQueryStream({
+              connectionId,
+              sql,
+              queryId,
+              chunkSize: 1_000,
+              maxRows: options.maxRows ?? useUiStore.getState().queryMaxRows,
+              consoleId,
+              tabId,
+              connectionName: options.connectionName,
+              database: options.database,
+              schema: options.schema,
+            })
+            connectionGeneration = session.connectionGeneration
+          } catch (error) {
+            if (streamState.state.terminal !== 'done') throw streamState.state.error ?? error
+          }
         } finally {
           streamState.unlisteners.forEach((unlisten) => unlisten())
         }
-        if (streamState.state.failed) {
-          void useQueryHistoryStore.getState().addEntry({
-            connectionId,
-            database: options.database,
-            schema: options.schema,
-            sql,
-            status: 'failed',
-            startedAt,
-            elapsedMs: Math.round(performance.now() - startedMs),
-            errorCode: 'QUERY_STREAM_FAILED',
-            errorMessage: i18n.t('notifications.queryStreamFailed'),
-          })
-          notify({ kind: 'error', title: i18n.t('notifications.queryFailed') })
-          return false
-        }
+        if (streamState.state.error) throw streamState.state.error
+        if (streamState.state.terminal !== 'done') throw { code: 'RESULT_PROCESSING_ERROR', message: i18n.t('notifications.queryStreamFailed') }
       } else {
         const response = await executeQuery({
           connectionId,
@@ -105,7 +96,7 @@ export function useQuery() {
         connectionGeneration = response.connectionGeneration
         setResults(queryId, response.results, classifyStatement(sql))
       }
-      setResultSource({
+      if (connectionGeneration !== undefined) setResultSource({
         queryId,
         sql,
         connectionId,
@@ -116,9 +107,6 @@ export function useQuery() {
         transactionMode,
         executedAt: startedAt,
       })
-      if (transactionMode === 'manual') {
-        useEditorStore.getState().setTabTransactionState(tabId, 'manual', 'active')
-      }
       if (containsLikelyDdl(sql)) {
         // The backend invalidates its metadata caches after successful DDL. Mirror that
         // boundary in the renderer so a previously expanded Object Browser does not
@@ -131,10 +119,11 @@ export function useQuery() {
         })
       }
       recordQueryHistory(connectionId, sql, queryId, startedAt, performance.now() - startedMs, options)
-      setTabQueryState(tabId, queryId)
+      if (isCurrentQuery(tabId, connectionId, queryId)) setTabQueryState(tabId, queryId)
       return true
     } catch (error) {
       const appError = normalizeAppError(error)
+      useQueryResultStore.getState().failStreamResult(queryId)
       void useQueryHistoryStore.getState().addEntry({
         connectionId,
         database: options.database,
@@ -146,12 +135,18 @@ export function useQuery() {
         errorCode: appError.code,
         errorMessage: appError.message,
       })
-      setTabQueryState(tabId, queryId, formatLocalError(appError))
-      if (useEditorStore.getState().tabs.find((tab) => tab.id === tabId)?.transactionMode === 'manual') {
-        useEditorStore.getState().setTabTransactionState(tabId, 'manual', 'failed')
-      }
+      if (isCurrentQuery(tabId, connectionId, queryId)) setTabQueryState(tabId, queryId, formatLocalError(appError))
       notify({ kind: 'error', title: i18n.t('notifications.queryFailed') })
       return false
+    } finally {
+      if (consoleId) {
+        const transaction = await getConsoleTransactionState(connectionId, consoleId).catch(() => null)
+        const current = useEditorStore.getState().tabs.find((item) => item.id === tabId)
+        if (isCurrentQuery(tabId, connectionId, queryId) && current?.transactionMode === 'manual'
+          && transaction?.connectionId === connectionId && transaction.consoleId === consoleId) {
+          useEditorStore.getState().setTabTransactionState(tabId, transaction.mode, transaction.phase)
+        }
+      }
     }
   }
 
@@ -227,27 +222,51 @@ function formatLocalError(error: { message: string; detail?: string }) {
   return error.detail ? `${error.message}\n${error.detail}` : error.message
 }
 
-async function registerStreamListeners(tabId: string, queryId: string) {
-  const state = { failed: false }
-  const unlisteners = await Promise.all([
+function isCurrentQuery(tabId: string, connectionId: string, queryId: string) {
+  const tab = useEditorStore.getState().tabs.find((item) => item.id === tabId)
+  return tab?.connectionId === connectionId && tab.lastQueryId === queryId && !tab.closing
+}
+
+async function registerStreamListeners(queryId: string) {
+  const state: { terminal: 'done' | 'error' | null; error: ReturnType<typeof normalizeAppError> | null } = { terminal: null, error: null }
+  const fail = (error: ReturnType<typeof normalizeAppError>) => {
+    if (state.terminal) return
+    state.terminal = 'error'
+    state.error = error
+    useQueryResultStore.getState().failStreamResult(queryId)
+  }
+  const registrations = await Promise.allSettled([
     onQueryResultChunk((chunk) => {
-      if (chunk.queryId === queryId) {
-        useQueryResultStore.getState().appendResultChunk(chunk)
+      if (chunk.queryId === queryId && !state.terminal) {
+        try {
+          useQueryResultStore.getState().appendResultChunk(chunk)
+        } catch {
+          fail({ code: 'RESULT_PROCESSING_ERROR', message: i18n.t('notifications.queryStreamFailed') })
+        }
       }
     }),
     onQueryResultDone((done) => {
-      if (done.queryId === queryId) {
-        useQueryResultStore.getState().finishStreamResult(done)
+      if (done.queryId === queryId && !state.terminal) {
+        try {
+          useQueryResultStore.getState().finishStreamResult(done)
+          state.terminal = 'done'
+        } catch {
+          fail({ code: 'RESULT_PROCESSING_ERROR', message: i18n.t('notifications.queryStreamFailed') })
+        }
       }
     }),
     onQueryResultError((error) => {
       if (error.queryId === queryId) {
-        state.failed = true
-        useEditorStore.getState().setTabQueryState(tabId, queryId, error.message)
+        fail(normalizeAppError(error))
       }
     }),
   ])
-
+  const unlisteners = registrations.flatMap((registration) => registration.status === 'fulfilled' ? [registration.value] : [])
+  const failed = registrations.find((registration) => registration.status === 'rejected')
+  if (failed?.status === 'rejected') {
+    unlisteners.forEach((unlisten) => unlisten())
+    throw failed.reason
+  }
   return { state, unlisteners }
 }
 

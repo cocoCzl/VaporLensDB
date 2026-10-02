@@ -13,7 +13,10 @@ use rusqlite::{
 use tokio::{sync::mpsc, task};
 
 use crate::{
-    drivers::trait_def::{DatabaseDriver, DbParameter},
+    drivers::trait_def::{
+        DatabaseDriver, DbParameter, DriverStreamRequest, StreamControl, StreamStopReason,
+        StreamTransactionMode,
+    },
     models::{
         error::AppError,
         metadata::{
@@ -148,6 +151,31 @@ impl DatabaseDriver for SqliteDriver {
         max_rows: Option<u64>,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
+        self.execute_query_stream_controlled(
+            DriverStreamRequest {
+                sql,
+                query_id,
+                chunk_size,
+                max_rows,
+            },
+            chunks,
+            StreamControl::new(StreamTransactionMode::Manual),
+        )
+        .await
+    }
+
+    async fn execute_query_stream_controlled(
+        &self,
+        request: DriverStreamRequest<'_>,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        control: StreamControl,
+    ) -> Result<QueryStreamSummary, AppError> {
+        let DriverStreamRequest {
+            sql,
+            query_id,
+            chunk_size,
+            max_rows,
+        } = request;
         let start = Instant::now();
         let sql = sql.to_string();
         let query_id = query_id.to_string();
@@ -162,6 +190,7 @@ impl DatabaseDriver for SqliteDriver {
                     chunk_size.max(1),
                     limit,
                     chunks,
+                    control,
                 )
             })
             .await?;
@@ -222,7 +251,7 @@ impl DatabaseDriver for SqliteDriver {
         let table = table.to_string();
         self.with_connection("metadata columns", move |connection| {
             let sql =
-                "SELECT name, cid, type, \"notnull\", dflt_value, pk FROM pragma_table_info(?1)";
+                "SELECT name, cid, type, \"notnull\", dflt_value, pk, hidden FROM pragma_table_xinfo(?1)";
             let mut statement = connection.prepare(sql)?;
             let rows = statement.query_map([table.as_str()], |row| {
                 Ok(ColumnInfo {
@@ -237,6 +266,9 @@ impl DatabaseDriver for SqliteDriver {
                     numeric_precision: None,
                     numeric_scale: None,
                     is_primary_key: row.get::<_, i32>(5)? > 0,
+                    is_identity: false,
+                    is_generated: matches!(row.get::<_, i32>(6)?, 2 | 3),
+                    is_auto_increment: false,
                 })
             })?;
             rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
@@ -622,6 +654,7 @@ fn stream_sqlite_query(
     chunk_size: usize,
     limit: u64,
     chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+    control: StreamControl,
 ) -> Result<(u64, u64, bool), AppError> {
     let mut statement = connection
         .prepare(sql)
@@ -648,6 +681,7 @@ fn stream_sqlite_query(
             nullable: true,
         })
         .collect::<Vec<_>>();
+    let readonly = statement.readonly();
     let mut cursor = statement.query([]).map_err(|error| AppError::QueryFailed {
         sql: sql.to_string(),
         message: error.to_string(),
@@ -656,6 +690,7 @@ fn stream_sqlite_query(
     let mut row_count = 0_u64;
     let mut row_offset = 0_u64;
     let mut truncated = false;
+    let mut processing_error = None;
 
     while let Some(row) = cursor.next().map_err(|error| AppError::QueryFailed {
         sql: sql.to_string(),
@@ -663,18 +698,48 @@ fn stream_sqlite_query(
     })? {
         if row_count >= limit {
             truncated = true;
-            break;
+            control.stop(StreamStopReason::MaxRows);
         }
-        let values = sqlite_row_to_json_values(row, columns.len())?;
-        if let Some(chunk_rows) = rows.push(values)? {
+        if control.is_stopped() {
+            if readonly {
+                break;
+            }
+            continue;
+        }
+        let buffered =
+            sqlite_row_to_json_values(row, columns.len()).and_then(|values| rows.push(values));
+        let buffered = match buffered {
+            Ok(buffered) => buffered,
+            Err(error) => {
+                control.stop(StreamStopReason::CellOrChunkLimit);
+                processing_error = Some(error);
+                if readonly {
+                    break;
+                }
+                continue;
+            }
+        };
+        if let Some(chunk_rows) = buffered {
             let chunk_row_count = chunk_rows.len() as u64;
-            send_sqlite_chunk(&chunks, query_id, &columns, chunk_rows, row_offset)?;
+            if let Err(error) =
+                send_sqlite_chunk(&chunks, query_id, &columns, chunk_rows, row_offset)
+            {
+                control.stop(StreamStopReason::ReceiverUnavailable);
+                processing_error = Some(error);
+                if readonly {
+                    break;
+                }
+                continue;
+            }
             row_offset += chunk_row_count;
         }
         row_count += 1;
     }
-    if !rows.is_empty() || !columns.is_empty() {
+    if !rows.is_empty() || (!columns.is_empty() && processing_error.is_none()) {
         send_sqlite_chunk(&chunks, query_id, &columns, rows.take(), row_offset)?;
+    }
+    if let Some(error) = processing_error {
+        return Err(error);
     }
     Ok((row_count, 0, truncated))
 }
@@ -693,7 +758,7 @@ fn send_sqlite_chunk(
             rows,
             row_offset,
         }))
-        .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))
+        .map_err(|_| AppError::ResultProcessingError("query stream receiver dropped".to_string()))
 }
 
 fn sqlite_row_to_json_values(
@@ -759,7 +824,7 @@ mod tests {
     use super::{
         encode_hex, sqlite_database_name, sqlite_value_to_json, stream_sqlite_query, SqliteDriver,
     };
-    use crate::drivers::trait_def::DatabaseDriver;
+    use crate::drivers::trait_def::{DatabaseDriver, StreamControl, StreamTransactionMode};
     use rusqlite::types::ValueRef;
     use tokio::sync::mpsc;
 
@@ -851,6 +916,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maps_sqlite_generated_columns_without_guessing_integer_primary_keys() {
+        let driver = SqliteDriver::connect(":memory:").await.unwrap();
+        driver
+            .execute_query(
+                "CREATE TABLE generated_items (id INTEGER PRIMARY KEY, value INTEGER, doubled INTEGER GENERATED ALWAYS AS (value * 2) STORED)",
+                None,
+            )
+            .await
+            .unwrap();
+
+        let columns = driver.get_columns("main", "generated_items").await.unwrap();
+        let id = columns.iter().find(|column| column.name == "id").unwrap();
+        let doubled = columns
+            .iter()
+            .find(|column| column.name == "doubled")
+            .unwrap();
+        assert!(!id.is_identity);
+        assert!(!id.is_generated);
+        assert!(!id.is_auto_increment);
+        assert!(doubled.is_generated);
+        assert!(!doubled.is_identity);
+        assert!(!doubled.is_auto_increment);
+    }
+
+    #[tokio::test]
     async fn streams_rows_without_materializing_the_full_result() {
         let (sender, mut receiver) = mpsc::channel(2);
         let worker = std::thread::spawn(move || {
@@ -867,6 +957,7 @@ mod tests {
                 2,
                 2,
                 sender,
+                StreamControl::new(StreamTransactionMode::Manual),
             )
         });
 
@@ -898,6 +989,7 @@ mod tests {
                 CHUNK_SIZE,
                 ROW_LIMIT,
                 sender,
+                StreamControl::new(StreamTransactionMode::Manual),
             )
         });
 
@@ -928,6 +1020,7 @@ mod tests {
             10,
             10,
             sender,
+            StreamControl::new(StreamTransactionMode::Manual),
         );
         assert!(result.is_err());
         assert!(receiver.try_recv().is_err());

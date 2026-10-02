@@ -21,6 +21,8 @@ import i18n from './i18n'
 import { closeEditorTab } from './lib/closeEditorTab'
 import { requestApplicationClose } from './lib/applicationClose'
 import { onConsoleTransactionUpdated } from './ipc/query'
+import type { ConnectionStatus } from './types/connection'
+import { normalizeAppError } from './ipc/client'
 
 const MIN_SPLASH_DURATION_MS = 250
 
@@ -33,6 +35,22 @@ export default function App() {
   const idleReclaimMinutes = useUiStore((state) => state.idleReclaimMinutes)
   const loadTasks = useTaskStore((state) => state.loadTasks)
   const upsertTask = useTaskStore((state) => state.upsertTask)
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+    listen<{ status: ConnectionStatus; revision: number }>('vaporlensdb:idle-reclaim-status', ({ payload }) => {
+      if (cancelled) return
+      void useConnectionStore.getState().synchronizeIdleReclaim(payload.status, payload.revision)
+        .catch((error) => useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.loadConnectionsFailed')))
+    })
+      .then((dispose) => {
+        if (cancelled) dispose()
+        else unlisten = dispose
+      })
+      .catch(() => {})
+    return () => { cancelled = true; unlisten?.() }
+  }, [])
 
   useEffect(() => {
     let unlisten: (() => void) | undefined

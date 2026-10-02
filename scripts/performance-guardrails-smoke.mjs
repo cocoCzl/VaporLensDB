@@ -16,10 +16,16 @@ assert(engine.includes('pub const MAX_INTERACTIVE_STREAM_CHUNK_BYTES: usize = 4 
 assert(engine.includes('remaining_bytes = remaining_bytes.saturating_sub(retained_bytes)'), 'batch byte budget is not shared across statements')
 assert(engine.includes('const MAX_STREAM_CHUNK_SIZE: usize = 2_000'), 'stream chunk hard limit is missing')
 assert(engine.includes('mpsc::channel::<Result<QueryResultChunk, AppError>>(8)'), 'stream backpressure channel budget is missing')
+assert(engine.includes('StreamControl::new(mode)'), 'interactive producers must receive transaction-aware stop control')
+assert(engine.includes('tokio::join!(produce, consume)'), 'producer and consumer must finish within the query lease')
 
 const resultStore = read('src/stores/queryResultStore.ts')
 assert(resultStore.includes('const MAX_RENDERED_RESULT_ROWS = 10_000'), 'grid memory window is missing')
 assert(resultStore.includes('const MAX_RETAINED_QUERY_RESULTS = 20'), 'query result retention budget is missing')
+assert(resultStore.includes('MAX_RENDERED_RESULT_BYTES = 4 * 1024 * 1024'), 'renderer byte retention budget is missing')
+assert(resultStore.includes('estimateRetainedRowBytes(row)'), 'renderer byte accounting must process incoming rows incrementally')
+assert(resultStore.includes('retainedBytes: Object.fromEntries(Object.keys(retained)'), 'result eviction must evict byte accounting too')
+assert(!resultStore.includes('JSON.stringify('), 'renderer accounting must not serialize historical results')
 assert(resultStore.includes('displayTruncated'), 'grid must distinguish retained-window truncation')
 assert(!resultStore.includes('rows: [...current.rows, ...chunk.rows]'), 'stream append must not copy every prior row')
 

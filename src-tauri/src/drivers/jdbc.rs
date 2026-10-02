@@ -1,7 +1,7 @@
 use std::{
     path::Path,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Instant,
@@ -10,15 +10,18 @@ use std::{
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command},
     sync::{mpsc, Mutex},
     time::{timeout, Duration},
 };
 use uuid::Uuid;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    drivers::trait_def::DatabaseDriver,
+    drivers::trait_def::{
+        DatabaseDriver, DriverStreamRequest, StreamControl, StreamStopReason, StreamTransactionMode,
+    },
     models::{
         connection::{ConnectionConfig, DriverType},
         driver_catalog::DriverDefinition,
@@ -48,12 +51,26 @@ pub struct JdbcDriver {
 }
 
 struct JdbcBridgeSidecar {
+    start_spec: JdbcBridgeStartSpec,
+    closed: AtomicBool,
+    session_lost: AtomicBool,
     process: Mutex<Option<Arc<JdbcBridgeProcess>>>,
     active_stream: Mutex<Option<ActiveJdbcStream>>,
     // The bridge has one stdout protocol stream. A query stream emits several
     // frames, so metadata and completion requests must wait until it finishes
     // rather than reading one another's responses.
     request_lock: Mutex<()>,
+}
+
+struct JdbcBridgeStartSpec {
+    program: String,
+    arguments: Vec<String>,
+    init_request: Zeroizing<String>,
+}
+
+enum JdbcRequestFailure {
+    Poisoned(AppError),
+    Completed(AppError),
 }
 
 struct JdbcBridgeProcess {
@@ -68,6 +85,7 @@ struct JdbcBridgeProcess {
 struct ActiveJdbcStream {
     query_id: String,
     request_id: u64,
+    process: Arc<JdbcBridgeProcess>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -278,14 +296,52 @@ impl JdbcBridgeSidecar {
 
         let configured_heap = std::env::var("VAPORLENSDB_JDBC_MAX_HEAP_MB").ok();
         let max_heap_mb = parse_jdbc_max_heap_mb(configured_heap.as_deref());
-        let mut child = Command::new("java")
-            .arg("-Xms16m")
-            .arg(format!("-Xmx{max_heap_mb}m"))
-            .arg("-XX:+UseSerialGC")
-            .arg("-cp")
-            .arg(classpath)
-            .arg("com.vaporlensdb.jdbcbridge.JdbcBridge")
-            .arg("server")
+        let mut init = JdbcBridgeCommand::Init {
+            driver_class: driver_class.to_string(),
+            connection_url: connection_url.to_string(),
+            username: username.to_string(),
+            password: password.to_string(),
+        };
+        let init_request = Zeroizing::new(init.encode(0));
+        if let JdbcBridgeCommand::Init {
+            connection_url,
+            username,
+            password,
+            ..
+        } = &mut init
+        {
+            connection_url.zeroize();
+            username.zeroize();
+            password.zeroize();
+        }
+        let sidecar = Self {
+            start_spec: JdbcBridgeStartSpec {
+                program: "java".into(),
+                arguments: vec![
+                    "-Xms16m".into(),
+                    format!("-Xmx{max_heap_mb}m"),
+                    "-XX:+UseSerialGC".into(),
+                    "-cp".into(),
+                    classpath,
+                    "com.vaporlensdb.jdbcbridge.JdbcBridge".into(),
+                    "server".into(),
+                ],
+                init_request,
+            },
+            closed: AtomicBool::new(false),
+            session_lost: AtomicBool::new(false),
+            process: Mutex::new(None),
+            active_stream: Mutex::new(None),
+            request_lock: Mutex::new(()),
+        };
+        sidecar.process().await?;
+        Ok(sidecar)
+    }
+
+    async fn spawn_process(&self) -> Result<Arc<JdbcBridgeProcess>, AppError> {
+        let mut child = Command::new(&self.start_spec.program)
+            .args(&self.start_spec.arguments)
+            .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -317,68 +373,169 @@ impl JdbcBridgeSidecar {
                 message: "JDBC bridge sidecar stderr unavailable".to_string(),
             })?;
 
-        let sidecar = Self {
-            process: Mutex::new(Some(Arc::new(JdbcBridgeProcess {
-                child: Mutex::new(child),
-                stdin: Mutex::new(stdin),
-                stdout: Mutex::new(BufReader::new(stdout)),
-                stderr: Mutex::new(BufReader::new(stderr)),
-                next_request_id: AtomicU64::new(0),
-            }))),
-            active_stream: Mutex::new(None),
-            request_lock: Mutex::new(()),
-        };
-
-        sidecar
-            .request(JdbcBridgeCommand::Init {
-                driver_class: driver_class.to_string(),
-                connection_url: connection_url.to_string(),
-                username: username.to_string(),
-                password: password.to_string(),
-            })
-            .await?;
-        Ok(sidecar)
+        Ok(Arc::new(JdbcBridgeProcess {
+            child: Mutex::new(child),
+            stdin: Mutex::new(stdin),
+            stdout: Mutex::new(BufReader::new(stdout)),
+            stderr: Mutex::new(BufReader::new(stderr)),
+            next_request_id: AtomicU64::new(1),
+        }))
     }
 
     async fn request(&self, command: JdbcBridgeCommand) -> Result<String, AppError> {
-        let _request_guard = self.request_lock.lock().await;
-        let process = self.process().await?;
-        let request_id = process.next_request_id.fetch_add(1, Ordering::Relaxed);
         let timeout_window = command.timeout();
-        let request = command.encode(request_id);
+        self.request_with_timeout(command, timeout_window).await
+    }
 
-        self.write_request(&process, &request, timeout_window, command.operation_name())
-            .await?;
+    async fn request_with_timeout(
+        &self,
+        command: JdbcBridgeCommand,
+        timeout_window: Duration,
+    ) -> Result<String, AppError> {
+        let _request_guard = self.request_lock.lock().await;
+        if self.session_lost.load(Ordering::Acquire)
+            && matches!(command, JdbcBridgeCommand::Transaction("COMMIT"))
+        {
+            return Err(broken_sidecar(
+                "JDBC session was lost; rollback is required before further transaction work",
+            ));
+        }
+        let process = self.process().await?;
+        if self.session_lost.load(Ordering::Acquire)
+            && matches!(command, JdbcBridgeCommand::Transaction("ROLLBACK"))
+        {
+            self.session_lost.store(false, Ordering::Release);
+            return Ok("{\"ok\":true}".into());
+        }
+        let request_id = process.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let request = Zeroizing::new(command.encode(request_id));
+
+        let result = self
+            .request_on_process(
+                &process,
+                &request,
+                request_id,
+                timeout_window,
+                command.operation_name(),
+            )
+            .await;
+        let result = self.finish_request(&process, result).await;
+        if result.is_ok()
+            && matches!(
+                command,
+                JdbcBridgeCommand::Transaction("BEGIN" | "ROLLBACK")
+            )
+        {
+            self.session_lost.store(false, Ordering::Release);
+        }
+        result
+    }
+
+    async fn finish_request<T>(
+        &self,
+        process: &Arc<JdbcBridgeProcess>,
+        result: Result<T, JdbcRequestFailure>,
+    ) -> Result<T, AppError> {
+        match result {
+            Ok(response) => Ok(response),
+            Err(JdbcRequestFailure::Completed(error)) => Err(error),
+            Err(JdbcRequestFailure::Poisoned(error)) => {
+                self.abort_process(process).await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn request_on_process(
+        &self,
+        process: &Arc<JdbcBridgeProcess>,
+        request: &str,
+        request_id: u64,
+        timeout_window: Duration,
+        operation: &str,
+    ) -> Result<String, JdbcRequestFailure> {
+        self.write_request(process, request, timeout_window, operation)
+            .await
+            .map_err(JdbcRequestFailure::Poisoned)?;
 
         let mut response = String::new();
         let mut stdout = process.stdout.lock().await;
         let bytes_read = timeout(timeout_window, stdout.read_line(&mut response))
             .await
-            .map_err(|_| AppError::Timeout {
-                operation: format!("jdbc {}", command.operation_name()),
-                elapsed_ms: timeout_window.as_millis() as u64,
+            .map_err(|_| {
+                JdbcRequestFailure::Poisoned(AppError::Timeout {
+                    operation: format!("jdbc {operation}"),
+                    elapsed_ms: timeout_window.as_millis() as u64,
+                })
             })?
             .map_err(|error| {
-                broken_sidecar(&format!("failed to read JDBC bridge response: {error}"))
+                JdbcRequestFailure::Poisoned(broken_sidecar(&format!(
+                    "failed to read JDBC bridge response: {error}"
+                )))
             })?;
+        drop(stdout);
 
         if bytes_read == 0 {
-            let error = process.take_exit_error().await;
-            self.clear_process(&process).await;
-            return Err(error);
+            return Err(JdbcRequestFailure::Poisoned(
+                process.take_exit_error().await,
+            ));
         }
 
-        parse_sidecar_response(&response, request_id)
+        let (status, payload) =
+            parse_sidecar_frame(&response, request_id).map_err(JdbcRequestFailure::Poisoned)?;
+        match status.as_str() {
+            "OK" => Ok(payload),
+            "ERR" => Err(JdbcRequestFailure::Completed(broken_sidecar(
+                &normalize_jdbc_error_message(&payload),
+            ))),
+            "LIMIT" => Err(JdbcRequestFailure::Completed(
+                AppError::ResultLimitExceeded(
+                    "JDBC result exceeded the interactive byte limit".into(),
+                ),
+            )),
+            _ => Err(JdbcRequestFailure::Poisoned(broken_sidecar(
+                "malformed JDBC bridge response: invalid status",
+            ))),
+        }
     }
 
-    async fn request_stream(
+    #[cfg(test)]
+    async fn request_stream_with_timeout(
         &self,
         sql: &str,
         query_id: &str,
         chunk_size: usize,
         max_rows: Option<u64>,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        timeout_window: Duration,
     ) -> Result<JdbcStreamDoneOutput, AppError> {
+        self.request_stream_controlled(
+            DriverStreamRequest {
+                sql,
+                query_id,
+                chunk_size,
+                max_rows,
+            },
+            chunks,
+            timeout_window,
+            StreamControl::new(StreamTransactionMode::Manual),
+        )
+        .await
+    }
+
+    async fn request_stream_controlled(
+        &self,
+        request: DriverStreamRequest<'_>,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        timeout_window: Duration,
+        control: StreamControl,
+    ) -> Result<JdbcStreamDoneOutput, AppError> {
+        let DriverStreamRequest {
+            sql,
+            query_id,
+            chunk_size,
+            max_rows,
+        } = request;
         let _request_guard = self.request_lock.lock().await;
         let process = self.process().await?;
         let request_id = process.next_request_id.fetch_add(1, Ordering::Relaxed);
@@ -393,11 +550,40 @@ impl JdbcBridgeSidecar {
             *active = Some(ActiveJdbcStream {
                 query_id: query_id.to_string(),
                 request_id,
+                process: process.clone(),
             });
         }
-        let result = self
-            .request_stream_frames(&process, &request, request_id, query_id, chunks)
-            .await;
+        let frames = self.request_stream_frames(
+            &process,
+            &request,
+            request_id,
+            query_id,
+            chunks,
+            timeout_window,
+            &control,
+        );
+        let result = if control.can_abort_select(sql) {
+            tokio::select! {
+                biased;
+                () = control.stopped() => None,
+                result = frames => Some(result),
+            }
+        } else {
+            Some(frames.await)
+        };
+        let result = match result {
+            Some(result) => self.finish_request(&process, result).await,
+            None => {
+                self.abort_process(&process).await;
+                Ok(JdbcStreamDoneOutput {
+                    row_count: 0,
+                    affected_rows: 0,
+                    elapsed_ms: 0,
+                    truncated: true,
+                    max_rows,
+                })
+            }
+        };
         let mut active = self.active_stream.lock().await;
         if active
             .as_ref()
@@ -408,6 +594,7 @@ impl JdbcBridgeSidecar {
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn request_stream_frames(
         &self,
         process: &Arc<JdbcBridgeProcess>,
@@ -415,26 +602,22 @@ impl JdbcBridgeSidecar {
         request_id: u64,
         query_id: &str,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
-    ) -> Result<JdbcStreamDoneOutput, AppError> {
-        self.write_request(
-            process,
-            request,
-            Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
-            "query stream",
-        )
-        .await?;
+        timeout_window: Duration,
+        control: &StreamControl,
+    ) -> Result<JdbcStreamDoneOutput, JdbcRequestFailure> {
+        self.write_request(process, request, timeout_window, "query stream")
+            .await
+            .map_err(JdbcRequestFailure::Poisoned)?;
         let mut row_offset = 0_u64;
+        let mut processing_error = None;
         let mut stdout = process.stdout.lock().await;
         loop {
             let mut response = String::new();
-            let bytes_read = match timeout(
-                Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
-                stdout.read_line(&mut response),
-            )
-            .await
-            {
+            let bytes_read = match timeout(timeout_window, stdout.read_line(&mut response)).await {
                 Ok(result) => result.map_err(|error| {
-                    broken_sidecar(&format!("failed to read JDBC stream response: {error}"))
+                    JdbcRequestFailure::Poisoned(broken_sidecar(&format!(
+                        "failed to read JDBC stream response: {error}"
+                    )))
                 })?,
                 Err(_) => {
                     // A JDBC stream that stops producing protocol frames cannot
@@ -443,23 +626,41 @@ impl JdbcBridgeSidecar {
                     // starts with a clean process instead of leaving the UI in
                     // an indefinite "receiving results" state.
                     drop(stdout);
-                    self.abort_process(process).await;
-                    return Err(AppError::Timeout {
+                    return Err(JdbcRequestFailure::Poisoned(AppError::Timeout {
                         operation: "jdbc query stream".to_string(),
-                        elapsed_ms: (JDBC_QUERY_TIMEOUT_SECS as u64) * 1_000,
-                    });
+                        elapsed_ms: timeout_window.as_millis() as u64,
+                    }));
                 }
             };
             if bytes_read == 0 {
-                return Err(process.take_exit_error().await);
+                return Err(JdbcRequestFailure::Poisoned(
+                    process.take_exit_error().await,
+                ));
             }
-            let (status, payload) = parse_sidecar_frame(&response, request_id)?;
+            let (status, payload) =
+                parse_sidecar_frame(&response, request_id).map_err(JdbcRequestFailure::Poisoned)?;
             match status.as_str() {
                 "CHUNK" => {
-                    let output: JdbcStreamChunkOutput = serde_json::from_str(&payload)?;
-                    validate_jdbc_stream_chunk(&output.rows)?;
+                    if processing_error.is_some() || control.is_stopped() {
+                        continue;
+                    }
+                    let output: JdbcStreamChunkOutput =
+                        serde_json::from_str(&payload).map_err(|_| {
+                            JdbcRequestFailure::Poisoned(broken_sidecar(
+                                "malformed JDBC stream chunk payload",
+                            ))
+                        })?;
+                    if let Err(error) = validate_jdbc_stream_chunk(&output.rows) {
+                        control.stop(StreamStopReason::CellOrChunkLimit);
+                        let _ = chunks.send(Err(error)).await;
+                        processing_error = Some(AppError::ResultLimitExceeded(
+                            "JDBC result exceeded the interactive cell or chunk limit".into(),
+                        ));
+                        tokio::task::yield_now().await;
+                        continue;
+                    }
                     let count = output.rows.len() as u64;
-                    chunks
+                    if chunks
                         .send(Ok(QueryResultChunk {
                             query_id: query_id.to_string(),
                             columns: output.columns,
@@ -467,14 +668,43 @@ impl JdbcBridgeSidecar {
                             row_offset,
                         }))
                         .await
-                        .map_err(|_| {
-                            AppError::ConfigError("query stream receiver dropped".to_string())
-                        })?;
+                        .is_err()
+                    {
+                        control.stop(StreamStopReason::ReceiverUnavailable);
+                        processing_error = Some(AppError::ResultProcessingError(
+                            "query stream receiver dropped".into(),
+                        ));
+                        continue;
+                    }
                     row_offset += count;
                 }
-                "OK" => return serde_json::from_str(&payload).map_err(AppError::from),
-                "ERR" => return Err(broken_sidecar(&normalize_jdbc_error_message(&payload))),
-                _ => return Err(broken_sidecar("malformed JDBC stream response status")),
+                "OK" => {
+                    return match processing_error {
+                        Some(error) => Err(JdbcRequestFailure::Completed(error)),
+                        None => serde_json::from_str(&payload).map_err(|_| {
+                            JdbcRequestFailure::Poisoned(broken_sidecar(
+                                "malformed JDBC stream completion payload",
+                            ))
+                        }),
+                    }
+                }
+                "LIMIT" => {
+                    return Err(JdbcRequestFailure::Completed(
+                        AppError::ResultLimitExceeded(
+                            "JDBC result exceeded the interactive byte limit".into(),
+                        ),
+                    ))
+                }
+                "ERR" => {
+                    return Err(JdbcRequestFailure::Completed(broken_sidecar(
+                        &normalize_jdbc_error_message(&payload),
+                    )))
+                }
+                _ => {
+                    return Err(JdbcRequestFailure::Poisoned(broken_sidecar(
+                        "malformed JDBC stream response status",
+                    )))
+                }
             }
         }
     }
@@ -487,7 +717,7 @@ impl JdbcBridgeSidecar {
                 id: query_id.to_string(),
             });
         };
-        let process = self.process().await?;
+        let process = active.process;
         self.write_request(
             &process,
             &format!("CANCEL\t0\t{}\n", active.request_id),
@@ -498,12 +728,31 @@ impl JdbcBridgeSidecar {
     }
 
     async fn process(&self) -> Result<Arc<JdbcBridgeProcess>, AppError> {
-        self.process
-            .lock()
-            .await
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| broken_sidecar("JDBC bridge sidecar is not running"))
+        if self.closed.load(Ordering::Acquire) {
+            return Err(broken_sidecar("JDBC bridge sidecar has been shut down"));
+        }
+        let mut current = self.process.lock().await;
+        if let Some(process) = current.as_ref() {
+            return Ok(process.clone());
+        }
+        let process = self.spawn_process().await?;
+        let initialized = self
+            .request_on_process(
+                &process,
+                &self.start_spec.init_request,
+                0,
+                Duration::from_secs(JDBC_CONNECT_TIMEOUT_SECS as u64),
+                "initialize",
+            )
+            .await;
+        if let Err(JdbcRequestFailure::Poisoned(error) | JdbcRequestFailure::Completed(error)) =
+            initialized
+        {
+            process.kill_and_reap().await;
+            return Err(error);
+        }
+        *current = Some(process.clone());
+        Ok(process)
     }
 
     async fn clear_process(&self, process: &Arc<JdbcBridgeProcess>) {
@@ -518,7 +767,16 @@ impl JdbcBridgeSidecar {
 
     async fn abort_process(&self, process: &Arc<JdbcBridgeProcess>) {
         self.clear_process(process).await;
-        let _ = process.child.lock().await.start_kill();
+        self.session_lost.store(true, Ordering::Release);
+        let mut active = self.active_stream.lock().await;
+        if active
+            .as_ref()
+            .is_some_and(|stream| Arc::ptr_eq(&stream.process, process))
+        {
+            *active = None;
+        }
+        drop(active);
+        process.kill_and_reap().await;
     }
 
     async fn write_request(
@@ -529,27 +787,13 @@ impl JdbcBridgeSidecar {
         operation: &str,
     ) -> Result<(), AppError> {
         let mut stdin = process.stdin.lock().await;
-        timeout(timeout_window, stdin.write_all(request.as_bytes()))
-            .await
-            .map_err(|_| AppError::Timeout {
-                operation: format!("jdbc {operation}"),
-                elapsed_ms: timeout_window.as_millis() as u64,
-            })?
-            .map_err(|error| {
-                broken_sidecar(&format!("failed to write JDBC bridge request: {error}"))
-            })?;
-        timeout(timeout_window, stdin.flush())
-            .await
-            .map_err(|_| AppError::Timeout {
-                operation: format!("jdbc {operation}"),
-                elapsed_ms: timeout_window.as_millis() as u64,
-            })?
-            .map_err(|error| {
-                broken_sidecar(&format!("failed to flush JDBC bridge request: {error}"))
-            })
+        write_protocol_request(&mut *stdin, request, timeout_window, operation).await
     }
 
     async fn shutdown(&self) -> Result<(), AppError> {
+        let _request_guard = self.request_lock.lock().await;
+        self.closed.store(true, Ordering::Release);
+        *self.active_stream.lock().await = None;
         let process = self.process.lock().await.take();
         let Some(process) = process else {
             return Ok(());
@@ -560,25 +804,57 @@ impl JdbcBridgeSidecar {
             .write_request(&process, &request, Duration::from_secs(2), "shutdown")
             .await;
         let _ = timeout(Duration::from_secs(2), process.child.lock().await.wait()).await;
-        let _ = process.child.lock().await.start_kill();
+        process.kill_and_reap().await;
         Ok(())
     }
 }
 
+async fn write_protocol_request(
+    writer: &mut (impl AsyncWrite + Unpin),
+    request: &str,
+    timeout_window: Duration,
+    operation: &str,
+) -> Result<(), AppError> {
+    timeout(timeout_window, writer.write_all(request.as_bytes()))
+        .await
+        .map_err(|_| AppError::Timeout {
+            operation: format!("jdbc {operation}"),
+            elapsed_ms: timeout_window.as_millis() as u64,
+        })?
+        .map_err(|error| {
+            broken_sidecar(&format!("failed to write JDBC bridge request: {error}"))
+        })?;
+    timeout(timeout_window, writer.flush())
+        .await
+        .map_err(|_| AppError::Timeout {
+            operation: format!("jdbc {operation}"),
+            elapsed_ms: timeout_window.as_millis() as u64,
+        })?
+        .map_err(|error| broken_sidecar(&format!("failed to flush JDBC bridge request: {error}")))
+}
+
 impl Drop for JdbcBridgeSidecar {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.process.try_lock() {
-            if let Some(process) = guard.as_mut() {
-                if let Ok(mut child) = process.child.try_lock() {
-                    let _ = child.start_kill();
-                }
+        if let Some(process) = self.process.get_mut().take() {
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                runtime.spawn(async move {
+                    process.kill_and_reap().await;
+                });
+            } else if let Ok(mut child) = process.child.try_lock() {
+                let _ = child.start_kill();
             }
         }
     }
 }
 
 impl JdbcBridgeProcess {
+    async fn kill_and_reap(&self) {
+        let mut child = self.child.lock().await;
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+    }
     async fn take_exit_error(&self) -> AppError {
+        self.kill_and_reap().await;
         let status = self.child.lock().await.wait().await.ok();
         let mut stderr = String::new();
         let _ = self.stderr.lock().await.read_to_string(&mut stderr).await;
@@ -776,18 +1052,50 @@ impl DatabaseDriver for JdbcDriver {
         max_rows: Option<u64>,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
+        self.execute_query_stream_controlled(
+            DriverStreamRequest {
+                sql,
+                query_id,
+                chunk_size,
+                max_rows,
+            },
+            chunks,
+            StreamControl::new(StreamTransactionMode::Manual),
+        )
+        .await
+    }
+
+    async fn execute_query_stream_controlled(
+        &self,
+        request: DriverStreamRequest<'_>,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        control: StreamControl,
+    ) -> Result<QueryStreamSummary, AppError> {
+        let DriverStreamRequest {
+            sql,
+            query_id,
+            chunk_size,
+            max_rows,
+        } = request;
         let start = Instant::now();
         // JDBC statements do not accept the editor's optional trailing
         // delimiter. Keep streamed execution consistent with execute_query.
         let sql = normalize_jdbc_sql(sql);
         let done = self
             .sidecar
-            .request_stream(&sql, query_id, chunk_size.max(1), max_rows, chunks)
+            .request_stream_controlled(
+                DriverStreamRequest {
+                    sql: &sql,
+                    query_id,
+                    chunk_size: chunk_size.max(1),
+                    max_rows,
+                },
+                chunks,
+                Duration::from_secs(JDBC_QUERY_TIMEOUT_SECS as u64),
+                control,
+            )
             .await
-            .map_err(|error| AppError::QueryFailed {
-                sql: sql.clone(),
-                message: error.to_string(),
-            })?;
+            .map_err(|error| classify_jdbc_error("query", Some(&sql), error))?;
 
         Ok(QueryStreamSummary {
             query_id: query_id.to_string(),
@@ -1202,6 +1510,11 @@ fn map_column_row(
         numeric_precision: row_i32(result, row, &["numeric_precision", "precision"]),
         numeric_scale: row_i32(result, row, &["numeric_scale", "scale"]),
         is_primary_key: row_bool(result, row, &["is_primary_key", "primary_key"]).unwrap_or(false),
+        is_identity: false,
+        is_generated: row_bool(result, row, &["is_generated", "is_generated_column"])
+            .unwrap_or(false),
+        is_auto_increment: row_bool(result, row, &["is_auto_increment", "is_autoincrement"])
+            .unwrap_or(false),
     })
 }
 
@@ -1330,6 +1643,9 @@ fn clarify_oracle_explain_error(error: AppError) -> AppError {
 fn classify_jdbc_error(command: &str, sql: Option<&str>, error: AppError) -> AppError {
     match error {
         AppError::Timeout { .. } => error,
+        AppError::ResultLimitExceeded(_)
+        | AppError::ResultProcessingError(_)
+        | AppError::SerializationError(_) => error,
         AppError::ConnectionFailed { driver, message } if command == "query" => {
             AppError::QueryFailed {
                 sql: sql.unwrap_or("<unknown>").to_string(),
@@ -1373,11 +1689,15 @@ fn classify_jdbc_error(command: &str, sql: Option<&str>, error: AppError) -> App
     }
 }
 
+#[cfg(test)]
 fn parse_sidecar_response(response: &str, expected_request_id: u64) -> Result<String, AppError> {
     let (status, decoded) = parse_sidecar_frame(response, expected_request_id)?;
     match status.as_str() {
         "OK" => Ok(decoded),
         "ERR" => Err(broken_sidecar(&normalize_jdbc_error_message(&decoded))),
+        "LIMIT" => Err(AppError::ResultLimitExceeded(
+            "JDBC result exceeded the interactive byte limit".into(),
+        )),
         _ => Err(broken_sidecar(
             "malformed JDBC bridge response: invalid status",
         )),
@@ -1389,8 +1709,8 @@ fn validate_jdbc_stream_chunk(rows: &[Vec<serde_json::Value>]) -> Result<(), App
     for row in rows {
         chunk_bytes = chunk_bytes.saturating_add(row_json_bytes(row)?);
         if chunk_bytes > MAX_INTERACTIVE_SOURCE_CHUNK_BYTES {
-            return Err(broken_sidecar(
-                "JDBC bridge stream chunk exceeded the interactive byte limit",
+            return Err(AppError::ResultLimitExceeded(
+                "JDBC bridge stream chunk exceeded the interactive byte limit".into(),
             ));
         }
     }
@@ -1407,15 +1727,11 @@ fn validate_jdbc_query_output_with_limit(
 ) -> Result<(), AppError> {
     let mut result_bytes = 0_usize;
     for row in &output.rows {
-        let row_bytes = row_json_bytes(row).map_err(|error| {
-            broken_sidecar(&format!(
-                "JDBC bridge query result violated its byte limit: {error}"
-            ))
-        })?;
+        let row_bytes = row_json_bytes(row)?;
         let framed_bytes = row_bytes.saturating_add(usize::from(result_bytes > 0));
         if framed_bytes > max_result_bytes.saturating_sub(result_bytes) {
-            return Err(broken_sidecar(
-                "JDBC bridge query result exceeded the interactive byte limit",
+            return Err(AppError::ResultLimitExceeded(
+                "JDBC bridge query result exceeded the interactive byte limit".into(),
             ));
         }
         result_bytes = result_bytes.saturating_add(framed_bytes);
@@ -1568,12 +1884,441 @@ mod tests {
         validate_jdbc_query_output_with_limit, validate_jdbc_stream_chunk, JdbcBridgeCommand,
         JdbcQueryOutput,
     };
+    use super::{JdbcBridgeSidecar, JdbcBridgeStartSpec};
     use crate::models::{
         error::AppError,
         metadata::DbObjectKind,
         query_result::{ColumnMeta, QueryResult},
     };
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use tokio::{sync::Mutex, time::Duration};
+    use zeroize::Zeroizing;
+
+    async fn fake_sidecar(mode: &str) -> JdbcBridgeSidecar {
+        static FIXTURE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        let executable = FIXTURE.get_or_init(|| {
+            let root = std::env::temp_dir()
+                .join(format!("vaporlens-jdbc-fixture-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let executable = root.join(format!("jdbc-sidecar{}", std::env::consts::EXE_SUFFIX));
+            let compiled = std::process::Command::new("rustc")
+                .arg(
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests/fixtures/jdbc_sidecar.rs"),
+                )
+                .arg("-o")
+                .arg(&executable)
+                .status()
+                .unwrap();
+            assert!(compiled.success());
+            executable
+        });
+        let sidecar = JdbcBridgeSidecar {
+            start_spec: JdbcBridgeStartSpec {
+                program: executable.to_string_lossy().into_owned(),
+                arguments: vec![mode.into()],
+                init_request: Zeroizing::new("INIT\t0\tfixture\n".into()),
+            },
+            closed: AtomicBool::new(false),
+            session_lost: AtomicBool::new(false),
+            process: Mutex::new(None),
+            active_stream: Mutex::new(None),
+            request_lock: Mutex::new(()),
+        };
+        sidecar.process().await.unwrap();
+        sidecar
+    }
+
+    #[tokio::test]
+    async fn ordinary_timeout_retires_the_process_before_the_next_request() {
+        let sidecar = fake_sidecar("late").await;
+        let process = sidecar.process().await.unwrap();
+        let error = sidecar
+            .request_with_timeout(JdbcBridgeCommand::Ping, Duration::from_millis(30))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::Timeout { .. }));
+        assert!(sidecar.process.lock().await.is_none());
+        assert!(process.child.lock().await.try_wait().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_lost_session_requires_rollback_before_commit_even_after_restart() {
+        let mut sidecar = fake_sidecar("late").await;
+        sidecar
+            .request_with_timeout(JdbcBridgeCommand::Ping, Duration::from_millis(30))
+            .await
+            .unwrap_err();
+        let error = sidecar
+            .request(JdbcBridgeCommand::Transaction("COMMIT"))
+            .await
+            .unwrap_err();
+        assert!(error.affects_transaction());
+        assert!(sidecar.process.lock().await.is_none());
+        sidecar.start_spec.arguments = vec!["normal".into()];
+        sidecar.request(JdbcBridgeCommand::Ping).await.unwrap();
+        assert!(sidecar
+            .request(JdbcBridgeCommand::Transaction("COMMIT"))
+            .await
+            .is_err());
+        sidecar
+            .request(JdbcBridgeCommand::Transaction("ROLLBACK"))
+            .await
+            .unwrap();
+        sidecar
+            .request(JdbcBridgeCommand::Transaction("BEGIN"))
+            .await
+            .unwrap();
+        sidecar
+            .request(JdbcBridgeCommand::Transaction("COMMIT"))
+            .await
+            .unwrap();
+        sidecar.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn normal_requests_use_matching_ids_and_shutdown_reaps_the_child() {
+        let sidecar = fake_sidecar("normal").await;
+        let process = sidecar.process().await.unwrap();
+        for request_id in [1, 2] {
+            let response = sidecar.request(JdbcBridgeCommand::Ping).await.unwrap();
+            let value: serde_json::Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(value["requestId"], request_id);
+        }
+        sidecar.shutdown().await.unwrap();
+        assert!(process.child.lock().await.try_wait().unwrap().is_some());
+        assert!(sidecar.process.lock().await.is_none());
+        assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_late_old_response_cannot_contaminate_a_fresh_process() {
+        let mut sidecar = fake_sidecar("late").await;
+        let old = sidecar.process().await.unwrap();
+        assert!(sidecar
+            .request_with_timeout(JdbcBridgeCommand::Ping, Duration::from_millis(30))
+            .await
+            .is_err());
+        sidecar.start_spec.arguments = vec!["normal".into()];
+        let response = sidecar.request(JdbcBridgeCommand::Ping).await.unwrap();
+        let current = sidecar.process().await.unwrap();
+        assert!(!Arc::ptr_eq(&old, &current));
+        let value: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["requestId"], 1);
+        assert_eq!(value["pid"], current.child.lock().await.id().unwrap());
+        assert!(old.child.lock().await.try_wait().unwrap().is_some());
+        assert!(sidecar
+            .request(JdbcBridgeCommand::Transaction("COMMIT"))
+            .await
+            .is_err());
+        sidecar
+            .request(JdbcBridgeCommand::Transaction("ROLLBACK"))
+            .await
+            .unwrap();
+        assert!(!sidecar
+            .session_lost
+            .load(std::sync::atomic::Ordering::Acquire));
+        sidecar.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn corrupted_protocol_is_retired_and_the_next_request_can_restart() {
+        for mode in ["mismatch", "malformed", "eof"] {
+            let mut sidecar = fake_sidecar(mode).await;
+            let process = sidecar.process().await.unwrap();
+            assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_err());
+            assert!(sidecar.process.lock().await.is_none());
+            assert!(process.child.lock().await.try_wait().unwrap().is_some());
+            sidecar.start_spec.arguments = vec!["normal".into()];
+            assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_ok());
+            sidecar.shutdown().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn write_timeout_also_retires_and_reaps_the_process() {
+        let sidecar = fake_sidecar("write-stall").await;
+        let process = sidecar.process().await.unwrap();
+        let error = sidecar
+            .request_with_timeout(
+                JdbcBridgeCommand::Query("x".repeat(8 * 1024 * 1024)),
+                Duration::from_millis(30),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::Timeout { .. }));
+        assert!(sidecar.process.lock().await.is_none());
+        assert!(process.child.lock().await.try_wait().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn stream_timeout_retires_the_process_and_clears_active_protocol_state() {
+        let sidecar = fake_sidecar("stream-stall").await;
+        let process = sidecar.process().await.unwrap();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+        let error = sidecar
+            .request_stream_with_timeout(
+                "SELECT 1",
+                "stream",
+                1,
+                Some(10),
+                sender,
+                Duration::from_millis(30),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::Timeout { .. }));
+        assert!(receiver.recv().await.unwrap().is_ok());
+        assert!(sidecar.process.lock().await.is_none());
+        assert!(sidecar.active_stream.lock().await.is_none());
+        assert!(process.child.lock().await.try_wait().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn result_limits_drain_to_the_terminal_frame_without_retiring_a_healthy_session() {
+        let sidecar = fake_sidecar("stream-limit").await;
+        let process = sidecar.process().await.unwrap();
+        let (sender, _receiver) = tokio::sync::mpsc::channel(8);
+        let error = sidecar
+            .request_stream_with_timeout(
+                "SELECT value",
+                "limited",
+                1,
+                Some(10),
+                sender,
+                Duration::from_secs(2),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "RESULT_LIMIT_EXCEEDED");
+        assert!(!error.affects_transaction());
+        assert!(Arc::ptr_eq(&process, &sidecar.process().await.unwrap()));
+        assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_ok());
+        sidecar.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn auto_consumer_stop_retires_and_reaps_sidecar_then_restarts_at_a_fresh_boundary() {
+        use crate::drivers::trait_def::{
+            DriverStreamRequest, StreamControl, StreamStopReason, StreamTransactionMode,
+        };
+        let mut sidecar = fake_sidecar("stream-stall").await;
+        let old = sidecar.process().await.unwrap();
+        let control = StreamControl::new(StreamTransactionMode::Auto);
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let producer = sidecar.request_stream_controlled(
+            DriverStreamRequest {
+                sql: "SELECT 1",
+                query_id: "auto-stop",
+                chunk_size: 1,
+                max_rows: Some(10),
+            },
+            sender,
+            Duration::from_secs(2),
+            control.clone(),
+        );
+        let consumer = async {
+            assert_eq!(receiver.recv().await.unwrap().unwrap().rows.len(), 1);
+            control.stop(StreamStopReason::ResultBytes);
+            while receiver.recv().await.is_some() {}
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(producer, consumer)
+        })
+        .await
+        .expect("stop must release I/O locks before aborting the process");
+        assert!(result.unwrap().truncated);
+        assert!(old.child.lock().await.try_wait().unwrap().is_some());
+        assert!(sidecar.process.lock().await.is_none());
+        assert!(sidecar.active_stream.lock().await.is_none());
+        sidecar.start_spec.arguments = vec!["normal".into()];
+        let response: serde_json::Value =
+            serde_json::from_str(&sidecar.request(JdbcBridgeCommand::Ping).await.unwrap()).unwrap();
+        let fresh = sidecar.process().await.unwrap();
+        assert!(!Arc::ptr_eq(&old, &fresh));
+        assert_eq!(response["requestId"], 1);
+        assert_eq!(response["pid"], fresh.child.lock().await.id().unwrap());
+        sidecar.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn manual_consumer_stop_drains_the_complete_frame_boundary_without_losing_session() {
+        use crate::drivers::trait_def::{
+            DriverStreamRequest, StreamControl, StreamStopReason, StreamTransactionMode,
+        };
+        let sidecar = fake_sidecar("stream-many").await;
+        let old = sidecar.process().await.unwrap();
+        let control = StreamControl::new(StreamTransactionMode::Manual);
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let producer = sidecar.request_stream_controlled(
+            DriverStreamRequest {
+                sql: "SELECT 1",
+                query_id: "manual-stop",
+                chunk_size: 1,
+                max_rows: Some(200),
+            },
+            sender,
+            Duration::from_secs(2),
+            control.clone(),
+        );
+        let consumer = async {
+            receiver.recv().await.unwrap().unwrap();
+            control.stop(StreamStopReason::ResultBytes);
+            while receiver.recv().await.is_some() {}
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(producer, consumer)
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().row_count, 100);
+        assert!(Arc::ptr_eq(&old, &sidecar.process().await.unwrap()));
+        assert!(!sidecar
+            .session_lost
+            .load(std::sync::atomic::Ordering::Acquire));
+        let response: serde_json::Value = serde_json::from_str(
+            &sidecar
+                .request(JdbcBridgeCommand::Transaction("COMMIT"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(response["requestId"], 2);
+        assert!(Arc::ptr_eq(&old, &sidecar.process().await.unwrap()));
+        sidecar.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn auto_write_result_limit_does_not_interrupt_or_retire_an_in_flight_write() {
+        use crate::drivers::trait_def::{
+            DriverStreamRequest, StreamControl, StreamStopReason, StreamTransactionMode,
+        };
+        let sidecar = fake_sidecar("stream-many").await;
+        let old = sidecar.process().await.unwrap();
+        let control = StreamControl::new(StreamTransactionMode::Auto);
+        control.stop(StreamStopReason::ResultBytes);
+        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+        let done = sidecar
+            .request_stream_controlled(
+                DriverStreamRequest {
+                    sql: "INSERT INTO items VALUES(1) RETURNING id",
+                    query_id: "write-limit",
+                    chunk_size: 1,
+                    max_rows: Some(200),
+                },
+                sender,
+                Duration::from_secs(2),
+                control,
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.row_count, 100);
+        assert!(Arc::ptr_eq(&old, &sidecar.process().await.unwrap()));
+        let response: serde_json::Value =
+            serde_json::from_str(&sidecar.request(JdbcBridgeCommand::Ping).await.unwrap()).unwrap();
+        assert_eq!(response["requestId"], 2);
+        sidecar.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bridge_limit_codes_do_not_echo_payloads_or_become_database_errors() {
+        let sidecar = fake_sidecar("limit").await;
+        let error = sidecar
+            .request(JdbcBridgeCommand::Query("SELECT fixture".into()))
+            .await
+            .unwrap_err();
+        let classified = classify_jdbc_error("query", Some("SELECT fixture"), error);
+        assert_eq!(classified.code(), "RESULT_LIMIT_EXCEEDED");
+        assert!(!classified.affects_transaction());
+        assert!(!classified.to_string().contains("dummy SQL"));
+        sidecar.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_flush_timeout_uses_the_same_poison_retirement_path() {
+        struct StalledFlush;
+        impl tokio::io::AsyncWrite for StalledFlush {
+            fn poll_write(
+                self: std::pin::Pin<&mut Self>,
+                _context: &mut std::task::Context<'_>,
+                bytes: &[u8],
+            ) -> std::task::Poll<std::io::Result<usize>> {
+                std::task::Poll::Ready(Ok(bytes.len()))
+            }
+            fn poll_flush(
+                self: std::pin::Pin<&mut Self>,
+                _context: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Pending
+            }
+            fn poll_shutdown(
+                self: std::pin::Pin<&mut Self>,
+                _context: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        let sidecar = fake_sidecar("normal").await;
+        let process = sidecar.process().await.unwrap();
+        let error = super::write_protocol_request(
+            &mut StalledFlush,
+            "PING\t1\t-\n",
+            Duration::from_millis(30),
+            "ping",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, AppError::Timeout { .. }));
+        assert!(sidecar
+            .finish_request::<()>(&process, Err(super::JdbcRequestFailure::Poisoned(error)))
+            .await
+            .is_err());
+        assert!(sidecar.process.lock().await.is_none());
+        assert!(process.child.lock().await.try_wait().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn dropping_a_sidecar_reaps_its_child() {
+        let sidecar = fake_sidecar("normal").await;
+        let process = sidecar.process().await.unwrap();
+        drop(sidecar);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if process.child.lock().await.try_wait().unwrap().is_some() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn restart_credentials_remain_runtime_only_and_are_not_echoed_in_errors() {
+        let mut sidecar = fake_sidecar("late").await;
+        sidecar.start_spec.init_request = Zeroizing::new(
+            JdbcBridgeCommand::Init {
+                driver_class: "fixture.Driver".into(),
+                connection_url: "jdbc:fixture://host/db".into(),
+                username: "fixture-user".into(),
+                password: "runtimeDummyPassword".into(),
+            }
+            .encode(0),
+        );
+        let error = sidecar
+            .request_with_timeout(JdbcBridgeCommand::Ping, Duration::from_millis(30))
+            .await
+            .unwrap_err();
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert!(!serialized.contains("runtimeDummyPassword"));
+        assert!(!serialized.contains("fixture-user"));
+        sidecar.start_spec.arguments = vec!["normal".into()];
+        assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_ok());
+        sidecar.shutdown().await.unwrap();
+    }
 
     #[test]
     fn removes_trailing_statement_semicolon_for_jdbc() {
@@ -1720,6 +2465,42 @@ mod tests {
         assert_eq!(object.kind, DbObjectKind::Package);
         assert_eq!(object.object_type.as_deref(), Some("PACKAGE"));
         assert_eq!(object.status.as_deref(), Some("VALID"));
+    }
+
+    #[test]
+    fn maps_jdbc_generated_and_auto_increment_flags_without_default_text_parsing() {
+        let columns = query_result(
+            &[
+                "schema_name",
+                "table_name",
+                "name",
+                "ordinal_position",
+                "data_type",
+                "nullable",
+                "default_value",
+                "is_primary_key",
+                "is_generated",
+                "is_auto_increment",
+            ],
+            vec![vec![
+                serde_json::json!("public"),
+                serde_json::json!("items"),
+                serde_json::json!("id"),
+                serde_json::json!(1),
+                serde_json::json!("INTEGER"),
+                serde_json::json!(0),
+                serde_json::json!("generated by trigger"),
+                serde_json::json!(1),
+                serde_json::json!(0),
+                serde_json::json!(1),
+            ]],
+        );
+
+        let column = map_column_row(&columns, &columns.rows[0], "fallback", "fallback", 0)
+            .expect("column row");
+        assert!(!column.is_identity);
+        assert!(!column.is_generated);
+        assert!(column.is_auto_increment);
     }
 
     #[test]

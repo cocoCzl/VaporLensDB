@@ -35,6 +35,7 @@ pub struct ConnectionManager {
     next_generation: u64,
     max_live_sessions: usize,
     idle_reclaim_after: Option<Duration>,
+    status_revisions: HashMap<Uuid, u64>,
 }
 
 pub(crate) struct ActiveConnection {
@@ -154,6 +155,7 @@ pub struct ConsoleOperation {
     pub phase: ConsoleTransactionPhase,
     pub generation: u64,
     active_query: Arc<std::sync::Mutex<Option<String>>>,
+    activity: Arc<Mutex<OperationRegistry>>,
     _permit: OwnedSemaphorePermit,
 }
 
@@ -162,6 +164,10 @@ impl Drop for ConsoleOperation {
         if let Ok(mut query) = self.active_query.lock() {
             *query = None;
         }
+        self.activity
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .last_used = Instant::now();
     }
 }
 
@@ -262,6 +268,7 @@ impl ConnectionManager {
             next_generation: 1,
             max_live_sessions: DEFAULT_MAX_LIVE_SESSIONS,
             idle_reclaim_after: Some(DEFAULT_IDLE_RECLAIM_AFTER),
+            status_revisions: HashMap::new(),
         }
     }
 
@@ -287,7 +294,6 @@ impl ConnectionManager {
                 "a connection attempt is already in progress for this Data Source".to_string(),
             ));
         }
-        self.reclaim_idle_sessions();
         self.reclaim_session_if_needed()?;
         self.pending_connections.insert(connection_id);
         self.set_status(connection_id, ConnectionRuntimeStatus::Connecting, None);
@@ -324,6 +330,23 @@ impl ConnectionManager {
     }
 
     pub fn disconnect(&mut self, connection_id: Uuid) -> Result<ConnectionStatus, AppError> {
+        self.preflight_disconnect(connection_id)?;
+        self.connections.remove(&connection_id);
+        self.pending_connections.remove(&connection_id);
+        Ok(self.set_status(connection_id, ConnectionRuntimeStatus::Disconnected, None))
+    }
+
+    pub fn preflight_configuration_change(&self, connection_id: Uuid) -> Result<(), AppError> {
+        if self.pending_connections.contains(&connection_id) {
+            return Err(AppError::ConfigError(
+                "a connection attempt is in progress; wait before changing the connection configuration"
+                    .to_string(),
+            ));
+        }
+        self.preflight_disconnect(connection_id)
+    }
+
+    fn preflight_disconnect(&self, connection_id: Uuid) -> Result<(), AppError> {
         if self
             .connections
             .get(&connection_id)
@@ -343,9 +366,7 @@ impl ConnectionManager {
                 reason: DisconnectBlockReason::UncommittedTransaction,
             });
         }
-        self.connections.remove(&connection_id);
-        self.pending_connections.remove(&connection_id);
-        Ok(self.set_status(connection_id, ConnectionRuntimeStatus::Disconnected, None))
+        Ok(())
     }
 
     /// Retire a runtime driver that has become unusable (for example, a JDBC
@@ -742,6 +763,7 @@ impl ConnectionManager {
             phase: session.phase,
             generation: connection.generation,
             active_query: session.active_query.clone(),
+            activity: connection.activity.0.clone(),
             _permit: permit,
         })
     }
@@ -881,29 +903,47 @@ impl ConnectionManager {
         Ok(())
     }
 
-    fn reclaim_idle_sessions(&mut self) {
+    pub(crate) fn reclaim_idle_sessions_at(
+        &mut self,
+        now: Instant,
+    ) -> Vec<(ConnectionStatus, u64, ActiveConnection)> {
         let Some(idle_after) = self.idle_reclaim_after else {
-            return;
+            return Vec::new();
         };
-        let now = Instant::now();
         let idle = self
             .connections
             .iter()
-            .filter(|(_, connection)| {
-                connection.can_reclaim()
+            .filter(|(id, connection)| {
+                !self.pending_connections.contains(id)
+                    && connection.can_reclaim()
                     && now.saturating_duration_since(connection.activity.lock().last_used)
                         >= idle_after
             })
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
-        for id in idle {
-            self.connections.remove(&id);
-            self.set_status(
-                id,
-                ConnectionRuntimeStatus::Disconnected,
-                Some("reclaimed after 30 minutes of inactivity".to_string()),
-            );
-        }
+        idle.into_iter()
+            .map(|id| {
+                let runtime = self
+                    .connections
+                    .remove(&id)
+                    .expect("reclaim candidate exists");
+                let status = self.set_status(
+                    id,
+                    ConnectionRuntimeStatus::Disconnected,
+                    Some(format!(
+                        "reclaimed after {} minutes of inactivity",
+                        idle_after.as_secs() / 60
+                    )),
+                );
+                let revision = self.status_revisions.get(&id).copied().unwrap_or_default();
+                (status, revision, runtime)
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn reclaim_idle_sessions(&mut self) {
+        self.reclaim_idle_sessions_at(Instant::now());
     }
 
     fn set_status(
@@ -918,6 +958,8 @@ impl ConnectionManager {
             message,
         };
         self.statuses.insert(connection_id, status.clone());
+        let revision = self.status_revisions.entry(connection_id).or_default();
+        *revision = revision.saturating_add(1);
         status
     }
 }
@@ -1601,6 +1643,152 @@ mod tests {
             manager.status(idle).status,
             ConnectionRuntimeStatus::Disconnected
         ));
+    }
+
+    #[tokio::test]
+    async fn new_connect_leaves_timeout_reclaim_to_the_background_cleanup_path() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(5, Some(5));
+        let idle = Uuid::new_v4();
+        manager.connections.insert(
+            idle,
+            sqlite_connection(Instant::now() - Duration::from_secs(600), 0).await,
+        );
+        manager.begin_connect(Uuid::new_v4()).unwrap();
+        assert!(manager.driver(idle).is_ok());
+        let reclaimed = manager.reclaim_idle_sessions_at(Instant::now());
+        assert_eq!(reclaimed.len(), 1);
+        assert_eq!(reclaimed[0].0.connection_id, idle);
+        assert!(manager.driver(idle).is_err());
+    }
+
+    #[tokio::test]
+    async fn idle_reclaim_at_uses_current_policy_message_and_returns_revision() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(5, Some(5));
+        let idle = Uuid::new_v4();
+        manager.connections.insert(
+            idle,
+            sqlite_connection(Instant::now() - Duration::from_secs(5 * 60), 0).await,
+        );
+
+        let reclaimed = manager.reclaim_idle_sessions_at(Instant::now());
+
+        assert_eq!(reclaimed.len(), 1);
+        assert_eq!(
+            reclaimed[0].0.message.as_deref(),
+            Some("reclaimed after 5 minutes of inactivity")
+        );
+        assert!(reclaimed[0].1 > 0);
+        assert!(!manager.connections.contains_key(&idle));
+    }
+
+    #[tokio::test]
+    async fn idle_reclaim_at_is_disabled_when_policy_is_none() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(5, None);
+        let idle = Uuid::new_v4();
+        manager.connections.insert(
+            idle,
+            sqlite_connection(Instant::now() - Duration::from_secs(120 * 60), 0).await,
+        );
+
+        assert!(manager.reclaim_idle_sessions_at(Instant::now()).is_empty());
+        assert!(manager.connections.contains_key(&idle));
+    }
+
+    #[tokio::test]
+    async fn console_operation_completion_starts_a_fresh_idle_window() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(5, Some(5));
+        let connection_id = Uuid::new_v4();
+        manager
+            .connections
+            .insert(connection_id, sqlite_connection(Instant::now(), 0).await);
+        manager
+            .install_console_session(
+                connection_id,
+                "console".to_string(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .unwrap();
+        let operation = manager
+            .begin_console_operation(connection_id, "console", None)
+            .unwrap();
+        manager.connections[&connection_id]
+            .activity
+            .lock()
+            .last_used = Instant::now() - Duration::from_secs(600);
+        assert!(manager.reclaim_idle_sessions_at(Instant::now()).is_empty());
+        let before_completion = Instant::now();
+        drop(operation);
+        assert!(
+            manager.connections[&connection_id]
+                .activity
+                .lock()
+                .last_used
+                >= before_completion
+        );
+        assert!(manager.reclaim_idle_sessions_at(Instant::now()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn idle_reclaim_at_respects_threshold_and_dynamic_policy_updates() {
+        let mut manager = ConnectionManager::new();
+        let id = Uuid::new_v4();
+        let now = Instant::now();
+        manager
+            .connections
+            .insert(id, sqlite_connection(now, 0).await);
+        manager.set_session_policy(5, Some(10));
+        assert!(manager
+            .reclaim_idle_sessions_at(now + Duration::from_secs(599))
+            .is_empty());
+        manager.set_session_policy(5, None);
+        assert!(manager
+            .reclaim_idle_sessions_at(now + Duration::from_secs(900))
+            .is_empty());
+        manager.set_session_policy(5, Some(5));
+        assert!(manager
+            .reclaim_idle_sessions_at(now + Duration::from_secs(299))
+            .is_empty());
+        let reclaimed = manager.reclaim_idle_sessions_at(now + Duration::from_secs(300));
+        assert_eq!(reclaimed.len(), 1);
+        assert_eq!(
+            reclaimed[0].0.message.as_deref(),
+            Some("reclaimed after 5 minutes of inactivity")
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_reclaim_at_protects_pending_running_and_queued_operations() {
+        let mut manager = ConnectionManager::new();
+        manager.set_session_policy(5, Some(5));
+        let now = Instant::now();
+        let pending = Uuid::new_v4();
+        let running = Uuid::new_v4();
+        let queued = Uuid::new_v4();
+        manager
+            .connections
+            .insert(pending, sqlite_connection(now, 0).await);
+        manager
+            .connections
+            .insert(running, sqlite_connection(now, 1).await);
+        let queued_connection = sqlite_connection(now, 1).await;
+        queued_connection
+            .activity
+            .lock()
+            .queries
+            .values_mut()
+            .next()
+            .unwrap()
+            .queued = true;
+        manager.connections.insert(queued, queued_connection);
+        manager.pending_connections.insert(pending);
+        assert!(manager
+            .reclaim_idle_sessions_at(now + Duration::from_secs(600))
+            .is_empty());
+        assert_eq!(manager.connections.len(), 3);
     }
 
     #[tokio::test]

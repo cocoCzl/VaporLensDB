@@ -72,6 +72,12 @@ pub struct ColumnInfo {
     pub numeric_precision: Option<i32>,
     pub numeric_scale: Option<i32>,
     pub is_primary_key: bool,
+    #[serde(default)]
+    pub is_identity: bool,
+    #[serde(default)]
+    pub is_generated: bool,
+    #[serde(default)]
+    pub is_auto_increment: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,7 +7,8 @@ use crate::{
     models::query_result::ExplainResult,
     services::{
         connection_manager::{
-            ConsoleTransactionPhase, ConsoleTransactionState, QueryOperationStart,
+            ConnectionManager, ConsoleTransactionPhase, ConsoleTransactionState,
+            QueryOperationStart,
         },
         query_engine::{ExecuteQueryResponse, StreamQueryRequest},
         sql_risk::{analyze_sql_risk as analyze_sql_risk_service, SqlRiskAnalysis},
@@ -201,11 +202,7 @@ pub async fn execute_query(
             .map_err(String::from)?;
         let driver = operation.driver.clone();
         let phase = operation.phase;
-        if phase == ConsoleTransactionPhase::Failed {
-            return Err(String::from(crate::models::error::AppError::ConfigError(
-                "transaction failed; rollback is required".to_string(),
-            )));
-        }
+        ensure_query_transaction_usable(phase).map_err(String::from)?;
         apply_execution_context(
             driver.clone(),
             driver_type,
@@ -224,15 +221,20 @@ pub async fn execute_query(
         let sql = input.sql.clone();
         let mut result = state
             .query_engine
-            .execute_query(driver, &input.sql, input.query_id, input.max_rows)
+            .execute_query_in_mode(
+                driver,
+                &input.sql,
+                input.query_id,
+                input.max_rows,
+                crate::drivers::trait_def::StreamTransactionMode::Manual,
+            )
             .await;
-        if result.is_err() {
-            state.connection_manager.lock().await.set_console_phase(
-                input.connection_id,
-                console_id,
-                ConsoleTransactionPhase::Failed,
-            );
-        }
+        update_console_phase_after_execution(
+            &mut *state.connection_manager.lock().await,
+            input.connection_id,
+            console_id,
+            &result,
+        );
         if let Ok(response) = &mut result {
             response.connection_generation = Some(operation.generation);
         }
@@ -315,11 +317,7 @@ pub async fn execute_query_stream(
             .map_err(String::from)?;
         let driver = operation.driver.clone();
         let phase = operation.phase;
-        if phase == ConsoleTransactionPhase::Failed {
-            return Err(String::from(crate::models::error::AppError::ConfigError(
-                "transaction failed; rollback is required".to_string(),
-            )));
-        }
+        ensure_query_transaction_usable(phase).map_err(String::from)?;
         apply_execution_context(
             driver.clone(),
             driver_type,
@@ -338,7 +336,7 @@ pub async fn execute_query_stream(
         let sql = input.sql.clone();
         let result = state
             .query_engine
-            .execute_query_stream(
+            .execute_query_stream_in_mode(
                 app,
                 driver,
                 StreamQueryRequest {
@@ -347,19 +345,21 @@ pub async fn execute_query_stream(
                     chunk_size: input.chunk_size,
                     max_rows: input.max_rows,
                 },
+                crate::drivers::trait_def::StreamTransactionMode::Manual,
             )
             .await;
-        if result.is_err() {
-            state.connection_manager.lock().await.set_console_phase(
-                input.connection_id,
-                console_id,
-                ConsoleTransactionPhase::Failed,
-            );
-        }
+        update_console_phase_after_execution(
+            &mut *state.connection_manager.lock().await,
+            input.connection_id,
+            console_id,
+            &result,
+        );
         clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
-        return result.map(|()| ExecutionSession {
-            connection_generation: operation.generation,
-        });
+        return result
+            .map(|()| ExecutionSession {
+                connection_generation: operation.generation,
+            })
+            .map_err(String::from);
     }
     let operation_start = {
         let mut manager = state.connection_manager.lock().await;
@@ -416,10 +416,7 @@ pub async fn execute_query_stream(
             },
         )
         .await;
-    if result
-        .as_ref()
-        .is_err_and(|error| should_retire_stale_connection_message(error))
-    {
+    if result.as_ref().is_err_and(should_retire_stale_connection) {
         retire_stale_connection(
             &state,
             input.connection_id,
@@ -429,9 +426,11 @@ pub async fn execute_query_stream(
         .await;
     }
     clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
-    result.map(|()| ExecutionSession {
-        connection_generation: generation,
-    })
+    result
+        .map(|()| ExecutionSession {
+            connection_generation: generation,
+        })
+        .map_err(String::from)
 }
 
 async fn clear_metadata_after_successful_ddl<T, E>(
@@ -443,6 +442,34 @@ async fn clear_metadata_after_successful_ddl<T, E>(
     if result.is_ok() && contains_metadata_ddl(sql) {
         state.metadata_service.clear_connection(connection_id).await;
         state.metadata_index.clear_connection(connection_id).await;
+    }
+}
+
+fn execution_fails_transaction<T>(result: &Result<T, crate::models::error::AppError>) -> bool {
+    result
+        .as_ref()
+        .is_err_and(|error| error.affects_transaction())
+}
+
+fn ensure_query_transaction_usable(
+    phase: ConsoleTransactionPhase,
+) -> Result<(), crate::models::error::AppError> {
+    if phase == ConsoleTransactionPhase::Failed {
+        return Err(crate::models::error::AppError::ConfigError(
+            "transaction failed; rollback is required".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn update_console_phase_after_execution<T>(
+    manager: &mut ConnectionManager,
+    connection_id: Uuid,
+    console_id: &str,
+    result: &Result<T, crate::models::error::AppError>,
+) {
+    if execution_fails_transaction(result) {
+        manager.set_console_phase(connection_id, console_id, ConsoleTransactionPhase::Failed);
     }
 }
 
@@ -808,6 +835,190 @@ pub async fn rollback_console_transaction(
 mod context_tests {
     use super::execution_context_statement;
     use crate::models::connection::DriverType;
+
+    #[test]
+    fn client_result_processing_does_not_fail_a_database_transaction() {
+        let result: Result<(), _> = Err(crate::models::error::AppError::SerializationError(
+            "result event could not be serialized".into(),
+        ));
+        assert!(!super::execution_fails_transaction(&result));
+    }
+
+    #[tokio::test]
+    async fn console_phase_tracks_execution_errors_without_reactivating_failed_transactions() {
+        use crate::{
+            models::{connection::ConnectionConfig, error::AppError},
+            services::connection_manager::{
+                create_active_connection, ConnectionManager, ConsoleTransactionPhase,
+            },
+        };
+        let connection_id = uuid::Uuid::new_v4();
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": connection_id, "name": "manual fixture", "driverType": "sqlite", "connectionUrl": ":memory:",
+            "driverPaths": [], "createdAt": chrono::Utc::now(), "updatedAt": chrono::Utc::now()
+        })).unwrap();
+        let mut manager = ConnectionManager::new();
+        manager.begin_connect(connection_id).unwrap();
+        manager
+            .finish_connect(
+                connection_id,
+                Ok(create_active_connection(&config, None, None).await.unwrap()),
+            )
+            .unwrap();
+        manager
+            .install_console_session(
+                connection_id,
+                "console".into(),
+                create_active_connection(&config, None, None).await.unwrap(),
+            )
+            .unwrap();
+        manager.set_console_phase(connection_id, "console", ConsoleTransactionPhase::Active);
+        for result in [
+            Ok(()),
+            Err(AppError::ResultLimitExceeded("client budget".into())),
+            Err(AppError::ResultProcessingError("event delivery".into())),
+            Err(AppError::SerializationError("result encoding".into())),
+        ] {
+            super::update_console_phase_after_execution(
+                &mut manager,
+                connection_id,
+                "console",
+                &result,
+            );
+            assert_eq!(
+                manager
+                    .console_transaction_state(connection_id, "console")
+                    .phase,
+                ConsoleTransactionPhase::Active
+            );
+        }
+        let database_failure: Result<(), _> = Err(AppError::QueryFailed {
+            sql: "SELECT missing".into(),
+            message: "statement failed".into(),
+        });
+        super::update_console_phase_after_execution(
+            &mut manager,
+            connection_id,
+            "console",
+            &database_failure,
+        );
+        assert_eq!(
+            manager
+                .console_transaction_state(connection_id, "console")
+                .phase,
+            ConsoleTransactionPhase::Failed
+        );
+        for result in [
+            Ok(()),
+            Err(AppError::ResultLimitExceeded("client budget".into())),
+        ] {
+            super::update_console_phase_after_execution(
+                &mut manager,
+                connection_id,
+                "console",
+                &result,
+            );
+            let phase = manager
+                .console_transaction_state(connection_id, "console")
+                .phase;
+            assert_eq!(phase, ConsoleTransactionPhase::Failed);
+            assert!(super::ensure_query_transaction_usable(phase).is_err());
+        }
+        manager.set_console_phase(connection_id, "console", ConsoleTransactionPhase::Idle);
+        assert!(super::ensure_query_transaction_usable(ConsoleTransactionPhase::Idle).is_ok());
+    }
+
+    #[test]
+    fn database_session_and_cancellation_errors_remain_conservative() {
+        use crate::models::error::AppError;
+        for error in [
+            AppError::QueryFailed {
+                sql: "SELECT fixture_value".into(),
+                message: "statement failed".into(),
+            },
+            AppError::ConnectionFailed {
+                driver: "jdbc".into(),
+                message: "session lost".into(),
+            },
+            AppError::Timeout {
+                operation: "jdbc query".into(),
+                elapsed_ms: 1,
+            },
+        ] {
+            assert!(super::execution_fails_transaction::<()>(&Err(error)));
+        }
+        for error in [
+            AppError::ResultLimitExceeded("result limit".into()),
+            AppError::ResultProcessingError("event delivery".into()),
+        ] {
+            assert!(!super::execution_fails_transaction::<()>(&Err(error)));
+        }
+    }
+
+    #[tokio::test]
+    async fn manual_stream_limit_preserves_partial_rows_and_allows_another_query_and_commit() {
+        use crate::{
+            drivers::{sqlite::SqliteDriver, trait_def::DatabaseDriver},
+            services::query_engine::{QueryEngine, QueryStreamEvent, StreamQueryRequest},
+        };
+        use std::sync::{Arc, Mutex};
+        let driver = Arc::new(SqliteDriver::connect(":memory:").await.unwrap());
+        driver.begin_transaction().await.unwrap();
+        driver
+            .execute_query("CREATE TABLE kept(value INTEGER)", None)
+            .await
+            .unwrap();
+        driver
+            .execute_query("INSERT INTO kept VALUES (7)", None)
+            .await
+            .unwrap();
+        let rows = Arc::new(Mutex::new(Vec::new()));
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let recorded_rows = rows.clone();
+        let recorded_errors = errors.clone();
+        let sql = format!(
+            "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT printf('%0{}d', 3)",
+            crate::utils::query_budget::MAX_INTERACTIVE_CELL_BYTES
+        );
+        let result = QueryEngine::new()
+            .execute_query_stream_with_sink_in_mode(
+                driver.clone(),
+                StreamQueryRequest {
+                    sql,
+                    query_id: "manual-budget".into(),
+                    chunk_size: Some(1),
+                    max_rows: Some(10),
+                },
+                crate::drivers::trait_def::StreamTransactionMode::Manual,
+                move |event| {
+                    match event {
+                        QueryStreamEvent::Chunk(chunk) => {
+                            recorded_rows.lock().unwrap().extend(chunk.rows)
+                        }
+                        QueryStreamEvent::Error(error) => {
+                            recorded_errors.lock().unwrap().push(error.code)
+                        }
+                        QueryStreamEvent::Done(_) => panic!("a limited stream must not emit DONE"),
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+        assert_eq!(result.as_ref().unwrap_err().code(), "RESULT_LIMIT_EXCEEDED");
+        assert!(!super::execution_fails_transaction(&result));
+        assert!(!rows.lock().unwrap().is_empty());
+        assert_eq!(*errors.lock().unwrap(), vec!["RESULT_LIMIT_EXCEEDED"]);
+        driver
+            .execute_query("INSERT INTO kept VALUES (8)", None)
+            .await
+            .unwrap();
+        driver.commit_transaction().await.unwrap();
+        let committed = driver
+            .execute_query("SELECT COUNT(*) FROM kept", None)
+            .await
+            .unwrap();
+        assert_eq!(committed.rows[0][0], serde_json::json!(2));
+    }
 
     #[test]
     fn native_execution_context_uses_the_tab_not_the_prior_session_state() {

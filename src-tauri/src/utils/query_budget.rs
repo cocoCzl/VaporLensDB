@@ -23,7 +23,7 @@ impl QueryChunkBuffer {
     pub fn push(&mut self, row: Vec<Value>) -> Result<Option<Vec<Vec<Value>>>, AppError> {
         let row_bytes = row_json_bytes(&row)?;
         if row_bytes > MAX_INTERACTIVE_SOURCE_CHUNK_BYTES {
-            return Err(AppError::ConfigError(format!(
+            return Err(AppError::ResultLimitExceeded(format!(
                 "interactive result row exceeds the {MAX_INTERACTIVE_SOURCE_CHUNK_BYTES} byte source chunk limit"
             )));
         }
@@ -57,7 +57,7 @@ pub fn row_json_bytes(row: &[Value]) -> Result<usize, AppError> {
     for value in row {
         let cell_bytes = estimated_json_bytes(value);
         if cell_bytes > MAX_INTERACTIVE_CELL_BYTES {
-            return Err(AppError::ConfigError(format!(
+            return Err(AppError::ResultLimitExceeded(format!(
                 "interactive result cell exceeds the {MAX_INTERACTIVE_CELL_BYTES} byte limit"
             )));
         }
@@ -110,6 +110,7 @@ mod tests {
             "x".repeat(MAX_INTERACTIVE_CELL_BYTES)
         )]);
         assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code(), "RESULT_LIMIT_EXCEEDED");
         assert!(buffer.is_empty());
     }
 

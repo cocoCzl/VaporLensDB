@@ -245,6 +245,21 @@ impl TaskManager {
         .await
     }
 
+    pub async fn update_progress_with_total(
+        &self,
+        id: Uuid,
+        current: u64,
+        total: Option<u64>,
+        message: impl Into<String>,
+    ) -> Result<TaskInfo, AppError> {
+        self.update_task(id, |info| {
+            info.progress.current = current;
+            info.progress.total = total;
+            info.progress.message = Some(message.into());
+        })
+        .await
+    }
+
     pub async fn request_cancel(&self, id: Uuid) -> Result<TaskInfo, AppError> {
         let mut tasks = self.inner.lock().await;
         let record = tasks.get_mut(&id).ok_or_else(|| AppError::NotFound {

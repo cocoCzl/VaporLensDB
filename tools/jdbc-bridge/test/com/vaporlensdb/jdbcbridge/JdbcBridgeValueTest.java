@@ -2,6 +2,10 @@ package com.vaporlensdb.jdbcbridge;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 
 /** Dependency-free contract test; runs even without any installed JDBC driver. */
@@ -38,6 +42,7 @@ public final class JdbcBridgeValueTest {
         checkUtf8AndCellBudget();
         checkStreamChunkBudget();
         checkNonStreamingResultBudget();
+        checkFailureFrames();
         System.out.println("JDBC scalar JSON contract tests passed.");
     }
 
@@ -46,6 +51,26 @@ public final class JdbcBridgeValueTest {
         JdbcBridge.appendJsonValue(output, value);
         if (!expected.contentEquals(output)) {
             throw new AssertionError("Expected " + expected + ", got " + output);
+        }
+    }
+
+    private static void checkFailureFrames() {
+        PrintStream original = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+            JdbcBridge.respondFailure("17", new JdbcBridge.ResultLimitException("fixture input must not be echoed"));
+            JdbcBridge.respondFailure("18", new IllegalStateException("statement failed"));
+        } finally {
+            System.setOut(original);
+        }
+        String[] frames = output.toString(StandardCharsets.UTF_8).split("\\R");
+        if (frames.length != 2 || !frames[0].startsWith("LIMIT\t17\t") || !frames[1].startsWith("ERR\t18\t")) {
+            throw new AssertionError("client limits and database failures must have distinct protocol statuses");
+        }
+        String message = new String(Base64.getDecoder().decode(frames[0].split("\t")[2]), StandardCharsets.UTF_8);
+        if (!message.equals("JDBC result exceeded the interactive byte limit")) {
+            throw new AssertionError("result-limit protocol messages must not echo input");
         }
     }
 
@@ -69,6 +94,9 @@ public final class JdbcBridgeValueTest {
                     JdbcBridge.MAX_INTERACTIVE_CELL_BYTES);
             throw new AssertionError("oversized JDBC cell must be rejected");
         } catch (IllegalArgumentException expected) {
+            if (!(expected instanceof JdbcBridge.ResultLimitException)) {
+                throw new AssertionError("cell budget failure must retain its client result classification");
+            }
             if (output.length() != 0) {
                 throw new AssertionError("rejected JDBC cell must not remain in the row buffer");
             }
@@ -107,6 +135,9 @@ public final class JdbcBridgeValueTest {
             rows.add("[7]");
             throw new AssertionError("oversized non-streaming JDBC result must be rejected");
         } catch (IllegalArgumentException expected) {
+            if (!(expected instanceof JdbcBridge.ResultLimitException)) {
+                throw new AssertionError("result budget failure must retain its client result classification");
+            }
             if (!"[123],[456]".contentEquals(output)) {
                 throw new AssertionError("rejected JDBC row must not remain in the result buffer");
             }

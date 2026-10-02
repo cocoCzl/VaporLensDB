@@ -166,8 +166,8 @@ describe('metadata store resource bounds', () => {
 
   it('keeps columns and foreign keys isolated when structure metadata loads concurrently', async () => {
     const childColumns: ColumnInfo[] = [
-      { schema: 'main', table: 'child_items', name: 'id', ordinalPosition: 1, dataType: 'INTEGER', nullable: true, isPrimaryKey: true },
-      { schema: 'main', table: 'child_items', name: 'parent_id', ordinalPosition: 2, dataType: 'INTEGER', nullable: true, isPrimaryKey: false },
+      { schema: 'main', table: 'child_items', name: 'id', ordinalPosition: 1, dataType: 'INTEGER', nullable: true, isPrimaryKey: true, isIdentity: false, isGenerated: false, isAutoIncrement: false },
+      { schema: 'main', table: 'child_items', name: 'parent_id', ordinalPosition: 2, dataType: 'INTEGER', nullable: true, isPrimaryKey: false, isIdentity: false, isGenerated: false, isAutoIncrement: false },
     ]
     const childIndexes: IndexInfo[] = []
     const childForeignKeys: ForeignKeyInfo[] = [{
@@ -180,7 +180,7 @@ describe('metadata store resource bounds', () => {
       referencedColumns: ['id'],
     }]
     const parentColumns: ColumnInfo[] = [
-      { schema: 'main', table: 'parent_items', name: 'id', ordinalPosition: 1, dataType: 'INTEGER', nullable: true, isPrimaryKey: true },
+      { schema: 'main', table: 'parent_items', name: 'id', ordinalPosition: 1, dataType: 'INTEGER', nullable: true, isPrimaryKey: true, isIdentity: false, isGenerated: false, isAutoIncrement: false },
     ]
 
     metadataMocks.getColumns

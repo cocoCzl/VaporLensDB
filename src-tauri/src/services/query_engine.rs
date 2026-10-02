@@ -5,7 +5,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use crate::{
-    drivers::trait_def::DatabaseDriver,
+    drivers::trait_def::{
+        DatabaseDriver, DriverStreamRequest, StreamControl, StreamStopReason, StreamTransactionMode,
+    },
     models::{
         error::AppError,
         query_result::{
@@ -57,8 +59,14 @@ struct StreamMetrics {
     received_bytes: u64,
     emitted_rows: u64,
     truncated: bool,
-    budget_error: Option<String>,
+    error: Option<AppError>,
     emitted_columns: bool,
+}
+
+pub(crate) enum QueryStreamEvent {
+    Chunk(QueryResultChunk),
+    Done(QueryStreamDone),
+    Error(QueryStreamError),
 }
 
 impl QueryEngine {
@@ -73,15 +81,27 @@ impl QueryEngine {
         query_id: Option<String>,
         max_rows: Option<u64>,
     ) -> Result<ExecuteQueryResponse, AppError> {
+        self.execute_query_in_mode(driver, sql, query_id, max_rows, StreamTransactionMode::Auto)
+            .await
+    }
+
+    pub async fn execute_query_in_mode(
+        &self,
+        driver: Arc<dyn DatabaseDriver>,
+        sql: &str,
+        query_id: Option<String>,
+        max_rows: Option<u64>,
+        mode: StreamTransactionMode,
+    ) -> Result<ExecuteQueryResponse, AppError> {
         if let Some(directive) = unsupported_client_directive(sql) {
-            return Err(AppError::ConfigError(format!(
+            return Err(AppError::ResultProcessingError(format!(
                 "client directive {directive} is not supported; remove it before execution"
             )));
         }
         let statements = split_sql_statements(sql);
         // Reject the entire batch before executing any statement, including DML.
         if statements.len() > MAX_INTERACTIVE_STATEMENTS {
-            return Err(AppError::ConfigError(format!(
+            return Err(AppError::ResultLimitExceeded(format!(
                 "interactive batches support at most {MAX_INTERACTIVE_STATEMENTS} statements"
             )));
         }
@@ -110,6 +130,7 @@ impl QueryEngine {
                 &execution_id,
                 effective_max_rows,
                 remaining_bytes,
+                mode,
             )
             .await?;
             remaining_rows = remaining_rows.saturating_sub(result.row_count);
@@ -131,24 +152,70 @@ impl QueryEngine {
         app: AppHandle,
         driver: Arc<dyn DatabaseDriver>,
         request: StreamQueryRequest,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
+        self.execute_query_stream_in_mode(app, driver, request, StreamTransactionMode::Auto)
+            .await
+    }
+
+    pub async fn execute_query_stream_in_mode(
+        &self,
+        app: AppHandle,
+        driver: Arc<dyn DatabaseDriver>,
+        request: StreamQueryRequest,
+        mode: StreamTransactionMode,
+    ) -> Result<(), AppError> {
+        self.execute_query_stream_with_sink_in_mode(driver, request, mode, move |event| {
+            let result = match event {
+                QueryStreamEvent::Chunk(chunk) => app.emit(QUERY_RESULT_CHUNK_EVENT, chunk),
+                QueryStreamEvent::Done(done) => app.emit(QUERY_RESULT_DONE_EVENT, done),
+                QueryStreamEvent::Error(error) => app.emit(QUERY_RESULT_ERROR_EVENT, error),
+            };
+            result.map_err(|_| {
+                AppError::ResultProcessingError("query result event delivery failed".into())
+            })
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn execute_query_stream_with_sink(
+        &self,
+        driver: Arc<dyn DatabaseDriver>,
+        request: StreamQueryRequest,
+        emit: impl Fn(QueryStreamEvent) -> Result<(), AppError> + Send + Sync,
+    ) -> Result<(), AppError> {
+        self.execute_query_stream_with_sink_in_mode(
+            driver,
+            request,
+            StreamTransactionMode::Auto,
+            emit,
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_query_stream_with_sink_in_mode(
+        &self,
+        driver: Arc<dyn DatabaseDriver>,
+        request: StreamQueryRequest,
+        mode: StreamTransactionMode,
+        emit: impl Fn(QueryStreamEvent) -> Result<(), AppError> + Send + Sync,
+    ) -> Result<(), AppError> {
         if let Some(directive) = unsupported_client_directive(&request.sql) {
-            return Err(format!(
+            return Err(AppError::ResultProcessingError(format!(
                 "client directive {directive} is not supported; remove it before execution"
-            ));
+            )));
         }
         let (chunk_tx, mut chunk_rx) = mpsc::channel::<Result<QueryResultChunk, AppError>>(8);
         let query_id = request.query_id.clone();
-        let emit_app = app.clone();
-        let emit_query_id = query_id.clone();
         let stream_started = Instant::now();
+        let control = StreamControl::new(mode);
 
-        let emit_task = tokio::spawn(async move {
+        let consume = async {
             let mut metrics = StreamMetrics::default();
             while let Some(chunk) = chunk_rx.recv().await {
                 match chunk {
                     Ok(chunk) => {
-                        if metrics.budget_error.is_some() || metrics.truncated {
+                        if metrics.error.is_some() || metrics.truncated {
                             continue;
                         }
                         match bounded_stream_chunks(
@@ -161,72 +228,80 @@ impl QueryEngine {
                         ) {
                             Ok((chunks, truncated)) => {
                                 metrics.truncated |= truncated;
+                                if truncated {
+                                    control.stop(StreamStopReason::ResultBytes);
+                                }
                                 for chunk in chunks {
                                     if metrics.first_row_ms.is_none() && !chunk.rows.is_empty() {
                                         metrics.first_row_ms =
                                             Some(stream_started.elapsed().as_millis() as u64);
                                     }
-                                    let payload_bytes = serde_json::to_vec(&chunk)
-                                        .map(|payload| payload.len() as u64)
-                                        .unwrap_or(0);
+                                    let payload_bytes = match serde_json::to_vec(&chunk) {
+                                        Ok(payload) => payload.len() as u64,
+                                        Err(error) => {
+                                            control.stop(StreamStopReason::ReceiverUnavailable);
+                                            metrics.error = Some(AppError::from(error));
+                                            break;
+                                        }
+                                    };
+                                    let row_count = chunk.rows.len() as u64;
+                                    let has_columns = !chunk.columns.is_empty();
+                                    if let Err(error) = emit(QueryStreamEvent::Chunk(chunk)) {
+                                        control.stop(StreamStopReason::ReceiverUnavailable);
+                                        metrics.error = Some(error);
+                                        break;
+                                    }
                                     metrics.received_bytes =
                                         metrics.received_bytes.saturating_add(payload_bytes);
-                                    metrics.emitted_rows = metrics
-                                        .emitted_rows
-                                        .saturating_add(chunk.rows.len() as u64);
-                                    metrics.emitted_columns |= !chunk.columns.is_empty();
-                                    if emit_app.emit(QUERY_RESULT_CHUNK_EVENT, chunk).is_err() {
-                                        return metrics;
-                                    }
+                                    metrics.emitted_rows =
+                                        metrics.emitted_rows.saturating_add(row_count);
+                                    metrics.emitted_columns |= has_columns;
                                 }
                             }
                             Err(error) => {
-                                let _ = emit_app.emit(
-                                    QUERY_RESULT_ERROR_EVENT,
-                                    stream_error_payload(&emit_query_id, &error),
-                                );
-                                metrics.budget_error = Some(error.to_string());
+                                control.stop(StreamStopReason::CellOrChunkLimit);
+                                metrics.error = Some(error);
                             }
                         }
                     }
                     Err(error) => {
-                        let _ = emit_app.emit(
-                            QUERY_RESULT_ERROR_EVENT,
-                            stream_error_payload(&emit_query_id, &error),
-                        );
-                        break;
+                        if !error.affects_transaction() {
+                            control.stop(StreamStopReason::CellOrChunkLimit);
+                        }
+                        if metrics.error.is_none() || error.affects_transaction() {
+                            metrics.error = Some(error);
+                        }
                     }
                 }
             }
             metrics
-        });
+        };
 
-        match driver
-            .execute_query_stream(
-                &request.sql,
-                &query_id,
-                request
+        let produce = driver.execute_query_stream_controlled(
+            DriverStreamRequest {
+                sql: &request.sql,
+                query_id: &query_id,
+                chunk_size: request
                     .chunk_size
                     .unwrap_or(DEFAULT_STREAM_CHUNK_SIZE)
                     .clamp(1, MAX_STREAM_CHUNK_SIZE),
-                Some(
+                max_rows: Some(
                     request
                         .max_rows
                         .unwrap_or(DEFAULT_INTERACTIVE_MAX_ROWS)
                         .clamp(1, MAX_INTERACTIVE_RESULT_ROWS),
                 ),
-                chunk_tx,
-            )
-            .await
-        {
+            },
+            chunk_tx,
+            control.clone(),
+        );
+        let (execution, metrics) = tokio::join!(produce, consume);
+        let result = match execution {
             Ok(summary) => {
-                let metrics = emit_task.await.unwrap_or_default();
-                if let Some(error) = metrics.budget_error {
-                    return Err(error);
-                }
-                app.emit(
-                    QUERY_RESULT_DONE_EVENT,
-                    QueryStreamDone {
+                if let Some(error) = metrics.error {
+                    Err(error)
+                } else {
+                    emit(QueryStreamEvent::Done(QueryStreamDone {
                         query_id: summary.query_id,
                         row_count: metrics.emitted_rows,
                         affected_rows: summary.affected_rows,
@@ -235,19 +310,17 @@ impl QueryEngine {
                         max_rows: summary.max_rows,
                         first_row_ms: metrics.first_row_ms,
                         received_bytes: metrics.received_bytes,
-                    },
-                )
-                .map_err(|error| error.to_string())
+                    }))
+                }
             }
-            Err(error) => {
-                let _ = emit_task.await;
-                let _ = app.emit(
-                    QUERY_RESULT_ERROR_EVENT,
-                    stream_error_payload(&query_id, &error),
-                );
-                Err(error.into())
-            }
+            Err(error) => Err(error),
+        };
+        if let Err(error) = &result {
+            let _ = emit(QueryStreamEvent::Error(stream_error_payload(
+                &query_id, error,
+            )));
         }
+        result
     }
 
     pub async fn explain_query(
@@ -306,7 +379,7 @@ fn bounded_stream_chunks(
         };
         let bytes = serde_json::to_vec(&outgoing)?.len();
         if bytes > max_chunk_bytes {
-            return Err(AppError::ConfigError(format!(
+            return Err(AppError::ResultLimitExceeded(format!(
                 "interactive result chunk exceeds the {max_chunk_bytes} byte limit"
             )));
         }
@@ -322,7 +395,7 @@ fn bounded_stream_chunks(
     for row in chunk.rows {
         let row_bytes = interactive_row_bytes(&row)?;
         if row_bytes > max_chunk_bytes {
-            return Err(AppError::ConfigError(format!(
+            return Err(AppError::ResultLimitExceeded(format!(
                 "interactive result row exceeds the {max_chunk_bytes} byte limit"
             )));
         }
@@ -360,27 +433,54 @@ async fn collect_interactive_result(
     query_id: &str,
     max_rows: u64,
     max_bytes: usize,
+    mode: StreamTransactionMode,
 ) -> Result<(QueryResult, usize), AppError> {
     let (tx, mut rx) = mpsc::channel::<Result<QueryResultChunk, AppError>>(2);
-    let producer = driver.execute_query_stream(
-        sql,
-        query_id,
-        DEFAULT_STREAM_CHUNK_SIZE,
-        // JDBC requires a positive limit. Once exhausted, observe at most one
-        // row to distinguish a truncated result from an empty result/DDL.
-        Some(max_rows.max(1)),
+    let control = StreamControl::new(mode);
+    let producer = driver.execute_query_stream_controlled(
+        DriverStreamRequest {
+            sql,
+            query_id,
+            chunk_size: DEFAULT_STREAM_CHUNK_SIZE,
+            // JDBC requires a positive limit. Once exhausted, observe at most one
+            // row to distinguish a truncated result from an empty result/DDL.
+            max_rows: Some(max_rows.max(1)),
+        },
         tx,
+        control.clone(),
     );
     let consumer = async move {
         let mut result = QueryResult::empty(0, 0);
         let mut retained_bytes = 0_usize;
+        let mut failure: Option<AppError> = None;
         while let Some(chunk) = rx.recv().await {
-            let chunk = chunk?;
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    if !error.affects_transaction() {
+                        control.stop(StreamStopReason::CellOrChunkLimit);
+                    }
+                    if failure.is_none() || error.affects_transaction() {
+                        failure = Some(error);
+                    }
+                    continue;
+                }
+            };
             if result.columns.is_empty() {
                 result.columns = chunk.columns;
             }
+            if failure.is_some() || result.truncated {
+                continue;
+            }
             for row in chunk.rows {
-                let row_bytes = interactive_row_bytes(&row)?;
+                let row_bytes = match interactive_row_bytes(&row) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        control.stop(StreamStopReason::CellOrChunkLimit);
+                        failure = Some(error);
+                        break;
+                    }
+                };
                 let row_available = (result.rows.len() as u64) < max_rows;
                 let bytes_available = row_bytes <= max_bytes.saturating_sub(retained_bytes);
                 if row_available && bytes_available {
@@ -388,10 +488,19 @@ async fn collect_interactive_result(
                     result.rows.push(row);
                 } else {
                     result.truncated = true;
+                    control.stop(if row_available {
+                        StreamStopReason::ResultBytes
+                    } else {
+                        StreamStopReason::MaxRows
+                    });
+                    break;
                 }
             }
         }
-        Ok::<_, AppError>((result, retained_bytes))
+        match failure {
+            Some(error) => Err(error),
+            None => Ok((result, retained_bytes)),
+        }
     };
     let (summary, result) = tokio::join!(producer, consumer);
     let (mut result, retained_bytes) = result?;
@@ -421,6 +530,390 @@ fn stream_error_payload(query_id: &str, error: &AppError) -> QueryStreamError {
 mod tests {
     use super::*;
     use crate::drivers::sqlite::SqliteDriver;
+    use crate::models::metadata::*;
+    use crate::models::query_result::QueryStreamSummary;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingProducer {
+        produced: AtomicUsize,
+        rows: usize,
+        cell_bytes: usize,
+        user_cancel: tokio_util::sync::CancellationToken,
+        database_failure: bool,
+    }
+
+    fn counting_producer(rows: usize, cell_bytes: usize) -> Arc<CountingProducer> {
+        Arc::new(CountingProducer {
+            produced: AtomicUsize::new(0),
+            rows,
+            cell_bytes,
+            user_cancel: tokio_util::sync::CancellationToken::new(),
+            database_failure: false,
+        })
+    }
+
+    fn counting_request(max_rows: Option<u64>) -> StreamQueryRequest {
+        StreamQueryRequest {
+            sql: "SELECT fixture".into(),
+            query_id: "counting".into(),
+            chunk_size: Some(1),
+            max_rows,
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DatabaseDriver for CountingProducer {
+        fn driver_name(&self) -> &'static str {
+            "counting producer"
+        }
+        fn capabilities(&self) -> DriverCapabilities {
+            DriverCapabilities {
+                has_database: false,
+                has_schema: false,
+                supports_transactions: true,
+                supports_explain: false,
+                supports_cancel: false,
+                supports_ddl: false,
+                supports_streaming: true,
+            }
+        }
+        async fn ping(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn execute_query(&self, _: &str, _: Option<&str>) -> Result<QueryResult, AppError> {
+            Ok(QueryResult::empty(0, 0))
+        }
+        async fn execute_query_stream(
+            &self,
+            sql: &str,
+            query_id: &str,
+            chunk_size: usize,
+            max_rows: Option<u64>,
+            chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        ) -> Result<QueryStreamSummary, AppError> {
+            self.execute_query_stream_controlled(
+                DriverStreamRequest {
+                    sql,
+                    query_id,
+                    chunk_size,
+                    max_rows,
+                },
+                chunks,
+                StreamControl::new(StreamTransactionMode::Manual),
+            )
+            .await
+        }
+        async fn execute_query_stream_controlled(
+            &self,
+            request: DriverStreamRequest<'_>,
+            chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+            control: StreamControl,
+        ) -> Result<QueryStreamSummary, AppError> {
+            let DriverStreamRequest {
+                query_id, max_rows, ..
+            } = request;
+            let mut truncated = false;
+            for offset in 0..self.rows {
+                if self.user_cancel.is_cancelled() {
+                    return Err(AppError::QueryFailed {
+                        sql: request.sql.into(),
+                        message: "statement cancelled".into(),
+                    });
+                }
+                if control.mode == StreamTransactionMode::Auto && control.is_stopped() {
+                    break;
+                }
+                self.produced.fetch_add(1, Ordering::Relaxed);
+                if control.is_stopped() {
+                    continue;
+                }
+                if max_rows.is_some_and(|limit| offset as u64 >= limit) {
+                    truncated = true;
+                    break;
+                }
+                chunks
+                    .send(Ok(QueryResultChunk {
+                        query_id: query_id.into(),
+                        columns: vec![],
+                        rows: vec![vec![serde_json::Value::String("x".repeat(self.cell_bytes))]],
+                        row_offset: offset as u64,
+                    }))
+                    .await
+                    .unwrap();
+            }
+            if self.database_failure {
+                return Err(AppError::QueryFailed {
+                    sql: request.sql.into(),
+                    message: "database execution failed while draining".into(),
+                });
+            }
+            Ok(QueryStreamSummary {
+                query_id: query_id.into(),
+                row_count: self.produced.load(Ordering::Relaxed) as u64,
+                affected_rows: 0,
+                elapsed_ms: 0,
+                truncated,
+                max_rows,
+            })
+        }
+        async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_schemas(&self, _: Option<&str>) -> Result<Vec<SchemaInfo>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_tables(&self, _: &str) -> Result<Vec<TableInfo>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_columns(&self, _: &str, _: &str) -> Result<Vec<ColumnInfo>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_indexes(&self, _: &str, _: &str) -> Result<Vec<IndexInfo>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_foreign_keys(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Vec<ForeignKeyInfo>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_views(&self, _: &str) -> Result<Vec<TableInfo>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_functions(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        async fn get_table_ddl(&self, _: &str, _: &str) -> Result<String, AppError> {
+            Ok(String::new())
+        }
+        async fn explain_query(&self, _: &str, _: Option<&str>) -> Result<ExplainResult, AppError> {
+            unreachable!()
+        }
+        async fn cancel_query(&self, _: &str) -> Result<(), AppError> {
+            self.user_cancel.cancel();
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn hard_cell_budget_stops_auto_producer_before_full_scan() {
+        let driver = counting_producer(200, MAX_INTERACTIVE_CELL_BYTES + 1);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            QueryEngine::new().execute_query_stream_with_sink(
+                driver.clone(),
+                StreamQueryRequest {
+                    sql: "SELECT fixture".into(),
+                    query_id: "cell-stop".into(),
+                    chunk_size: Some(1),
+                    max_rows: None,
+                },
+                |_| Ok(()),
+            ),
+        )
+        .await
+        .expect("producer must exit without blocking on the bounded channel");
+        assert_eq!(result.unwrap_err().code(), "RESULT_LIMIT_EXCEEDED");
+        assert!(
+            driver.produced.load(Ordering::Relaxed) < driver.rows,
+            "budget failure must stop the producer, not scan every row"
+        );
+    }
+
+    #[tokio::test]
+    async fn max_rows_limits_production_and_is_normal_truncation() {
+        let driver = counting_producer(10000, 1);
+        let done = std::sync::Mutex::new(None);
+        QueryEngine::new()
+            .execute_query_stream_with_sink(driver.clone(), counting_request(Some(3)), |event| {
+                if let QueryStreamEvent::Done(summary) = event {
+                    *done.lock().unwrap() = Some(summary);
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert_eq!(driver.produced.load(Ordering::Relaxed), 4);
+        let done = done.lock().unwrap().take().unwrap();
+        assert_eq!(done.row_count, 3);
+        assert!(done.truncated);
+    }
+
+    #[tokio::test]
+    async fn total_byte_budget_stops_auto_producer_but_still_emits_truncated_done() {
+        let driver = counting_producer(200, MAX_INTERACTIVE_CELL_BYTES - 2);
+        let truncated = std::sync::atomic::AtomicBool::new(false);
+        QueryEngine::new()
+            .execute_query_stream_with_sink(driver.clone(), counting_request(None), |event| {
+                if let QueryStreamEvent::Done(done) = event {
+                    truncated.store(done.truncated, Ordering::Relaxed);
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(truncated.load(Ordering::Relaxed));
+        assert!(driver.produced.load(Ordering::Relaxed) < 80);
+    }
+
+    #[tokio::test]
+    async fn receiver_failure_stops_producer_joins_it_and_releases_operation_lease() {
+        use crate::services::connection_manager::{create_active_connection, ConnectionManager};
+        let id = uuid::Uuid::new_v4();
+        let config = serde_json::from_value(serde_json::json!({ "id": id, "name": "Producer lease fixture", "driverType": "sqlite", "connectionUrl": ":memory:", "driverPaths": [], "createdAt": chrono::Utc::now(), "updatedAt": chrono::Utc::now() })).unwrap();
+        let mut connections = ConnectionManager::new();
+        connections.begin_connect(id).unwrap();
+        connections
+            .finish_connect(id, create_active_connection(&config, None, None).await)
+            .unwrap();
+        let operation = connections
+            .begin_query_operation(id, "counting")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        assert!(connections.disconnect(id).is_err());
+        let driver = counting_producer(10000, 1);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            QueryEngine::new().execute_query_stream_with_sink(
+                driver.clone(),
+                counting_request(None),
+                |event| match event {
+                    QueryStreamEvent::Chunk(_) => Err(AppError::ResultProcessingError(
+                        "receiver unavailable".into(),
+                    )),
+                    _ => Ok(()),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap_err().code(), "RESULT_PROCESSING_ERROR");
+        assert!(driver.produced.load(Ordering::Relaxed) <= 10);
+        drop(operation);
+        connections.disconnect(id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn manual_budget_stop_intentionally_drains_and_preserves_real_database_failure() {
+        for database_failure in [false, true] {
+            let mut driver = counting_producer(200, MAX_INTERACTIVE_CELL_BYTES + 1);
+            Arc::get_mut(&mut driver).unwrap().database_failure = database_failure;
+            let result = QueryEngine::new()
+                .execute_query_stream_with_sink_in_mode(
+                    driver.clone(),
+                    counting_request(None),
+                    StreamTransactionMode::Manual,
+                    |_| Ok(()),
+                )
+                .await;
+            assert_eq!(driver.produced.load(Ordering::Relaxed), 200);
+            assert_eq!(result.unwrap_err().affects_transaction(), database_failure);
+        }
+    }
+
+    #[tokio::test]
+    async fn user_cancel_is_execution_failure_not_a_client_budget_stop() {
+        let driver = counting_producer(10000, 1);
+        let cancellation = driver.user_cancel.clone();
+        let result = QueryEngine::new()
+            .execute_query_stream_with_sink(driver.clone(), counting_request(None), |event| {
+                if matches!(event, QueryStreamEvent::Chunk(_)) {
+                    cancellation.cancel();
+                }
+                Ok(())
+            })
+            .await;
+        assert_eq!(result.as_ref().unwrap_err().code(), "QUERY_FAILED");
+        assert!(result.unwrap_err().affects_transaction());
+        assert!(driver.produced.load(Ordering::Relaxed) <= 10);
+    }
+
+    #[tokio::test]
+    async fn event_delivery_failure_is_structured_and_does_not_poison_the_database_session() {
+        let driver = Arc::new(SqliteDriver::connect(":memory:").await.unwrap());
+        driver.begin_transaction().await.unwrap();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failures = count.clone();
+        let result = QueryEngine::new()
+            .execute_query_stream_with_sink(
+                driver.clone(),
+                StreamQueryRequest {
+                    sql: "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3".into(),
+                    query_id: "delivery".into(),
+                    chunk_size: Some(1),
+                    max_rows: None,
+                },
+                move |event| match event {
+                    QueryStreamEvent::Chunk(_) => Err(AppError::ResultProcessingError(
+                        "renderer delivery unavailable".into(),
+                    )),
+                    QueryStreamEvent::Error(_) => {
+                        failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        Ok(())
+                    }
+                    QueryStreamEvent::Done(_) => panic!("delivery failure must not emit DONE"),
+                },
+            )
+            .await;
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), "RESULT_PROCESSING_ERROR");
+        assert!(!error.affects_transaction());
+        assert_eq!(count.load(std::sync::atomic::Ordering::Relaxed), 1);
+        driver.execute_query("SELECT 4", None).await.unwrap();
+        driver.commit_transaction().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn database_stream_failure_retains_execution_error_type_and_emits_one_error() {
+        let driver = Arc::new(SqliteDriver::connect(":memory:").await.unwrap());
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failures = count.clone();
+        let result = QueryEngine::new()
+            .execute_query_stream_with_sink(
+                driver,
+                StreamQueryRequest {
+                    sql: "SELECT * FROM missing_table".into(),
+                    query_id: "database-failure".into(),
+                    chunk_size: Some(1),
+                    max_rows: None,
+                },
+                move |event| {
+                    if let QueryStreamEvent::Error(_) = event {
+                        failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+        assert!(result.unwrap_err().affects_transaction());
+        assert_eq!(count.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn completion_delivery_failure_is_not_reported_as_database_success_or_failure() {
+        let driver = Arc::new(SqliteDriver::connect(":memory:").await.unwrap());
+        let result = QueryEngine::new()
+            .execute_query_stream_with_sink(
+                driver,
+                StreamQueryRequest {
+                    sql: "SELECT 1".into(),
+                    query_id: "done-delivery".into(),
+                    chunk_size: Some(1),
+                    max_rows: None,
+                },
+                |event| match event {
+                    QueryStreamEvent::Done(_) => Err(AppError::ResultProcessingError(
+                        "completion delivery failed".into(),
+                    )),
+                    _ => Ok(()),
+                },
+            )
+            .await;
+        assert!(!result.unwrap_err().affects_transaction());
+    }
 
     #[tokio::test]
     async fn batch_respects_per_result_row_preference_and_executes_later_statements() {
@@ -484,6 +977,7 @@ mod tests {
             "exact",
             2,
             MAX_INTERACTIVE_RESULT_BYTES,
+            StreamTransactionMode::Auto,
         )
         .await
         .unwrap();
@@ -495,6 +989,7 @@ mod tests {
             "empty",
             0,
             MAX_INTERACTIVE_RESULT_BYTES,
+            StreamTransactionMode::Auto,
         )
         .await
         .unwrap();
@@ -506,6 +1001,7 @@ mod tests {
             "error",
             2,
             MAX_INTERACTIVE_RESULT_BYTES,
+            StreamTransactionMode::Auto,
         )
         .await
         .is_err());
@@ -532,6 +1028,7 @@ mod tests {
             "bytes",
             10,
             65,
+            StreamTransactionMode::Auto,
         )
         .await
         .unwrap();

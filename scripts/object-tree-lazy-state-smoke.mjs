@@ -29,7 +29,7 @@ includesAll(
     "t('explorer.emptyCategory'",
     "t('explorer.loadFailed')",
     'children.length === 0 && isObjectCategoryNode(node)',
-    'setChildIds((state) => ({ ...state, [id]: [errorNode.id] }))',
+    'setChildIds((state) => requestGeneration.current.isCurrent(request, currentConnection.current)\n        ? { ...state, [id]: [errorNode.id] } : state)',
     'clearNodeMetadataCache(node)',
     'metadata.clearConnection(activeConnectionId)',
     'metadata.clearSchema(activeConnectionId, node.meta.schema)',

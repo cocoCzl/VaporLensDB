@@ -7,7 +7,10 @@ use mysql_async::{
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
-    drivers::trait_def::{DatabaseDriver, DbParameter},
+    drivers::trait_def::{
+        DatabaseDriver, DbParameter, DriverStreamRequest, StreamControl, StreamStopReason,
+        StreamTransactionMode,
+    },
     models::{
         error::AppError,
         metadata::{
@@ -255,6 +258,31 @@ impl DatabaseDriver for MysqlDriver {
         max_rows: Option<u64>,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
+        self.execute_query_stream_controlled(
+            DriverStreamRequest {
+                sql,
+                query_id,
+                chunk_size,
+                max_rows,
+            },
+            chunks,
+            StreamControl::new(StreamTransactionMode::Manual),
+        )
+        .await
+    }
+
+    async fn execute_query_stream_controlled(
+        &self,
+        request: DriverStreamRequest<'_>,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        control: StreamControl,
+    ) -> Result<QueryStreamSummary, AppError> {
+        let DriverStreamRequest {
+            sql,
+            query_id,
+            chunk_size,
+            max_rows,
+        } = request;
         let start = Instant::now();
         let chunk_size = chunk_size.max(1);
         let mut conn = self.conn.lock().await;
@@ -268,6 +296,7 @@ impl DatabaseDriver for MysqlDriver {
         let mut row_offset = 0_u64;
         let mut truncated = false;
         let mut rows = QueryChunkBuffer::new(chunk_size);
+        let mut processing_error = None;
 
         while let Some(row) = result
             .next()
@@ -276,12 +305,28 @@ impl DatabaseDriver for MysqlDriver {
         {
             if max_rows.is_some_and(|limit| row_count >= limit) {
                 truncated = true;
+                control.stop(StreamStopReason::MaxRows);
+            }
+            if control.is_stopped() {
                 break;
             }
 
-            if let Some(chunk_rows) = rows.push(row_to_json_values(&row))? {
+            let buffered = match rows.push(row_to_json_values(&row)) {
+                Ok(buffered) => buffered,
+                Err(error) => {
+                    control.stop(StreamStopReason::CellOrChunkLimit);
+                    processing_error = Some(error);
+                    break;
+                }
+            };
+            if let Some(chunk_rows) = buffered {
                 let chunk_row_count = chunk_rows.len() as u64;
-                send_query_chunk(&chunks, query_id, &columns, chunk_rows, row_offset).await?;
+                if let Err(error) =
+                    send_query_chunk(&chunks, query_id, &columns, chunk_rows, row_offset).await
+                {
+                    processing_error = Some(error);
+                    break;
+                }
                 row_offset += chunk_row_count;
             }
             row_count += 1;
@@ -293,6 +338,9 @@ impl DatabaseDriver for MysqlDriver {
 
         if !rows.is_empty() || !columns.is_empty() {
             send_query_chunk(&chunks, query_id, &columns, rows.take(), row_offset).await?;
+        }
+        if let Some(error) = processing_error {
+            return Err(error);
         }
 
         Ok(QueryStreamSummary {
@@ -354,58 +402,37 @@ impl DatabaseDriver for MysqlDriver {
                 character_maximum_length,
                 numeric_precision,
                 numeric_scale,
-                column_key = 'PRI'
+                column_key = 'PRI',
+                LOWER(extra) LIKE '%generated%',
+                LOWER(extra) LIKE '%auto_increment%'
             FROM information_schema.columns
             WHERE table_schema = ?
               AND table_name = ?
             ORDER BY ordinal_position
         "#;
         let mut conn = self.conn.lock().await;
-        let rows: Vec<(
-            String,
-            String,
-            String,
-            i32,
-            String,
-            bool,
-            Option<String>,
-            Option<i64>,
-            Option<i32>,
-            Option<i32>,
-            bool,
-        )> = conn
+        let rows: Vec<Row> = conn
             .exec(sql, (schema, table))
             .await
             .map_err(|error| map_mysql_query_error(sql, error))?;
         Ok(rows
             .into_iter()
-            .map(
-                |(
-                    schema,
-                    table,
-                    name,
-                    ordinal_position,
-                    data_type,
-                    nullable,
-                    default_value,
-                    character_maximum_length,
-                    numeric_precision,
-                    numeric_scale,
-                    is_primary_key,
-                )| ColumnInfo {
-                    schema: Some(schema),
-                    table,
-                    name,
-                    ordinal_position,
-                    data_type,
-                    nullable,
-                    default_value,
-                    character_maximum_length,
-                    numeric_precision,
-                    numeric_scale,
-                    is_primary_key,
-                },
-            )
+            .map(|row| ColumnInfo {
+                schema: row.get(0),
+                table: row.get(1).unwrap_or_else(|| table.to_string()),
+                name: row.get(2).unwrap_or_default(),
+                ordinal_position: row.get(3).unwrap_or_default(),
+                data_type: row.get(4).unwrap_or_default(),
+                nullable: row.get(5).unwrap_or(true),
+                default_value: row.get(6),
+                character_maximum_length: row.get(7),
+                numeric_precision: row.get(8),
+                numeric_scale: row.get(9),
+                is_primary_key: row.get(10).unwrap_or(false),
+                is_identity: false,
+                is_generated: row.get(11).unwrap_or(false),
+                is_auto_increment: row.get(12).unwrap_or(false),
+            })
             .collect())
     }
 
@@ -666,7 +693,7 @@ async fn send_query_chunk(
     chunks
         .send(Ok(chunk))
         .await
-        .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))
+        .map_err(|_| AppError::ResultProcessingError("query stream receiver dropped".to_string()))
 }
 
 fn row_to_json_values(row: &Row) -> Vec<serde_json::Value> {

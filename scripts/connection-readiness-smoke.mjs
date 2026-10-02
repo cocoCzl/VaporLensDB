@@ -45,7 +45,7 @@ includesAll(
     'const validationError = validate(true)',
     "t('connectionForm.savePassword')",
     "t('connectionForm.storedSecurely')",
-    'savePassword: initialUrlCredentials.password ? true : (connection?.hasSavedPassword ?? true)',
+    'savePassword: connection?.hasSavedPassword ?? true',
     "t('connectionForm.testConnection')",
     'dataSourceGroups = useConnectionStore',
     'groupId: groupSelection || null',
@@ -79,6 +79,7 @@ includesAll(
   'shared input text assistance controls',
 )
 excludesAll(form, ['实验性'], 'connection form primary copy')
+excludesAll(form, ['savePassword: extracted.password ? true', 'savePassword: initialUrlCredentials.password ? true'], 'URL credentials must not override password storage consent')
 
 const dialog = read('src/components/connection/ConnectionDialog.tsx')
 includesAll(

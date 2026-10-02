@@ -30,7 +30,7 @@ includesAll(
     'externalDriverMissingItems',
     "t('connectionForm.missing'",
     "t('connectionForm.externalDriverReady')",
-    'profileCapabilities',
+    'unknownCapabilities',
     'profileBackend',
   ],
   'connection dialog driver support summary',

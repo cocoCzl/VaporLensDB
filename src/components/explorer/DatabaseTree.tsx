@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -9,8 +9,9 @@ import { buildDataTabSql, dataTabFetchLimit, qualifiedName, quoteIdentifier } fr
 import { isSystemDatabase, isSystemSchema } from '@/lib/systemObjects'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
-import { useMetadataStore } from '@/stores/metadataStore'
+import { isMetadataLoadInvalidatedError, useMetadataStore } from '@/stores/metadataStore'
 import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
+import { TreeRequestGeneration } from '@/lib/treeRequestGeneration'
 import { useUiStore } from '@/stores/uiStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -148,10 +149,12 @@ export function DatabaseTree({
   compact?: boolean
 } = {}) {
   const { t } = useTranslation()
-  const { activeConnectionId: browsingConnectionId, connections, statuses, setActiveConnection } = useConnectionStore(useShallow((state) => ({
+  const { activeConnectionId: browsingConnectionId, connections, statuses, lifecycleEpochs, busyConnectionIds, setActiveConnection } = useConnectionStore(useShallow((state) => ({
     activeConnectionId: state.activeConnectionId,
     connections: state.connections,
     statuses: state.statuses,
+    lifecycleEpochs: state.lifecycleEpochs,
+    busyConnectionIds: state.busyConnectionIds,
     setActiveConnection: state.setActiveConnection,
   })))
   const activeConnectionId = connectionIdOverride ?? browsingConnectionId
@@ -196,6 +199,10 @@ export function DatabaseTree({
     x: number
     y: number
   } | null>(null)
+  const requestGeneration = useRef(new TreeRequestGeneration())
+  const loadedRootGeneration = useRef<number | null>(null)
+  const currentConnection = useRef(activeConnectionId)
+  const currentView = useRef('')
 
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
   const activePath = activeConnectionId ? metadata.catalogSchemaPaths[activeConnectionId] : null
@@ -210,19 +217,29 @@ export function DatabaseTree({
     ? requiresExternalDriver(activeConnection) && (activeConnection.driverPaths?.length ?? 0) === 0
     : false
   const driverSupportsBrowsing = activeConnection
-    ? supportsObjectBrowsing(activeConnection.driverType)
+    ? hasObjectBrowsingImplementation(activeConnection.driverType)
     : false
   const objectBrowsingSupported = driverSupportsBrowsing && !missingExternalDriver
   const canSearchCurrentConnection = isConnected && objectBrowsingSupported
+  const connectionEpoch = activeConnectionId ? lifecycleEpochs[activeConnectionId] ?? 0 : 0
+  const connectionBusy = Boolean(activeConnectionId && busyConnectionIds[activeConnectionId])
+  const viewKey = [activeConnectionId, activeRuntimeStatus, objectBrowsingSupported, activeConnection?.driverType, showSystemObjects, connectionEpoch, connectionBusy].join(':')
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const generationController = requestGeneration.current
+    currentConnection.current = activeConnectionId
+    currentView.current = viewKey
+    generationController.invalidateView()
+    const generation = generationController.viewRevision
     queueMicrotask(() => {
+      if (generation !== generationController.viewRevision) return
       setNodes({})
       setChildIds({})
       setIndexSearchActive(false)
       setSelectedNodeId(null)
     })
-  }, [activeConnectionId])
+    return () => generationController.invalidateView()
+  }, [activeConnectionId, viewKey])
 
   const loadedNodes = useMemo(() => flattenTree(nodes, childIds, ROOT_ID), [nodes, childIds])
   const visibleNodes = useMemo(() => {
@@ -241,7 +258,7 @@ export function DatabaseTree({
     indexSearchActive && canSearchCurrentConnection && filter.trim().length >= 2
 
   async function loadRoot(force = false) {
-    if (!activeConnectionId || !isConnected) {
+    if (!activeConnectionId || !isConnected || connectionBusy || currentView.current !== viewKey) {
       return
     }
     if (!objectBrowsingSupported) {
@@ -249,12 +266,14 @@ export function DatabaseTree({
       setChildIds({})
       return
     }
-    if (!force && childIds[ROOT_ID]?.length) {
+    if (!force && loadedRootGeneration.current === requestGeneration.current.viewRevision && childIds[ROOT_ID]?.length) {
       return
     }
+    const request = requestGeneration.current.begin(ROOT_ID, activeConnectionId)
 
     try {
       const databases = await metadata.loadDatabases(activeConnectionId, force)
+      if (!requestGeneration.current.isCurrent(request, currentConnection.current)) return
       const filteredDatabases = filterDatabases(
         activeConnection?.driverType ?? 'postgres',
         databases,
@@ -297,6 +316,7 @@ export function DatabaseTree({
           ] as const),
         ),
       )
+      if (!requestGeneration.current.isCurrent(request, currentConnection.current)) return
       let defaultSchemaNodeId: string | null = null
       let defaultSchemaName: string | null = null
       for (const database of visibleDatabases) {
@@ -382,6 +402,7 @@ export function DatabaseTree({
       }
 
       if (selectedDatabase) {
+        if (!requestGeneration.current.isCurrent(request, currentConnection.current)) return
         const isMysql = activeConnection?.driverType === 'mysql'
         metadata.setCatalogSchemaPath({
           connectionId: activeConnectionId,
@@ -391,14 +412,20 @@ export function DatabaseTree({
         })
       }
 
-      setNodes(nextNodes)
-      setChildIds({
+      if (!requestGeneration.current.isCurrent(request, currentConnection.current)) return
+      loadedRootGeneration.current = request.generation
+      setNodes((state) => requestGeneration.current.isCurrent(request, currentConnection.current) ? nextNodes : state)
+      const nextChildIds = {
         [ROOT_ID]: visibleDatabases.map((database) => databaseId(database.name)),
         ...databaseChildIds,
         ...schemaChildIds,
-      })
-      setSelectedNodeId(defaultSchemaNodeId ?? (selectedDatabase ? databaseId(selectedDatabase.name) : null))
+      }
+      setChildIds((state) => requestGeneration.current.isCurrent(request, currentConnection.current) ? nextChildIds : state)
+      setSelectedNodeId((state) => requestGeneration.current.isCurrent(request, currentConnection.current)
+        ? defaultSchemaNodeId ?? (selectedDatabase ? databaseId(selectedDatabase.name) : null)
+        : state)
     } catch (error) {
+      if (!requestGeneration.current.isCurrent(request, currentConnection.current) || isMetadataLoadInvalidatedError(error)) return
       notifyError(normalizeAppError(error), t('notifications.loadDatabasesFailed'))
     } finally {
       // Root loading is represented by empty-state text for now.
@@ -418,6 +445,8 @@ export function DatabaseTree({
     showSystemObjects,
     activePath?.database,
     activePath?.schema,
+    connectionEpoch,
+    connectionBusy,
   ])
 
   useEffect(() => {
@@ -430,12 +459,12 @@ export function DatabaseTree({
 
   async function toggleNode(id: string, force = false) {
     const node = nodes[id]
-    if (!node?.expandable || !activeConnectionId) {
+    if (!node?.expandable || !activeConnectionId || currentView.current !== viewKey) {
       return
     }
 
     if (node.expanded && !force) {
-      setNodes((state) => ({ ...state, [id]: { ...node, expanded: false } }))
+      setNodes((state) => state[id] ? { ...state, [id]: { ...state[id], expanded: false } } : state)
       return
     }
 
@@ -445,6 +474,9 @@ export function DatabaseTree({
       setNodes((state) => ({ ...state, [id]: { ...state[id], expanded: true, loading: false } }))
       return
     }
+
+    const request = requestGeneration.current.begin(id, activeConnectionId)
+    let childrenLoaded = false
 
     try {
       if (force) {
@@ -459,34 +491,46 @@ export function DatabaseTree({
         t,
         force,
       )
+      if (!requestGeneration.current.isCurrent(request, currentConnection.current)) return
       const nextChildren =
         children.length === 0 && isObjectCategoryNode(node) ? [emptyCategoryNode(node, t)] : children
+      childrenLoaded = true
       setNodes((state) =>
+        requestGeneration.current.isCurrent(request, currentConnection.current) ?
         replaceChildren(
           state,
           childIds[id] ?? [],
           Object.fromEntries(nextChildren.map((child) => [child.id, child])),
-        ),
+        ) : state,
       )
-      setChildIds((state) => ({ ...state, [id]: nextChildren.map((child) => child.id) }))
+      setChildIds((state) => requestGeneration.current.isCurrent(request, currentConnection.current)
+        ? { ...state, [id]: nextChildren.map((child) => child.id) } : state)
     } catch (error) {
+      if (!requestGeneration.current.isCurrent(request, currentConnection.current) || isMetadataLoadInvalidatedError(error)) return
       const appError = normalizeAppError(error)
+      childrenLoaded = true
       const errorNode = errorCategoryNode(node, appError.message, t)
       setNodes((state) =>
-        replaceChildren(state, childIds[id] ?? [], { [errorNode.id]: errorNode }),
+        requestGeneration.current.isCurrent(request, currentConnection.current)
+          ? replaceChildren(state, childIds[id] ?? [], { [errorNode.id]: errorNode }) : state,
       )
-      setChildIds((state) => ({ ...state, [id]: [errorNode.id] }))
+      setChildIds((state) => requestGeneration.current.isCurrent(request, currentConnection.current)
+        ? { ...state, [id]: [errorNode.id] } : state)
       notifyError(appError, t('notifications.loadMetadataFailed'))
     } finally {
-      setNodes((state) => ({
-        ...state,
-        [id]: { ...state[id], expanded: true, loading: false, childrenLoaded: true },
-      }))
+      if (requestGeneration.current.isCurrent(request, currentConnection.current)) {
+        setNodes((state) => requestGeneration.current.isCurrent(request, currentConnection.current) && state[id] ? ({
+          ...state,
+          [id]: { ...state[id], loading: false, childrenLoaded },
+        }) : state)
+      }
     }
   }
 
   function refreshNode(id: string) {
+    if (currentView.current !== viewKey) return
     if (id === ROOT_ID) {
+      requestGeneration.current.invalidateView()
       if (activeConnectionId) {
         metadata.clearConnection(activeConnectionId)
       }
@@ -1735,7 +1779,7 @@ function selectDefaultSchema(
   return schemas.length === 1 ? schemas[0] : null
 }
 
-function supportsObjectBrowsing(driverType: DriverType) {
+function hasObjectBrowsingImplementation(driverType: DriverType) {
   return driverType === 'postgres' || driverType === 'mysql' || driverType === 'oracle' || driverType === 'sqlite'
 }
 

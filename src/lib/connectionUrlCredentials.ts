@@ -13,51 +13,77 @@ export function extractUrlCredentials(value: string): ExtractedUrlCredentials {
   const trimmed = value.trim()
   if (!trimmed) return { connectionUrl: trimmed }
 
-  const jdbcPrefix = trimmed.startsWith('jdbc:') ? 'jdbc:' : ''
-  const candidate = jdbcPrefix ? trimmed.slice(jdbcPrefix.length) : trimmed
+  const sqlServerCredentials = extractSqlServerCredentials(trimmed)
+  const sanitized = sqlServerCredentials.connectionUrl
+
+  const jdbcPrefix = sanitized.startsWith('jdbc:') ? 'jdbc:' : ''
+  const candidate = jdbcPrefix ? sanitized.slice(jdbcPrefix.length) : sanitized
   try {
     const url = new URL(candidate)
-    const username = url.username ? decodeURIComponent(url.username) : undefined
-    const password = url.password ? decodeURIComponent(url.password) : undefined
-    if (!username && !password) {
-      const queryCredentials = extractQueryCredentials(trimmed, jdbcPrefix, url)
-      return queryCredentials.connectionUrl === trimmed
-        ? extractSqlServerCredentials(trimmed)
-        : queryCredentials
+    let username = url.username ? decodeCredential(url.username) : sqlServerCredentials.username
+    let password = url.password ? decodeCredential(url.password) : sqlServerCredentials.password
+    let hasCredentials = Boolean(url.username || url.password || username !== undefined || password !== undefined)
+    for (const [key, value] of [...url.searchParams]) {
+      const normalizedKey = key.toLowerCase()
+      if (normalizedKey === 'user' || normalizedKey === 'username') {
+        username ??= value
+      } else if (normalizedKey === 'password') {
+        password ??= value
+      } else {
+        continue
+      }
+      hasCredentials = true
+      url.searchParams.delete(key)
     }
+    if (!hasCredentials) return { connectionUrl: sanitized }
     url.username = ''
     url.password = ''
     return { connectionUrl: `${jdbcPrefix}${url.toString()}`, username, password }
   } catch {
-    return extractSqlServerCredentials(trimmed)
+    return sqlServerCredentials
   }
 }
 
-function extractQueryCredentials(original: string, jdbcPrefix: string, url: URL): ExtractedUrlCredentials {
-  const username = url.searchParams.get('user') ?? url.searchParams.get('username') ?? undefined
-  const password = url.searchParams.get('password') ?? undefined
-  if (!username && !password) return { connectionUrl: original }
-  url.searchParams.delete('user')
-  url.searchParams.delete('username')
-  url.searchParams.delete('password')
-  return { connectionUrl: `${jdbcPrefix}${url.toString()}`, username, password }
+function decodeCredential(value: string): string {
+  return new URLSearchParams(`value=${value.replaceAll('+', '%2B').replaceAll('&', '%26')}`).get('value') ?? value
 }
 
 function extractSqlServerCredentials(value: string): ExtractedUrlCredentials {
-  if (!/^jdbc:sqlserver:/i.test(value) && !/(?:^|;)\s*(?:user(?:\s*id)?|password)\s*=/i.test(value)) {
+  if (!/^jdbc:sqlserver:/i.test(value) && !/(?:^|;)\s*(?:user(?:\s*id)?|username|password)\s*=/i.test(value)) {
     return { connectionUrl: value }
   }
   let username: string | undefined
   let password: string | undefined
-  const connectionUrl = value
-    .split(';')
+  const connectionUrl = splitConnectionProperties(value)
     .filter((part) => {
-      const match = part.match(/^\s*(user(?:\s*id)?|password)\s*=\s*(.*)\s*$/i)
+      const match = part.match(/^\s*(user(?:\s*id)?|username|password)\s*=\s*(.*)\s*$/i)
       if (!match) return true
-      if (/^password$/i.test(match[1])) password = match[2]
-      else username = match[2]
+      const value = match[2].trim()
+      const credential = value.startsWith('{') && value.endsWith('}')
+        ? value.slice(1, -1).replaceAll('}}', '}')
+        : value
+      if (/^password$/i.test(match[1])) password ??= credential
+      else username ??= credential
       return false
     })
     .join(';')
   return { connectionUrl, username, password }
+}
+
+function splitConnectionProperties(value: string): string[] {
+  const parts: string[] = []
+  let braced = false
+  let start = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === '{') braced = true
+    else if (character === '}' && braced && value[index + 1] === '}') index += 1
+    else if (character === '}') braced = false
+    else if (character === ';' && !braced) {
+      parts.push(value.slice(start, index))
+      start = index + 1
+    }
+  }
+  parts.push(value.slice(start))
+  return parts
 }

@@ -61,6 +61,9 @@ export interface ColumnInfo {
   numericPrecision?: number | null
   numericScale?: number | null
   isPrimaryKey: boolean
+  isIdentity: boolean
+  isGenerated: boolean
+  isAutoIncrement: boolean
 }
 
 export interface IndexInfo {

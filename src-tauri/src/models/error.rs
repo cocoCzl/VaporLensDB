@@ -49,6 +49,10 @@ pub enum AppError {
 
     SerializationError(String),
 
+    ResultLimitExceeded(String),
+
+    ResultProcessingError(String),
+
     ConfigError(String),
 }
 
@@ -59,6 +63,15 @@ pub enum DisconnectBlockReason {
 }
 
 impl AppError {
+    pub fn affects_transaction(&self) -> bool {
+        !matches!(
+            self,
+            Self::ResultLimitExceeded(_)
+                | Self::ResultProcessingError(_)
+                | Self::SerializationError(_)
+        )
+    }
+
     /// Safe external text for IPC, persisted operation state, logs, and diagnostics.
     pub fn safe_message(&self) -> String {
         match self {
@@ -120,6 +133,9 @@ impl AppError {
                     sanitize_diagnostic_error(message, None)
                 )
             }
+            Self::ResultLimitExceeded(message) | Self::ResultProcessingError(message) => {
+                sanitize_diagnostic_error(message, None)
+            }
         }
     }
 
@@ -136,6 +152,8 @@ impl AppError {
             Self::Timeout { .. } => "TIMEOUT",
             Self::UnsupportedOperation { .. } => "UNSUPPORTED_OPERATION",
             Self::SerializationError(_) => "SERIALIZATION_ERROR",
+            Self::ResultLimitExceeded(_) => "RESULT_LIMIT_EXCEEDED",
+            Self::ResultProcessingError(_) => "RESULT_PROCESSING_ERROR",
             Self::ConfigError(_) => "CONFIG_ERROR",
         }
     }

@@ -33,6 +33,7 @@ interface ObjectInspectorState {
 export const useObjectInspectorStore = create<ObjectInspectorState>((set) => ({
   selected: null,
   inspectTable: async (connectionId, schema, table, kind) => {
+    const requestToken = ++latestInspectionToken
     set({
       selected: {
         connectionId,
@@ -55,6 +56,7 @@ export const useObjectInspectorStore = create<ObjectInspectorState>((set) => ({
         metadata.loadForeignKeys(connectionId, schema, table),
         getTableDdl(connectionId, schema, table),
       ])
+      if (!isCurrentInspection(requestToken, connectionId, schema, table, kind)) return
       set({
         selected: {
           connectionId,
@@ -69,6 +71,7 @@ export const useObjectInspectorStore = create<ObjectInspectorState>((set) => ({
         },
       })
     } catch (error) {
+      if (!isCurrentInspection(requestToken, connectionId, schema, table, kind)) return
       const appError = normalizeAppError(error)
       useUiStore.getState().notifyError(appError, i18n.t('notifications.loadObjectStructureFailed'))
       set((state) => ({
@@ -78,5 +81,25 @@ export const useObjectInspectorStore = create<ObjectInspectorState>((set) => ({
       }))
     }
   },
-  clear: () => set({ selected: null }),
+  clear: () => {
+    latestInspectionToken += 1
+    set({ selected: null })
+  },
 }))
+
+let latestInspectionToken = 0
+
+function isCurrentInspection(
+  token: number,
+  connectionId: string,
+  schema: string,
+  table: string,
+  kind: ObjectInspection['kind'],
+) {
+  const selected = useObjectInspectorStore.getState().selected
+  return latestInspectionToken === token
+    && selected?.connectionId === connectionId
+    && selected.schema === schema
+    && selected.table === table
+    && selected.kind === kind
+}

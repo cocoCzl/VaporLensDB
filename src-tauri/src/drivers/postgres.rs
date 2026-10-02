@@ -41,7 +41,10 @@ impl ToSql for CsvParameter<'_> {
 }
 
 use crate::{
-    drivers::trait_def::{DatabaseDriver, DbParameter},
+    drivers::trait_def::{
+        DatabaseDriver, DbParameter, DriverStreamRequest, StreamControl, StreamStopReason,
+        StreamTransactionMode,
+    },
     models::{
         error::AppError,
         metadata::{
@@ -271,13 +274,19 @@ impl DatabaseDriver for PostgresDriver {
             ));
         }
 
+        let statement = self
+            .client
+            .prepare(sql)
+            .await
+            .map_err(|error| self.map_query_error(sql, error))?;
+        let columns = columns_from_statement(&statement);
         let rows = self
             .client
-            .query(sql, &[])
+            .query(&statement, &[])
             .await
             .map_err(|error| self.map_query_error(sql, error))?;
 
-        rows_to_query_result(rows, start.elapsed().as_millis() as u64)
+        rows_to_query_result(columns, rows, start.elapsed().as_millis() as u64)
     }
 
     async fn execute_parameterized(
@@ -309,12 +318,18 @@ impl DatabaseDriver for PostgresDriver {
                 affected_rows,
             ));
         }
-        let rows = self
+        let statement = self
             .client
-            .query(sql, &references)
+            .prepare(sql)
             .await
             .map_err(|error| self.map_query_error(sql, error))?;
-        rows_to_query_result(rows, start.elapsed().as_millis() as u64)
+        let columns = columns_from_statement(&statement);
+        let rows = self
+            .client
+            .query(&statement, &references)
+            .await
+            .map_err(|error| self.map_query_error(sql, error))?;
+        rows_to_query_result(columns, rows, start.elapsed().as_millis() as u64)
     }
 
     async fn execute_query_stream(
@@ -325,6 +340,31 @@ impl DatabaseDriver for PostgresDriver {
         max_rows: Option<u64>,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
+        self.execute_query_stream_controlled(
+            DriverStreamRequest {
+                sql,
+                query_id,
+                chunk_size,
+                max_rows,
+            },
+            chunks,
+            StreamControl::new(StreamTransactionMode::Manual),
+        )
+        .await
+    }
+
+    async fn execute_query_stream_controlled(
+        &self,
+        request: DriverStreamRequest<'_>,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        control: StreamControl,
+    ) -> Result<QueryStreamSummary, AppError> {
+        let DriverStreamRequest {
+            sql,
+            query_id,
+            chunk_size,
+            max_rows,
+        } = request;
         let start = Instant::now();
         let _query_registration = self.register_query(Some(query_id));
         let chunk_size = chunk_size.max(1);
@@ -362,24 +402,72 @@ impl DatabaseDriver for PostgresDriver {
         let mut truncated = false;
         let mut columns = columns_from_statement(&statement);
         let mut rows = QueryChunkBuffer::new(chunk_size);
+        let mut processing_error = None;
+        let mut cancelled_for_failure = false;
 
-        while let Some(row) = stream
-            .try_next()
-            .await
-            .map_err(|error| self.map_query_error(sql, error))?
-        {
+        loop {
+            if control.mode == StreamTransactionMode::Auto
+                && matches!(
+                    control.stop_reason(),
+                    Some(
+                        StreamStopReason::CellOrChunkLimit | StreamStopReason::ReceiverUnavailable
+                    )
+                )
+                && !cancelled_for_failure
+            {
+                self.cancel_query(query_id).await?;
+                cancelled_for_failure = true;
+            }
+            let next = if control.mode == StreamTransactionMode::Auto && !control.is_stopped() {
+                tokio::select! {
+                    row = stream.try_next() => row,
+                    () = control.stopped() => { continue; }
+                }
+            } else {
+                stream.try_next().await
+            };
+            let row = match next {
+                Ok(Some(row)) => row,
+                Ok(None) => break,
+                Err(error)
+                    if cancelled_for_failure
+                        && error.code()
+                            == Some(&tokio_postgres::error::SqlState::QUERY_CANCELED) =>
+                {
+                    continue
+                }
+                Err(error) => return Err(self.map_query_error(sql, error)),
+            };
             if max_rows.is_some_and(|limit| row_count >= limit) {
                 truncated = true;
-                break;
+                control.stop(StreamStopReason::MaxRows);
+            }
+            if control.is_stopped() {
+                continue;
             }
 
             if columns.is_empty() {
                 columns = columns_from_row(&row);
             }
 
-            if let Some(chunk_rows) = rows.push(row_to_json_values(&row)?)? {
+            let buffered = row_to_json_values(&row).and_then(|values| rows.push(values));
+            let buffered = match buffered {
+                Ok(buffered) => buffered,
+                Err(error) => {
+                    control.stop(StreamStopReason::CellOrChunkLimit);
+                    processing_error = Some(error);
+                    continue;
+                }
+            };
+            if let Some(chunk_rows) = buffered {
                 let chunk_row_count = chunk_rows.len() as u64;
-                send_query_chunk(&chunks, query_id, &columns, chunk_rows, row_offset).await?;
+                if let Err(error) =
+                    send_query_chunk(&chunks, query_id, &columns, chunk_rows, row_offset).await
+                {
+                    control.stop(StreamStopReason::ReceiverUnavailable);
+                    processing_error = Some(error);
+                    continue;
+                }
                 row_offset += chunk_row_count;
             }
             row_count += 1;
@@ -387,6 +475,9 @@ impl DatabaseDriver for PostgresDriver {
 
         if !rows.is_empty() || !columns.is_empty() {
             send_query_chunk(&chunks, query_id, &columns, rows.take(), row_offset).await?;
+        }
+        if let Some(error) = processing_error {
+            return Err(error);
         }
 
         Ok(QueryStreamSummary {
@@ -486,6 +577,12 @@ impl DatabaseDriver for PostgresDriver {
                       AND tc.table_name = c.table_name
                       AND kcu.column_name = c.column_name
                 ) AS is_primary_key
+                ,c.is_identity = 'YES' AS is_identity
+                ,c.is_generated = 'ALWAYS' AS is_generated
+                ,(
+                    c.is_identity = 'YES'
+                    OR COALESCE(c.column_default, '') LIKE 'nextval(%'
+                ) AS is_auto_increment
             FROM information_schema.columns c
             WHERE c.table_schema = $1
               AND c.table_name = $2
@@ -913,9 +1010,11 @@ impl Drop for QueryRegistration<'_> {
     }
 }
 
-fn rows_to_query_result(rows: Vec<Row>, elapsed_ms: u64) -> Result<QueryResult, AppError> {
-    let columns = rows.first().map(columns_from_row).unwrap_or_default();
-
+fn rows_to_query_result(
+    columns: Vec<ColumnMeta>,
+    rows: Vec<Row>,
+    elapsed_ms: u64,
+) -> Result<QueryResult, AppError> {
     let row_count = rows.len() as u64;
     let rows = rows
         .iter()
@@ -974,7 +1073,7 @@ async fn send_query_chunk(
     chunks
         .send(Ok(chunk))
         .await
-        .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))
+        .map_err(|_| AppError::ResultProcessingError("query stream receiver dropped".to_string()))
 }
 
 fn row_to_json_values(row: &Row) -> Result<Vec<serde_json::Value>, AppError> {
@@ -1020,6 +1119,9 @@ fn column_info_from_row(row: Row) -> ColumnInfo {
         numeric_precision: row.get(8),
         numeric_scale: row.get(9),
         is_primary_key: row.get(10),
+        is_identity: row.get(11),
+        is_generated: row.get(12),
+        is_auto_increment: row.get(13),
     }
 }
 
@@ -1065,6 +1167,667 @@ fn returns_rows(sql: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+    #[derive(Default)]
+    struct ProtocolCounts {
+        produced: AtomicUsize,
+        completed: AtomicUsize,
+        cancellations: AtomicUsize,
+    }
+
+    #[derive(Default)]
+    struct ProtocolFixture {
+        fields: Vec<(&'static str, u32)>,
+        rows: Vec<Vec<Vec<u8>>>,
+        fail: bool,
+        parameterized: bool,
+        counts: Arc<ProtocolCounts>,
+        pause_after_two: Option<Arc<tokio::sync::Semaphore>>,
+        await_cancel: bool,
+        cancelled: tokio_util::sync::CancellationToken,
+    }
+
+    async fn frame(server: &mut (impl AsyncWrite + Unpin), tag: u8, body: &[u8]) {
+        server.write_u8(tag).await.unwrap();
+        server.write_u32((body.len() + 4) as u32).await.unwrap();
+        server.write_all(body).await.unwrap();
+    }
+
+    async fn serve_protocol(
+        mut server: impl AsyncRead + AsyncWrite + Unpin,
+        fixture: ProtocolFixture,
+    ) {
+        let length = server.read_u32().await.unwrap();
+        let mut startup = vec![0; length as usize - 4];
+        server.read_exact(&mut startup).await.unwrap();
+        frame(&mut server, b'R', &[0, 0, 0, 0]).await;
+        let mut backend_key = 73_i32.to_be_bytes().to_vec();
+        backend_key.extend_from_slice(&93_i32.to_be_bytes());
+        frame(&mut server, b'K', &backend_key).await;
+        frame(&mut server, b'Z', b"I").await;
+        while let Ok(tag) = server.read_u8().await {
+            let length = server.read_u32().await.unwrap();
+            let mut body = vec![0; length as usize - 4];
+            server.read_exact(&mut body).await.unwrap();
+            match tag {
+                b'P' => frame(&mut server, b'1', &[]).await,
+                b'D' => {
+                    let mut parameters = (u16::from(fixture.parameterized)).to_be_bytes().to_vec();
+                    if fixture.parameterized {
+                        parameters.extend_from_slice(&23_u32.to_be_bytes());
+                    }
+                    frame(&mut server, b't', &parameters).await;
+                    if fixture.fields.is_empty() {
+                        frame(&mut server, b'n', &[]).await;
+                    } else {
+                        let mut description = (fixture.fields.len() as u16).to_be_bytes().to_vec();
+                        for (name, type_oid) in &fixture.fields {
+                            description.extend_from_slice(name.as_bytes());
+                            description.push(0);
+                            description.extend_from_slice(&0_u32.to_be_bytes());
+                            description.extend_from_slice(&0_i16.to_be_bytes());
+                            description.extend_from_slice(&type_oid.to_be_bytes());
+                            description.extend_from_slice(&(-1_i16).to_be_bytes());
+                            description.extend_from_slice(&(-1_i32).to_be_bytes());
+                            description.extend_from_slice(&0_i16.to_be_bytes());
+                        }
+                        frame(&mut server, b'T', &description).await;
+                    }
+                }
+                b'B' => frame(&mut server, b'2', &[]).await,
+                b'E' => {
+                    if fixture.fail {
+                        frame(&mut server, b'E', b"SERROR\0C42501\0Mpermission denied\0\0").await;
+                    } else {
+                        for (row_index, values) in fixture.rows.iter().enumerate() {
+                            let mut row = (values.len() as u16).to_be_bytes().to_vec();
+                            for value in values {
+                                row.extend_from_slice(&(value.len() as i32).to_be_bytes());
+                                row.extend_from_slice(value);
+                            }
+                            frame(&mut server, b'D', &row).await;
+                            fixture.counts.produced.fetch_add(1, Ordering::SeqCst);
+                            if row_index == 1 {
+                                if let Some(gate) = &fixture.pause_after_two {
+                                    gate.acquire().await.unwrap().forget();
+                                }
+                            }
+                        }
+                        if fixture.await_cancel {
+                            fixture.cancelled.cancelled().await;
+                            frame(&mut server, b'E', b"SERROR\0C57014\0Mquery cancelled\0\0").await;
+                        } else {
+                            frame(
+                                &mut server,
+                                b'C',
+                                if fixture.fields.is_empty() {
+                                    b"UPDATE 2\0"
+                                } else {
+                                    b"SELECT 0\0"
+                                },
+                            )
+                            .await;
+                            fixture.counts.completed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                }
+                b'S' => frame(&mut server, b'Z', b"I").await,
+                b'C' => frame(&mut server, b'3', &[]).await,
+                b'X' => break,
+                _ => panic!("unexpected PostgreSQL fixture request"),
+            }
+        }
+    }
+
+    async fn cancellable_driver(
+        fixture: ProtocolFixture,
+    ) -> (
+        super::PostgresDriver,
+        Arc<ProtocolCounts>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let counts = fixture.counts.clone();
+        let cancelled = fixture.cancelled.clone();
+        let cancellation_counts = counts.clone();
+        let server_task = tokio::spawn(async move {
+            let (server, _) = listener.accept().await.unwrap();
+            let cancellation_task = tokio::spawn(async move {
+                loop {
+                    let (mut request, _) = listener.accept().await.unwrap();
+                    assert_eq!(request.read_u32().await.unwrap(), 16);
+                    assert_eq!(request.read_u32().await.unwrap(), 80_877_102);
+                    assert_eq!(request.read_i32().await.unwrap(), 73);
+                    assert_eq!(request.read_i32().await.unwrap(), 93);
+                    cancellation_counts
+                        .cancellations
+                        .fetch_add(1, Ordering::SeqCst);
+                    cancelled.cancel();
+                }
+            });
+            serve_protocol(server, fixture).await;
+            cancellation_task.abort();
+            assert!(cancellation_task.await.unwrap_err().is_cancelled());
+        });
+        let driver = super::PostgresDriver::connect(&format!(
+            "host=127.0.0.1 port={port} user=fixture sslmode=disable"
+        ))
+        .await
+        .unwrap();
+        (driver, counts, server_task)
+    }
+
+    #[tokio::test]
+    async fn auto_successful_truncation_does_not_cancel_side_effecting_select() {
+        use crate::drivers::trait_def::{
+            DatabaseDriver, DriverStreamRequest, StreamControl, StreamTransactionMode,
+        };
+        let driver = described_driver(vec![("value", 23)], true, false, false).await;
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+        let summary = driver
+            .execute_query_stream_controlled(
+                DriverStreamRequest {
+                    sql: "SELECT side_effecting_function()",
+                    query_id: "successful-truncation",
+                    chunk_size: 1,
+                    max_rows: Some(0),
+                },
+                sender,
+                StreamControl::new(StreamTransactionMode::Auto),
+            )
+            .await
+            .expect("successful truncation must drain without native cancellation");
+        assert!(summary.truncated);
+        assert_eq!(summary.row_count, 0);
+        let chunk = receiver.recv().await.unwrap().unwrap();
+        assert_eq!(chunk.columns[0].name, "value");
+        assert!(chunk.rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn successful_max_rows_drains_without_decoding_discarded_values_in_both_modes() {
+        use crate::{
+            drivers::trait_def::StreamTransactionMode,
+            services::query_engine::{QueryEngine, QueryStreamEvent, StreamQueryRequest},
+        };
+        for mode in [StreamTransactionMode::Auto, StreamTransactionMode::Manual] {
+            let (driver, counts, server) = cancellable_driver(ProtocolFixture {
+                fields: vec![("value", 23)],
+                rows: vec![
+                    vec![7_i32.to_be_bytes().to_vec()],
+                    vec![vec![0]],
+                    vec![vec![0]],
+                    vec![vec![0]],
+                ],
+                ..Default::default()
+            })
+            .await;
+            let driver = Arc::new(driver);
+            let done = std::sync::Mutex::new(None);
+            let retained = std::sync::Mutex::new(Vec::new());
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                QueryEngine::new().execute_query_stream_with_sink_in_mode(
+                    driver.clone(),
+                    StreamQueryRequest {
+                        sql: "SELECT side_effecting_function()".into(),
+                        query_id: "max-rows-drain".into(),
+                        chunk_size: Some(1),
+                        max_rows: Some(1),
+                    },
+                    mode,
+                    |event| {
+                        match event {
+                            QueryStreamEvent::Chunk(chunk) => {
+                                assert_eq!(chunk.columns[0].name, "value");
+                                retained.lock().unwrap().extend(chunk.rows);
+                            }
+                            QueryStreamEvent::Done(summary) => {
+                                *done.lock().unwrap() = Some(summary)
+                            }
+                            QueryStreamEvent::Error(_) => panic!("truncation must not emit ERROR"),
+                        }
+                        Ok(())
+                    },
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let done = done.into_inner().unwrap().unwrap();
+            assert!(done.truncated);
+            assert_eq!(done.row_count, 1);
+            assert_eq!(
+                retained.into_inner().unwrap(),
+                vec![vec![serde_json::json!(7)]]
+            );
+            assert_eq!(counts.produced.load(Ordering::SeqCst), 4);
+            assert_eq!(counts.completed.load(Ordering::SeqCst), 1);
+            assert_eq!(counts.cancellations.load(Ordering::SeqCst), 0);
+            assert!(driver.active_queries.lock().unwrap().is_empty());
+            drop(driver);
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_result_bytes_stop_drains_without_decoding_late_values_in_both_modes() {
+        use crate::drivers::trait_def::{
+            DatabaseDriver, DriverStreamRequest, StreamControl, StreamStopReason,
+            StreamTransactionMode,
+        };
+        for mode in [StreamTransactionMode::Auto, StreamTransactionMode::Manual] {
+            let gate = Arc::new(tokio::sync::Semaphore::new(0));
+            let (driver, counts, server) = cancellable_driver(ProtocolFixture {
+                fields: vec![("value", 23)],
+                rows: vec![
+                    vec![7_i32.to_be_bytes().to_vec()],
+                    vec![8_i32.to_be_bytes().to_vec()],
+                    vec![vec![0]],
+                    vec![vec![0]],
+                ],
+                pause_after_two: Some(gate.clone()),
+                ..Default::default()
+            })
+            .await;
+            let control = StreamControl::new(mode);
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+            let execution = driver.execute_query_stream_controlled(
+                DriverStreamRequest {
+                    sql: "SELECT side_effecting_function()",
+                    query_id: "byte-drain",
+                    chunk_size: 1,
+                    max_rows: None,
+                },
+                sender,
+                control.clone(),
+            );
+            let consume = async {
+                let first = receiver.recv().await.unwrap().unwrap();
+                assert_eq!(first.rows, vec![vec![serde_json::json!(7)]]);
+                control.stop(StreamStopReason::ResultBytes);
+                gate.add_permits(1);
+                let mut retained = first.rows;
+                while let Some(chunk) = receiver.recv().await {
+                    retained.extend(chunk.unwrap().rows);
+                }
+                retained
+            };
+            let (summary, retained) =
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    tokio::join!(execution, consume)
+                })
+                .await
+                .unwrap();
+            assert_eq!(summary.unwrap().row_count, 2);
+            assert_eq!(
+                retained,
+                vec![vec![serde_json::json!(7)], vec![serde_json::json!(8)]]
+            );
+            assert_eq!(counts.produced.load(Ordering::SeqCst), 4);
+            assert_eq!(counts.completed.load(Ordering::SeqCst), 1);
+            assert_eq!(counts.cancellations.load(Ordering::SeqCst), 0);
+            drop(driver);
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn query_engine_result_byte_budget_emits_truncated_done_after_normal_pg_completion() {
+        use crate::services::query_engine::{
+            QueryEngine, QueryStreamEvent, StreamQueryRequest, MAX_INTERACTIVE_RESULT_BYTES,
+        };
+        let row_bytes = 900_000;
+        let total_rows = MAX_INTERACTIVE_RESULT_BYTES / row_bytes + 4;
+        let (driver, counts, server) = cancellable_driver(ProtocolFixture {
+            fields: vec![("value", 25)],
+            rows: vec![vec![vec![b'x'; row_bytes]]; total_rows],
+            ..Default::default()
+        })
+        .await;
+        let driver = Arc::new(driver);
+        let done = std::sync::Mutex::new(None);
+        let retained = AtomicUsize::new(0);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            QueryEngine::new().execute_query_stream_with_sink(
+                driver.clone(),
+                StreamQueryRequest {
+                    sql: "SELECT side_effecting_function()".into(),
+                    query_id: "byte-truncated-done".into(),
+                    chunk_size: Some(1),
+                    max_rows: None,
+                },
+                |event| {
+                    match event {
+                        QueryStreamEvent::Chunk(chunk) => {
+                            retained.fetch_add(chunk.rows.len(), Ordering::SeqCst);
+                        }
+                        QueryStreamEvent::Done(summary) => *done.lock().unwrap() = Some(summary),
+                        QueryStreamEvent::Error(_) => panic!("byte truncation must not emit ERROR"),
+                    }
+                    Ok(())
+                },
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let done = done.into_inner().unwrap().unwrap();
+        assert!(done.truncated);
+        assert!(done.row_count > 0 && done.row_count < total_rows as u64);
+        assert_eq!(done.row_count as usize, retained.load(Ordering::SeqCst));
+        assert!(done.received_bytes <= MAX_INTERACTIVE_RESULT_BYTES as u64);
+        assert_eq!(counts.produced.load(Ordering::SeqCst), total_rows);
+        assert_eq!(counts.completed.load(Ordering::SeqCst), 1);
+        assert_eq!(counts.cancellations.load(Ordering::SeqCst), 0);
+        assert!(driver.active_queries.lock().unwrap().is_empty());
+        drop(driver);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hard_processing_failure_cancels_auto_but_drains_manual() {
+        use crate::drivers::trait_def::{
+            DatabaseDriver, DriverStreamRequest, StreamControl, StreamTransactionMode,
+        };
+        for (type_oid, value) in [
+            (23, vec![0]),
+            (
+                25,
+                vec![b'x'; crate::utils::query_budget::MAX_INTERACTIVE_CELL_BYTES + 1],
+            ),
+        ] {
+            for mode in [StreamTransactionMode::Auto, StreamTransactionMode::Manual] {
+                let (driver, counts, server) = cancellable_driver(ProtocolFixture {
+                    fields: vec![("value", type_oid)],
+                    rows: vec![vec![value.clone()]],
+                    await_cancel: mode == StreamTransactionMode::Auto,
+                    ..Default::default()
+                })
+                .await;
+                let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+                let error = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    driver.execute_query_stream_controlled(
+                        DriverStreamRequest {
+                            sql: "SELECT side_effecting_function()",
+                            query_id: "hard-failure",
+                            chunk_size: 1,
+                            max_rows: None,
+                        },
+                        sender,
+                        StreamControl::new(mode),
+                    ),
+                )
+                .await
+                .unwrap()
+                .unwrap_err();
+                if type_oid == 23 {
+                    assert!(matches!(error, super::AppError::SerializationError(_)));
+                } else {
+                    assert!(matches!(error, super::AppError::ResultLimitExceeded(_)));
+                }
+                assert!(!error.affects_transaction());
+                assert_eq!(
+                    counts.cancellations.load(Ordering::SeqCst),
+                    usize::from(mode == StreamTransactionMode::Auto)
+                );
+                assert_eq!(
+                    counts.completed.load(Ordering::SeqCst),
+                    usize::from(mode == StreamTransactionMode::Manual)
+                );
+                assert!(driver.active_queries.lock().unwrap().is_empty());
+                drop(driver);
+                server.await.unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn delivery_failure_can_native_cancel_auto_while_waiting_for_rows() {
+        use crate::services::query_engine::{QueryEngine, QueryStreamEvent, StreamQueryRequest};
+        let (driver, counts, server) = cancellable_driver(ProtocolFixture {
+            fields: vec![("value", 23)],
+            rows: vec![vec![7_i32.to_be_bytes().to_vec()]; 2],
+            await_cancel: true,
+            ..Default::default()
+        })
+        .await;
+        let driver = Arc::new(driver);
+        let errors = AtomicUsize::new(0);
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            QueryEngine::new().execute_query_stream_with_sink(
+                driver.clone(),
+                StreamQueryRequest {
+                    sql: "SELECT side_effecting_function()".into(),
+                    query_id: "delivery-failure".into(),
+                    chunk_size: Some(1),
+                    max_rows: None,
+                },
+                |event| match event {
+                    QueryStreamEvent::Chunk(_) => Err(super::AppError::ResultProcessingError(
+                        "fixture receiver unavailable".into(),
+                    )),
+                    QueryStreamEvent::Error(_) => {
+                        errors.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    }
+                    QueryStreamEvent::Done(_) => panic!("delivery failure must not emit DONE"),
+                },
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(matches!(error, super::AppError::ResultProcessingError(_)));
+        assert!(!error.affects_transaction());
+        assert_eq!(errors.load(Ordering::SeqCst), 1);
+        assert_eq!(counts.cancellations.load(Ordering::SeqCst), 1);
+        assert_eq!(counts.completed.load(Ordering::SeqCst), 0);
+        drop(driver);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn explicit_user_cancel_still_uses_native_cancel_and_returns_failure_in_both_modes() {
+        use crate::{
+            drivers::trait_def::{DatabaseDriver, StreamTransactionMode},
+            services::query_engine::{QueryEngine, QueryStreamEvent, StreamQueryRequest},
+        };
+        for mode in [StreamTransactionMode::Auto, StreamTransactionMode::Manual] {
+            let (driver, counts, server) = cancellable_driver(ProtocolFixture {
+                fields: vec![("value", 23)],
+                rows: vec![vec![7_i32.to_be_bytes().to_vec()]; 2],
+                await_cancel: true,
+                ..Default::default()
+            })
+            .await;
+            let driver = Arc::new(driver);
+            let (ready, receive_ready) = tokio::sync::oneshot::channel();
+            let ready = std::sync::Mutex::new(Some(ready));
+            let errors = AtomicUsize::new(0);
+            let engine = QueryEngine::new();
+            let execution = engine.execute_query_stream_with_sink_in_mode(
+                driver.clone(),
+                StreamQueryRequest {
+                    sql: "SELECT side_effecting_function()".into(),
+                    query_id: "explicit-cancel".into(),
+                    chunk_size: Some(1),
+                    max_rows: None,
+                },
+                mode,
+                |event| {
+                    match event {
+                        QueryStreamEvent::Chunk(_) => {
+                            if let Some(ready) = ready.lock().unwrap().take() {
+                                ready.send(()).unwrap();
+                            }
+                        }
+                        QueryStreamEvent::Error(_) => {
+                            errors.fetch_add(1, Ordering::SeqCst);
+                        }
+                        QueryStreamEvent::Done(_) => panic!("user cancellation must not emit DONE"),
+                    }
+                    Ok(())
+                },
+            );
+            let cancel = async {
+                receive_ready.await.unwrap();
+                driver.cancel_query("explicit-cancel").await.unwrap();
+            };
+            let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tokio::join!(execution, cancel)
+            })
+            .await
+            .unwrap();
+            let error = result.unwrap_err();
+            assert!(matches!(error, super::AppError::QueryFailed { .. }));
+            assert!(error.affects_transaction());
+            assert_eq!(errors.load(Ordering::SeqCst), 1);
+            assert_eq!(counts.cancellations.load(Ordering::SeqCst), 1);
+            assert_eq!(counts.completed.load(Ordering::SeqCst), 0);
+            assert!(driver.active_queries.lock().unwrap().is_empty());
+            drop(driver);
+            server.await.unwrap();
+        }
+    }
+
+    async fn described_driver(
+        fields: Vec<(&'static str, u32)>,
+        nonempty: bool,
+        fail: bool,
+        parameterized: bool,
+    ) -> super::PostgresDriver {
+        let rows = if nonempty {
+            vec![fields
+                .iter()
+                .map(|(_, type_oid)| {
+                    if *type_oid == 23 {
+                        7_i32.to_be_bytes().to_vec()
+                    } else {
+                        b"value".to_vec()
+                    }
+                })
+                .collect()]
+        } else {
+            vec![]
+        };
+        let (stream, server) = tokio::io::duplex(16 * 1024);
+        tokio::spawn(serve_protocol(
+            server,
+            ProtocolFixture {
+                fields,
+                rows,
+                fail,
+                parameterized,
+                ..Default::default()
+            },
+        ));
+        let mut config = tokio_postgres::Config::new();
+        config
+            .user("fixture")
+            .ssl_mode(tokio_postgres::config::SslMode::Disable);
+        let (client, connection) = config
+            .connect_raw(stream, tokio_postgres::NoTls)
+            .await
+            .unwrap();
+        super::PostgresDriver {
+            cancel_token: client.cancel_token(),
+            client,
+            tls: postgres_native_tls::MakeTlsConnector::new(
+                native_tls::TlsConnector::new().unwrap(),
+            ),
+            active_queries: std::sync::Mutex::new(std::collections::HashMap::new()),
+            _connection_task: tokio::spawn(async move {
+                connection.await.unwrap();
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_select_keeps_statement_columns_including_aliases_and_types() {
+        use crate::drivers::trait_def::DatabaseDriver;
+        for (sql, fields, expected) in [
+            (
+                "SELECT 1 AS id WHERE false",
+                vec![("id", 23)],
+                vec![("id", "int4")],
+            ),
+            (
+                "SELECT CAST(NULL AS bigint) AS id, CAST(NULL AS text) AS name WHERE false",
+                vec![("id", 20), ("name", 25)],
+                vec![("id", "int8"), ("name", "text")],
+            ),
+        ] {
+            let driver = described_driver(fields, false, false, false).await;
+            let result = driver.execute_query(sql, None).await.unwrap();
+            assert_eq!(result.row_count, 0);
+            assert!(result.rows.is_empty());
+            assert_eq!(
+                result
+                    .columns
+                    .iter()
+                    .map(|column| (column.name.as_str(), column.data_type.as_str()))
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_parameterized_select_keeps_columns() {
+        use crate::drivers::trait_def::{DatabaseDriver, DbParameter};
+        let driver = described_driver(vec![("id", 23)], false, false, true).await;
+        let result = driver
+            .execute_parameterized(
+                "SELECT $1::integer AS id WHERE false",
+                &[DbParameter::Text("7".into())],
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(result.rows.is_empty());
+        assert_eq!(result.row_count, 0);
+        assert_eq!(result.columns[0].name, "id");
+        assert_eq!(result.columns[0].data_type, "int4");
+    }
+
+    #[tokio::test]
+    async fn described_nonempty_select_dml_and_query_errors_keep_their_semantics() {
+        use crate::drivers::trait_def::DatabaseDriver;
+        let driver = described_driver(vec![("alias", 23)], true, false, false).await;
+        let result = driver
+            .execute_query("SELECT 7 AS alias", None)
+            .await
+            .unwrap();
+        assert_eq!(result.rows, vec![vec![serde_json::json!(7)]]);
+        assert_eq!(result.row_count, 1);
+        assert_eq!(result.columns[0].name, "alias");
+        let driver = described_driver(vec![], false, false, false).await;
+        let result = driver
+            .execute_query("UPDATE fixture SET id = 7", None)
+            .await
+            .unwrap();
+        assert!(result.columns.is_empty());
+        assert_eq!(result.affected_rows, 2);
+        let driver = described_driver(vec![("id", 23)], false, true, false).await;
+        assert!(matches!(
+            driver
+                .execute_query("SELECT id FROM denied", None)
+                .await
+                .unwrap_err(),
+            super::AppError::QueryFailed { .. }
+        ));
+    }
+
     #[test]
     fn csv_parameters_use_server_parsed_text_format_for_typed_columns() {
         use super::{CsvParameter, DbParameter, Format, IsNull, ToSql, Type};

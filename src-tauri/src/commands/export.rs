@@ -436,8 +436,13 @@ pub async fn export_query_csv(
 pub async fn export_table_csv(
     app: AppHandle,
     state: State<'_, AppState>,
-    input: ExportTableCsvInput,
+    mut input: ExportTableCsvInput,
 ) -> Result<TaskInfo, AppError> {
+    input.driver_type = resolve_connection_sql_dialect(
+        &state.config_store,
+        input.connection_id,
+        input.driver_type,
+    )?;
     let operation = begin_csv_operation(&state, input.connection_id).await?;
     let path = PathBuf::from(&input.path);
     let staged_path = staged_export_path(&path)?;
@@ -565,8 +570,13 @@ async fn preview_table_csv_import_inner(
 pub async fn import_table_csv(
     app: AppHandle,
     state: State<'_, AppState>,
-    input: ImportTableCsvInput,
+    mut input: ImportTableCsvInput,
 ) -> Result<TaskInfo, AppError> {
+    input.driver_type = resolve_connection_sql_dialect(
+        &state.config_store,
+        input.connection_id,
+        input.driver_type,
+    )?;
     let operation = begin_csv_operation(&state, input.connection_id)
         .await?
         .wait()
@@ -906,16 +916,11 @@ async fn write_table_csv(
     if handle.is_cancel_requested() {
         return Err(ExportTaskError::Cancelled);
     }
+    let selected_columns = export_column_names(&columns)?;
     let file = File::create(path).await.map_err(AppError::from)?;
     let mut writer = BufWriter::new(file);
     let mut bytes_written = 0_u64;
     let mut wrote_any = false;
-    let selected_columns = columns
-        .iter()
-        .filter(|column| !generated_column_default(&column.default_value))
-        .map(|column| column.name.clone())
-        .collect::<Vec<_>>();
-
     if input.include_header {
         bytes_written += write_csv_line(
             &mut writer,
@@ -1089,7 +1094,7 @@ async fn preview_csv_import(
     columns: &[ColumnInfo],
 ) -> Result<ImportPreview, AppError> {
     let file = File::open(&input.path).await?;
-    preview_csv_reader(input, file, importable_column_names(columns)).await
+    preview_csv_reader(input, file, require_importable_column_names(columns)?).await
 }
 
 #[derive(Debug)]
@@ -1133,7 +1138,13 @@ async fn preview_csv_import_with_cancel(
 ) -> Result<ImportPreview, PreviewCsvError> {
     ensure_preview_not_cancelled(handle)?;
     let file = File::open(&input.path).await.map_err(AppError::from)?;
-    preview_csv_reader_with_cancel(input, file, importable_column_names(columns), handle).await
+    preview_csv_reader_with_cancel(
+        input,
+        file,
+        require_importable_column_names(columns)?,
+        handle,
+    )
+    .await
 }
 
 async fn preview_csv_reader<R: AsyncRead + Unpin>(
@@ -1277,6 +1288,7 @@ async fn import_csv_rows(
     manager: &crate::services::task_manager::TaskManager,
     handle: &TaskHandle,
 ) -> Result<ImportReport, ExportTaskError> {
+    ensure_import_active(handle)?;
     // Imports are a single logical write job.  Keep the connection in an
     // explicit transaction while the two-pass validation/write pipeline runs
     // so cancellation or an unrecoverable write error cannot leave an
@@ -1296,9 +1308,13 @@ async fn import_csv_rows(
         .await
         .map_err(ExportTaskError::from)?;
 
-    let result = import_csv_rows_in_transaction(input, operation, columns, manager, handle).await;
+    let result = import_csv_rows_in_transaction(input, &operation, columns, manager, handle).await;
     match result {
         Ok(report) => {
+            if handle.is_cancel_requested() {
+                let _ = driver.rollback_transaction().await;
+                return Err(ExportTaskError::Cancelled);
+            }
             if let Err(error) = driver.commit_transaction().await {
                 let _ = driver.rollback_transaction().await;
                 Err(ExportTaskError::from(error))
@@ -1315,9 +1331,17 @@ async fn import_csv_rows(
     }
 }
 
+fn ensure_import_active(handle: &TaskHandle) -> Result<(), ExportTaskError> {
+    if handle.is_cancel_requested() {
+        Err(ExportTaskError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
 async fn import_csv_rows_in_transaction(
     input: &ImportTableCsvInput,
-    operation: QueryOperation,
+    operation: &QueryOperation,
     columns: Vec<ColumnInfo>,
     manager: &crate::services::task_manager::TaskManager,
     handle: &TaskHandle,
@@ -1326,11 +1350,13 @@ async fn import_csv_rows_in_transaction(
         return Err(ExportTaskError::Cancelled);
     }
     let driver = operation.driver.clone();
-    let target_columns = importable_column_names(&columns);
+    let target_columns = require_importable_column_names(&columns)?;
     let file_snapshot = import_file_snapshot(Path::new(&input.path)).await?;
     let file = File::open(&input.path).await.map_err(AppError::from)?;
     let mut reader = CsvRecordReader::new(file, IMPORT_MAX_RECORD_BYTES);
-    let first = reader.next_row().await?;
+    let first = reader
+        .next_row_checked(|| ensure_import_active(handle))
+        .await?;
     let headers = match &first {
         Some(row) if input.has_header => row.clone(),
         Some(_) | None => target_columns.clone(),
@@ -1349,7 +1375,9 @@ async fn import_csv_rows_in_transaction(
     let table = qualified_table(input.driver_type, &input.schema, &input.table);
     let mut total_rows = 0_u64;
     let mut next = if input.has_header {
-        reader.next_row().await?
+        reader
+            .next_row_checked(|| ensure_import_active(handle))
+            .await?
     } else {
         first
     };
@@ -1375,7 +1403,10 @@ async fn import_csv_rows_in_transaction(
         if total_rows.is_multiple_of(100) {
             yield_now().await;
         }
-        next = reader.next_row().await?;
+        ensure_import_active(handle)?;
+        next = reader
+            .next_row_checked(|| ensure_import_active(handle))
+            .await?;
     }
 
     // Validate the complete stream before the first database write. This
@@ -1386,13 +1417,16 @@ async fn import_csv_rows_in_transaction(
     // Before the first write, also compare the content hash so an in-place
     // rewrite that preserves length and mtime cannot be imported silently.
     ensure_import_file_content_unchanged(Path::new(&input.path), &file_snapshot).await?;
+    ensure_import_active(handle)?;
     let mut file = reader.into_inner();
     file.seek(SeekFrom::Start(0))
         .await
         .map_err(AppError::from)?;
     let mut reader = CsvRecordReader::new(file, IMPORT_MAX_RECORD_BYTES);
     if input.has_header {
-        reader.next_row().await?;
+        reader
+            .next_row_checked(|| ensure_import_active(handle))
+            .await?;
     }
     let mut inserted_rows = 0_u64;
     let mut failed_writes = BoundedRowReports::default();
@@ -1425,12 +1459,19 @@ async fn import_csv_rows_in_transaction(
         failed_writes: &mut BoundedRowReports,
         inserted_rows: &mut u64,
     ) -> Result<(), ExportTaskError> {
+        ensure_import_active(handle)?;
         if batch.is_empty() {
             return Ok(());
         }
         let query_id = format!("table-import-{}", handle.id);
-        let (sql, params) =
-            build_parameterized_insert_batch_sql(driver_type, table, columns, batch, empty_as_null);
+        let (sql, params) = build_parameterized_insert_batch_sql_checked(
+            driver_type,
+            table,
+            columns,
+            batch,
+            empty_as_null,
+            || ensure_import_active(handle),
+        )?;
         let postgres = driver_type == DriverType::Postgres;
         if postgres {
             driver
@@ -1438,9 +1479,11 @@ async fn import_csv_rows_in_transaction(
                 .await
                 .map_err(ExportTaskError::DatabaseFailed)?;
         }
+        ensure_import_active(handle)?;
         let batch_result = driver
             .execute_parameterized(&sql, &params, Some(&query_id))
             .await;
+        ensure_import_active(handle)?;
         if batch_result.is_ok() {
             if postgres {
                 driver
@@ -1448,6 +1491,7 @@ async fn import_csv_rows_in_transaction(
                     .await
                     .map_err(ExportTaskError::DatabaseFailed)?;
             }
+            ensure_import_active(handle)?;
             *inserted_rows += batch.len() as u64;
         } else {
             if postgres {
@@ -1473,17 +1517,20 @@ async fn import_csv_rows_in_transaction(
                         .await
                         .map_err(ExportTaskError::DatabaseFailed)?;
                 }
-                let (sql, params) = build_parameterized_insert_sql(
+                let (sql, params) = build_parameterized_insert_sql_checked(
                     driver_type,
                     table,
                     columns,
                     &row,
                     empty_as_null,
-                );
-                match driver
+                    || ensure_import_active(handle),
+                )?;
+                ensure_import_active(handle)?;
+                let row_result = driver
                     .execute_parameterized(&sql, &params, Some(&query_id))
-                    .await
-                {
+                    .await;
+                ensure_import_active(handle)?;
+                match row_result {
                     Ok(_) => {
                         if postgres {
                             driver
@@ -1494,6 +1541,7 @@ async fn import_csv_rows_in_transaction(
                                 .await
                                 .map_err(ExportTaskError::DatabaseFailed)?;
                         }
+                        ensure_import_active(handle)?;
                         *inserted_rows += 1;
                     }
                     Err(error) => {
@@ -1513,6 +1561,7 @@ async fn import_csv_rows_in_transaction(
                                 .await
                                 .map_err(ExportTaskError::DatabaseFailed)?;
                         }
+                        ensure_import_active(handle)?;
                         failed_writes.push(RowReport {
                             row_number,
                             message: error.to_string(),
@@ -1524,10 +1573,14 @@ async fn import_csv_rows_in_transaction(
             return Ok(());
         }
         batch.clear();
+        ensure_import_active(handle)?;
         Ok(())
     }
 
-    while let Some(row) = reader.next_row().await? {
+    while let Some(row) = reader
+        .next_row_checked(|| ensure_import_active(handle))
+        .await?
+    {
         current += 1;
         if handle.is_cancel_requested() {
             return Err(ExportTaskError::Cancelled);
@@ -1559,21 +1612,24 @@ async fn import_csv_rows_in_transaction(
                     batch_bytes = 0;
                 }
             } else {
-                let (sql, params) = build_parameterized_insert_sql(
+                let (sql, params) = build_parameterized_insert_sql_checked(
                     input.driver_type,
                     &table,
                     &import_columns,
                     &row,
                     input.empty_as_null,
-                );
-                match driver
+                    || ensure_import_active(handle),
+                )?;
+                ensure_import_active(handle)?;
+                let row_result = driver
                     .execute_parameterized(
                         &sql,
                         &params,
                         Some(&format!("table-import-{}", handle.id)),
                     )
-                    .await
-                {
+                    .await;
+                ensure_import_active(handle)?;
+                match row_result {
                     Ok(_) => inserted_rows += 1,
                     Err(error) => failed_writes.push(RowReport {
                         row_number,
@@ -1608,6 +1664,7 @@ async fn import_csv_rows_in_transaction(
         &mut inserted_rows,
     )
     .await?;
+    ensure_import_active(handle)?;
 
     let report_path = format!("{}.import-report.json", input.path);
     let report = ImportReport {
@@ -1624,6 +1681,7 @@ async fn import_csv_rows_in_transaction(
     };
     if report.invalid_row_count > 0 || report.failed_write_count > 0 {
         let content = serde_json::to_string_pretty(&report).map_err(AppError::from)?;
+        ensure_import_active(handle)?;
         tokio::fs::write(&report_path, content)
             .await
             .map_err(AppError::from)?;
@@ -1722,10 +1780,19 @@ impl<R: AsyncRead + Unpin> CsvRecordReader<R> {
     }
 
     async fn next_row(&mut self) -> Result<Option<Vec<String>>, AppError> {
+        self.next_row_checked(|| Ok::<_, AppError>(())).await
+    }
+
+    async fn next_row_checked<Error: From<AppError>>(
+        &mut self,
+        mut check: impl FnMut() -> Result<(), Error>,
+    ) -> Result<Option<Vec<String>>, Error> {
         let mut record = Vec::new();
         let mut in_quotes = false;
         loop {
-            let available = self.reader.fill_buf().await?;
+            check()?;
+            let available = self.reader.fill_buf().await.map_err(AppError::from)?;
+            check()?;
             if available.is_empty() {
                 if record.is_empty() {
                     return Ok(None);
@@ -1751,7 +1818,8 @@ impl<R: AsyncRead + Unpin> CsvRecordReader<R> {
                     return Err(AppError::SerializationError(format!(
                         "CSV record exceeds the {} byte limit",
                         self.max_record_bytes
-                    )));
+                    ))
+                    .into());
                 }
                 if byte == b'"' {
                     in_quotes = !in_quotes;
@@ -1768,7 +1836,9 @@ impl<R: AsyncRead + Unpin> CsvRecordReader<R> {
         })?;
         // Terminate even an empty record, preserving an empty quoted EOF field.
         record.push('\n');
+        check()?;
         let mut rows = parse_csv(&record)?;
+        check()?;
         Ok(rows.pop())
     }
 }
@@ -1837,7 +1907,7 @@ fn csv_headers_and_rows(
         let headers = iter.next().unwrap_or_default();
         (headers, iter.collect(), 2)
     } else {
-        // Headerless CSV maps by target metadata order, excluding generated
+        // Headerless CSV maps by target metadata order, excluding non-writable columns
         // columns. Require the complete width rather than guessing a subset.
         (target_columns.to_vec(), parsed, 1)
     }
@@ -1919,18 +1989,103 @@ fn validate_import_rows_sampled(
     }
 }
 
+fn resolve_connection_sql_dialect(
+    store: &crate::services::config_store::ConfigStore,
+    connection_id: Uuid,
+    _caller: DriverType,
+) -> Result<DriverType, AppError> {
+    let connection = store
+        .get_connection(connection_id)?
+        .ok_or_else(|| AppError::NotFound {
+            resource: "connection".into(),
+            id: connection_id.to_string(),
+        })?;
+    let definition = connection
+        .driver_definition_id
+        .as_deref()
+        .map(|id| {
+            store
+                .get_driver_definition(id)?
+                .ok_or_else(|| AppError::NotFound {
+                    resource: "driver definition".into(),
+                    id: id.to_string(),
+                })
+        })
+        .transpose()?;
+    let jdbc = matches!(connection.driver_type, DriverType::Jdbc)
+        || matches!(
+            definition.as_ref().map(|driver| &driver.backend),
+            Some(crate::models::driver_catalog::DriverBackend::Jdbc)
+        );
+    let dialect = if jdbc {
+        match connection
+            .driver_dialect
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                definition
+                    .as_ref()
+                    .map(|driver| driver.driver_dialect.as_str())
+            })
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("postgres" | "postgresql") => DriverType::Postgres,
+            Some("mysql" | "mariadb") => DriverType::Mysql,
+            Some("mssql" | "sqlserver") => DriverType::Mssql,
+            Some("sqlite") => DriverType::Sqlite,
+            Some("oracle") => DriverType::Oracle,
+            _ => {
+                return Err(AppError::UnsupportedOperation {
+                    driver: "jdbc".into(),
+                    operation: "CSV SQL dialect is not supported".into(),
+                })
+            }
+        }
+    } else {
+        connection.driver_type
+    };
+    if matches!(
+        dialect,
+        DriverType::Mongo | DriverType::Redis | DriverType::Jdbc
+    ) {
+        return Err(AppError::UnsupportedOperation {
+            driver: dialect.to_string(),
+            operation: "table CSV SQL dialect".into(),
+        });
+    }
+    Ok(dialect)
+}
+
+fn export_column_names(columns: &[ColumnInfo]) -> Result<Vec<String>, AppError> {
+    if columns.is_empty() {
+        return Err(AppError::ConfigError(
+            "table has no readable/exportable columns".into(),
+        ));
+    }
+    Ok(columns.iter().map(|column| column.name.clone()).collect())
+}
+
 fn importable_column_names(columns: &[ColumnInfo]) -> Vec<String> {
     columns
         .iter()
-        .filter(|column| !generated_column_default(&column.default_value))
+        .filter(|column| column_is_import_writable(column))
         .map(|column| column.name.clone())
         .collect()
 }
 
-fn generated_column_default(default_value: &Option<String>) -> bool {
-    default_value
-        .as_deref()
-        .is_some_and(|value| value.to_lowercase().contains("generated"))
+fn require_importable_column_names(columns: &[ColumnInfo]) -> Result<Vec<String>, AppError> {
+    let names = importable_column_names(columns);
+    if names.is_empty() {
+        return Err(AppError::ConfigError(
+            "table has no writable/importable columns".into(),
+        ));
+    }
+    Ok(names)
+}
+
+fn column_is_import_writable(column: &ColumnInfo) -> bool {
+    !column.is_identity && !column.is_generated && !column.is_auto_increment
 }
 
 fn parameter_placeholder(driver_type: DriverType, index: usize) -> String {
@@ -1949,6 +2104,7 @@ fn csv_parameter(value: &str, empty_as_null: bool) -> DbParameter {
     }
 }
 
+#[cfg(test)]
 fn build_parameterized_insert_sql(
     driver_type: DriverType,
     table: &str,
@@ -1956,14 +2112,32 @@ fn build_parameterized_insert_sql(
     row: &[String],
     empty_as_null: bool,
 ) -> (String, Vec<DbParameter>) {
-    let placeholders = (0..row.len())
-        .map(|index| parameter_placeholder(driver_type, index))
-        .collect::<Vec<_>>();
-    let params = row
-        .iter()
-        .map(|value| csv_parameter(value, empty_as_null))
-        .collect::<Vec<_>>();
-    (
+    build_parameterized_insert_sql_checked(driver_type, table, columns, row, empty_as_null, || {
+        Ok(())
+    })
+    .unwrap()
+}
+
+fn build_parameterized_insert_sql_checked(
+    driver_type: DriverType,
+    table: &str,
+    columns: &[String],
+    row: &[String],
+    empty_as_null: bool,
+    mut check: impl FnMut() -> Result<(), ExportTaskError>,
+) -> Result<(String, Vec<DbParameter>), ExportTaskError> {
+    check()?;
+    let mut placeholders = Vec::with_capacity(row.len());
+    let mut params = Vec::with_capacity(row.len());
+    for (index, value) in row.iter().enumerate() {
+        if index.is_multiple_of(64) {
+            check()?;
+        }
+        placeholders.push(parameter_placeholder(driver_type, index));
+        params.push(csv_parameter(value, empty_as_null));
+    }
+    check()?;
+    Ok((
         format!(
             "INSERT INTO {table} ({}) VALUES ({});",
             columns
@@ -1974,9 +2148,10 @@ fn build_parameterized_insert_sql(
             placeholders.join(", ")
         ),
         params,
-    )
+    ))
 }
 
+#[cfg(test)]
 fn build_parameterized_insert_batch_sql(
     driver_type: DriverType,
     table: &str,
@@ -1984,21 +2159,44 @@ fn build_parameterized_insert_batch_sql(
     rows: &[(u64, Vec<String>)],
     empty_as_null: bool,
 ) -> (String, Vec<DbParameter>) {
-    let mut parameter_index = 0;
+    build_parameterized_insert_batch_sql_checked(
+        driver_type,
+        table,
+        columns,
+        rows,
+        empty_as_null,
+        || Ok(()),
+    )
+    .unwrap()
+}
+
+fn build_parameterized_insert_batch_sql_checked(
+    driver_type: DriverType,
+    table: &str,
+    columns: &[String],
+    rows: &[(u64, Vec<String>)],
+    empty_as_null: bool,
+    mut check: impl FnMut() -> Result<(), ExportTaskError>,
+) -> Result<(String, Vec<DbParameter>), ExportTaskError> {
+    check()?;
+    let mut parameter_index = 0_usize;
     let mut values = Vec::with_capacity(rows.len());
     let mut params = Vec::new();
     for (_, row) in rows {
-        let placeholders = (0..row.len())
-            .map(|_| {
-                let placeholder = parameter_placeholder(driver_type, parameter_index);
-                parameter_index += 1;
-                placeholder
-            })
-            .collect::<Vec<_>>();
+        check()?;
+        let mut placeholders = Vec::with_capacity(row.len());
+        for value in row {
+            if parameter_index.is_multiple_of(64) {
+                check()?;
+            }
+            placeholders.push(parameter_placeholder(driver_type, parameter_index));
+            parameter_index += 1;
+            params.push(csv_parameter(value, empty_as_null));
+        }
         values.push(format!("({})", placeholders.join(", ")));
-        params.extend(row.iter().map(|value| csv_parameter(value, empty_as_null)));
     }
-    (
+    check()?;
+    Ok((
         format!(
             "INSERT INTO {table} ({}) VALUES {};",
             columns
@@ -2009,7 +2207,7 @@ fn build_parameterized_insert_batch_sql(
             values.join(", ")
         ),
         params,
-    )
+    ))
 }
 
 fn qualified_table(driver_type: DriverType, schema: &str, table: &str) -> String {
@@ -2021,15 +2219,11 @@ fn qualified_table(driver_type: DriverType, schema: &str, table: &str) -> String
 }
 
 fn quote_identifier(driver_type: DriverType, value: &str) -> String {
-    let quote = if matches!(driver_type, DriverType::Mysql) {
-        '`'
-    } else {
-        '"'
-    };
-    format!(
-        "{quote}{}{quote}",
-        value.replace(quote, &format!("{quote}{quote}"))
-    )
+    match driver_type {
+        DriverType::Mysql => format!("`{}`", value.replace('`', "``")),
+        DriverType::Mssql => format!("[{}]", value.replace(']', "]]")),
+        _ => format!("\"{}\"", value.replace('"', "\"\"")),
+    }
 }
 
 async fn write_csv_line(
@@ -2153,6 +2347,230 @@ mod tests {
     use crate::models::connection::DriverType;
     use crate::models::query_result::{ColumnMeta, QueryResult};
 
+    #[test]
+    fn table_csv_dialect_comes_from_saved_connection_not_frontend_input() {
+        use crate::services::config_store::ConfigStore;
+        for (actual, caller, table, placeholder) in [
+            (
+                DriverType::Postgres,
+                DriverType::Mysql,
+                "\"public\".\"items\"",
+                "$1",
+            ),
+            (
+                DriverType::Mysql,
+                DriverType::Postgres,
+                "`public`.`items`",
+                "?",
+            ),
+            (
+                DriverType::Mssql,
+                DriverType::Mysql,
+                "[public].[items]",
+                "?",
+            ),
+        ] {
+            let root = std::env::temp_dir()
+                .join(format!("vaporlens-csv-dialect-{}", uuid::Uuid::new_v4()));
+            let store = ConfigStore::new(root.clone()).unwrap();
+            let id = uuid::Uuid::new_v4();
+            let config = serde_json::from_value(json!({ "id": id, "name": "dialect fixture", "driverType": actual, "driverPaths": [], "createdAt": chrono::Utc::now(), "updatedAt": chrono::Utc::now() })).unwrap();
+            store.create_connection(config, None, false).unwrap();
+            let mut export: super::ExportTableCsvInput = serde_json::from_value(json!({ "connectionId": id, "driverType": caller, "schema": "public", "table": "items", "path": "fixture.csv" })).unwrap();
+            let mut import: super::ImportTableCsvInput = serde_json::from_value(json!({ "connectionId": id, "driverType": caller, "schema": "public", "table": "items", "path": "fixture.csv" })).unwrap();
+            export.driver_type = super::resolve_connection_sql_dialect(
+                &store,
+                export.connection_id,
+                export.driver_type,
+            )
+            .unwrap();
+            import.driver_type = super::resolve_connection_sql_dialect(
+                &store,
+                import.connection_id,
+                import.driver_type,
+            )
+            .unwrap();
+            assert_eq!(
+                qualified_table(export.driver_type, &export.schema, &export.table),
+                table
+            );
+            assert_eq!(
+                qualified_table(import.driver_type, &import.schema, &import.table),
+                table
+            );
+            let (sql, params) = build_parameterized_insert_sql(
+                import.driver_type,
+                table,
+                &["id".into()],
+                &["7".into()],
+                false,
+            );
+            assert_eq!(
+                sql,
+                format!(
+                    "INSERT INTO {table} ({}) VALUES ({placeholder});",
+                    super::quote_identifier(actual, "id")
+                )
+            );
+            assert_eq!(params, vec![DbParameter::Text("7".into())]);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn jdbc_csv_dialect_uses_saved_dialect_or_catalog_and_rejects_unknown_targets() {
+        use crate::services::config_store::ConfigStore;
+        let root = std::env::temp_dir().join(format!(
+            "vaporlens-jdbc-csv-dialect-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ConfigStore::new(root.clone()).unwrap();
+        for (driver_type, definition_id, dialect, expected) in [
+            (
+                DriverType::Jdbc,
+                Some("jdbc-postgresql"),
+                None,
+                Some(DriverType::Postgres),
+            ),
+            (
+                DriverType::Postgres,
+                Some("jdbc-postgresql"),
+                Some("mysql"),
+                Some(DriverType::Mysql),
+            ),
+            (
+                DriverType::Jdbc,
+                None,
+                Some("sqlserver"),
+                Some(DriverType::Mssql),
+            ),
+            (
+                DriverType::Oracle,
+                Some("oracle"),
+                None,
+                Some(DriverType::Oracle),
+            ),
+            (DriverType::Jdbc, None, Some("unknown"), None),
+            (DriverType::Jdbc, None, None, None),
+            (
+                DriverType::Postgres,
+                Some("jdbc-postgresql"),
+                Some("unknown"),
+                None,
+            ),
+        ] {
+            let id = uuid::Uuid::new_v4();
+            let config = serde_json::from_value(json!({ "id": id, "name": "JDBC dialect fixture", "driverType": driver_type, "driverDefinitionId": definition_id, "driverDialect": dialect, "driverPaths": [], "createdAt": chrono::Utc::now(), "updatedAt": chrono::Utc::now() })).unwrap();
+            store.create_connection(config, None, false).unwrap();
+            let resolved = super::resolve_connection_sql_dialect(&store, id, DriverType::Mysql);
+            match expected {
+                Some(expected) => assert_eq!(resolved.unwrap(), expected),
+                None => assert!(matches!(
+                    resolved,
+                    Err(crate::models::error::AppError::UnsupportedOperation { .. })
+                )),
+            }
+        }
+        assert!(matches!(
+            super::resolve_connection_sql_dialect(
+                &store,
+                uuid::Uuid::new_v4(),
+                DriverType::Postgres
+            ),
+            Err(crate::models::error::AppError::NotFound { .. })
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn readable_export_columns_are_separate_from_writable_import_columns() {
+        let column = |name, default_value, is_identity, is_generated, is_auto_increment| {
+            serde_json::from_value(json!({ "table": "items", "name": name, "ordinalPosition": 1, "dataType": "INTEGER", "nullable": false, "isPrimaryKey": false, "defaultValue": default_value, "isIdentity": is_identity, "isGenerated": is_generated, "isAutoIncrement": is_auto_increment })).unwrap()
+        };
+        let columns = vec![
+            column(
+                "id",
+                Some("GENERATED ALWAYS AS IDENTITY"),
+                true,
+                false,
+                true,
+            ),
+            column("name", None, false, false, false),
+            column("defaulted", Some("7"), false, false, false),
+        ];
+        assert_eq!(
+            super::export_column_names(&columns).unwrap(),
+            vec!["id", "name", "defaulted"]
+        );
+        assert_eq!(
+            super::importable_column_names(&columns),
+            vec!["name", "defaulted"]
+        );
+        assert!(super::export_column_names(&[]).is_err());
+    }
+
+    #[test]
+    fn structured_generated_metadata_controls_importability_without_default_text_guessing() {
+        let column = |name, default_value, is_identity, is_generated, is_auto_increment| {
+            serde_json::from_value(json!({
+                "table": "items",
+                "name": name,
+                "ordinalPosition": 1,
+                "dataType": "INTEGER",
+                "nullable": false,
+                "isPrimaryKey": false,
+                "defaultValue": default_value,
+                "isIdentity": is_identity,
+                "isGenerated": is_generated,
+                "isAutoIncrement": is_auto_increment
+            }))
+            .unwrap()
+        };
+        let columns = vec![
+            column("identity_id", None, true, false, true),
+            column("computed", Some("1 + 1"), false, true, false),
+            column("ordinary_default", Some("now()"), false, false, false),
+            column(
+                "legacy_text",
+                Some("generated by application"),
+                false,
+                false,
+                false,
+            ),
+        ];
+
+        assert_eq!(
+            super::importable_column_names(&columns),
+            vec!["ordinary_default", "legacy_text"]
+        );
+        assert!(super::require_importable_column_names(&columns).is_ok());
+        assert!(super::require_importable_column_names(&columns[..2]).is_err());
+        assert_eq!(
+            super::export_column_names(&columns).unwrap(),
+            vec!["identity_id", "computed", "ordinary_default", "legacy_text"]
+        );
+    }
+
+    #[test]
+    fn mssql_generated_sql_uses_bracket_quoting_and_escapes_closing_brackets() {
+        assert_eq!(
+            super::qualified_table(DriverType::Mssql, "dbo", "Order"),
+            "[dbo].[Order]"
+        );
+        assert_eq!(
+            super::quote_identifier(DriverType::Mssql, "weird]name"),
+            "[weird]]name]"
+        );
+        let (sql, _) = super::build_parameterized_insert_sql(
+            DriverType::Mssql,
+            "[ignored by helper]",
+            &["value".into(), "col]name".into()],
+            &["a".into(), "b".into()],
+            false,
+        );
+        assert!(sql.contains("[value], [col]]name]"));
+    }
+
     struct CountingReader {
         bytes: Vec<u8>,
         position: usize,
@@ -2185,6 +2603,79 @@ mod tests {
             }
             Poll::Ready(Ok(()))
         }
+    }
+
+    #[tokio::test]
+    async fn import_parser_cancellation_stops_inside_a_record_before_eof() {
+        let bytes = Arc::new(AtomicUsize::new(0));
+        let content = format!("\"{}\"\n", "large field".repeat(1000));
+        let length = content.len();
+        let mut reader = super::CsvRecordReader::new(
+            CountingReader::new(content, bytes.clone()),
+            super::IMPORT_MAX_RECORD_BYTES,
+        );
+        let mut checks = 0;
+        let result = reader
+            .next_row_checked(|| {
+                checks += 1;
+                if checks == 5 {
+                    Err(super::ExportTaskError::Cancelled)
+                } else {
+                    Ok(())
+                }
+            })
+            .await;
+        assert!(matches!(result, Err(super::ExportTaskError::Cancelled)));
+        assert!(bytes.load(Ordering::SeqCst) < length);
+    }
+
+    #[test]
+    fn import_parameter_build_checks_inside_a_wide_row_and_between_batch_rows() {
+        let columns = (0..256)
+            .map(|index| format!("column_{index}"))
+            .collect::<Vec<_>>();
+        let row = vec!["value".to_string(); columns.len()];
+        let mut checks = 0;
+        let result = super::build_parameterized_insert_sql_checked(
+            DriverType::Postgres,
+            "items",
+            &columns,
+            &row,
+            true,
+            || {
+                checks += 1;
+                if checks == 3 {
+                    Err(super::ExportTaskError::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(matches!(result, Err(super::ExportTaskError::Cancelled)));
+        assert_eq!(checks, 3);
+        let rows = vec![
+            (1, vec!["first".into()]),
+            (2, vec!["second".into()]),
+            (3, vec!["third".into()]),
+        ];
+        let mut checks = 0;
+        let result = super::build_parameterized_insert_batch_sql_checked(
+            DriverType::Sqlite,
+            "items",
+            &["name".into()],
+            &rows,
+            true,
+            || {
+                checks += 1;
+                if checks == 4 {
+                    Err(super::ExportTaskError::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(matches!(result, Err(super::ExportTaskError::Cancelled)));
+        assert_eq!(checks, 4);
     }
 
     fn preview_input() -> super::PreviewTableCsvImportInput {
@@ -2750,6 +3241,317 @@ mod tests {
 
 #[cfg(test)]
 mod stream_lifecycle_tests {
+    use crate::drivers::trait_def::DatabaseDriver;
+    use crate::models::{error::AppError, metadata::*};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CancellingImportDriver {
+        inner: Arc<dyn DatabaseDriver>,
+        tasks: TaskManager,
+        task_id: Uuid,
+        cancel_after_write: usize,
+        cancel_after_savepoint: bool,
+        writes: AtomicUsize,
+        rollback_gate: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+    }
+
+    #[async_trait::async_trait]
+    impl DatabaseDriver for CancellingImportDriver {
+        fn driver_name(&self) -> &'static str {
+            "CSV cancellation fixture"
+        }
+        fn capabilities(&self) -> DriverCapabilities {
+            self.inner.capabilities()
+        }
+        fn supports_parameterized_import(&self) -> bool {
+            true
+        }
+        async fn ping(&self) -> Result<(), AppError> {
+            self.inner.ping().await
+        }
+        async fn execute_query(
+            &self,
+            sql: &str,
+            id: Option<&str>,
+        ) -> Result<QueryResult, AppError> {
+            if sql == "ROLLBACK" {
+                if let Some((started, resume)) = &self.rollback_gate {
+                    started.notify_one();
+                    resume.notified().await;
+                }
+            }
+            let result = self.inner.execute_query(sql, id).await;
+            if self.cancel_after_savepoint && sql.starts_with("SAVEPOINT") {
+                self.tasks.request_cancel(self.task_id).await.unwrap();
+            }
+            result
+        }
+        async fn execute_parameterized(
+            &self,
+            sql: &str,
+            params: &[DbParameter],
+            id: Option<&str>,
+        ) -> Result<QueryResult, AppError> {
+            let writes = self.writes.fetch_add(1, Ordering::Relaxed) + 1;
+            let result = self.inner.execute_parameterized(sql, params, id).await;
+            if writes == self.cancel_after_write {
+                self.tasks.request_cancel(self.task_id).await.unwrap();
+            }
+            result
+        }
+        async fn execute_query_stream(
+            &self,
+            sql: &str,
+            id: &str,
+            size: usize,
+            max: Option<u64>,
+            chunks: tokio::sync::mpsc::Sender<
+                Result<crate::models::query_result::QueryResultChunk, AppError>,
+            >,
+        ) -> Result<crate::models::query_result::QueryStreamSummary, AppError> {
+            self.inner
+                .execute_query_stream(sql, id, size, max, chunks)
+                .await
+        }
+        async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, AppError> {
+            self.inner.get_databases().await
+        }
+        async fn get_schemas(&self, database: Option<&str>) -> Result<Vec<SchemaInfo>, AppError> {
+            self.inner.get_schemas(database).await
+        }
+        async fn get_tables(&self, schema: &str) -> Result<Vec<TableInfo>, AppError> {
+            self.inner.get_tables(schema).await
+        }
+        async fn get_columns(
+            &self,
+            schema: &str,
+            table: &str,
+        ) -> Result<Vec<ColumnInfo>, AppError> {
+            self.inner.get_columns(schema, table).await
+        }
+        async fn get_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>, AppError> {
+            self.inner.get_indexes(schema, table).await
+        }
+        async fn get_foreign_keys(
+            &self,
+            schema: &str,
+            table: &str,
+        ) -> Result<Vec<ForeignKeyInfo>, AppError> {
+            self.inner.get_foreign_keys(schema, table).await
+        }
+        async fn get_views(&self, schema: &str) -> Result<Vec<TableInfo>, AppError> {
+            self.inner.get_views(schema).await
+        }
+        async fn get_functions(&self, schema: &str) -> Result<Vec<String>, AppError> {
+            self.inner.get_functions(schema).await
+        }
+        async fn get_table_ddl(&self, schema: &str, table: &str) -> Result<String, AppError> {
+            self.inner.get_table_ddl(schema, table).await
+        }
+        async fn explain_query(
+            &self,
+            sql: &str,
+            id: Option<&str>,
+        ) -> Result<crate::models::query_result::ExplainResult, AppError> {
+            self.inner.explain_query(sql, id).await
+        }
+        async fn cancel_query(&self, id: &str) -> Result<(), AppError> {
+            self.inner.cancel_query(id).await
+        }
+    }
+
+    async fn assert_cancelled_import(
+        csv: &str,
+        cancel_after_write: usize,
+        cancel_after_savepoint: bool,
+        dialect: DriverType,
+    ) {
+        let (mut connections, id) = connection().await;
+        let mut operation = connections
+            .begin_query_operation(id, "cancel-import")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        let inner = operation.driver.clone();
+        inner
+            .execute_query(
+                "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)",
+                None,
+            )
+            .await
+            .unwrap();
+        let columns = inner.get_columns("main", "items").await.unwrap();
+        let path = ExportTestPath::new();
+        tokio::fs::write(&path.0, csv).await.unwrap();
+        let report_path = format!("{}.import-report.json", path.0.display());
+        tokio::fs::write(&report_path, "previous report")
+            .await
+            .unwrap();
+        let (tasks, handle) = task().await;
+        tasks.start_task(handle.id, "Importing").await.unwrap();
+        let driver = Arc::new(CancellingImportDriver {
+            inner: inner.clone(),
+            tasks: tasks.clone(),
+            task_id: handle.id,
+            cancel_after_write,
+            cancel_after_savepoint,
+            writes: AtomicUsize::new(0),
+            rollback_gate: None,
+        });
+        operation.driver = driver.clone();
+        let result = import_csv_rows(
+            &ImportTableCsvInput {
+                connection_id: id,
+                driver_type: dialect,
+                schema: "main".into(),
+                table: "items".into(),
+                path: path.0.to_string_lossy().into_owned(),
+                has_header: true,
+                empty_as_null: true,
+            },
+            operation,
+            columns,
+            &tasks,
+            &handle,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ExportTaskError::Cancelled)),
+            "cancellation after an in-flight write must not commit"
+        );
+        assert_eq!(
+            driver.writes.load(Ordering::Relaxed),
+            if cancel_after_savepoint {
+                0
+            } else {
+                cancel_after_write
+            }
+        );
+        assert_eq!(
+            inner
+                .execute_query("SELECT COUNT(*) FROM items", None)
+                .await
+                .unwrap()
+                .rows[0][0],
+            json!(0)
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&report_path).await.unwrap(),
+            "previous report"
+        );
+        assert_eq!(
+            tasks
+                .finish_cancelled(handle.id, "Cancelled")
+                .await
+                .unwrap()
+                .status,
+            crate::services::task_manager::TaskStatus::Cancelled
+        );
+        tokio::fs::remove_file(&report_path).await.unwrap();
+        connections.disconnect(id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_last_import_batch_rolls_back_instead_of_committing() {
+        assert_cancelled_import("id,name\n1,Ada\n2,Grace", 1, false, DriverType::Sqlite).await;
+    }
+
+    #[tokio::test]
+    async fn import_cancel_after_batch_write_does_not_start_next_batch() {
+        let mut csv = String::from("id,name\n");
+        for row in 1..=205 {
+            writeln!(&mut csv, "{row},row-{row}").unwrap();
+        }
+        assert_cancelled_import(&csv, 1, false, DriverType::Sqlite).await;
+    }
+
+    #[tokio::test]
+    async fn import_cancel_after_savepoint_is_observed_before_first_batch_write() {
+        assert_cancelled_import("id,name\n1,Ada\n2,Grace", 0, true, DriverType::Postgres).await;
+    }
+
+    #[tokio::test]
+    async fn import_fallback_cancellation_stops_between_rows_and_after_last_row() {
+        for cancel_after_write in [2, 4] {
+            assert_cancelled_import(
+                "id,name\n1,Ada\n1,duplicate\n2,Grace",
+                cancel_after_write,
+                false,
+                DriverType::Sqlite,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn import_single_row_path_stops_after_one_in_flight_write() {
+        assert_cancelled_import("id,name\n1,Ada\n2,Grace", 1, false, DriverType::Oracle).await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_import_keeps_its_operation_lease_until_rollback_finishes() {
+        let (mut connections, connection_id) = connection().await;
+        let mut operation = connections
+            .begin_query_operation(connection_id, "rollback-lease")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        let inner = operation.driver.clone();
+        inner
+            .execute_query("CREATE TABLE items(id INTEGER, name TEXT)", None)
+            .await
+            .unwrap();
+        let columns = inner.get_columns("main", "items").await.unwrap();
+        let path = ExportTestPath::new();
+        tokio::fs::write(&path.0, "id,name\n1,Ada\n").await.unwrap();
+        let (tasks, handle) = task().await;
+        let started = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        operation.driver = Arc::new(CancellingImportDriver {
+            inner: inner.clone(),
+            tasks: tasks.clone(),
+            task_id: handle.id,
+            cancel_after_write: 1,
+            cancel_after_savepoint: false,
+            writes: AtomicUsize::new(0),
+            rollback_gate: Some((started.clone(), resume.clone())),
+        });
+        let input = ImportTableCsvInput {
+            connection_id,
+            driver_type: DriverType::Sqlite,
+            schema: "main".into(),
+            table: "items".into(),
+            path: path.0.to_string_lossy().into_owned(),
+            has_header: true,
+            empty_as_null: true,
+        };
+        let importer = import_csv_rows(&input, operation, columns, &tasks, &handle);
+        let observer = async {
+            started.notified().await;
+            assert!(
+                connections.disconnect(connection_id).is_err(),
+                "rollback still owns the database session"
+            );
+            resume.notify_one();
+        };
+        let (result, ()) = tokio::time::timeout(StdDuration::from_secs(2), async {
+            tokio::join!(importer, observer)
+        })
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(ExportTaskError::Cancelled)));
+        assert_eq!(
+            inner
+                .execute_query("SELECT COUNT(*) FROM items", None)
+                .await
+                .unwrap()
+                .rows[0][0],
+            json!(0)
+        );
+        connections.disconnect(connection_id).unwrap();
+    }
     use super::*;
     use serde_json::json;
     use std::fmt::Write as _;
@@ -3387,6 +4189,81 @@ mod stream_lifecycle_tests {
                 "id,name\r\n1,Ada"
             );
             connections.disconnect(id).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn table_export_keeps_readable_generated_and_defaulted_columns_with_or_without_headers() {
+        for kind in ["normal", "generated-only", "mixed", "defaulted", "empty"] {
+            for include_header in [true, false] {
+                let (mut connections, id) = connection().await;
+                let operation = connections
+                    .begin_query_operation(id, "column-export")
+                    .unwrap()
+                    .wait()
+                    .await
+                    .unwrap();
+                operation
+                    .driver
+                    .execute_query(
+                        "CREATE TABLE items (id INTEGER, name TEXT DEFAULT 'Ada')",
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                operation
+                    .driver
+                    .execute_query("INSERT INTO items VALUES (1, 'Ada')", None)
+                    .await
+                    .unwrap();
+                let mut columns = operation.driver.get_columns("main", "items").await.unwrap();
+                match kind {
+                    "generated-only" => {
+                        columns.truncate(1);
+                        columns[0].default_value = Some("GENERATED ALWAYS AS IDENTITY".into());
+                    }
+                    "mixed" => {
+                        columns[0].default_value = Some("GENERATED ALWAYS AS IDENTITY".into())
+                    }
+                    "empty" => columns.clear(),
+                    _ => {}
+                }
+                let path = ExportTestPath::new();
+                let (manager, handle) = task().await;
+                let result = write_table_csv(
+                    &ExportTableCsvInput {
+                        connection_id: id,
+                        driver_type: DriverType::Sqlite,
+                        schema: "main".into(),
+                        table: "items".into(),
+                        path: path.0.to_string_lossy().into_owned(),
+                        include_header,
+                        max_rows: None,
+                    },
+                    Arc::new(operation),
+                    columns,
+                    &path.0,
+                    &manager,
+                    &handle,
+                )
+                .await;
+                if kind == "empty" {
+                    assert!(
+                        matches!(result, Err(ExportTaskError::Failed(AppError::ConfigError(message))) if message == "table has no readable/exportable columns")
+                    );
+                } else {
+                    let report = result.unwrap();
+                    assert_eq!(report.row_count, 1);
+                    let expected = match (kind, include_header) {
+                        ("generated-only", true) => "id\r\n1",
+                        ("generated-only", false) => "1",
+                        (_, true) => "id,name\r\n1,Ada",
+                        (_, false) => "1,Ada",
+                    };
+                    assert_eq!(tokio::fs::read_to_string(&path.0).await.unwrap(), expected);
+                }
+                connections.disconnect(id).unwrap();
+            }
         }
     }
 

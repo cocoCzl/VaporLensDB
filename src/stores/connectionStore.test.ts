@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import zh from '@/locales/zh.json'
 import type { ConnectionConfig, ConnectionInput } from '@/types/connection'
+import { useMetadataStore } from '@/stores/metadataStore'
 
 const connectionMocks = vi.hoisted(() => ({
   connect: vi.fn(),
@@ -249,5 +250,105 @@ describe('saved credential recovery', () => {
 
     await i18n.changeLanguage('zh')
     expect(i18n.t('connection.savedCredentialUnavailable')).toBe(zh.connection.savedCredentialUnavailable)
+  })
+})
+
+describe('idle reclaim status ordering', () => {
+  const reclaimed = { connectionId: 'connection-1', status: 'disconnected' as const, message: 'reclaimed after 5 minutes of inactivity' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useConnectionStore.setState({
+      connections: [connection('connection-1', 'mysql')],
+      statuses: { 'connection-1': { connectionId: 'connection-1', status: 'connected' } },
+      busyConnectionIds: {},
+      statusRevisions: {},
+      lifecycleEpochs: {},
+      reclaimRequestTokens: {},
+      favoriteDataSourceIds: ['connection-1'],
+      recentDataSourceIds: ['connection-1'],
+    })
+  })
+
+  it('does not let a late reclaim event overwrite a successful reconnect', async () => {
+    connectionMocks.listConnectionStatuses.mockResolvedValue([{ connectionId: 'connection-1', status: 'connected' }])
+    const clear = vi.spyOn(useMetadataStore.getState(), 'clearConnection')
+    await useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)
+    expect(useConnectionStore.getState().statuses['connection-1'].status).toBe('connected')
+    expect(clear).not.toHaveBeenCalled()
+  })
+
+  it('rejects an old disconnected snapshot if reconnect completes while validation is pending', async () => {
+    let resolveSnapshot!: (value: typeof reclaimed[]) => void
+    connectionMocks.listConnectionStatuses.mockReturnValue(new Promise<typeof reclaimed[]>((resolve) => { resolveSnapshot = resolve }))
+    connectionMocks.connect.mockResolvedValue({ connectionId: 'connection-1', status: 'connected' })
+    const pending = useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)
+    await useConnectionStore.getState().connectConnection('connection-1')
+    const clear = vi.spyOn(useMetadataStore.getState(), 'clearConnection')
+    resolveSnapshot([reclaimed])
+    await pending
+    expect(useConnectionStore.getState().statuses['connection-1'].status).toBe('connected')
+    expect(clear).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a disconnected snapshot while reconnect is still in flight', async () => {
+    let resolveConnect!: (value: { connectionId: string; status: string }) => void
+    connectionMocks.connect.mockReturnValue(new Promise((resolve) => { resolveConnect = resolve }))
+    connectionMocks.listConnectionStatuses.mockResolvedValue([reclaimed])
+    const reconnect = useConnectionStore.getState().connectConnection('connection-1')
+    await useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)
+    expect(useConnectionStore.getState().statuses['connection-1'].status).toBe('connected')
+    resolveConnect({ connectionId: 'connection-1', status: 'connected' })
+    await reconnect
+  })
+
+  it('applies an authoritative reclaim and preserves the saved datasource and navigation history', async () => {
+    connectionMocks.listConnectionStatuses.mockResolvedValue([reclaimed])
+    const clear = vi.spyOn(useMetadataStore.getState(), 'clearConnection')
+    const configs = useConnectionStore.getState().connections
+    await useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)
+    expect(useConnectionStore.getState().statuses['connection-1']).toEqual(reclaimed)
+    expect(useConnectionStore.getState().connections).toBe(configs)
+    expect(useConnectionStore.getState().favoriteDataSourceIds).toEqual(['connection-1'])
+    expect(useConnectionStore.getState().recentDataSourceIds).toEqual(['connection-1'])
+    expect(clear).toHaveBeenCalledExactlyOnceWith('connection-1')
+    await useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)
+    expect(clear).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the latest event validation and ignores an older pending validation', async () => {
+    let resolveOld!: (value: typeof reclaimed[]) => void
+    connectionMocks.listConnectionStatuses.mockReturnValueOnce(new Promise<typeof reclaimed[]>((resolve) => { resolveOld = resolve }))
+      .mockResolvedValueOnce([reclaimed])
+    const oldRequest = useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)
+    await useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 4)
+    resolveOld([{ ...reclaimed, message: 'old status' }])
+    await oldRequest
+    expect(useConnectionStore.getState().statuses['connection-1'].message).toBe(reclaimed.message)
+    expect(useConnectionStore.getState().statusRevisions['connection-1']).toBe(4)
+  })
+
+  it('does not recreate a deleted datasource status', async () => {
+    connectionMocks.listConnectionStatuses.mockResolvedValue([reclaimed])
+    useConnectionStore.setState({ connections: [], statuses: {} })
+    await useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)
+    expect(useConnectionStore.getState().statuses).toEqual({})
+  })
+
+  it('snapshot failure is propagated and does not pretend that reclaim was validated', async () => {
+    connectionMocks.listConnectionStatuses.mockRejectedValueOnce(new Error('snapshot unavailable'))
+    await expect(useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)).rejects.toThrow('snapshot unavailable')
+    expect(useConnectionStore.getState().statuses['connection-1'].status).toBe('connected')
+  })
+
+  it('does not invalidate another datasource event because of unrelated connection activity', async () => {
+    const saved = connection('connection-2', 'mysql')
+    useConnectionStore.setState({
+      connections: [connection('connection-1', 'mysql'), saved],
+      lifecycleEpochs: { 'connection-2': 5 },
+    })
+    connectionMocks.listConnectionStatuses.mockResolvedValue([reclaimed])
+    await useConnectionStore.getState().synchronizeIdleReclaim(reclaimed, 2)
+    expect(useConnectionStore.getState().statuses['connection-1'].status).toBe('disconnected')
   })
 })

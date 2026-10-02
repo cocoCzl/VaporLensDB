@@ -16,6 +16,187 @@ const WRONG_PASSWORD: &str = "postgres-runtime-redaction-regression-value";
 
 #[tokio::test]
 #[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn manual_budget_and_max_rows_drain_without_aborting_the_transaction() {
+    use vapor_lens_db_lib::{
+        drivers::trait_def::StreamTransactionMode, services::query_engine::QueryEngine,
+    };
+    let driver = Arc::new(
+        PostgresDriver::connect(&test_pg_url().expect("PostgreSQL test URL"))
+            .await
+            .unwrap(),
+    );
+    driver.begin_transaction().await.unwrap();
+    driver
+        .execute_query("CREATE TEMP TABLE phase4a_kept(value INTEGER)", None)
+        .await
+        .unwrap();
+    driver
+        .execute_query("INSERT INTO phase4a_kept VALUES(7)", None)
+        .await
+        .unwrap();
+    let limited = QueryEngine::new()
+        .execute_query_in_mode(
+            driver.clone(),
+            "SELECT n FROM generate_series(1,1000) AS n",
+            Some("manual-maxrows".into()),
+            Some(2),
+            StreamTransactionMode::Manual,
+        )
+        .await
+        .unwrap();
+    assert_eq!(limited.results[0].row_count, 2);
+    assert!(limited.results[0].truncated);
+    let error = QueryEngine::new()
+        .execute_query_in_mode(
+            driver.clone(),
+            "SELECT repeat('x',1048576) FROM generate_series(1,3)",
+            Some("manual-bytes".into()),
+            None,
+            StreamTransactionMode::Manual,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "RESULT_LIMIT_EXCEEDED");
+    assert!(!error.affects_transaction());
+    driver
+        .execute_query("INSERT INTO phase4a_kept VALUES(8)", None)
+        .await
+        .unwrap();
+    driver.commit_transaction().await.unwrap();
+    assert_eq!(
+        driver
+            .execute_query("SELECT COUNT(*) FROM phase4a_kept", None)
+            .await
+            .unwrap()
+            .rows[0][0],
+        serde_json::json!(2)
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn auto_max_rows_preserves_side_effecting_select_completion_and_session_reuse() {
+    let driver = Arc::new(
+        PostgresDriver::connect(&test_pg_url().expect("PostgreSQL test URL"))
+            .await
+            .unwrap(),
+    );
+    driver
+        .execute_query("CREATE TEMP TABLE phase4a1_effects(value INTEGER)", None)
+        .await
+        .unwrap();
+    driver
+        .execute_query(
+            "CREATE FUNCTION pg_temp.phase4a1_effect(value INTEGER) RETURNS INTEGER
+             LANGUAGE plpgsql VOLATILE AS $$
+             BEGIN
+                 INSERT INTO phase4a1_effects VALUES(value);
+                 RETURN value;
+             END $$",
+            None,
+        )
+        .await
+        .unwrap();
+    let response = tokio::time::timeout(
+        Duration::from_secs(10),
+        vapor_lens_db_lib::services::query_engine::QueryEngine::new().execute_query(
+            driver.clone(),
+            "SELECT pg_temp.phase4a1_effect(n) AS value FROM generate_series(1,10) AS series(n)",
+            Some("auto-maxrows".into()),
+            Some(2),
+        ),
+    )
+    .await
+    .expect("successful truncation must wait for normal statement completion")
+    .unwrap();
+    assert_eq!(response.results[0].row_count, 2);
+    assert!(response.results[0].truncated);
+    assert_eq!(
+        driver
+            .execute_query("SELECT COUNT(*) FROM phase4a1_effects", None)
+            .await
+            .unwrap()
+            .rows[0][0],
+        serde_json::json!(10)
+    );
+    assert_eq!(
+        driver.execute_query("SELECT 7", None).await.unwrap().rows[0][0],
+        serde_json::json!(7)
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
+async fn empty_select_and_parameterized_select_keep_aliases_and_types() {
+    use vapor_lens_db_lib::drivers::trait_def::DbParameter;
+    let driver = PostgresDriver::connect(&test_pg_url().expect("PostgreSQL test URL"))
+        .await
+        .unwrap();
+    for (sql, expected) in [
+        ("SELECT 1 AS id WHERE false", vec![("id", "int4")]),
+        (
+            "SELECT CAST(NULL AS bigint) AS id, CAST(NULL AS text) AS name WHERE false",
+            vec![("id", "int8"), ("name", "text")],
+        ),
+    ] {
+        let result = driver.execute_query(sql, None).await.unwrap();
+        assert!(result.rows.is_empty());
+        assert_eq!(result.row_count, 0);
+        assert_eq!(
+            result
+                .columns
+                .iter()
+                .map(|column| (column.name.as_str(), column.data_type.as_str()))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    let result = driver
+        .execute_parameterized(
+            "SELECT $1::bigint AS id WHERE false",
+            &[DbParameter::Text("7".into())],
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.row_count, 0);
+    assert!(result.rows.is_empty());
+    assert_eq!(result.columns[0].name, "id");
+    assert_eq!(result.columns[0].data_type, "int8");
+    let result = driver.execute_query("SELECT 7 AS id", None).await.unwrap();
+    assert_eq!(result.row_count, 1);
+    assert_eq!(result.rows[0][0], serde_json::json!(7));
+    driver.begin_transaction().await.unwrap();
+    driver
+        .execute_query(
+            "CREATE TEMP TABLE phase3_metadata_fixture(id INTEGER)",
+            None,
+        )
+        .await
+        .unwrap();
+    let result = driver
+        .execute_parameterized(
+            "INSERT INTO phase3_metadata_fixture VALUES ($1)",
+            &[DbParameter::Text("7".into())],
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(result.columns.is_empty());
+    assert_eq!(result.affected_rows, 1);
+    driver.rollback_transaction().await.unwrap();
+    assert_eq!(
+        driver
+            .execute_query("SELECT phase3_missing_column", None)
+            .await
+            .unwrap_err()
+            .code(),
+        "QUERY_FAILED"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
 async fn preserves_result_types_and_precision_in_queries_and_streams() {
     let driver = PostgresDriver::connect(&test_pg_url().expect("PostgreSQL test URL"))
         .await

@@ -66,7 +66,7 @@ includesAll(
     "kind: 'structure'",
     "kind: 'definition'",
     'sourceLikeObjectKind',
-    'supportsObjectBrowsing',
+    'hasObjectBrowsingImplementation',
     "t('explorer.unsupportedTitle')",
   ],
   'object tree workflow coverage',

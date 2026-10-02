@@ -18,9 +18,10 @@ use crate::models::{
 };
 
 const TUNNEL_START_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_FORWARD_START_ATTEMPTS: usize = 4;
 
 pub struct SshTunnel {
-    child: Child,
+    child: Option<Child>,
     _askpass_helper: Option<AskpassHelper>,
     pub local_host: String,
     pub local_port: u16,
@@ -54,73 +55,94 @@ impl SshTunnel {
             .clone()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "127.0.0.1".to_string());
-        let local_port = allocate_local_port(&local_host)?;
-        // Reject unsupported URLs before spawning SSH (and creating askpass
-        // helpers), so a rewrite error cannot leave a child process behind.
-        let mut runtime_config = config.clone();
-        runtime_config.host = Some(local_host.clone());
-        runtime_config.port = Some(local_port);
-        runtime_config.connection_url =
-            rewrite_connection_url(config.connection_url.as_deref(), &local_host, local_port)?;
-        let mut args = ssh_args(
-            tunnel_config,
-            &local_host,
-            local_port,
-            remote_host,
-            remote_port,
-        );
-        let mut askpass_helper = None;
-
+        let local_host = if local_host.eq_ignore_ascii_case("localhost") {
+            "127.0.0.1".to_string()
+        } else {
+            local_host
+        };
         let secret = match tunnel_config.auth_method {
             SshAuthMethod::Password => tunnel_config.password_encrypted.as_deref(),
             SshAuthMethod::PrivateKey => tunnel_config.private_key_passphrase_encrypted.as_deref(),
         };
 
-        if secret.filter(|value| !value.is_empty()).is_some() {
-            askpass_helper = Some(write_askpass_script()?);
-        } else {
-            args.push("-o".to_string());
-            args.push("BatchMode=yes".to_string());
-        }
-
-        let mut command = Command::new("ssh");
-        command.args(&args);
-        command.stdin(std::process::Stdio::null());
-        command.stdout(std::process::Stdio::null());
-        command.stderr(std::process::Stdio::piped());
-        if let Some(helper) = askpass_helper.as_ref() {
-            command.env("SSH_ASKPASS", helper.path());
-            command.env("SSH_ASKPASS_REQUIRE", "force");
-            command.env("DISPLAY", "vaporlensdb:0");
-            command.env("VAPORLENSDB_SSH_ASKPASS_SECRET", secret.unwrap_or_default());
-        }
-
-        let mut child = command.spawn().map_err(|error| AppError::SshTunnelError {
-            message: format!(
-                "failed to start ssh; install the OpenSSH client and ensure ssh is on PATH: {error}"
-            ),
-        })?;
-
-        if let Err(error) = wait_until_forward_ready(&mut child, &local_host, local_port).await {
-            let _ = child.start_kill();
-            return Err(error);
-        }
-
-        Ok(Some((
-            Self {
-                child,
-                _askpass_helper: askpass_helper,
-                local_host,
+        for attempt in 0..MAX_FORWARD_START_ATTEMPTS {
+            let reservation = LocalPortReservation::bind(&local_host)?;
+            let local_port = reservation.port();
+            let mut runtime_config = config.clone();
+            runtime_config.host = Some(local_host.clone());
+            runtime_config.port = Some(local_port);
+            runtime_config.connection_url =
+                rewrite_connection_url(config.connection_url.as_deref(), &local_host, local_port)?;
+            let mut args = ssh_args(
+                tunnel_config,
+                &local_host,
                 local_port,
-            },
-            runtime_config,
-        )))
+                remote_host,
+                remote_port,
+            );
+            let askpass_helper = if secret.filter(|value| !value.is_empty()).is_some() {
+                Some(write_askpass_script()?)
+            } else {
+                args.push("-o".to_string());
+                args.push("BatchMode=yes".to_string());
+                None
+            };
+
+            reservation.release();
+            let mut command = Command::new("ssh");
+            command.args(&args);
+            command.stdin(std::process::Stdio::null());
+            command.stdout(std::process::Stdio::null());
+            command.stderr(std::process::Stdio::piped());
+            if let Some(helper) = askpass_helper.as_ref() {
+                command.env("SSH_ASKPASS", helper.path());
+                command.env("SSH_ASKPASS_REQUIRE", "force");
+                command.env("DISPLAY", "vaporlensdb:0");
+                command.env("VAPORLENSDB_SSH_ASKPASS_SECRET", secret.unwrap_or_default());
+            }
+
+            let mut child = command.spawn().map_err(|error| AppError::SshTunnelError {
+                message: format!(
+                    "failed to start ssh; install the OpenSSH client and ensure ssh is on PATH: {error}"
+                ),
+            })?;
+
+            match wait_until_forward_ready(&mut child, &local_host, local_port).await {
+                Ok(()) => {
+                    return Ok(Some((
+                        Self {
+                            child: Some(child),
+                            _askpass_helper: askpass_helper,
+                            local_host,
+                            local_port,
+                        },
+                        runtime_config,
+                    )));
+                }
+                Err(failure) if failure.retryable && attempt + 1 < MAX_FORWARD_START_ATTEMPTS => {
+                    continue;
+                }
+                Err(failure) => return Err(failure.into_app_error()),
+            }
+        }
+
+        Err(AppError::SshTunnelError {
+            message: "SSH tunnel startup exhausted the bounded port-collision retries".to_string(),
+        })
     }
 }
 
 impl Drop for SshTunnel {
     fn drop(&mut self) {
-        let _ = self.child.start_kill();
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let _ = child.start_kill();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = child.wait().await;
+            });
+        }
     }
 }
 
@@ -176,7 +198,10 @@ fn ssh_args(
     let mut args = vec![
         "-N".to_string(),
         "-L".to_string(),
-        format!("{local_host}:{local_port}:{remote_host}:{remote_port}"),
+        format!(
+            "{}:{local_port}:{remote_host}:{remote_port}",
+            ssh_forward_host(local_host)
+        ),
         "-p".to_string(),
         config.port.to_string(),
         "-o".to_string(),
@@ -204,25 +229,52 @@ fn ssh_args(
     args
 }
 
-fn allocate_local_port(local_host: &str) -> Result<u16, AppError> {
-    let addr = if local_host == "127.0.0.1" || local_host.eq_ignore_ascii_case("localhost") {
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 0))
-    } else {
-        format!("{local_host}:0")
-            .parse()
+fn ssh_forward_host(local_host: &str) -> String {
+    let host = local_host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(local_host);
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(address)) => format!("[{address}]"),
+        _ => local_host.to_string(),
+    }
+}
+
+struct LocalPortReservation {
+    listener: TcpListener,
+    local_port: u16,
+}
+
+impl LocalPortReservation {
+    fn bind(local_host: &str) -> Result<Self, AppError> {
+        let listener = TcpListener::bind(local_bind_addr(local_host)?).map_err(|error| {
+            AppError::SshTunnelError {
+                message: format!("failed to allocate SSH local port: {error}"),
+            }
+        })?;
+        let local_port = listener
+            .local_addr()
+            .map(|addr| addr.port())
             .map_err(|error| AppError::SshTunnelError {
-                message: format!("invalid SSH local bind address: {error}"),
-            })?
-    };
-    let listener = TcpListener::bind(addr).map_err(|error| AppError::SshTunnelError {
-        message: format!("failed to allocate SSH local port: {error}"),
-    })?;
-    listener
-        .local_addr()
-        .map(|addr| addr.port())
-        .map_err(|error| AppError::SshTunnelError {
-            message: format!("failed to read SSH local port: {error}"),
+                message: format!("failed to read SSH local port: {error}"),
+            })?;
+        Ok(Self {
+            listener,
+            local_port,
         })
+    }
+
+    fn port(&self) -> u16 {
+        self.local_port
+    }
+
+    fn release(self) {
+        drop(self.listener);
+    }
+}
+
+fn local_bind_addr(local_host: &str) -> Result<SocketAddr, AppError> {
+    local_bind_addr_with_port(local_host, 0)
 }
 
 fn write_askpass_script() -> Result<AskpassHelper, AppError> {
@@ -371,14 +423,27 @@ async fn wait_until_forward_ready(
     child: &mut Child,
     local_host: &str,
     local_port: u16,
-) -> Result<(), AppError> {
+) -> Result<(), ForwardStartupFailure> {
     let deadline = Instant::now() + TUNNEL_START_TIMEOUT;
-    let addr = format!("{local_host}:{local_port}");
+    let addr = local_bind_addr_with_port(local_host, local_port).map_err(|error| {
+        ForwardStartupFailure {
+            message: error.to_string(),
+            retryable: false,
+        }
+    })?;
 
     loop {
-        if let Some(status) = child.try_wait().map_err(|error| AppError::SshTunnelError {
-            message: format!("failed to inspect ssh process: {error}"),
-        })? {
+        let process_status = match child.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                terminate_child(child).await;
+                return Err(ForwardStartupFailure {
+                    message: format!("failed to inspect ssh process: {error}"),
+                    retryable: false,
+                });
+            }
+        };
+        if let Some(status) = process_status {
             let mut stderr = String::new();
             if let Some(mut pipe) = child.stderr.take() {
                 let _ = pipe.read_to_string(&mut stderr).await;
@@ -389,22 +454,45 @@ async fn wait_until_forward_ready(
             } else {
                 format!("ssh exited before tunnel was ready: {details}")
             };
-            return Err(AppError::SshTunnelError { message });
+            let auth_failure = looks_like_auth_failure(details);
+            return Err(ForwardStartupFailure {
+                retryable: !auth_failure
+                    && (port_is_occupied(local_host, local_port)
+                        || looks_like_forward_bind_failure(details)),
+                message,
+            });
         }
 
-        if timeout(Duration::from_millis(250), TcpStream::connect(&addr))
+        if timeout(Duration::from_millis(250), TcpStream::connect(addr))
             .await
             .ok()
             .and_then(Result::ok)
             .is_some()
         {
+            let process_status = match child.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    terminate_child(child).await;
+                    return Err(ForwardStartupFailure {
+                        message: format!("failed to inspect ssh process: {error}"),
+                        retryable: false,
+                    });
+                }
+            };
+            if let Some(status) = process_status {
+                return Err(ForwardStartupFailure {
+                    retryable: port_is_occupied(local_host, local_port),
+                    message: format!("ssh exited before tunnel was ready: {status}"),
+                });
+            }
             return Ok(());
         }
 
         if Instant::now() >= deadline {
-            let _ = child.start_kill();
-            return Err(AppError::SshTunnelError {
+            terminate_child(child).await;
+            return Err(ForwardStartupFailure {
                 message: "timed out waiting for SSH tunnel".to_string(),
+                retryable: false,
             });
         }
 
@@ -412,9 +500,74 @@ async fn wait_until_forward_ready(
     }
 }
 
+struct ForwardStartupFailure {
+    message: String,
+    retryable: bool,
+}
+
+impl ForwardStartupFailure {
+    fn into_app_error(self) -> AppError {
+        AppError::SshTunnelError {
+            message: self.message,
+        }
+    }
+}
+
+async fn terminate_child(child: &mut Child) {
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+}
+
+fn port_is_occupied(local_host: &str, local_port: u16) -> bool {
+    local_bind_addr_with_port(local_host, local_port)
+        .map(|addr| TcpListener::bind(addr).is_err())
+        .unwrap_or(false)
+}
+
+fn local_bind_addr_with_port(local_host: &str, local_port: u16) -> Result<SocketAddr, AppError> {
+    if local_host == "127.0.0.1" || local_host.eq_ignore_ascii_case("localhost") {
+        return Ok(SocketAddr::from((Ipv4Addr::LOCALHOST, local_port)));
+    }
+    let host = local_host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(local_host);
+    let ip = host.parse().map_err(|error| AppError::SshTunnelError {
+        message: format!("invalid SSH local bind address: {error}"),
+    })?;
+    Ok(SocketAddr::new(ip, local_port))
+}
+
+fn looks_like_forward_bind_failure(stderr: &str) -> bool {
+    let normalized = stderr.to_ascii_lowercase();
+    [
+        "address already in use",
+        "cannot listen to port",
+        "bind: address",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
+fn looks_like_auth_failure(stderr: &str) -> bool {
+    let normalized = stderr.to_ascii_lowercase();
+    [
+        "permission denied",
+        "authentication failed",
+        "could not authenticate",
+        "too many authentication failures",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{rewrite_connection_url, ssh_args, write_askpass_script};
+    use super::{
+        looks_like_auth_failure, looks_like_forward_bind_failure, port_is_occupied,
+        rewrite_connection_url, ssh_args, ssh_forward_host, wait_until_forward_ready,
+        write_askpass_script, LocalPortReservation, MAX_FORWARD_START_ATTEMPTS,
+    };
     use crate::models::connection::{SshAuthMethod, SshTunnelConfig};
 
     #[test]
@@ -443,6 +596,13 @@ mod tests {
     }
 
     #[test]
+    fn keeps_port_reservation_and_forwarding_identity_for_localhost_and_ipv6() {
+        assert_eq!(ssh_forward_host("localhost"), "localhost");
+        assert_eq!(ssh_forward_host("::1"), "[::1]");
+        assert_eq!(ssh_forward_host("[::1]"), "[::1]");
+    }
+
+    #[test]
     fn askpass_helper_never_contains_a_password() {
         let helper = write_askpass_script().expect("create askpass helper");
         let contents = std::fs::read_to_string(helper.path()).expect("read askpass helper");
@@ -464,6 +624,86 @@ mod tests {
         let path = helper.path().to_path_buf();
         drop(helper);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn local_port_reservation_holds_the_port_until_the_attempt_releases_it() {
+        let reservation = LocalPortReservation::bind("127.0.0.1").expect("reserve local port");
+        let port = reservation.port();
+        assert!(port_is_occupied("127.0.0.1", port));
+        reservation.release();
+        assert!(!port_is_occupied("127.0.0.1", port));
+    }
+
+    #[test]
+    fn occupied_port_marks_fake_ssh_startup_as_retryable_without_retrying_auth_failure() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fake listener");
+        let port = listener.local_addr().unwrap().port();
+        assert!(port_is_occupied("127.0.0.1", port));
+        assert!(looks_like_forward_bind_failure(
+            "bind: Address already in use"
+        ));
+        assert!(!looks_like_forward_bind_failure(
+            "Could not request local forwarding"
+        ));
+        assert!(!looks_like_forward_bind_failure(
+            "Permission denied (publickey)"
+        ));
+        assert!(looks_like_auth_failure("Permission denied (publickey)"));
+        drop(listener);
+    }
+
+    #[test]
+    fn ssh_port_retry_is_bounded_and_attempt_state_is_not_shared() {
+        assert_eq!(MAX_FORWARD_START_ATTEMPTS, 4);
+        let first = LocalPortReservation::bind("127.0.0.1").unwrap();
+        let first_port = first.port();
+        first.release();
+        let second = LocalPortReservation::bind("127.0.0.1").unwrap();
+        assert!(second.port() > 0);
+        assert!(!port_is_occupied("127.0.0.1", first_port) || first_port == second.port());
+        second.release();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fake_ssh_startup_distinguishes_stolen_port_from_auth_failure() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind alien listener");
+        let occupied_port = listener.local_addr().unwrap().port();
+        let mut collision_child = tokio::process::Command::new("sh")
+            .args([
+                "-c",
+                "printf '%s' 'bind: Address already in use' >&2; exit 255",
+            ])
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn fake collision ssh");
+        collision_child
+            .wait()
+            .await
+            .expect("wait for fake collision ssh");
+        let collision = wait_until_forward_ready(&mut collision_child, "127.0.0.1", occupied_port)
+            .await
+            .expect_err("stolen port must fail startup");
+        assert!(collision.retryable);
+        drop(listener);
+
+        let free = LocalPortReservation::bind("127.0.0.1").unwrap();
+        let free_port = free.port();
+        free.release();
+        let mut auth_child = tokio::process::Command::new("sh")
+            .args([
+                "-c",
+                "printf '%s' 'Permission denied (publickey)' >&2; exit 255",
+            ])
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn fake auth ssh");
+        auth_child.wait().await.expect("wait for fake auth ssh");
+        let auth = wait_until_forward_ready(&mut auth_child, "127.0.0.1", free_port)
+            .await
+            .expect_err("auth failure must fail startup");
+        assert!(!auth.retryable);
     }
 
     #[test]

@@ -7,7 +7,9 @@ use tokio::{net::TcpStream, sync::mpsc, sync::Mutex};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use crate::{
-    drivers::trait_def::DatabaseDriver,
+    drivers::trait_def::{
+        DatabaseDriver, DriverStreamRequest, StreamControl, StreamStopReason, StreamTransactionMode,
+    },
     models::{
         error::AppError,
         metadata::{
@@ -98,16 +100,34 @@ impl MssqlDriver {
     }
 
     async fn query_first_result(&self, sql: &str) -> Result<Vec<Row>, AppError> {
+        Ok(self.query_first_result_with_metadata(sql).await?.1)
+    }
+
+    async fn query_first_result_with_metadata(
+        &self,
+        sql: &str,
+    ) -> Result<(Vec<ColumnMeta>, Vec<Row>), AppError> {
         let mut client = self.client.lock().await;
-        let stream = client
+        let mut stream = client
             .simple_query(sql)
             .await
             .map_err(|error| map_mssql_query_error(sql, error))?;
-        let rows = stream
-            .into_first_result()
+        let mut columns = Vec::new();
+        let mut rows = Vec::new();
+        while let Some(item) = stream
+            .try_next()
             .await
-            .map_err(|error| map_mssql_query_error(sql, error))?;
-        Ok(rows)
+            .map_err(|error| map_mssql_query_error(sql, error))?
+        {
+            match item {
+                QueryItem::Metadata(metadata) if metadata.result_index() == 0 => {
+                    columns = columns_from_mssql(metadata.columns())
+                }
+                QueryItem::Row(row) if row.result_index() == 0 => rows.push(row),
+                _ => {}
+            }
+        }
+        Ok((columns, rows))
     }
 }
 
@@ -146,23 +166,13 @@ impl DatabaseDriver for MssqlDriver {
         query_id: Option<&str>,
     ) -> Result<QueryResult, AppError> {
         let start = Instant::now();
-        let rows = self.query_first_result(sql).await?;
-        let columns = rows
-            .first()
-            .map(|row| columns_from_mssql(row.columns()))
-            .unwrap_or_default();
-        let values = rows.iter().map(row_to_json_values).collect::<Vec<_>>();
-
-        Ok(QueryResult {
-            row_count: values.len() as u64,
+        let (columns, rows) = self.query_first_result_with_metadata(sql).await?;
+        Ok(mssql_query_result(
+            rows,
             columns,
-            rows: values,
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            affected_rows: 0,
-            query_id: query_id.map(str::to_string),
-            truncated: false,
-            max_rows: None,
-        })
+            start.elapsed().as_millis() as u64,
+            query_id,
+        ))
     }
 
     async fn execute_query_stream(
@@ -173,6 +183,31 @@ impl DatabaseDriver for MssqlDriver {
         max_rows: Option<u64>,
         chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
     ) -> Result<QueryStreamSummary, AppError> {
+        self.execute_query_stream_controlled(
+            DriverStreamRequest {
+                sql,
+                query_id,
+                chunk_size,
+                max_rows,
+            },
+            chunks,
+            StreamControl::new(StreamTransactionMode::Manual),
+        )
+        .await
+    }
+
+    async fn execute_query_stream_controlled(
+        &self,
+        request: DriverStreamRequest<'_>,
+        chunks: mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        control: StreamControl,
+    ) -> Result<QueryStreamSummary, AppError> {
+        let DriverStreamRequest {
+            sql,
+            query_id,
+            chunk_size,
+            max_rows,
+        } = request;
         let start = Instant::now();
         let chunk_size = chunk_size.max(1);
         let limit = max_rows.unwrap_or(u64::MAX);
@@ -185,6 +220,7 @@ impl DatabaseDriver for MssqlDriver {
         let mut rows = QueryChunkBuffer::new(chunk_size);
         let mut row_offset = 0_u64;
         let mut truncated = false;
+        let mut processing_error = None;
 
         while let Some(item) = stream
             .try_next()
@@ -198,11 +234,22 @@ impl DatabaseDriver for MssqlDriver {
                 QueryItem::Row(row) if row.result_index() == 0 => {
                     if row_offset + rows.len() as u64 >= limit {
                         truncated = true;
+                        control.stop(StreamStopReason::MaxRows);
+                    }
+                    if control.is_stopped() {
                         continue;
                     }
-                    if let Some(chunk_rows) = rows.push(row_to_json_values(&row))? {
+                    let buffered = match rows.push(row_to_json_values(&row)) {
+                        Ok(buffered) => buffered,
+                        Err(error) => {
+                            control.stop(StreamStopReason::CellOrChunkLimit);
+                            processing_error = Some(error);
+                            continue;
+                        }
+                    };
+                    if let Some(chunk_rows) = buffered {
                         let row_count = chunk_rows.len() as u64;
-                        chunks
+                        if chunks
                             .send(Ok(QueryResultChunk {
                                 query_id: query_id.to_string(),
                                 columns: columns.clone(),
@@ -210,9 +257,14 @@ impl DatabaseDriver for MssqlDriver {
                                 row_offset,
                             }))
                             .await
-                            .map_err(|_| {
-                                AppError::ConfigError("query stream receiver dropped".to_string())
-                            })?;
+                            .is_err()
+                        {
+                            control.stop(StreamStopReason::ReceiverUnavailable);
+                            processing_error = Some(AppError::ResultProcessingError(
+                                "query stream receiver dropped".into(),
+                            ));
+                            continue;
+                        }
                         row_offset += row_count;
                     }
                 }
@@ -231,8 +283,13 @@ impl DatabaseDriver for MssqlDriver {
                     row_offset,
                 }))
                 .await
-                .map_err(|_| AppError::ConfigError("query stream receiver dropped".to_string()))?;
+                .map_err(|_| {
+                    AppError::ResultProcessingError("query stream receiver dropped".to_string())
+                })?;
             row_offset += row_count;
+        }
+        if let Some(error) = processing_error {
+            return Err(error);
         }
 
         Ok(QueryStreamSummary {
@@ -327,7 +384,9 @@ impl DatabaseDriver for MssqlDriver {
                 c.max_length,
                 c.precision,
                 c.scale,
-                CASE WHEN pk.column_id IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END
+                CASE WHEN pk.column_id IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END,
+                c.is_identity,
+                c.is_computed
             FROM sys.columns c
             JOIN sys.tables t ON t.object_id = c.object_id
             JOIN sys.schemas s ON s.schema_id = t.schema_id
@@ -364,6 +423,9 @@ impl DatabaseDriver for MssqlDriver {
                 numeric_precision: get_u8(&row, 8).map(i32::from),
                 numeric_scale: get_u8(&row, 9).map(i32::from),
                 is_primary_key: get_bool(&row, 10).unwrap_or(false),
+                is_identity: get_bool(&row, 11).unwrap_or(false),
+                is_generated: get_bool(&row, 12).unwrap_or(false),
+                is_auto_increment: get_bool(&row, 11).unwrap_or(false),
             })
             .collect())
     }
@@ -581,6 +643,25 @@ impl DatabaseDriver for MssqlDriver {
     }
 }
 
+fn mssql_query_result(
+    rows: Vec<Row>,
+    columns: Vec<ColumnMeta>,
+    elapsed_ms: u64,
+    query_id: Option<&str>,
+) -> QueryResult {
+    let values = rows.iter().map(row_to_json_values).collect::<Vec<_>>();
+    QueryResult {
+        columns,
+        row_count: values.len() as u64,
+        rows: values,
+        elapsed_ms,
+        affected_rows: 0,
+        query_id: query_id.map(str::to_string),
+        truncated: false,
+        max_rows: None,
+    }
+}
+
 fn columns_from_mssql(columns: &[Column]) -> Vec<ColumnMeta> {
     columns
         .iter()
@@ -679,6 +760,38 @@ fn map_mssql_query_error(sql: &str, error: tiberius::error::Error) -> AppError {
 #[cfg(test)]
 mod result_value_tests {
     use super::*;
+
+    #[test]
+    fn empty_result_retains_metadata_without_constructing_a_row() {
+        let metadata = columns_from_mssql(&[
+            Column::new("id_alias".into(), tiberius::ColumnType::Int8),
+            Column::new("name_alias".into(), tiberius::ColumnType::NVarchar),
+        ]);
+        let result = mssql_query_result(Vec::new(), metadata, 3, Some("empty"));
+        assert!(result.rows.is_empty());
+        assert_eq!(result.row_count, 0);
+        assert_eq!(
+            result
+                .columns
+                .iter()
+                .map(|column| (column.name.as_str(), column.data_type.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("id_alias", "Int8"), ("name_alias", "NVarchar")]
+        );
+        let no_result = mssql_query_result(Vec::new(), Vec::new(), 1, None);
+        assert!(no_result.columns.is_empty());
+    }
+
+    #[test]
+    fn normal_query_errors_remain_query_failures() {
+        let error = map_mssql_query_error(
+            "SELECT fixture",
+            tiberius::error::Error::Protocol("malformed query response".into()),
+        );
+        assert!(matches!(error, AppError::QueryFailed { .. }));
+        assert_eq!(error.code(), "QUERY_FAILED");
+        assert!(!error.safe_message().contains("SELECT fixture"));
+    }
 
     #[test]
     fn preserves_bigints_and_real_nulls() {

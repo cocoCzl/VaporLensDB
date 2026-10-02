@@ -66,6 +66,8 @@ pub struct MetadataSearchResult {
 pub struct MetadataIndexSummary {
     pub connection_id: Uuid,
     pub entry_count: usize,
+    #[serde(default)]
+    pub capacity_reached: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -84,11 +86,49 @@ impl MetadataIndexService {
         connection: &ConnectionConfig,
         driver: Arc<dyn DatabaseDriver>,
         force: bool,
+        on_progress: F,
+    ) -> Result<MetadataIndexSummary, AppError>
+    where
+        F: FnMut(MetadataIndexProgress) -> bool + Send,
+    {
+        self.index_connection_with_capacity(
+            connection,
+            driver,
+            force,
+            MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION,
+            on_progress,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    async fn index_connection_with_limit<F>(
+        &self,
+        connection: &ConnectionConfig,
+        driver: Arc<dyn DatabaseDriver>,
+        force: bool,
+        capacity: usize,
+        on_progress: F,
+    ) -> Result<MetadataIndexSummary, AppError>
+    where
+        F: FnMut(MetadataIndexProgress) -> bool + Send,
+    {
+        self.index_connection_with_capacity(connection, driver, force, capacity, on_progress)
+            .await
+    }
+
+    async fn index_connection_with_capacity<F>(
+        &self,
+        connection: &ConnectionConfig,
+        driver: Arc<dyn DatabaseDriver>,
+        force: bool,
+        capacity: usize,
         mut on_progress: F,
     ) -> Result<MetadataIndexSummary, AppError>
     where
         F: FnMut(MetadataIndexProgress) -> bool + Send,
     {
+        let capacity = capacity.max(1);
         let generation = {
             let mut state = self.state.write().await;
             if !force {
@@ -96,6 +136,7 @@ impl MetadataIndexService {
                     return Ok(MetadataIndexSummary {
                         connection_id: connection.id,
                         entry_count: existing.len(),
+                        capacity_reached: existing.len() >= capacity,
                     });
                 }
             }
@@ -105,9 +146,8 @@ impl MetadataIndexService {
         };
 
         let mut entries = vec![connection_entry(connection)];
-        let mut current = 1;
         if !on_progress(MetadataIndexProgress {
-            current,
+            current: 0,
             total: None,
         }) {
             return Err(AppError::ConfigError(
@@ -115,57 +155,103 @@ impl MetadataIndexService {
             ));
         }
 
-        let databases = driver.get_databases().await.unwrap_or_default();
-        for database in &databases {
-            push_index_entry(&mut entries, database_entry(connection, database));
-        }
-        current += databases.len() as u64;
-        if !on_progress(MetadataIndexProgress {
-            current,
-            total: None,
-        }) {
-            return Err(AppError::ConfigError(
-                "metadata indexing cancelled".to_string(),
-            ));
+        let mut capacity_reached = false;
+        if has_capacity(&entries, capacity) {
+            let databases = supported_metadata(driver.get_databases().await)?;
+            for database in &databases {
+                push_index_entry(&mut entries, database_entry(connection, database), capacity);
+                if !has_capacity(&entries, capacity) {
+                    capacity_reached = true;
+                    break;
+                }
+            }
+        } else {
+            capacity_reached = true;
         }
 
-        let schemas = driver.get_schemas(connection.database.as_deref()).await?;
+        let schemas = if has_capacity(&entries, capacity) {
+            supported_metadata(driver.get_schemas(connection.database.as_deref()).await)?
+        } else {
+            Vec::new()
+        };
         let schema_total = schemas.len() as u64;
-        for (schema_index, schema) in schemas.iter().enumerate() {
-            if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+        if !on_progress(MetadataIndexProgress {
+            current: 0,
+            total: Some(schema_total),
+        }) {
+            return Err(AppError::ConfigError(
+                "metadata indexing cancelled".to_string(),
+            ));
+        }
+
+        let mut current = 0_u64;
+        for schema in &schemas {
+            if !has_capacity(&entries, capacity) {
+                capacity_reached = true;
                 break;
             }
-            push_index_entry(&mut entries, schema_entry(connection, schema));
+            push_index_entry(&mut entries, schema_entry(connection, schema), capacity);
+            if !has_capacity(&entries, capacity) {
+                capacity_reached = true;
+                break;
+            }
 
-            let tables = driver.get_tables(&schema.name).await.unwrap_or_default();
-            let views = driver.get_views(&schema.name).await.unwrap_or_default();
-            let functions = driver.get_functions(&schema.name).await.unwrap_or_default();
-            current += 1 + tables.len() as u64 + views.len() as u64 + functions.len() as u64;
+            let tables = supported_metadata(driver.get_tables(&schema.name).await)?;
 
             for table in &tables {
-                push_index_entry(&mut entries, table_entry(connection, schema, table));
-                append_columns(connection, schema, table, &mut entries, &driver).await;
-                if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+                push_index_entry(
+                    &mut entries,
+                    table_entry(connection, schema, table),
+                    capacity,
+                );
+                if !has_capacity(&entries, capacity) {
+                    capacity_reached = true;
+                    break;
+                }
+                append_columns(connection, schema, table, &mut entries, &driver, capacity).await?;
+                if !has_capacity(&entries, capacity) {
+                    capacity_reached = true;
                     break;
                 }
             }
+            if capacity_reached {
+                break;
+            }
+
+            let views = supported_metadata(driver.get_views(&schema.name).await)?;
             for view in &views {
-                push_index_entry(&mut entries, view_entry(connection, schema, view));
-                append_columns(connection, schema, view, &mut entries, &driver).await;
-                if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+                push_index_entry(&mut entries, view_entry(connection, schema, view), capacity);
+                if !has_capacity(&entries, capacity) {
+                    capacity_reached = true;
+                    break;
+                }
+                append_columns(connection, schema, view, &mut entries, &driver, capacity).await?;
+                if !has_capacity(&entries, capacity) {
+                    capacity_reached = true;
                     break;
                 }
             }
+            if capacity_reached {
+                break;
+            }
+
+            let functions = supported_metadata(driver.get_functions(&schema.name).await)?;
             for function in functions {
-                push_index_entry(&mut entries, function_entry(connection, schema, &function));
-                if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+                push_index_entry(
+                    &mut entries,
+                    function_entry(connection, schema, &function),
+                    capacity,
+                );
+                if !has_capacity(&entries, capacity) {
+                    capacity_reached = true;
                     break;
                 }
             }
 
+            current += 1;
             if !on_progress(MetadataIndexProgress {
                 current,
-                total: Some(1 + databases.len() as u64 + schema_total),
+                total: Some(schema_total),
             }) {
                 return Err(AppError::ConfigError(
                     "metadata indexing cancelled".to_string(),
@@ -173,7 +259,7 @@ impl MetadataIndexService {
             }
 
             // Keep the task responsive between schemas for cancellation checks in callers.
-            if schema_index + 1 < schemas.len() {
+            if current < schema_total {
                 tokio::task::yield_now().await;
             }
         }
@@ -208,6 +294,7 @@ impl MetadataIndexService {
         Ok(MetadataIndexSummary {
             connection_id: connection.id,
             entry_count,
+            capacity_reached,
         })
     }
 
@@ -311,27 +398,49 @@ fn compare_search_results(
         .then_with(|| right.entry.path.cmp(&left.entry.path))
 }
 
+fn supported_metadata<T>(result: Result<Vec<T>, AppError>) -> Result<Vec<T>, AppError> {
+    match result {
+        Ok(values) => Ok(values),
+        Err(AppError::UnsupportedOperation { .. }) => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
 async fn append_columns(
     connection: &ConnectionConfig,
     schema: &SchemaInfo,
     table: &TableInfo,
     entries: &mut Vec<MetadataIndexEntry>,
     driver: &Arc<dyn DatabaseDriver>,
-) {
-    let columns = driver
-        .get_columns(&schema.name, &table.name)
-        .await
-        .unwrap_or_default();
+    capacity: usize,
+) -> Result<(), AppError> {
+    if !has_capacity(entries, capacity) {
+        return Ok(());
+    }
+    let columns = supported_metadata(driver.get_columns(&schema.name, &table.name).await)?;
     for column in columns {
-        push_index_entry(entries, column_entry(connection, schema, table, &column));
-        if entries.len() >= MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+        push_index_entry(
+            entries,
+            column_entry(connection, schema, table, &column),
+            capacity,
+        );
+        if !has_capacity(entries, capacity) {
             break;
         }
     }
+    Ok(())
 }
 
-fn push_index_entry(entries: &mut Vec<MetadataIndexEntry>, entry: MetadataIndexEntry) {
-    if entries.len() < MAX_METADATA_INDEX_ENTRIES_PER_CONNECTION {
+fn has_capacity(entries: &[MetadataIndexEntry], capacity: usize) -> bool {
+    entries.len() < capacity
+}
+
+fn push_index_entry(
+    entries: &mut Vec<MetadataIndexEntry>,
+    entry: MetadataIndexEntry,
+    capacity: usize,
+) {
+    if entries.len() < capacity {
         entries.push(entry);
     }
 }
@@ -494,9 +603,312 @@ fn score_entry(entry: &MetadataIndexEntry, query: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        drivers::trait_def::DatabaseDriver,
+        models::{
+            connection::ConnectionConfig,
+            error::AppError,
+            metadata::{
+                ColumnInfo, DatabaseInfo, DriverCapabilities, ForeignKeyInfo, IndexInfo,
+                SchemaInfo, TableInfo, TableType,
+            },
+            query_result::{ExplainResult, QueryResult, QueryResultChunk, QueryStreamSummary},
+        },
+    };
+    use async_trait::async_trait;
+    use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
     use super::{MetadataIndexEntry, MetadataIndexKind, MetadataIndexService};
+
+    struct IndexDriver {
+        fail_at: Option<&'static str>,
+        error: fn() -> AppError,
+        empty: bool,
+        calls: Option<Arc<Mutex<Vec<String>>>>,
+    }
+
+    fn permission_error() -> AppError {
+        AppError::QueryFailed {
+            sql: "metadata fixture".into(),
+            message: "permission denied".into(),
+        }
+    }
+
+    impl IndexDriver {
+        fn metadata<T>(&self, operation: &str, values: Vec<T>) -> Result<Vec<T>, AppError> {
+            if let Some(calls) = &self.calls {
+                calls.lock().unwrap().push(operation.to_string());
+            }
+            if self.fail_at == Some(operation) {
+                return Err((self.error)());
+            }
+            Ok(if self.empty { Vec::new() } else { values })
+        }
+        fn unsupported(&self) -> AppError {
+            AppError::UnsupportedOperation {
+                driver: "index fixture".into(),
+                operation: "unused fixture operation".into(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DatabaseDriver for IndexDriver {
+        fn driver_name(&self) -> &'static str {
+            "index fixture"
+        }
+        fn capabilities(&self) -> DriverCapabilities {
+            DriverCapabilities {
+                has_database: true,
+                has_schema: true,
+                supports_transactions: false,
+                supports_explain: false,
+                supports_cancel: false,
+                supports_ddl: false,
+                supports_streaming: false,
+            }
+        }
+        async fn ping(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn execute_query(&self, _: &str, _: Option<&str>) -> Result<QueryResult, AppError> {
+            Err(self.unsupported())
+        }
+        async fn execute_query_stream(
+            &self,
+            _: &str,
+            _: &str,
+            _: usize,
+            _: Option<u64>,
+            _: tokio::sync::mpsc::Sender<Result<QueryResultChunk, AppError>>,
+        ) -> Result<QueryStreamSummary, AppError> {
+            Err(self.unsupported())
+        }
+        async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, AppError> {
+            self.metadata("databases", vec![DatabaseInfo { name: "app".into() }])
+        }
+        async fn get_schemas(&self, _: Option<&str>) -> Result<Vec<SchemaInfo>, AppError> {
+            self.metadata(
+                "schemas",
+                vec![SchemaInfo {
+                    name: "public".into(),
+                    database: Some("app".into()),
+                }],
+            )
+        }
+        async fn get_tables(&self, _: &str) -> Result<Vec<TableInfo>, AppError> {
+            self.metadata(
+                "tables",
+                vec![TableInfo {
+                    name: "kept".into(),
+                    schema: Some("public".into()),
+                    table_type: TableType::Table,
+                    row_count: None,
+                }],
+            )
+        }
+        async fn get_views(&self, _: &str) -> Result<Vec<TableInfo>, AppError> {
+            self.metadata("views", Vec::new())
+        }
+        async fn get_functions(&self, _: &str) -> Result<Vec<String>, AppError> {
+            self.metadata("functions", Vec::new())
+        }
+        async fn get_columns(&self, _: &str, _: &str) -> Result<Vec<ColumnInfo>, AppError> {
+            self.metadata("columns", vec![serde_json::from_value(serde_json::json!({ "table": "kept", "name": "id", "ordinalPosition": 1, "dataType": "INTEGER", "nullable": false, "isPrimaryKey": true })).unwrap()])
+        }
+        async fn get_indexes(&self, _: &str, _: &str) -> Result<Vec<IndexInfo>, AppError> {
+            Err(self.unsupported())
+        }
+        async fn get_foreign_keys(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Vec<ForeignKeyInfo>, AppError> {
+            Err(self.unsupported())
+        }
+        async fn get_table_ddl(&self, _: &str, _: &str) -> Result<String, AppError> {
+            Err(self.unsupported())
+        }
+        async fn explain_query(&self, _: &str, _: Option<&str>) -> Result<ExplainResult, AppError> {
+            Err(self.unsupported())
+        }
+        async fn cancel_query(&self, _: &str) -> Result<(), AppError> {
+            Err(self.unsupported())
+        }
+    }
+
+    fn config() -> ConnectionConfig {
+        serde_json::from_value(serde_json::json!({ "id": Uuid::new_v4(), "name": "Fixture", "driverType": "postgres", "driverPaths": [], "createdAt": chrono::Utc::now(), "updatedAt": chrono::Utc::now() })).unwrap()
+    }
+
+    #[tokio::test]
+    async fn capacity_stop_skips_columns_and_later_metadata_requests() {
+        let service = MetadataIndexService::new();
+        let config = config();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut progress = Vec::new();
+        let summary = service
+            .index_connection_with_limit(
+                &config,
+                Arc::new(IndexDriver {
+                    fail_at: None,
+                    error: permission_error,
+                    empty: false,
+                    calls: Some(calls.clone()),
+                }),
+                true,
+                4,
+                |value| {
+                    progress.push(value);
+                    true
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.entry_count, 4);
+        assert!(summary.capacity_reached);
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(calls, ["databases", "schemas", "tables"]);
+        assert!(progress
+            .iter()
+            .all(|value| { value.total.is_none_or(|total| value.current <= total) }));
+    }
+
+    async fn assert_failed_refresh(stage: &'static str, error: fn() -> AppError) {
+        for existing in [false, true] {
+            let service = MetadataIndexService::new();
+            let config = config();
+            if existing {
+                service
+                    .index_connection(
+                        &config,
+                        Arc::new(IndexDriver {
+                            fail_at: None,
+                            error: permission_error,
+                            empty: false,
+                            calls: None,
+                        }),
+                        false,
+                        |_| true,
+                    )
+                    .await
+                    .unwrap();
+            }
+            let before =
+                serde_json::to_value(service.state.read().await.entries.get(&config.id)).unwrap();
+            let result = service
+                .index_connection(
+                    &config,
+                    Arc::new(IndexDriver {
+                        fail_at: Some(stage),
+                        error,
+                        empty: false,
+                        calls: None,
+                    }),
+                    true,
+                    |_| true,
+                )
+                .await;
+            assert_eq!(result.unwrap_err().code(), error().code());
+            assert_eq!(
+                serde_json::to_value(service.state.read().await.entries.get(&config.id)).unwrap(),
+                before
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn permission_errors_propagate_at_every_stage_and_never_commit_partial_entries() {
+        for stage in [
+            "databases",
+            "schemas",
+            "tables",
+            "views",
+            "functions",
+            "columns",
+        ] {
+            assert_failed_refresh(stage, permission_error).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn connection_timeout_and_serialization_errors_preserve_the_previous_index() {
+        assert_failed_refresh("tables", || AppError::ConnectionFailed {
+            driver: "fixture".into(),
+            message: "connection lost".into(),
+        })
+        .await;
+        assert_failed_refresh("columns", || AppError::Timeout {
+            operation: "metadata".into(),
+            elapsed_ms: 1,
+        })
+        .await;
+        assert_failed_refresh("functions", || {
+            AppError::SerializationError("malformed metadata".into())
+        })
+        .await;
+        assert_failed_refresh("columns", || {
+            AppError::ResultLimitExceeded("metadata result budget".into())
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn unsupported_metadata_is_skipped_without_hiding_real_errors() {
+        for stage in [
+            "databases",
+            "schemas",
+            "tables",
+            "views",
+            "functions",
+            "columns",
+        ] {
+            let service = MetadataIndexService::new();
+            let config = config();
+            let summary = service
+                .index_connection(
+                    &config,
+                    Arc::new(IndexDriver {
+                        fail_at: Some(stage),
+                        error: || AppError::UnsupportedOperation {
+                            driver: "fixture".into(),
+                            operation: "metadata".into(),
+                        },
+                        empty: false,
+                        calls: None,
+                    }),
+                    true,
+                    |_| true,
+                )
+                .await
+                .unwrap();
+            assert!(summary.entry_count >= 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn truly_empty_metadata_successfully_commits_a_minimal_index() {
+        let service = MetadataIndexService::new();
+        let config = config();
+        let summary = service
+            .index_connection(
+                &config,
+                Arc::new(IndexDriver {
+                    fail_at: None,
+                    error: permission_error,
+                    empty: true,
+                    calls: None,
+                }),
+                false,
+                |_| true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(summary.entry_count, 1);
+        assert_eq!(service.search("kept", Some(config.id), 10).await.len(), 0);
+    }
 
     #[tokio::test]
     async fn search_returns_matching_entries_with_connection_path() {

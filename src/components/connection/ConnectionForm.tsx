@@ -69,7 +69,7 @@ export function ConnectionForm({
     connectionUrl: initialUrlCredentials.connectionUrl,
     username: initialUrlCredentials.username ?? connection?.username ?? '',
     password: initialUrlCredentials.password ?? '',
-    savePassword: initialUrlCredentials.password ? true : (connection?.hasSavedPassword ?? true),
+    savePassword: connection?.hasSavedPassword ?? true,
     driverClass: connection?.driverClass ?? '',
     driverPaths: connection?.driverPaths ?? [],
     sslMode: connection?.sslMode ?? '',
@@ -112,6 +112,7 @@ export function ConnectionForm({
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
   const sslModes = supportedSslModes(form.driverType, form.sslMode)
   const readinessIssue = connectionReadinessIssue(form, driverProfile, selectedDriver, t)
+  const runtimeCapabilityUnavailable = !selectedDriver?.capabilities.canConnect
   const databaseTypes = databaseTypeOptions(selectableDrivers, t)
   const activeDatabaseType = databaseTypes.find((option) => option.driverType === form.driverType)
   const driverVariants = activeDatabaseType?.drivers ?? []
@@ -136,7 +137,6 @@ export function ConnectionForm({
       connectionUrl: extracted.connectionUrl,
       username: extracted.username ?? current.username,
       password: extracted.password ?? current.password,
-      savePassword: extracted.password ? true : current.savePassword,
     }))
     if (extracted.username || extracted.password) setMessage(t('connectionForm.urlCredentialsExtracted'))
   }
@@ -419,7 +419,7 @@ export function ConnectionForm({
           {messageDetail && <details className="mt-1 text-[11px]"><summary className="cursor-pointer">{t('connectionForm.errorDetails')}</summary><pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap font-sans">{messageDetail}</pre></details>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button type="button" variant="outline" className="h-9 px-3" onClick={test} disabled={loading}><PlugZap />{t('connectionForm.testConnection')}</Button>
+          <Button type="button" variant="outline" className="h-9 px-3" onClick={test} disabled={loading || runtimeCapabilityUnavailable}><PlugZap />{t('connectionForm.testConnection')}</Button>
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button type="button" size="icon" variant="ghost" aria-label={t('common.moreActions')}><MoreHorizontal /></Button>} />
             <DropdownMenuContent align="end">
@@ -427,7 +427,7 @@ export function ConnectionForm({
               {layout === 'panel' && <DropdownMenuItem onClick={onCancel}>{t('common.cancel')}</DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button type="submit" className="h-9 px-3" title={t('connectionForm.saveAndConnect')} disabled={loading || Boolean(readinessIssue)}><Database />{t('connection.connect')}</Button>
+          <Button type="submit" className="h-9 px-3" title={t('connectionForm.saveAndConnect')} disabled={loading || Boolean(readinessIssue) || runtimeCapabilityUnavailable}><Database />{t('connection.connect')}</Button>
         </div>
       </div>
     </form>
@@ -705,9 +705,9 @@ function DriverSupportSummary({
   readinessIssue: string | null
   t: TFunction
 }) {
-  const capabilities = driver?.capabilities ?? profileCapabilities(profile)
+  const capabilities = driver?.capabilities ?? unknownCapabilities()
   const missing = externalDriverMissingItems(input, profile, driver, t)
-  const ready = !readinessIssue && missing.length === 0 && profile.status !== 'planned'
+  const ready = Boolean(driver?.capabilities.canConnect) && !readinessIssue && missing.length === 0
   const requiresLocalJar = profile.externalDriver || Boolean(driver?.userDriverRequired)
   const status = driverStatusLabel(driver?.status ?? profile.status, t)
   const downloadUrl = driver?.downloadUrl ?? (input.driverType === 'oracle' ? ORACLE_JDBC_DOWNLOAD_URL : null)
@@ -794,15 +794,14 @@ function driverCapabilityBadges(capabilities: DriverDefinition['capabilities'], 
   ]
 }
 
-function profileCapabilities(profile: DriverProfile): DriverDefinition['capabilities'] {
-  const queryable = profile.status !== 'planned'
+function unknownCapabilities(): DriverDefinition['capabilities'] {
   return {
-    canConnect: queryable,
-    canQuery: queryable,
-    canStream: queryable,
-    canReadMetadata: queryable,
+    canConnect: false,
+    canQuery: false,
+    canStream: false,
+    canReadMetadata: false,
     canCancel: false,
-    canGenerateDdl: queryable,
+    canGenerateDdl: false,
   }
 }
 

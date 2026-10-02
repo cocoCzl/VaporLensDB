@@ -900,7 +900,8 @@ impl ConfigStore {
     fn init(&self) -> Result<(), AppError> {
         let conn = self.conn()?;
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        run_config_migrations(&conn)
+        run_config_migrations(&conn)?;
+        clear_disabled_ssh_tunnel_secrets(&conn)
     }
 
     fn seed_builtin_driver_definitions(&self) -> Result<(), AppError> {
@@ -977,6 +978,27 @@ impl ConfigStore {
         let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
     }
+}
+
+fn clear_disabled_ssh_tunnel_secrets(conn: &Connection) -> Result<(), AppError> {
+    let mut statement = conn
+        .prepare("SELECT id, ssh_tunnel_json FROM connections WHERE ssh_tunnel_json IS NOT NULL")?;
+    let disabled_ids = statement
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let tunnel: Option<SshTunnelConfig> = row
+                .get::<_, Option<String>>(1)?
+                .and_then(|value| serde_json::from_str(&value).ok());
+            Ok(tunnel.filter(|value| !value.enabled).map(|_| id))
+        })?
+        .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+    for id in disabled_ids.into_iter().flatten() {
+        conn.execute(
+            "UPDATE connections SET ssh_password_encrypted = NULL, ssh_private_key_passphrase_encrypted = NULL WHERE id = ?1",
+            [id],
+        )?;
+    }
+    Ok(())
 }
 
 fn run_config_migrations(conn: &Connection) -> Result<(), AppError> {
@@ -1553,6 +1575,11 @@ fn encrypt_ssh_tunnel_secrets(
     existing: Option<&SshTunnelConfig>,
 ) -> Result<(), AppError> {
     if let Some(tunnel) = config.ssh_tunnel.as_mut() {
+        if !tunnel.enabled {
+            tunnel.password_encrypted = None;
+            tunnel.private_key_passphrase_encrypted = None;
+            return Ok(());
+        }
         tunnel.password_encrypted = match tunnel.password_encrypted.take() {
             Some(password) if !password.is_empty() => Some(secrets.encrypt(&password)?),
             _ => existing.and_then(|value| value.password_encrypted.clone()),
@@ -1873,6 +1900,48 @@ mod tests {
     use rusqlite::{params, Connection};
     use std::path::Path;
     use uuid::Uuid;
+
+    fn test_connection_config(id: Uuid) -> ConnectionConfig {
+        ConnectionConfig {
+            id,
+            name: "SSH test connection".to_string(),
+            driver_definition_id: Some("postgres".to_string()),
+            driver_type: DriverType::Postgres,
+            driver_dialect: Some("postgresql".to_string()),
+            host: Some("db.internal".to_string()),
+            port: Some(5432),
+            database: Some("app".to_string()),
+            connection_url: None,
+            username: Some("db-user".to_string()),
+            password_encrypted: None,
+            has_saved_password: false,
+            driver_class: None,
+            driver_paths: Vec::new(),
+            ssl_mode: None,
+            group_id: None,
+            group: None,
+            color_tag: None,
+            ssh_tunnel: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn test_ssh_tunnel(enabled: bool) -> SshTunnelConfig {
+        SshTunnelConfig {
+            enabled,
+            host: "bastion.internal".to_string(),
+            port: 22,
+            username: "deploy".to_string(),
+            auth_method: SshAuthMethod::Password,
+            password_encrypted: Some("tunnel-password".to_string()),
+            private_key_path: Some("/tmp/id_ed25519".to_string()),
+            private_key_passphrase_encrypted: Some("tunnel-passphrase".to_string()),
+            remote_host: None,
+            remote_port: None,
+            local_host: Some("127.0.0.1".to_string()),
+        }
+    }
 
     fn create_v8_config_database(config_dir: &Path) -> Connection {
         std::fs::create_dir_all(config_dir).expect("create temp config directory");
@@ -2793,6 +2862,176 @@ mod tests {
             Some("key-passphrase")
         );
         assert_eq!(decrypted.host, "bastion.internal");
+    }
+
+    #[test]
+    fn disabling_ssh_clears_both_persisted_secret_columns() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!("vaporlensdb-ssh-disable-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir.clone()).expect("create config store");
+        let id = Uuid::new_v4();
+        let mut config = test_connection_config(id);
+        config.ssh_tunnel = Some(test_ssh_tunnel(true));
+        store
+            .create_connection(config.clone(), None, false)
+            .expect("create enabled tunnel");
+        let mut disabled = store.get_connection(id).unwrap().unwrap();
+        disabled.ssh_tunnel = Some(test_ssh_tunnel(false));
+        store
+            .update_connection(disabled, None, false)
+            .expect("disable tunnel");
+        let db = Connection::open(store.db_path()).unwrap();
+        let values: (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT ssh_password_encrypted, ssh_private_key_passphrase_encrypted FROM connections WHERE id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(values, (None, None));
+        drop(db);
+        drop(store);
+        let reopened = ConfigStore::new(dir.clone()).expect("reopen config store");
+        let reopened_db = Connection::open(reopened.db_path()).unwrap();
+        let reopened_values: (Option<String>, Option<String>) = reopened_db
+            .query_row(
+                "SELECT ssh_password_encrypted, ssh_private_key_passphrase_encrypted FROM connections WHERE id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(reopened_values, (None, None));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn disabled_ssh_does_not_store_supplied_secrets_or_resurrect_them() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir =
+            std::env::temp_dir().join(format!("vaporlensdb-ssh-no-resurrect-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir.clone()).expect("create config store");
+        let id = Uuid::new_v4();
+        let mut config = test_connection_config(id);
+        let mut disabled = test_ssh_tunnel(false);
+        disabled.password_encrypted = Some("accidental-password".to_string());
+        disabled.private_key_passphrase_encrypted = Some("accidental-passphrase".to_string());
+        config.ssh_tunnel = Some(disabled);
+        store.create_connection(config, None, false).unwrap();
+        let db = Connection::open(store.db_path()).unwrap();
+        let values: (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT ssh_password_encrypted, ssh_private_key_passphrase_encrypted FROM connections WHERE id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(values, (None, None));
+        let mut enabled = store.get_connection(id).unwrap().unwrap();
+        let mut reenabled = test_ssh_tunnel(true);
+        reenabled.password_encrypted = None;
+        reenabled.private_key_passphrase_encrypted = None;
+        enabled.ssh_tunnel = Some(reenabled);
+        let enabled = store.update_connection(enabled, None, false).unwrap();
+        assert!(store
+            .decrypt_ssh_tunnel(&enabled)
+            .unwrap()
+            .unwrap()
+            .password_encrypted
+            .is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn disabling_ssh_preserves_database_password_and_other_connection_secrets() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir =
+            std::env::temp_dir().join(format!("vaporlensdb-ssh-isolation-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir.clone()).expect("create config store");
+        let first_id = Uuid::new_v4();
+        let second_id = Uuid::new_v4();
+        let mut first = test_connection_config(first_id);
+        first.ssh_tunnel = Some(test_ssh_tunnel(true));
+        store
+            .create_connection(first, Some("database-password".into()), true)
+            .unwrap();
+        let mut second = test_connection_config(second_id);
+        second.ssh_tunnel = Some(test_ssh_tunnel(true));
+        store.create_connection(second, None, false).unwrap();
+        let mut first_disabled = store.get_connection(first_id).unwrap().unwrap();
+        first_disabled.ssh_tunnel = Some(test_ssh_tunnel(false));
+        store.update_connection(first_disabled, None, true).unwrap();
+        let first_after = store.get_connection(first_id).unwrap().unwrap();
+        let second_after = store.get_connection(second_id).unwrap().unwrap();
+        assert!(first_after.password_encrypted.is_some());
+        assert!(store
+            .decrypt_ssh_tunnel(&first_after)
+            .unwrap()
+            .unwrap()
+            .password_encrypted
+            .is_none());
+        assert!(store
+            .decrypt_ssh_tunnel(&second_after)
+            .unwrap()
+            .unwrap()
+            .password_encrypted
+            .is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn enabled_ssh_update_without_new_secret_preserves_current_secret() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir = std::env::temp_dir().join(format!("vaporlensdb-ssh-preserve-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir.clone()).expect("create config store");
+        let id = Uuid::new_v4();
+        let mut config = test_connection_config(id);
+        config.ssh_tunnel = Some(test_ssh_tunnel(true));
+        store.create_connection(config, None, false).unwrap();
+        let mut edited = store.get_connection(id).unwrap().unwrap();
+        let mut tunnel = test_ssh_tunnel(true);
+        tunnel.password_encrypted = None;
+        tunnel.private_key_passphrase_encrypted = None;
+        tunnel.local_host = Some("127.0.0.1".to_string());
+        edited.ssh_tunnel = Some(tunnel);
+        let saved = store.update_connection(edited, None, true).unwrap();
+        let decrypted = store.decrypt_ssh_tunnel(&saved).unwrap().unwrap();
+        assert_eq!(
+            decrypted.password_encrypted.as_deref(),
+            Some("tunnel-password")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ssh_disable_persistence_failure_does_not_report_success_or_clear_storage() {
+        std::env::set_var("VAPORLENSDB_USE_DEV_KEY", "1");
+        let dir =
+            std::env::temp_dir().join(format!("vaporlensdb-ssh-update-failure-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(dir.clone()).expect("create config store");
+        let id = Uuid::new_v4();
+        let mut config = test_connection_config(id);
+        config.ssh_tunnel = Some(test_ssh_tunnel(true));
+        store.create_connection(config, None, false).unwrap();
+        let db = Connection::open(store.db_path()).unwrap();
+        db.execute_batch(
+            "CREATE TRIGGER reject_connection_update BEFORE UPDATE ON connections BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+        )
+        .unwrap();
+        drop(db);
+        let mut disabled = store.get_connection(id).unwrap().unwrap();
+        disabled.ssh_tunnel = Some(test_ssh_tunnel(false));
+        assert!(store.update_connection(disabled, None, true).is_err());
+        let persisted: (Option<String>, Option<String>) = Connection::open(store.db_path())
+            .unwrap()
+            .query_row(
+                "SELECT ssh_password_encrypted, ssh_private_key_passphrase_encrypted FROM connections WHERE id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(persisted.0.is_some());
+        assert!(persisted.1.is_some());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

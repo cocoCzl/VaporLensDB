@@ -262,7 +262,12 @@ pub async fn start_metadata_index_task(
         let progress_task = tokio::spawn(async move {
             while let Some(progress) = progress_rx.recv().await {
                 if let Ok(task) = progress_manager
-                    .update_progress(progress_task_id, progress.current, "Indexing metadata")
+                    .update_progress_with_total(
+                        progress_task_id,
+                        progress.current,
+                        progress.total,
+                        "Indexing metadata",
+                    )
                     .await
                 {
                     emit_task_update(&progress_app, &task);
@@ -292,10 +297,15 @@ pub async fn start_metadata_index_task(
         } else {
             match result {
                 Ok(summary) => {
+                    let suffix = if summary.capacity_reached {
+                        "; index capacity reached"
+                    } else {
+                        ""
+                    };
                     manager
                         .finish_success(
                             handle.id,
-                            format!("Indexed {} metadata objects", summary.entry_count),
+                            format!("Indexed {} metadata objects{}", summary.entry_count, suffix),
                         )
                         .await
                 }

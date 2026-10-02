@@ -198,7 +198,7 @@ public final class JdbcBridge {
                     default -> throw new IllegalArgumentException("unsupported command: " + command);
                 }
             } catch (Exception | LinkageError error) {
-                respondErr(requestId, error.getMessage() == null ? error.toString() : error.getMessage());
+                respondFailure(requestId, error);
             }
         }
     }
@@ -371,7 +371,7 @@ public final class JdbcBridge {
             try {
                 request.run();
             } catch (Exception | LinkageError error) {
-                respondErr(requestId, error.getMessage() == null ? error.toString() : error.getMessage());
+                respondFailure(requestId, error);
             }
         }, "vaporlensdb-jdbc-query-" + requestId);
         worker.setDaemon(true);
@@ -475,7 +475,7 @@ public final class JdbcBridge {
             long rowBytes = utf8Length(row);
             long framedRowBytes = rowBytes + 1;
             if (framedRowBytes + 2 > maxBytes) {
-                throw new IllegalArgumentException(
+                throw new ResultLimitException(
                         "interactive result row exceeds the " + maxBytes + " byte source chunk limit");
             }
             List<String> flushed = null;
@@ -538,7 +538,7 @@ public final class JdbcBridge {
 
         void add(CharSequence row) {
             if (!budget.tryAdd(row)) {
-                throw new IllegalArgumentException(
+                throw new ResultLimitException(
                         "interactive JDBC result exceeds the byte limit");
             }
             if (rowCount > 0) {
@@ -672,13 +672,15 @@ public final class JdbcBridge {
                         nullableInt(resultSet, "COLUMN_SIZE"),
                         nullableInt(resultSet, "COLUMN_SIZE"),
                         nullableInt(resultSet, "DECIMAL_DIGITS"),
-                        primaryKeys.contains(column)));
+                        primaryKeys.contains(column),
+                        safeMetadataFlag(resultSet, "IS_GENERATEDCOLUMN"),
+                        safeMetadataFlag(resultSet, "IS_AUTOINCREMENT")));
             }
         }
         return result(
                 new String[] { "schema_name", "table_name", "name", "ordinal_position", "data_type", "nullable",
                         "default_value", "character_maximum_length", "numeric_precision", "numeric_scale",
-                        "is_primary_key" },
+                        "is_primary_key", "is_generated", "is_auto_increment" },
                 rows);
     }
 
@@ -807,6 +809,20 @@ public final class JdbcBridge {
         }
     }
 
+    private static boolean safeMetadataFlag(ResultSet resultSet, String column) {
+        String value = nullableColumn(resultSet, column);
+        if (value != null) {
+            String normalized = value.trim().toLowerCase(Locale.ROOT);
+            if (normalized.equals("yes") || normalized.equals("true") || normalized.equals("1")) {
+                return true;
+            }
+            if (normalized.equals("no") || normalized.equals("false") || normalized.equals("0")) {
+                return false;
+            }
+        }
+        return safeBool(resultSet, column);
+    }
+
     private static String firstNonEmpty(String... values) {
         for (String value : values) {
             if (value != null && !value.isEmpty()) {
@@ -859,6 +875,20 @@ public final class JdbcBridge {
 
     private static void respondErr(String requestId, String message) {
         respond("ERR", requestId, message);
+    }
+
+    static final class ResultLimitException extends IllegalArgumentException {
+        ResultLimitException(String message) {
+            super(message);
+        }
+    }
+
+    static void respondFailure(String requestId, Throwable error) {
+        if (error instanceof ResultLimitException) {
+            respond("LIMIT", requestId, "JDBC result exceeded the interactive byte limit");
+        } else {
+            respondErr(requestId, error.getMessage() == null ? error.toString() : error.getMessage());
+        }
     }
 
     private static synchronized void respond(String status, String requestId, String payload) {
@@ -916,7 +946,7 @@ public final class JdbcBridge {
         appendJsonValue(output, value);
         if (utf8Length(output, start, output.length()) > maxBytes) {
             output.setLength(start);
-            throw new IllegalArgumentException(
+            throw new ResultLimitException(
                     "interactive result cell exceeds the " + maxBytes + " byte limit");
         }
     }

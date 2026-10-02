@@ -433,11 +433,15 @@ async function withLoading<T>(
   return promise
 }
 
-class MetadataLoadInvalidatedError extends Error {
+export class MetadataLoadInvalidatedError extends Error {
   constructor() {
     super('metadata request was invalidated; retry the load')
     this.name = 'MetadataLoadInvalidatedError'
   }
+}
+
+export function isMetadataLoadInvalidatedError(error: unknown): error is MetadataLoadInvalidatedError {
+  return error instanceof MetadataLoadInvalidatedError
 }
 
 function invalidatePendingLoad(key: string) {
