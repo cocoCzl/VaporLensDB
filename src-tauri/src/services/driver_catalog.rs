@@ -346,7 +346,7 @@ fn oracle_metadata_sql() -> String {
         "schemas": "SELECT username AS name, COALESCE(SYS_CONTEXT('USERENV', 'CON_NAME'), SYS_CONTEXT('USERENV', 'SERVICE_NAME'), SYS_CONTEXT('USERENV', 'DB_NAME')) AS database FROM all_users ORDER BY CASE WHEN username = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') THEN 0 WHEN username = USER THEN 1 ELSE 2 END, username",
         "tables": "SELECT owner AS schema_name, table_name AS name, 'table' AS table_type, num_rows AS row_count FROM all_tables WHERE owner = UPPER('{schema}') AND nested = 'NO' ORDER BY table_name",
         "views": "SELECT owner AS schema_name, view_name AS name, 'view' AS table_type, CAST(NULL AS NUMBER) AS row_count FROM all_views WHERE owner = UPPER('{schema}') ORDER BY view_name",
-        "columns": "SELECT c.owner AS schema_name, c.table_name AS table_name, c.column_name AS name, c.column_id AS ordinal_position, c.data_type AS data_type, CASE WHEN c.nullable = 'Y' THEN 1 ELSE 0 END AS nullable, c.data_default AS default_value, c.char_length AS character_maximum_length, c.data_precision AS numeric_precision, c.data_scale AS numeric_scale, CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key, CASE WHEN c.identity_column = 'YES' THEN 1 ELSE 0 END AS is_identity, CASE WHEN c.virtual_column = 'YES' THEN 1 ELSE 0 END AS is_generated, CASE WHEN c.identity_column = 'YES' THEN 1 ELSE 0 END AS is_auto_increment FROM all_tab_columns c LEFT JOIN (SELECT acc.owner, acc.table_name, acc.column_name FROM all_constraints ac JOIN all_cons_columns acc ON acc.owner = ac.owner AND acc.constraint_name = ac.constraint_name AND acc.table_name = ac.table_name WHERE ac.constraint_type = 'P') pk ON pk.owner = c.owner AND pk.table_name = c.table_name AND pk.column_name = c.column_name WHERE c.owner = UPPER('{schema}') AND c.table_name = UPPER('{table}') ORDER BY c.column_id",
+        "columns": "SELECT c.owner AS schema_name, c.table_name AS table_name, c.column_name AS name, c.column_id AS ordinal_position, c.data_type AS data_type, CASE WHEN c.nullable = 'Y' THEN 1 ELSE 0 END AS nullable, c.data_default AS default_value, c.char_length AS character_maximum_length, c.data_precision AS numeric_precision, c.data_scale AS numeric_scale, CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key, CASE WHEN c.identity_column = 'YES' THEN 1 ELSE 0 END AS is_identity, CASE WHEN ac.virtual_column = 'YES' THEN 1 ELSE 0 END AS is_generated, CASE WHEN c.identity_column = 'YES' THEN 1 ELSE 0 END AS is_auto_increment FROM all_tab_columns c LEFT JOIN all_tab_cols ac ON ac.owner = c.owner AND ac.table_name = c.table_name AND ac.column_name = c.column_name LEFT JOIN (SELECT acc.owner, acc.table_name, acc.column_name FROM all_constraints ac JOIN all_cons_columns acc ON acc.owner = ac.owner AND acc.constraint_name = ac.constraint_name AND acc.table_name = ac.table_name WHERE ac.constraint_type = 'P') pk ON pk.owner = c.owner AND pk.table_name = c.table_name AND pk.column_name = c.column_name WHERE c.owner = UPPER('{schema}') AND c.table_name = UPPER('{table}') ORDER BY c.column_id",
         "indexes": "SELECT i.owner AS schema_name, i.table_name AS table_name, i.index_name AS name, LISTAGG(ic.column_name, ', ') WITHIN GROUP (ORDER BY ic.column_position) AS column_names, CASE WHEN i.uniqueness = 'UNIQUE' THEN 1 ELSE 0 END AS is_unique, i.index_type AS definition FROM all_indexes i LEFT JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name WHERE i.owner = UPPER('{schema}') AND i.table_name = UPPER('{table}') GROUP BY i.owner, i.table_name, i.index_name, i.uniqueness, i.index_type ORDER BY i.index_name",
         "foreignKeys": "SELECT ac.owner AS schema_name, ac.table_name AS table_name, ac.constraint_name AS name, LISTAGG(acc.column_name, ', ') WITHIN GROUP (ORDER BY acc.position) AS column_names, rc.owner AS referenced_schema, rcc.table_name AS referenced_table, LISTAGG(rcc.column_name, ', ') WITHIN GROUP (ORDER BY rcc.position) AS referenced_columns FROM all_constraints ac JOIN all_cons_columns acc ON acc.owner = ac.owner AND acc.constraint_name = ac.constraint_name AND acc.table_name = ac.table_name JOIN all_constraints rc ON rc.owner = ac.r_owner AND rc.constraint_name = ac.r_constraint_name JOIN all_cons_columns rcc ON rcc.owner = rc.owner AND rcc.constraint_name = rc.constraint_name AND rcc.position = acc.position WHERE ac.constraint_type = 'R' AND ac.owner = UPPER('{schema}') AND ac.table_name = UPPER('{table}') GROUP BY ac.owner, ac.table_name, ac.constraint_name, rc.owner, rcc.table_name ORDER BY ac.constraint_name",
         "functions": "SELECT owner AS schema_name, object_name AS name FROM all_objects WHERE owner = UPPER('{schema}') AND object_type = 'FUNCTION' ORDER BY object_name",
@@ -398,6 +398,20 @@ mod tests {
         assert!(!sql.contains(" AS schema,"));
         assert!(!sql.contains(" AS columns,"));
         assert!(!sql.contains(" AS unique,"));
+    }
+
+    #[test]
+    fn oracle_columns_metadata_joins_virtual_flags_without_changing_row_source() {
+        let sql = oracle_metadata_sql().to_ascii_lowercase();
+
+        assert!(sql.contains("from all_tab_columns c"));
+        assert!(sql.contains("left join all_tab_cols ac"));
+        assert!(sql.contains("ac.virtual_column"));
+        assert!(sql.contains("c.identity_column"));
+        assert!(sql.contains("ac.owner = c.owner"));
+        assert!(sql.contains("ac.table_name = c.table_name"));
+        assert!(sql.contains("ac.column_name = c.column_name"));
+        assert!(!sql.contains("case when c.virtual_column"));
     }
 
     #[test]
