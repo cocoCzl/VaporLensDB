@@ -2,7 +2,8 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use mysql_async::{
-    prelude::Queryable, Column, Conn, Opts, OptsBuilder, Params, Row, SslOpts, Value,
+    prelude::{FromValue, Queryable},
+    Column, Conn, Opts, OptsBuilder, Params, Row, SslOpts, Value,
 };
 use tokio::sync::{mpsc, Mutex};
 
@@ -415,25 +416,7 @@ impl DatabaseDriver for MysqlDriver {
             .exec(sql, (schema, table))
             .await
             .map_err(|error| map_mysql_query_error(sql, error))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| ColumnInfo {
-                schema: row.get(0),
-                table: row.get(1).unwrap_or_else(|| table.to_string()),
-                name: row.get(2).unwrap_or_default(),
-                ordinal_position: row.get(3).unwrap_or_default(),
-                data_type: row.get(4).unwrap_or_default(),
-                nullable: row.get(5).unwrap_or(true),
-                default_value: row.get(6),
-                character_maximum_length: row.get(7),
-                numeric_precision: row.get(8),
-                numeric_scale: row.get(9),
-                is_primary_key: row.get(10).unwrap_or(false),
-                is_identity: false,
-                is_generated: row.get(11).unwrap_or(false),
-                is_auto_increment: row.get(12).unwrap_or(false),
-            })
-            .collect())
+        rows.iter().map(mysql_column_info_from_row).collect()
     }
 
     async fn get_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>, AppError> {
@@ -706,6 +689,87 @@ fn row_to_json_values(row: &Row) -> Vec<serde_json::Value> {
         .collect()
 }
 
+struct MysqlColumnMetadata {
+    schema: String,
+    table: String,
+    name: String,
+    ordinal_position: i32,
+    data_type: String,
+    nullable: bool,
+    default_value: Option<String>,
+    character_maximum_length: Option<i64>,
+    numeric_precision: Option<i32>,
+    numeric_scale: Option<i32>,
+    is_primary_key: bool,
+    is_generated: bool,
+    is_auto_increment: bool,
+}
+
+fn mysql_metadata_field_error(field: &str, reason: &str) -> AppError {
+    AppError::ResultProcessingError(format!("MySQL column metadata field {field} {reason}"))
+}
+
+fn mysql_required_metadata<T: FromValue>(
+    row: &Row,
+    index: usize,
+    field: &str,
+) -> Result<T, AppError> {
+    match row.get_opt::<T, _>(index) {
+        Some(Ok(value)) => Ok(value),
+        Some(Err(_)) => Err(mysql_metadata_field_error(field, "has an invalid value")),
+        None => Err(mysql_metadata_field_error(field, "is missing")),
+    }
+}
+
+fn mysql_optional_metadata<T: FromValue>(
+    row: &Row,
+    index: usize,
+    field: &str,
+) -> Result<Option<T>, AppError> {
+    match row.get_opt::<Option<T>, _>(index) {
+        Some(Ok(value)) => Ok(value),
+        Some(Err(_)) => Err(mysql_metadata_field_error(field, "has an invalid value")),
+        None => Err(mysql_metadata_field_error(field, "is missing")),
+    }
+}
+
+fn mysql_column_info_from_row(row: &Row) -> Result<ColumnInfo, AppError> {
+    Ok(mysql_column_info_from_metadata(MysqlColumnMetadata {
+        schema: mysql_required_metadata(row, 0, "schema")?,
+        table: mysql_required_metadata(row, 1, "table")?,
+        name: mysql_required_metadata(row, 2, "name")?,
+        ordinal_position: mysql_required_metadata(row, 3, "ordinal_position")?,
+        data_type: mysql_required_metadata(row, 4, "data_type")?,
+        nullable: mysql_required_metadata(row, 5, "nullable")?,
+        default_value: mysql_optional_metadata(row, 6, "column_default")?,
+        character_maximum_length: mysql_optional_metadata(row, 7, "character_maximum_length")?,
+        numeric_precision: mysql_optional_metadata(row, 8, "numeric_precision")?,
+        numeric_scale: mysql_optional_metadata(row, 9, "numeric_scale")?,
+        is_primary_key: mysql_required_metadata(row, 10, "is_primary_key")?,
+        is_generated: mysql_required_metadata(row, 11, "is_generated")?,
+        is_auto_increment: mysql_required_metadata(row, 12, "is_auto_increment")?,
+    }))
+}
+
+fn mysql_column_info_from_metadata(metadata: MysqlColumnMetadata) -> ColumnInfo {
+    ColumnInfo {
+        schema: Some(metadata.schema),
+        table: metadata.table,
+        name: metadata.name,
+        ordinal_position: metadata.ordinal_position,
+        data_type: metadata.data_type,
+        nullable: metadata.nullable,
+        default_value: metadata.default_value,
+        character_maximum_length: metadata.character_maximum_length,
+        numeric_precision: metadata.numeric_precision,
+        numeric_scale: metadata.numeric_scale,
+        is_primary_key: metadata.is_primary_key,
+        is_identity: false,
+        is_generated: metadata.is_generated,
+        is_auto_increment: metadata.is_auto_increment,
+    }
+}
+
 fn value_to_json(value: &Value) -> serde_json::Value {
     match value {
         Value::NULL => serde_json::Value::Null,
@@ -749,6 +813,28 @@ fn escape_identifier(value: &str) -> String {
 mod result_value_tests {
     use super::*;
 
+    fn test_column_metadata(
+        default_value: Option<&str>,
+        is_generated: bool,
+        is_auto_increment: bool,
+    ) -> MysqlColumnMetadata {
+        MysqlColumnMetadata {
+            schema: "vaporlensdb_qa".to_string(),
+            table: "child_items".to_string(),
+            name: "id".to_string(),
+            ordinal_position: 1,
+            data_type: "int".to_string(),
+            nullable: false,
+            default_value: default_value.map(str::to_string),
+            character_maximum_length: None,
+            numeric_precision: Some(10),
+            numeric_scale: Some(0),
+            is_primary_key: true,
+            is_generated,
+            is_auto_increment,
+        }
+    }
+
     #[test]
     fn preserves_signed_and_unsigned_bigints() {
         assert_eq!(value_to_json(&Value::Int(42)), serde_json::json!(42));
@@ -761,6 +847,29 @@ mod result_value_tests {
             serde_json::json!("18446744073709551615")
         );
         assert_eq!(value_to_json(&Value::NULL), serde_json::Value::Null);
+    }
+
+    #[test]
+    fn column_metadata_mapping_preserves_nullable_defaults_and_structured_flags() {
+        let nullable_default =
+            mysql_column_info_from_metadata(test_column_metadata(None, false, true));
+        assert_eq!(nullable_default.default_value, None);
+        assert!(nullable_default.is_auto_increment);
+        assert!(!nullable_default.is_generated);
+
+        let explicit_default =
+            mysql_column_info_from_metadata(test_column_metadata(Some("0"), true, false));
+        assert_eq!(explicit_default.default_value.as_deref(), Some("0"));
+        assert!(explicit_default.is_generated);
+        assert!(!explicit_default.is_auto_increment);
+    }
+
+    #[test]
+    fn metadata_decode_errors_are_returned_without_silent_defaults() {
+        let error = mysql_metadata_field_error("column_default", "has an invalid value");
+        assert!(
+            matches!(error, AppError::ResultProcessingError(message) if message.contains("column_default"))
+        );
     }
 
     #[test]
