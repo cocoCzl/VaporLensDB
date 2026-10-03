@@ -564,11 +564,26 @@ fn looks_like_auth_failure(stderr: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        looks_like_auth_failure, looks_like_forward_bind_failure, port_is_occupied,
-        rewrite_connection_url, ssh_args, ssh_forward_host, wait_until_forward_ready,
-        write_askpass_script, LocalPortReservation, MAX_FORWARD_START_ATTEMPTS,
+        looks_like_auth_failure, looks_like_forward_bind_failure, rewrite_connection_url, ssh_args,
+        ssh_forward_host, wait_until_forward_ready, write_askpass_script, LocalPortReservation,
+        MAX_FORWARD_START_ATTEMPTS,
     };
     use crate::models::connection::{SshAuthMethod, SshTunnelConfig};
+
+    fn probe_local_bind(port: u16) -> std::io::Result<std::net::TcpListener> {
+        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+    }
+
+    fn assert_held_port(port: u16) {
+        let error = probe_local_bind(port).expect_err("held reservation must reject a second bind");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::AddrInUse,
+            "held port={port}, kind={:?}, errno={:?}",
+            error.kind(),
+            error.raw_os_error()
+        );
+    }
 
     #[test]
     fn builds_private_key_forwarding_args() {
@@ -630,16 +645,17 @@ mod tests {
     fn local_port_reservation_holds_the_port_until_the_attempt_releases_it() {
         let reservation = LocalPortReservation::bind("127.0.0.1").expect("reserve local port");
         let port = reservation.port();
-        assert!(port_is_occupied("127.0.0.1", port));
-        reservation.release();
-        assert!(!port_is_occupied("127.0.0.1", port));
+        assert_eq!(reservation.listener.local_addr().unwrap().port(), port);
+        assert_held_port(port);
+        let release_owned: fn(LocalPortReservation) = LocalPortReservation::release;
+        release_owned(reservation);
     }
 
     #[test]
     fn occupied_port_marks_fake_ssh_startup_as_retryable_without_retrying_auth_failure() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fake listener");
         let port = listener.local_addr().unwrap().port();
-        assert!(port_is_occupied("127.0.0.1", port));
+        assert_held_port(port);
         assert!(looks_like_forward_bind_failure(
             "bind: Address already in use"
         ));
@@ -657,12 +673,19 @@ mod tests {
     fn ssh_port_retry_is_bounded_and_attempt_state_is_not_shared() {
         assert_eq!(MAX_FORWARD_START_ATTEMPTS, 4);
         let first = LocalPortReservation::bind("127.0.0.1").unwrap();
-        let first_port = first.port();
-        first.release();
+        let LocalPortReservation {
+            listener: stolen_listener,
+            local_port: first_port,
+        } = first;
         let second = LocalPortReservation::bind("127.0.0.1").unwrap();
         assert!(second.port() > 0);
-        assert!(!port_is_occupied("127.0.0.1", first_port) || first_port == second.port());
+        assert_ne!(first_port, second.port());
+        assert_eq!(stolen_listener.local_addr().unwrap().port(), first_port);
+        assert_eq!(second.listener.local_addr().unwrap().port(), second.port());
+        assert_held_port(first_port);
+        assert_held_port(second.port());
         second.release();
+        drop(stolen_listener);
     }
 
     #[cfg(unix)]

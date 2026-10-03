@@ -30,6 +30,8 @@ export const COMMANDS = {
   listCommandContracts: 'list_command_contracts',
   healthCheck: 'health_check',
   shutdownApplication: 'shutdown_application',
+  applicationCloseListenerReady: 'application_close_listener_ready',
+  applicationCloseRequestFinished: 'application_close_request_finished',
   exportDiagnosticsPackage: 'export_diagnostics_package',
   setApplicationMenuLanguage: 'set_application_menu_language',
   createConnection: 'create_connection',

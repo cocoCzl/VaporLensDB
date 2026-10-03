@@ -1,5 +1,19 @@
 [
   {
+    "name": "application_close_listener_ready",
+    "namespace": "lifecycle",
+    "args": "void",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "application_close_request_finished",
+    "namespace": "lifecycle",
+    "args": "void",
+    "response": "void",
+    "status": "active"
+  },
+  {
     "name": "list_command_contracts",
     "namespace": "contract",
     "args": "void",

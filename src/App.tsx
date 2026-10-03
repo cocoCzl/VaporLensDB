@@ -19,7 +19,7 @@ import { useConnectionStore } from './stores/connectionStore'
 import { useMetadataStore } from './stores/metadataStore'
 import i18n from './i18n'
 import { closeEditorTab } from './lib/closeEditorTab'
-import { requestApplicationClose } from './lib/applicationClose'
+import { subscribeApplicationCloseRequests } from './lib/applicationCloseListener'
 import { onConsoleTransactionUpdated } from './ipc/query'
 import type { ConnectionStatus } from './types/connection'
 import { normalizeAppError } from './ipc/client'
@@ -52,19 +52,7 @@ export default function App() {
     return () => { cancelled = true; unlisten?.() }
   }, [])
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined
-    let disposed = false
-    listen('vaporlensdb:request-application-close', () => {
-      void requestApplicationClose()
-    }).then((dispose) => {
-      if (disposed) dispose()
-      else unlisten = dispose
-    }).catch(() => {
-      // Browser preview does not expose Tauri's event bridge.
-    })
-    return () => { disposed = true; unlisten?.() }
-  }, [])
+  useEffect(subscribeApplicationCloseRequests, [])
 
   useEffect(() => {
     let cancelled = false

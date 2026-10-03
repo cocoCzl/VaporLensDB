@@ -5,6 +5,7 @@ pub mod models;
 pub mod services;
 pub mod utils;
 
+use commands::lifecycle::{ApplicationCloseRequestBridge, ApplicationShutdownCoordinator};
 use services::{
     config_store::ConfigStore, connection_manager::ConnectionManager,
     external_driver::configure_bundled_jdbc_bridge_jar, metadata_index::MetadataIndexService,
@@ -161,6 +162,23 @@ mod idle_reclaim_worker_tests {
     }
 
     #[tokio::test]
+    async fn repeated_stop_requests_are_idempotent() {
+        let worker = Arc::new(IdleReclaimWorker::new());
+        worker.start_with_tick(Duration::from_secs(30), || async {});
+
+        let first = worker.clone();
+        let second = worker.clone();
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            tokio::join!(first.stop(), second.stop());
+        })
+        .await
+        .unwrap();
+
+        assert!(worker.task.lock().unwrap().is_none());
+        worker.stop().await;
+    }
+
+    #[tokio::test]
     async fn dropping_worker_aborts_inflight_tick_instead_of_detaching_it() {
         struct TickCompletion(Option<tokio::sync::oneshot::Sender<()>>);
         impl Drop for TickCompletion {
@@ -233,6 +251,7 @@ pub struct AppState {
     pub task_manager: TaskManager,
     pub idle_reclaim_worker: IdleReclaimWorker,
     pub idle_reclaim_gate: Mutex<()>,
+    pub shutdown_coordinator: ApplicationShutdownCoordinator,
 }
 
 impl AppState {
@@ -286,6 +305,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             app_menu::handle_menu_event(app, &event);
         })
+        .manage(ApplicationCloseRequestBridge::default())
         .manage(AppState {
             config_store,
             connection_manager: Mutex::new(ConnectionManager::new()),
@@ -295,17 +315,20 @@ pub fn run() {
             task_manager: TaskManager::new(),
             idle_reclaim_worker: IdleReclaimWorker::new(),
             idle_reclaim_gate: Mutex::new(()),
+            shutdown_coordinator: ApplicationShutdownCoordinator::new(),
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.emit(APPLICATION_CLOSE_REQUEST_EVENT, ());
+                let _ = commands::lifecycle::request_application_close(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
             commands::contract::list_command_contracts,
             commands::health::health_check,
             commands::lifecycle::shutdown_application,
+            commands::lifecycle::application_close_listener_ready,
+            commands::lifecycle::application_close_request_finished,
             commands::config::export_diagnostics_package,
             commands::connection::create_connection,
             commands::connection::update_connection,
@@ -375,9 +398,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                tauri::async_runtime::block_on(app.state::<AppState>().idle_reclaim_worker.stop());
-            }
-        });
+        .run(|_, _| {});
 }

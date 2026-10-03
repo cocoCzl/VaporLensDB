@@ -171,7 +171,7 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
         VIEW_QUERY_HISTORY_ID => emit_workspace_command(app, "query-history"),
         VIEW_SETTINGS_ID => emit_workspace_command(app, "settings"),
         APP_QUIT_ID => {
-            let _ = app.emit(crate::APPLICATION_CLOSE_REQUEST_EVENT, ());
+            let _ = crate::commands::lifecycle::request_application_close(app);
         }
         WINDOW_MINIMIZE_ID => {
             if let Some(window) = app.get_webview_window("main") {

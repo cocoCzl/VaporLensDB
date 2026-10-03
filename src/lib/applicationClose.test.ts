@@ -43,4 +43,34 @@ describe('application close', () => {
     expect(await requestApplicationClose()).toBe(false)
     expect(mocks.shutdown).not.toHaveBeenCalled()
   })
+
+  it('shares one in-flight shutdown request', async () => {
+    let resolveShutdown: (() => void) | undefined
+    mocks.shutdown.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveShutdown = resolve
+    }))
+
+    const first = requestApplicationClose()
+    const second = requestApplicationClose()
+
+    expect(second).toBe(first)
+    await Promise.resolve()
+    expect(mocks.shutdown).toHaveBeenCalledOnce()
+    expect(window.confirm).toHaveBeenCalledOnce()
+
+    resolveShutdown?.()
+    await expect(first).resolves.toBe(true)
+    await expect(second).resolves.toBe(true)
+  })
+
+  it('surfaces shutdown failure and allows a later close request to retry', async () => {
+    mocks.shutdown.mockRejectedValueOnce(new Error('cleanup failed'))
+
+    await expect(requestApplicationClose()).resolves.toBe(false)
+    expect(mocks.notifyError).toHaveBeenCalledOnce()
+    expect(mocks.shutdown).toHaveBeenCalledOnce()
+
+    await expect(requestApplicationClose()).resolves.toBe(true)
+    expect(mocks.shutdown).toHaveBeenCalledTimes(2)
+  })
 })

@@ -793,6 +793,7 @@ mod tests {
             task_manager: crate::services::task_manager::TaskManager::new(),
             idle_reclaim_worker: crate::IdleReclaimWorker::new(),
             idle_reclaim_gate: tokio::sync::Mutex::new(()),
+            shutdown_coordinator: crate::commands::lifecycle::ApplicationShutdownCoordinator::new(),
         };
         (state, root)
     }
@@ -809,6 +810,76 @@ mod tests {
             manager.finish_connect(config.id, Ok(active)).unwrap();
         }
         config
+    }
+
+    #[tokio::test]
+    async fn coordinated_shutdown_completes_with_empty_connected_and_stopped_worker_states() {
+        for connected in [false, true] {
+            for worker_stopped in [false, true] {
+                let (state, root) = test_state();
+                let config = saved_sqlite(&state, connected).await;
+                if connected {
+                    let driver = state
+                        .connection_manager
+                        .lock()
+                        .await
+                        .driver(config.id)
+                        .unwrap();
+                    state
+                        .metadata_index
+                        .index_connection(&config, driver, true, |_| true)
+                        .await
+                        .unwrap();
+                    assert!(!state
+                        .metadata_index
+                        .search(&config.name, Some(config.id), 10)
+                        .await
+                        .is_empty());
+                }
+                state
+                    .idle_reclaim_worker
+                    .start_with_tick(std::time::Duration::from_secs(30), || async {});
+                if worker_stopped {
+                    state.idle_reclaim_worker.stop().await;
+                }
+                let exit_calls = std::sync::atomic::AtomicUsize::new(0);
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    state
+                        .shutdown_coordinator
+                        .run_once(|| async {
+                            state.idle_reclaim_worker.stop().await;
+                            state.connection_manager.lock().await.shutdown_all().await;
+                            state.metadata_index.clear_all().await;
+                            exit_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            Ok(())
+                        })
+                        .await
+                        .unwrap();
+                    state
+                        .shutdown_coordinator
+                        .run_once(|| async { panic!("completed shutdown must not join again") })
+                        .await
+                        .unwrap();
+                })
+                .await
+                .unwrap();
+                assert_eq!(exit_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+                assert!(state.idle_reclaim_worker.task.lock().unwrap().is_none());
+                assert!(state
+                    .connection_manager
+                    .lock()
+                    .await
+                    .driver(config.id)
+                    .is_err());
+                assert!(state
+                    .metadata_index
+                    .search(&config.name, Some(config.id), 10)
+                    .await
+                    .is_empty());
+                drop(state);
+                std::fs::remove_dir_all(root).unwrap();
+            }
+        }
     }
 
     #[tokio::test]
