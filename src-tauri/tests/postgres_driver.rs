@@ -15,6 +15,82 @@ use vapor_lens_db_lib::{
 const WRONG_PASSWORD: &str = "postgres-runtime-redaction-regression-value";
 
 #[tokio::test]
+#[ignore = "requires the repository disposable PostgreSQL QA environment"]
+async fn non_owner_reads_fixture_foreign_key_and_table_ddl() {
+    assert_eq!(
+        std::env::var("VAPORLENSDB_QA_ENVIRONMENT").as_deref(),
+        Ok("1")
+    );
+    let driver = PostgresDriver::connect(&test_pg_url().expect("PostgreSQL QA URL"))
+        .await
+        .unwrap();
+    let environment = driver
+        .execute_query("SELECT environment FROM public.vaporlensdb_qa_marker", None)
+        .await
+        .unwrap();
+    assert_eq!(environment.rows[0][0], serde_json::json!("disposable_qa"));
+    let ownership = driver
+        .execute_query(
+            "SELECT current_user = 'vaporlensdb_qa' AS qa_user,
+                    pg_catalog.pg_get_userbyid(relowner) = current_user AS owns_table
+             FROM pg_catalog.pg_class
+             WHERE oid IN ('public.child_items'::regclass, 'public.parent_items'::regclass)",
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(ownership.rows.len(), 2);
+    for row in ownership.rows {
+        assert_eq!(row, vec![serde_json::json!(true), serde_json::json!(false)]);
+    }
+    let foreign_keys = driver
+        .get_foreign_keys("public", "child_items")
+        .await
+        .unwrap();
+    let ddl = driver.get_table_ddl("public", "child_items").await.unwrap();
+    let expected_ddl =
+        "FOREIGN KEY (\"parent_id\") REFERENCES \"public\".\"parent_items\" (\"id\")";
+    assert!(
+        foreign_keys.len() == 1 && ddl.contains(expected_ddl),
+        "non-owner FK count={}, DDL FK present={}",
+        foreign_keys.len(),
+        ddl.contains(expected_ddl)
+    );
+    let foreign_key = &foreign_keys[0];
+    assert_eq!(foreign_key.schema.as_deref(), Some("public"));
+    assert_eq!(foreign_key.table, "child_items");
+    assert_eq!(foreign_key.name, "child_items_parent_id_fkey");
+    assert_eq!(foreign_key.columns, vec!["parent_id"]);
+    assert_eq!(foreign_key.referenced_schema.as_deref(), Some("public"));
+    assert_eq!(foreign_key.referenced_table, "parent_items");
+    assert_eq!(foreign_key.referenced_columns, vec!["id"]);
+    assert!(driver
+        .get_columns("public", "child_items")
+        .await
+        .unwrap()
+        .iter()
+        .any(|column| column.name == "parent_id"));
+    assert!(driver
+        .get_indexes("public", "child_items")
+        .await
+        .unwrap()
+        .iter()
+        .any(|index| index.name == "idx_child_parent"));
+    assert!(driver
+        .get_tables("public")
+        .await
+        .unwrap()
+        .iter()
+        .any(|table| table.name == "child_items"));
+    assert!(driver
+        .get_views("public")
+        .await
+        .unwrap()
+        .iter()
+        .any(|view| view.name == "child_item_view"));
+}
+
+#[tokio::test]
 #[ignore = "requires TEST_PG_URL or TEST_PG_JDBC_URL"]
 async fn manual_budget_and_max_rows_drain_without_aborting_the_transaction() {
     use vapor_lens_db_lib::{
@@ -592,6 +668,9 @@ async fn reads_postgres_schema_objects_and_ddl() {
     let schema = format!("vaporlensdb_it_{}", Uuid::new_v4().simple());
     let parent = "parent_items";
     let child = "child_items";
+    let composite_parent = "composite_parent";
+    let composite_child = "composite_child";
+    let cross_schema = format!("{schema}_ref");
     let view = "child_item_view";
     let function = "child_count";
     let trigger_function = "child_items_default_note";
@@ -646,6 +725,66 @@ async fn reads_postgres_schema_objects_and_ddl() {
         )
         .await
         .expect("create postgres view");
+    driver
+        .execute_query(&format!(r#"CREATE SCHEMA "{cross_schema}""#), None)
+        .await
+        .expect("create postgres referenced schema");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE TABLE "{schema}"."{composite_parent}" (
+                    a INTEGER NOT NULL,
+                    b INTEGER NOT NULL,
+                    PRIMARY KEY (a, b)
+                )
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres composite parent table");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE TABLE "{schema}"."{composite_child}" (
+                    a INTEGER NOT NULL,
+                    b INTEGER NOT NULL,
+                    FOREIGN KEY (a, b) REFERENCES "{schema}"."{composite_parent}" (a, b)
+                )
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres composite child table");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE TABLE "{cross_schema}".cross_parent (
+                    id INTEGER PRIMARY KEY
+                )
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres cross-schema parent table");
+    driver
+        .execute_query(
+            &format!(
+                r#"
+                CREATE TABLE "{schema}".cross_child (
+                    parent_id INTEGER REFERENCES "{cross_schema}".cross_parent(id)
+                )
+                "#
+            ),
+            None,
+        )
+        .await
+        .expect("create postgres cross-schema child table");
     driver
         .execute_query(
             &format!(
@@ -729,6 +868,28 @@ async fn reads_postgres_schema_objects_and_ddl() {
             && item.referenced_columns == vec!["id"]
     }));
 
+    let composite_foreign_keys = driver
+        .get_foreign_keys(&schema, composite_child)
+        .await
+        .expect("get postgres composite foreign keys");
+    assert!(composite_foreign_keys.iter().any(|item| {
+        item.columns == vec!["a", "b"]
+            && item.referenced_schema.as_deref() == Some(schema.as_str())
+            && item.referenced_table == composite_parent
+            && item.referenced_columns == vec!["a", "b"]
+    }));
+
+    let cross_schema_foreign_keys = driver
+        .get_foreign_keys(&schema, "cross_child")
+        .await
+        .expect("get postgres cross-schema foreign keys");
+    assert!(cross_schema_foreign_keys.iter().any(|item| {
+        item.columns == vec!["parent_id"]
+            && item.referenced_schema.as_deref() == Some(cross_schema.as_str())
+            && item.referenced_table == "cross_parent"
+            && item.referenced_columns == vec!["id"]
+    }));
+
     let views = driver.get_views(&schema).await.expect("get postgres views");
     assert!(views.iter().any(|item| item.name == view));
 
@@ -764,4 +925,8 @@ async fn reads_postgres_schema_objects_and_ddl() {
         .execute_query(&format!("DROP SCHEMA \"{schema}\" CASCADE"), None)
         .await
         .expect("drop postgres integration schema");
+    driver
+        .execute_query(&format!("DROP SCHEMA \"{cross_schema}\" CASCADE"), None)
+        .await
+        .expect("drop postgres referenced schema");
 }

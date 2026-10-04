@@ -656,26 +656,45 @@ impl DatabaseDriver for PostgresDriver {
     ) -> Result<Vec<ForeignKeyInfo>, AppError> {
         let sql = "
             SELECT
-                tc.table_schema,
-                tc.table_name,
-                tc.constraint_name,
-                array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) AS columns,
-                ccu.table_schema AS foreign_table_schema,
-                ccu.table_name AS foreign_table_name,
-                array_agg(ccu.column_name::text ORDER BY kcu.ordinal_position) AS foreign_columns
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-              ON tc.constraint_name = kcu.constraint_name
-             AND tc.table_schema = kcu.table_schema
-             AND tc.table_name = kcu.table_name
-            JOIN information_schema.constraint_column_usage ccu
-              ON ccu.constraint_name = tc.constraint_name
-             AND ccu.table_schema = tc.table_schema
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-              AND tc.table_schema = $1
-              AND tc.table_name = $2
-            GROUP BY tc.table_schema, tc.table_name, tc.constraint_name, ccu.table_schema, ccu.table_name
-            ORDER BY tc.constraint_name
+                source_namespace.nspname,
+                source_relation.relname,
+                fk_constraint.conname,
+                array_agg(source_column.attname ORDER BY source_key.ordinality),
+                referenced_namespace.nspname,
+                referenced_relation.relname,
+                array_agg(referenced_column.attname ORDER BY source_key.ordinality)
+            FROM pg_catalog.pg_constraint AS fk_constraint
+            JOIN pg_catalog.pg_class AS source_relation
+              ON source_relation.oid = fk_constraint.conrelid
+            JOIN pg_catalog.pg_namespace AS source_namespace
+              ON source_namespace.oid = source_relation.relnamespace
+            JOIN LATERAL unnest(fk_constraint.conkey) WITH ORDINALITY AS source_key(attnum, ordinality)
+              ON true
+            JOIN LATERAL unnest(fk_constraint.confkey) WITH ORDINALITY AS referenced_key(attnum, ordinality)
+              ON referenced_key.ordinality = source_key.ordinality
+            JOIN pg_catalog.pg_attribute AS source_column
+              ON source_column.attrelid = fk_constraint.conrelid
+             AND source_column.attnum = source_key.attnum
+             AND source_column.attnum > 0
+             AND NOT source_column.attisdropped
+            JOIN pg_catalog.pg_class AS referenced_relation
+              ON referenced_relation.oid = fk_constraint.confrelid
+            JOIN pg_catalog.pg_namespace AS referenced_namespace
+              ON referenced_namespace.oid = referenced_relation.relnamespace
+            JOIN pg_catalog.pg_attribute AS referenced_column
+              ON referenced_column.attrelid = fk_constraint.confrelid
+             AND referenced_column.attnum = referenced_key.attnum
+             AND referenced_column.attnum > 0
+             AND NOT referenced_column.attisdropped
+            WHERE fk_constraint.contype = 'f'
+              AND source_namespace.nspname = $1
+              AND source_relation.relname = $2
+            GROUP BY source_namespace.nspname,
+                     source_relation.relname,
+                     fk_constraint.conname,
+                     referenced_namespace.nspname,
+                     referenced_relation.relname
+            ORDER BY fk_constraint.conname
         ";
 
         let rows = self
