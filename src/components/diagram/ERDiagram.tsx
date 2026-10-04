@@ -168,6 +168,15 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
         edges,
         truncated,
         tableErrorCount,
+        labels: {
+          title: t('diagram.title'),
+          summary: t('diagram.summary', { tables: nodes.length, relationships: edges.length }),
+          truncatedWarning: t('diagram.exportLargeDiagramLimit', { count: MAX_SCHEMA_TABLES }),
+          missingMetadataWarning: t('diagram.exportMissingMetadata', { count: tableErrorCount }),
+          columnsSummary: (count, outgoing, incoming) => t('diagram.columnsSummary', { count, outgoing, incoming }),
+          moreColumns: (count) => t('diagram.moreColumns', { count }),
+          primaryKeyPrefix: t('diagram.primaryKeyPrefix'),
+        },
       })
       downloadTextFile(`${safeFileName(`${schema}-er-diagram`)}.svg`, svg, 'image/svg+xml')
     } catch (exportError) {
@@ -179,18 +188,18 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
     <section className="flex min-h-0 flex-1 flex-col bg-background">
       <div className="flex min-h-11 items-center justify-between gap-3 border-b ide-toolbar px-3 py-1.5 text-xs">
         <div className="min-w-0">
-          <div className="truncate font-medium">ER Diagram</div>
+          <div className="truncate font-medium">{t('diagram.title')}</div>
           <div className="truncate text-[11px] text-muted-foreground">
             {database ? `${database} / ` : ''}
-            {schema} · {diagramTables.length} tables · {relationCount} relationships
-            {truncated ? ` · first ${MAX_SCHEMA_TABLES} tables` : ''}
-            {tableErrorCount > 0 ? ` · ${tableErrorCount} tables missing metadata` : ''}
+            {t('diagram.summary', { tables: diagramTables.length, relationships: relationCount })}
+            {truncated ? t('diagram.truncatedSummary', { count: MAX_SCHEMA_TABLES }) : ''}
+            {tableErrorCount > 0 ? t('diagram.missingMetadataSummary', { count: tableErrorCount }) : ''}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {truncated && (
             <span className="text-[11px] text-warning">
-              Large diagram limit: first {MAX_SCHEMA_TABLES} tables
+              {t('diagram.largeDiagramLimit', { count: MAX_SCHEMA_TABLES })}
             </span>
           )}
           <Button
@@ -212,13 +221,13 @@ export function ERDiagram({ connectionId, database, schema, tables }: ERDiagramP
 
       <div className="min-h-0 flex-1">
         {error ? (
-          <DiagramState title="ER diagram unavailable" detail={error} />
+          <DiagramState title={t('diagram.unavailable')} detail={error} />
         ) : loading && diagramTables.length === 0 ? (
-          <DiagramState title="Loading ER diagram" detail={t('diagram.loadingDetail')} />
+          <DiagramState title={t('diagram.loading')} detail={t('diagram.loadingDetail')} />
         ) : diagramTables.length === 0 ? (
-          <DiagramState title="No tables" detail={t('diagram.noTablesDetail')} />
+          <DiagramState title={t('diagram.noTables')} detail={t('diagram.noTablesDetail')} />
         ) : nodes.length === 0 ? (
-          <DiagramState title="Missing metadata" detail={t('diagram.missingMetadataDetail')} />
+          <DiagramState title={t('diagram.missingMetadata')} detail={t('diagram.missingMetadataDetail')} />
         ) : (
           <ReactFlow
             nodes={nodes}
@@ -299,6 +308,7 @@ function buildDiagramSvg({
   edges,
   truncated,
   tableErrorCount,
+  labels,
 }: {
   schema: string
   database?: string | null
@@ -306,6 +316,15 @@ function buildDiagramSvg({
   edges: Edge[]
   truncated: boolean
   tableErrorCount: number
+  labels: {
+    title: string
+    summary: string
+    truncatedWarning: string
+    missingMetadataWarning: string
+    columnsSummary: (count: number, outgoing: number, incoming: number) => string
+    moreColumns: (count: number) => string
+    primaryKeyPrefix: string
+  }
 }) {
   const nodeWidth = 280
   const headerHeight = 76
@@ -364,20 +383,20 @@ function buildDiagramSvg({
           <rect width="${nodeWidth}" height="${headerHeight}" rx="7" class="node-header" />
           <text x="14" y="22" class="node-schema">${escapeXml(data.schema)}</text>
           <text x="14" y="45" class="node-title">${escapeXml(data.table)}</text>
-          <text x="14" y="64" class="node-meta">${data.columns.length} columns · ${data.outgoingCount} FK out · ${data.incomingCount} FK in</text>
+          <text x="14" y="64" class="node-meta">${escapeXml(labels.columnsSummary(data.columns.length, data.outgoingCount, data.incomingCount))}</text>
           ${visibleColumns
             .map((column, index) => {
               const rowY = headerHeight + index * rowHeight
               return `
                 <line x1="0" y1="${rowY}" x2="${nodeWidth}" y2="${rowY}" class="node-divider" />
-                <text x="14" y="${rowY + 16}" class="${column.isPrimaryKey ? 'column-pk' : 'column-name'}">${column.isPrimaryKey ? 'PK ' : ''}${escapeXml(column.name)}</text>
+                <text x="14" y="${rowY + 16}" class="${column.isPrimaryKey ? 'column-pk' : 'column-name'}">${column.isPrimaryKey ? escapeXml(labels.primaryKeyPrefix) : ''}${escapeXml(column.name)}</text>
                 <text x="${nodeWidth - 14}" y="${rowY + 16}" text-anchor="end" class="column-type">${escapeXml(column.dataType)}</text>
               `
             })
             .join('\n')}
           ${
             hiddenColumns > 0
-              ? `<text x="14" y="${nodeHeight - 10}" class="node-meta">+${hiddenColumns} more columns</text>`
+              ? `<text x="14" y="${nodeHeight - 10}" class="node-meta">${escapeXml(labels.moreColumns(hiddenColumns))}</text>`
               : ''
           }
         </g>
@@ -386,8 +405,8 @@ function buildDiagramSvg({
     .join('\n')
 
   const warning = [
-    truncated ? `Large diagram limited to first ${MAX_SCHEMA_TABLES} tables.` : '',
-    tableErrorCount > 0 ? `${tableErrorCount} tables had missing metadata.` : '',
+    truncated ? labels.truncatedWarning : '',
+    tableErrorCount > 0 ? labels.missingMetadataWarning : '',
   ]
     .filter(Boolean)
     .join(' ')
@@ -413,8 +432,8 @@ function buildDiagramSvg({
     </style>
   </defs>
   <rect class="canvas" width="100%" height="100%" />
-  <text x="${padding}" y="32" class="title">ER Diagram</text>
-  <text x="${padding}" y="54" class="subtitle">${escapeXml([database, schema].filter(Boolean).join(' / '))} · ${nodes.length} tables · ${edges.length} relationships</text>
+  <text x="${padding}" y="32" class="title">${escapeXml(labels.title)}</text>
+  <text x="${padding}" y="54" class="subtitle">${escapeXml([database, schema].filter(Boolean).join(' / '))}${database || schema ? ' · ' : ''}${escapeXml(labels.summary)}</text>
   ${warning ? `<text x="${padding}" y="80" class="warning">${escapeXml(warning)}</text>` : ''}
   ${edgeSvg}
   ${nodeSvg}

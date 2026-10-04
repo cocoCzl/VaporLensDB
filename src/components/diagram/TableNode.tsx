@@ -1,4 +1,5 @@
 import { KeyRound } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { ColumnInfo } from '@/types/metadata'
 
@@ -11,6 +12,7 @@ export interface TableNodeData extends Record<string, unknown> {
 }
 
 export function TableNode({ data }: NodeProps) {
+  const { t } = useTranslation()
   const table = data as TableNodeData
   const visibleColumns = table.columns.slice(0, 18)
   const hiddenColumns = Math.max(0, table.columns.length - visibleColumns.length)
@@ -23,9 +25,11 @@ export function TableNode({ data }: NodeProps) {
         <div className="truncate text-[11px] text-muted-foreground">{table.schema}</div>
         <div className="truncate font-semibold text-foreground">{table.table}</div>
         <div className="mt-1 flex gap-2 text-[10px] text-muted-foreground">
-          <span>{table.columns.length} columns</span>
-          <span>{table.outgoingCount} FK out</span>
-          <span>{table.incomingCount} FK in</span>
+          <span>{t('diagram.columnsSummary', {
+            count: table.columns.length,
+            outgoing: table.outgoingCount,
+            incoming: table.incomingCount,
+          })}</span>
         </div>
       </div>
       <div className="max-h-[420px] overflow-hidden">
@@ -48,7 +52,7 @@ export function TableNode({ data }: NodeProps) {
         ))}
         {hiddenColumns > 0 && (
           <div className="px-3 py-2 text-[11px] text-muted-foreground">
-            +{hiddenColumns} more columns
+            {t('diagram.moreColumns', { count: hiddenColumns })}
           </div>
         )}
       </div>

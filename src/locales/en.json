@@ -1,6 +1,8 @@
 {
   "app": {
-    "name": "VaporLensDB"
+    "name": "VaporLensDB",
+    "tagline": "LIGHTWEIGHT DATABASE IDE",
+    "preparingWorkspace": "Preparing workspace…"
   },
   "topBar": {
     "label": "Application toolbar",
@@ -26,6 +28,7 @@
     "confirm": "Confirm",
     "confirmClear": "Confirm clear",
     "clear": "Clear",
+    "close": "Close",
     "loading": "Loading...",
     "refresh": "Refresh",
     "copy": "Copy",
@@ -136,6 +139,11 @@
     "viewDdl": "View DDL",
     "viewDdlSource": "View DDL/Source",
     "openErDiagram": "Open ER Diagram",
+    "tableDdlTabTitle": "{{name}} DDL",
+    "objectDefinitionTabTitle": "{{name}} {{kind}}",
+    "tableErTabTitle": "{{name}} ER",
+    "schemaErTabTitle": "{{name}} ER",
+    "treeAria": "Object Tree",
     "generateSelect": "Generate SELECT",
     "copyName": "Copy name",
     "copyObjectName": "Object name copied",
@@ -343,6 +351,24 @@
     "deleteSqlDraftFailed": "Failed to delete SQL draft"
   },
   "inspector": {
+    "workspace": "Object Inspector workspace",
+    "title": "Object Inspector",
+    "materializedView": "Materialized View",
+    "view": "View",
+    "table": "Table",
+    "columns": "Columns",
+    "indexes": "Indexes",
+    "foreignKeys": "Foreign Keys",
+    "ddl": "DDL",
+    "columnName": "Name",
+    "columnType": "Type",
+    "columnNullable": "Null",
+    "columnKey": "Key",
+    "definition": "Definition",
+    "yes": "YES",
+    "no": "NO",
+    "unique": "unique",
+    "index": "index",
     "editStructure": "Edit structure",
     "refreshStructure": "Refresh object structure",
     "close": "Close",
@@ -357,6 +383,20 @@
     "noDdl": "No DDL"
   },
   "diagram": {
+    "title": "ER Diagram",
+    "unavailable": "ER diagram unavailable",
+    "loading": "Loading ER diagram",
+    "noTables": "No tables",
+    "missingMetadata": "Missing metadata",
+    "summary": "{{tables}} tables · {{relationships}} relationships",
+    "truncatedSummary": " · first {{count}} tables",
+    "missingMetadataSummary": " · {{count}} tables missing metadata",
+    "largeDiagramLimit": "Large diagram limit: first {{count}} tables",
+    "exportLargeDiagramLimit": "Large diagram limited to first {{count}} tables.",
+    "exportMissingMetadata": "{{count}} tables had missing metadata.",
+    "columnsSummary": "{{count}} columns · {{outgoing}} FK out · {{incoming}} FK in",
+    "moreColumns": "+{{count}} more columns",
+    "primaryKeyPrefix": "PK ",
     "connectFirst": "Connect before opening an ER diagram.",
     "loadFailed": "Failed to load ER diagram",
     "exportUnavailable": "The current ER diagram has no exportable content.",
@@ -438,6 +478,39 @@
     "openInSqlTab": "Open in SQL Tab",
     "exportTable": "Export table",
     "readOnlyDataPreview": "Read-only data preview",
+    "limit": "Limit",
+    "wherePredicatePlaceholder": "WHERE predicate",
+    "csvImportPathPlaceholder": "CSV import path",
+    "csvPreviewSummary": "{{valid}} valid / {{total}} rows",
+    "csvRowsQueued": "{{count}} rows queued",
+    "csvInvalidSummary": " · {{count}} invalid",
+    "generatedSqlAria": "generated SQL",
+    "readOnlyDdlAria": "read-only DDL",
+    "generatedSqlTitle": "{{name}} generated SQL",
+    "sqlTabTitle": "{{name}} SQL",
+    "historyTabTitle": "{{name}} history",
+    "page": "Page {{page}}",
+    "noColumns": "No columns",
+    "noIndexes": "No indexes",
+    "noForeignKeys": "No foreign keys",
+    "noTriggers": "No triggers",
+    "structureHeaders": {
+      "position": "#",
+      "column": "Column",
+      "type": "Type",
+      "nullable": "Nullable",
+      "default": "Default",
+      "primaryKey": "PK",
+      "index": "Index",
+      "columns": "Columns",
+      "unique": "Unique",
+      "definition": "Definition",
+      "name": "Name",
+      "referencedTable": "Referenced Table",
+      "referencedColumns": "Referenced Columns",
+      "trigger": "Trigger",
+      "status": "Status"
+    },
     "primaryKeyAscending": "Primary key ascending",
     "noPrimaryKeyUnstable": "No primary key. Result order is not guaranteed.",
     "applyFilter": "Apply filter",
@@ -822,6 +895,10 @@
     "noImportableConnections": "No importable connections",
     "chooseConfigFile": "Choose a DBeaver data-sources.json or XML configuration file.",
     "xmlParseFailed": "Failed to parse the DBeaver XML configuration."
+    ,"previewConnections": "Connections"
+    ,"previewDriverTemplates": "Driver templates"
+    ,"previewImportReport": "Import report"
+    ,"importSummary": "{{imported}} imported / {{failed}} failed / {{skipped}} skipped."
   },
   "runtime": {
     "tauriUnavailable": "This page is not running inside the Tauri desktop runtime. Start the app with pnpm tauri dev."

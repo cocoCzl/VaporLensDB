@@ -79,7 +79,7 @@ includesAll(
     'Math.max(0, tab.dataContext.offset - tab.dataContext.limit)',
     "t('workbench.noPrimaryKeyUnstable')",
     "t('workbench.primaryKeyAscending')",
-    'aria-label="generated SQL"',
+    "t('workbench.generatedSqlAria')",
     'readOnly',
     "t('workbench.openInSqlTab')",
     'dataContextToSqlInput',

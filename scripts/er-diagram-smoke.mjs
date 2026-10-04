@@ -44,7 +44,7 @@ includesAll(
     'metadata.loadForeignKeys',
     'MAX_SCHEMA_TABLES = 40',
     'gridPosition',
-    'Missing metadata',
+    "t('diagram.missingMetadata')",
   ],
   'ER diagram workspace',
 )
@@ -52,7 +52,7 @@ includesAll(
 const tableNode = read('src/components/diagram/TableNode.tsx')
 includesAll(
   tableNode,
-  ['columns: ColumnInfo[]', 'isPrimaryKey', 'FK out', 'FK in', 'more columns'],
+  ['columns: ColumnInfo[]', 'isPrimaryKey', "t('diagram.columnsSummary'", "t('diagram.moreColumns'"],
   'ER diagram table node',
 )
 

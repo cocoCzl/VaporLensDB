@@ -82,7 +82,7 @@ includesAll(
     'csvPreview.cancel()',
     'importTableCsv({',
     "t('workbench.exportTable')",
-    'CSV import path',
+    "t('workbench.csvImportPathPlaceholder')",
     "t('workbench.previewImport')",
     "t('workbench.runImport')",
   ],

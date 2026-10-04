@@ -1096,7 +1096,7 @@ function DbeaverImportSettings({
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <PreviewList title="Connections">
+            <PreviewList title={t('dbeaver.previewConnections')}>
               {preview.connections.length === 0 ? (
                 <PreviewEmpty label={t('dbeaver.noImportableConnections')} />
               ) : (
@@ -1125,7 +1125,7 @@ function DbeaverImportSettings({
               )}
             </PreviewList>
 
-            <PreviewList title="Driver templates">
+            <PreviewList title={t('dbeaver.previewDriverTemplates')}>
               {preview.driverTemplates.map((template) => (
                 <div key={template.sourceDriver} className="flex items-center justify-between gap-2 rounded border bg-background/70 px-2 py-1.5 text-xs">
                   <span className="min-w-0 truncate">{template.sourceDriver}</span>
@@ -1144,7 +1144,7 @@ function DbeaverImportSettings({
           </div>
 
           {preview.skipped.length > 0 && (
-            <PreviewList title="Import report">
+            <PreviewList title={t('dbeaver.previewImportReport')}>
               {preview.skipped.slice(0, 6).map((skipped) => (
                 <div key={`${skipped.name}:${skipped.sourceDriver}`} className="rounded border border-warning/30 bg-warning-bg px-2 py-1.5 text-xs text-warning-foreground">
                   <div className="truncate font-medium">{skipped.name}</div>
@@ -1158,8 +1158,11 @@ function DbeaverImportSettings({
 
           {report && (
             <div className="rounded border bg-background/70 px-2 py-1.5 text-xs text-muted-foreground">
-              Import report: {report.imported} imported / {report.failed} failed /{' '}
-              {preview.skipped.length} skipped.
+              {t('dbeaver.importSummary', {
+                imported: report.imported,
+                failed: report.failed,
+                skipped: preview.skipped.length,
+              })}
             </div>
           )}
         </div>

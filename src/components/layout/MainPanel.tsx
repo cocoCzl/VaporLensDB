@@ -554,7 +554,7 @@ export function MainPanel() {
               addTab({
                 id: crypto.randomUUID(),
                 kind: 'structure',
-                title: `${activeObjectSummaryContext.object} Structure`,
+                title: t('explorer.structureTabTitle', { name: activeObjectSummaryContext.object }),
                 sql: '',
                 connectionId: activeTab.connectionId,
                 structureContext: {
@@ -569,7 +569,7 @@ export function MainPanel() {
               addTab({
                 id: crypto.randomUUID(),
                 kind: 'definition',
-                title: `${activeObjectSummaryContext.object} DDL`,
+                title: t('explorer.tableDdlTabTitle', { name: activeObjectSummaryContext.object }),
                 sql: '',
                 connectionId: activeTab.connectionId,
                 definitionContext: {
@@ -597,7 +597,7 @@ export function MainPanel() {
               addTab({
                 id: crypto.randomUUID(),
                 kind: 'diagram',
-                title: `${activeObjectSummaryContext.schema} ER`,
+                title: t('explorer.schemaErTabTitle', { name: activeObjectSummaryContext.schema }),
                 sql: '',
                 connectionId: activeTab.connectionId,
                 diagramContext: {
@@ -662,7 +662,7 @@ export function MainPanel() {
               addTab({
                 id: crypto.randomUUID(),
                 kind: 'sql',
-                title: `${activeDataContext.object} generated SQL`,
+                title: t('workbench.generatedSqlTitle', { name: activeDataContext.object }),
                 sql: activeTab.sql,
                 connectionId: activeTab.connectionId,
               })
@@ -725,7 +725,7 @@ export function MainPanel() {
               addTab({
                 id: crypto.randomUUID(),
                 kind: 'sql',
-                title: `${activeDefinitionContext.object} SQL`,
+                title: t('workbench.sqlTabTitle', { name: activeDefinitionContext.object }),
                 sql: activeTab.sql,
                 connectionId: activeTab.connectionId,
               })
@@ -1065,7 +1065,7 @@ export function MainPanel() {
               addTab({
                 id: crypto.randomUUID(),
                 kind: 'sql',
-                title: `${entry.connectionNameSnapshot} history`,
+                title: t('workbench.historyTabTitle', { name: entry.connectionNameSnapshot }),
                 sql: entry.sql,
                 connectionId: entry.connectionId,
                 database: entry.database ?? null,
@@ -1537,7 +1537,10 @@ function DataTabPanel({
     onCompleted: (preview) => notify({
       kind: preview.canImport && preview.invalidRows.length === 0 ? 'info' : 'warning',
       title: t('workbench.csvImportPreviewComplete'),
-      message: `${preview.validRows.toLocaleString()} valid / ${preview.totalRows.toLocaleString()} rows`,
+      message: t('workbench.csvPreviewSummary', {
+        valid: preview.validRows.toLocaleString(),
+        total: preview.totalRows.toLocaleString(),
+      }),
     }),
     onError: (error) => notifyError(normalizeAppError(error), t('workbench.csvImportPreviewFailed')),
   })
@@ -1634,7 +1637,7 @@ function DataTabPanel({
       notify({
         kind: 'info',
         title: t('workbench.csvImportStarted'),
-        message: `${importPreview.validRows.toLocaleString()} rows queued`,
+        message: t('workbench.csvRowsQueued', { count: importPreview.validRows.toLocaleString() }),
       })
     } catch (importError) {
       notifyError(normalizeAppError(importError), t('workbench.startCsvImportFailed'))
@@ -1659,7 +1662,7 @@ function DataTabPanel({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <label className="flex items-center gap-1 text-muted-foreground">
-            <span>Limit</span>
+            <span>{t('workbench.limit')}</span>
             <input
               className="h-7 w-20 rounded-md border bg-background px-2 text-right text-foreground"
               type="number"
@@ -1708,7 +1711,7 @@ function DataTabPanel({
       <div className="flex h-8 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
         <span>{t('workbench.readOnlyDataPreview')}</span>
         {displayResult && <span>{resultSummary(displayResult)}</span>}
-        <span>Page {page}</span>
+        <span>{t('workbench.page', { page })}</span>
         {hasPrimaryKeyOrder && <span>{t('workbench.primaryKeyAscending')}</span>}
         {hasNoStableOrder && <span className="text-warning">{t('workbench.noPrimaryKeyUnstable')}</span>}
       </div>
@@ -1716,7 +1719,7 @@ function DataTabPanel({
         <div className="flex min-h-10 items-center gap-2 border-b px-3 py-1.5 text-xs">
           <input
             className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-[11px]"
-            placeholder="WHERE predicate"
+            placeholder={t('workbench.wherePredicatePlaceholder')}
             value={whereText}
             onChange={(event) => setWhereText(event.target.value)}
             onKeyDown={(event) => {
@@ -1781,7 +1784,7 @@ function DataTabPanel({
           <Upload className="size-3.5 shrink-0 text-muted-foreground" />
           <input
             className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-[11px]"
-            placeholder="CSV import path"
+            placeholder={t('workbench.csvImportPathPlaceholder')}
             value={importPath}
             onChange={(event) => {
               setImportPath(event.target.value)
@@ -1826,10 +1829,12 @@ function DataTabPanel({
               }
               title={importPreview.invalidRows[0]?.message}
             >
-              {importPreview.validRows.toLocaleString()} valid /{' '}
-              {importPreview.totalRows.toLocaleString()} rows
+              {t('workbench.csvPreviewSummary', {
+                valid: importPreview.validRows.toLocaleString(),
+                total: importPreview.totalRows.toLocaleString(),
+              })}
               {importPreview.invalidRows.length > 0
-                ? ` · ${(importPreview.totalRows - importPreview.validRows).toLocaleString()} invalid`
+                ? t('workbench.csvInvalidSummary', { count: (importPreview.totalRows - importPreview.validRows).toLocaleString() })
                 : ''}
             </span>
           )}
@@ -1838,7 +1843,7 @@ function DataTabPanel({
           className="h-20 shrink-0 resize-none border-b bg-muted/20 p-2 font-mono text-[11px] text-muted-foreground outline-none"
           readOnly
           value={tab.sql}
-          aria-label="generated SQL"
+          aria-label={t('workbench.generatedSqlAria')}
         />
         <div className="min-h-0 flex-1">
         {error ? (
@@ -2000,7 +2005,7 @@ function StructureTabPanel({
             readOnly
             spellCheck={false}
             value={ddl}
-            aria-label="read-only DDL"
+          aria-label={t('workbench.readOnlyDdlAria')}
           />
         )}
       </div>
@@ -2017,13 +2022,21 @@ const structureSections: Array<{ id: StructureSection; labelKey: string }> = [
 ]
 
 function ColumnsView({ columns }: { columns: ColumnInfo[] }) {
+  const { t } = useTranslation()
   if (columns.length === 0) {
-    return <StructureEmpty label="No columns" />
+    return <StructureEmpty label={t('workbench.noColumns')} />
   }
 
   return (
     <StructureTable
-      headers={['#', 'Column', 'Type', 'Nullable', 'Default', 'PK']}
+      headers={[
+        t('workbench.structureHeaders.position'),
+        t('workbench.structureHeaders.column'),
+        t('workbench.structureHeaders.type'),
+        t('workbench.structureHeaders.nullable'),
+        t('workbench.structureHeaders.default'),
+        t('workbench.structureHeaders.primaryKey'),
+      ]}
       rows={columns.map((column) => [
         String(column.ordinalPosition),
         column.name,
@@ -2037,13 +2050,19 @@ function ColumnsView({ columns }: { columns: ColumnInfo[] }) {
 }
 
 function IndexesView({ indexes }: { indexes: IndexInfo[] }) {
+  const { t } = useTranslation()
   if (indexes.length === 0) {
-    return <StructureEmpty label="No indexes" />
+    return <StructureEmpty label={t('workbench.noIndexes')} />
   }
 
   return (
     <StructureTable
-      headers={['Index', 'Columns', 'Unique', 'Definition']}
+      headers={[
+        t('workbench.structureHeaders.index'),
+        t('workbench.structureHeaders.columns'),
+        t('workbench.structureHeaders.unique'),
+        t('workbench.structureHeaders.definition'),
+      ]}
       rows={indexes.map((index) => [
         index.name,
         index.columns.join(', '),
@@ -2055,13 +2074,19 @@ function IndexesView({ indexes }: { indexes: IndexInfo[] }) {
 }
 
 function ForeignKeysView({ foreignKeys }: { foreignKeys: ForeignKeyInfo[] }) {
+  const { t } = useTranslation()
   if (foreignKeys.length === 0) {
-    return <StructureEmpty label="No foreign keys" />
+    return <StructureEmpty label={t('workbench.noForeignKeys')} />
   }
 
   return (
     <StructureTable
-      headers={['Name', 'Columns', 'Referenced Table', 'Referenced Columns']}
+      headers={[
+        t('workbench.structureHeaders.name'),
+        t('workbench.structureHeaders.columns'),
+        t('workbench.structureHeaders.referencedTable'),
+        t('workbench.structureHeaders.referencedColumns'),
+      ]}
       rows={foreignKeyDisplayRows(foreignKeys)}
     />
   )
@@ -2076,16 +2101,16 @@ function TriggersView({
 }) {
   const { t } = useTranslation()
   if (triggers.length === 0) {
-    return <StructureEmpty label="No triggers" />
+    return <StructureEmpty label={t('workbench.noTriggers')} />
   }
 
   return (
     <div className="min-w-[720px] text-xs">
       <div className="grid grid-cols-[minmax(220px,1fr)_160px_120px_120px] border-b bg-muted/45 font-medium">
-        <div className="border-r px-2 py-1.5">Trigger</div>
-        <div className="border-r px-2 py-1.5">Type</div>
-        <div className="border-r px-2 py-1.5">Status</div>
-        <div className="px-2 py-1.5">Definition</div>
+        <div className="border-r px-2 py-1.5">{t('workbench.structureHeaders.trigger')}</div>
+        <div className="border-r px-2 py-1.5">{t('workbench.structureHeaders.type')}</div>
+        <div className="border-r px-2 py-1.5">{t('workbench.structureHeaders.status')}</div>
+        <div className="px-2 py-1.5">{t('workbench.structureHeaders.definition')}</div>
       </div>
       {triggers.map((trigger) => (
         <div

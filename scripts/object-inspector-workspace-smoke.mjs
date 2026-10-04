@@ -36,8 +36,8 @@ const panel = read('src/components/inspector/ObjectInspectorPanel.tsx')
 includesAll(
   panel,
   [
-    'Object Inspector',
-    'aria-label="Object Inspector workspace"',
+    "t('inspector.title')",
+    "t('inspector.workspace')",
     'STRUCTURE_EDITING_ENABLED = false',
     'ColumnsTable',
     'IndexesTable',

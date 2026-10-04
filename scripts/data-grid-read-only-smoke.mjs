@@ -63,7 +63,7 @@ excludesAll(
 const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
-  ['Data tab · read-only', "t('workbench.readOnlyDataPreview')", '<DataGrid result={displayResult} />', 'aria-label="generated SQL"'],
+  ['Data tab · read-only', "t('workbench.readOnlyDataPreview')", '<DataGrid result={displayResult} />', "t('workbench.generatedSqlAria')"],
   'read-only data tab UI',
 )
 excludesAll(

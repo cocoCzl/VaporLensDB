@@ -225,9 +225,9 @@ export function DataGrid({
                             {inspectable && (
                               <button
                                 type="button"
-                                aria-label="Open value viewer"
+                                aria-label={t('result.openFullValue')}
                                 className="grid size-5 shrink-0 place-items-center rounded opacity-0 transition-opacity hover:bg-background/80 group-hover:opacity-100 focus-visible:opacity-100"
-                                title="Open value viewer"
+                                title={t('result.openFullValue')}
                                 onClick={(event) => {
                                   event.stopPropagation()
                                   setViewerValue({

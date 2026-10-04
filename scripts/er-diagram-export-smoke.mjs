@@ -29,7 +29,7 @@ includesAll(
     '<svg xmlns="http://www.w3.org/2000/svg"',
     'marker id="arrow"',
     'column.isPrimaryKey',
-    'Large diagram limited to first',
+    "t('diagram.exportLargeDiagramLimit'",
     'ER_DIAGRAM_EXPORT_UNAVAILABLE',
     "t('diagram.exportFailed')",
     'safeFileName',

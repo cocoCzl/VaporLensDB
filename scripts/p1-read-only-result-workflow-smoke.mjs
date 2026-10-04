@@ -40,7 +40,7 @@ includesAll(
     'ValueViewer',
     'formatJsonIfPossible',
     "t('result.searchValue')",
-    'Open value viewer',
+    "t('result.openFullValue')",
   ],
   'read-only grid copy, widths, and viewer',
 )

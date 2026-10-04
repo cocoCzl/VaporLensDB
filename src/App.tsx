@@ -238,21 +238,21 @@ export default function App() {
 
 function SplashScreen() {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-background text-foreground" role="status" aria-label="VaporLensDB loading">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-background text-foreground" role="status" aria-label={i18n.t('app.name') + ' ' + i18n.t('common.loading')}>
       <div className="app-splash-grid relative flex h-64 w-[440px] max-w-[86vw] overflow-hidden rounded-lg border bg-card shadow-2xl shadow-black/20">
         <div className="flex min-w-0 flex-1 flex-col justify-between p-8">
           <div className="flex items-center gap-3">
             <VaporLensMark />
             <div>
               <div className="text-lg font-semibold tracking-[-0.02em]">VaporLensDB</div>
-              <div className="mt-0.5 text-[11px] tracking-wide text-muted-foreground">LIGHTWEIGHT DATABASE IDE</div>
+              <div className="mt-0.5 text-[11px] tracking-wide text-muted-foreground">{i18n.t('app.tagline')}</div>
             </div>
           </div>
           <div className="space-y-3">
             <div className="h-px w-full overflow-hidden bg-border">
               <div className="h-full w-2/3 animate-pulse bg-primary" />
             </div>
-            <div className="text-[11px] text-muted-foreground">Preparing workspace…</div>
+            <div className="text-[11px] text-muted-foreground">{i18n.t('app.preparingWorkspace')}</div>
           </div>
         </div>
         <div className="w-1.5 bg-primary" />

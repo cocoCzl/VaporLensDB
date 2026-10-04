@@ -52,7 +52,7 @@ export function RecentQueries({ entries, loading, onOpen }: RecentQueriesProps) 
 
 function HomeListSkeleton() {
   return (
-    <div className="grid gap-px p-3" aria-label="Loading">
+    <div className="grid gap-px p-3" aria-label={useTranslation().t('common.loading')}>
       {[0, 1, 2].map((index) => <div key={index} className="h-10 animate-pulse rounded-sm bg-muted/65" />)}
     </div>
   )

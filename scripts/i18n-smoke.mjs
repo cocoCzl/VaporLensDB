@@ -40,6 +40,36 @@ if (missingRequired.length) {
   process.exit(1)
 }
 
+const placeholderMismatches = []
+for (const key of zhKeys) {
+  const zhPlaceholders = placeholders(valueAtPath(zh, key))
+  const enPlaceholders = placeholders(valueAtPath(en, key))
+  if (!sameValues(zhPlaceholders, enPlaceholders)) {
+    placeholderMismatches.push(`${key}: zh=${[...zhPlaceholders].join(',') || '(none)'} en=${[...enPlaceholders].join(',') || '(none)'}`)
+  }
+}
+
+if (placeholderMismatches.length) {
+  console.error('Locale interpolation placeholder mismatch.')
+  for (const item of placeholderMismatches) console.error(`- ${item}`)
+  process.exit(1)
+}
+
+const invalidTranslations = []
+for (const [language, locale] of [['zh', zh], ['en', en]]) {
+  for (const [key, value] of flattenEntries(locale)) {
+    if (typeof value !== 'string' || !value.trim() || value.trim() === key) {
+      invalidTranslations.push(`${language}.${key}`)
+    }
+  }
+}
+
+if (invalidTranslations.length) {
+  console.error('Empty or unresolved locale values found.')
+  for (const item of invalidTranslations) console.error(`- ${item}`)
+  process.exit(1)
+}
+
 const reviewFiles = walk(resolve(root, 'src')).filter((file) => {
   const normalized = relative(root, file)
   return (
@@ -66,6 +96,31 @@ if (hardcoded.length) {
 }
 
 console.log(`i18n smoke passed: ${zhKeys.size} locale keys, ${reviewFiles.length} source files scanned.`)
+
+function flattenEntries(value, prefix = '', entries = []) {
+  for (const [key, nested] of Object.entries(value)) {
+    const path = prefix ? `${prefix}.${key}` : key
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      flattenEntries(nested, path, entries)
+    } else {
+      entries.push([path, nested])
+    }
+  }
+  return entries
+}
+
+function valueAtPath(value, path) {
+  return path.split('.').reduce((current, key) => current?.[key], value)
+}
+
+function placeholders(value) {
+  if (typeof value !== 'string') return new Set()
+  return new Set([...value.matchAll(/{{\s*-?\s*([\w]+)\s*}}/g)].map((match) => match[1]))
+}
+
+function sameValues(left, right) {
+  return left.size === right.size && [...left].every((value) => right.has(value))
+}
 
 function flattenKeys(value, prefix = '', keys = new Set()) {
   for (const [key, nested] of Object.entries(value)) {

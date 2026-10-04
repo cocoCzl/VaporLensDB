@@ -687,7 +687,7 @@ export function DatabaseTree({
 
     addTab({
       id: crypto.randomUUID(),
-      title: `${node.meta.table} DDL`,
+      title: t('explorer.tableDdlTabTitle', { name: node.meta.table }),
       kind: 'definition',
       sql: '',
       connectionId: activeConnectionId,
@@ -711,7 +711,7 @@ export function DatabaseTree({
     const definitionKind = sourceLikeObjectKind(node.kind) ? 'Source' : 'DDL'
     addTab({
       id: crypto.randomUUID(),
-      title: `${node.label} ${definitionKind}`,
+      title: t('explorer.objectDefinitionTabTitle', { name: node.label, kind: definitionKind }),
       kind: 'definition',
       sql: '',
       connectionId: activeConnectionId,
@@ -790,7 +790,7 @@ export function DatabaseTree({
 
     addTab({
       id: crypto.randomUUID(),
-      title: `${node.meta.table} ER`,
+      title: t('explorer.tableErTabTitle', { name: node.meta.table }),
       kind: 'diagram',
       sql: '',
       connectionId: activeConnectionId,
@@ -809,7 +809,7 @@ export function DatabaseTree({
 
     addTab({
       id: crypto.randomUUID(),
-      title: `${node.meta.schema} ER`,
+      title: t('explorer.schemaErTabTitle', { name: node.meta.schema }),
       kind: 'diagram',
       sql: '',
       connectionId: activeConnectionId,
@@ -1270,7 +1270,7 @@ export function DatabaseTree({
           />
         ) : (
           <>
-            <div className="grid gap-0.5" role="tree" aria-label="Object Tree">
+            <div className="grid gap-0.5" role="tree" aria-label={t('explorer.treeAria')}>
               {visibleNodes.map((node) => (
                 <TreeNode
                   key={node.id}

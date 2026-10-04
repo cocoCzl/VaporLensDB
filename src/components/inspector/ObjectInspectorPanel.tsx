@@ -20,21 +20,21 @@ export function ObjectInspectorPanel() {
   const title = `${selected.schema}.${selected.table}`
   const kindLabel =
     selected.kind === 'materializedView'
-      ? 'Materialized View'
+      ? t('inspector.materializedView')
       : selected.kind === 'view'
-        ? 'View'
-        : 'Table'
+        ? t('inspector.view')
+        : t('inspector.table')
 
   return (
     <aside
       className="flex h-full w-[460px] min-w-[360px] max-w-[52vw] flex-col border-l bg-background"
-      aria-label="Object Inspector workspace"
+      aria-label={t('inspector.workspace')}
     >
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
           <Table2 className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">Object Inspector</div>
+            <div className="truncate text-sm font-semibold">{t('inspector.title')}</div>
             <div className="text-[11px] text-muted-foreground">
               {kindLabel} · {title}
             </div>
@@ -72,16 +72,16 @@ export function ObjectInspectorPanel() {
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <InspectorSection title="Columns" count={selected.columns.length}>
+        <InspectorSection title={t('inspector.columns')} count={selected.columns.length}>
           <ColumnsTable columns={selected.columns} loading={selected.loading} />
         </InspectorSection>
-        <InspectorSection title="Indexes" count={selected.indexes.length}>
+        <InspectorSection title={t('inspector.indexes')} count={selected.indexes.length}>
           <IndexesTable indexes={selected.indexes} loading={selected.loading} />
         </InspectorSection>
-        <InspectorSection title="Foreign Keys" count={selected.foreignKeys.length}>
+        <InspectorSection title={t('inspector.foreignKeys')} count={selected.foreignKeys.length}>
           <ForeignKeysTable foreignKeys={selected.foreignKeys} loading={selected.loading} />
         </InspectorSection>
-        <InspectorSection title="DDL">
+        <InspectorSection title={t('inspector.ddl')}>
           <DdlBlock ddl={selected.ddl} loading={selected.loading} />
         </InspectorSection>
       </div>
@@ -117,10 +117,10 @@ function ColumnsTable({ columns, loading }: { columns: ColumnInfo[]; loading: bo
   return (
     <div className="overflow-hidden rounded-md border">
       <div className="grid grid-cols-[minmax(120px,1fr)_120px_70px_52px] bg-muted/60 text-[11px] font-medium text-muted-foreground">
-        <div className="border-r px-2 py-1.5">Name</div>
-        <div className="border-r px-2 py-1.5">Type</div>
-        <div className="border-r px-2 py-1.5">Null</div>
-        <div className="px-2 py-1.5">Key</div>
+        <div className="border-r px-2 py-1.5">{t('inspector.columnName')}</div>
+        <div className="border-r px-2 py-1.5">{t('inspector.columnType')}</div>
+        <div className="border-r px-2 py-1.5">{t('inspector.columnNullable')}</div>
+        <div className="px-2 py-1.5">{t('inspector.columnKey')}</div>
       </div>
       {columns.map((column) => (
         <div
@@ -132,7 +132,7 @@ function ColumnsTable({ columns, loading }: { columns: ColumnInfo[]; loading: bo
             {column.dataType}
           </div>
           <div className="border-r px-2 py-1.5 text-muted-foreground">
-            {column.nullable ? 'YES' : 'NO'}
+            {column.nullable ? t('inspector.yes') : t('inspector.no')}
           </div>
           <div className="px-2 py-1.5">
             {column.isPrimaryKey && <KeyRound className="size-3.5 text-warning" />}
@@ -155,7 +155,7 @@ function IndexesTable({ indexes, loading }: { indexes: IndexInfo[]; loading: boo
           <div className="flex items-center justify-between gap-2">
             <span className="min-w-0 truncate font-mono">{index.name}</span>
             <span className="shrink-0 text-[11px] text-muted-foreground">
-              {index.unique ? 'unique' : 'index'}
+              {index.unique ? t('inspector.unique') : t('inspector.index')}
             </span>
           </div>
           <div className="mt-1 truncate text-[11px] text-muted-foreground">
@@ -203,7 +203,7 @@ function DdlBlock({ ddl, loading }: { ddl: string | null; loading: boolean }) {
       <div className="flex h-8 items-center justify-between border-b bg-muted/40 px-2 text-xs">
         <span className="flex items-center gap-1 text-muted-foreground">
           <FileText className="size-3.5" />
-          Definition
+          {t('inspector.definition')}
         </span>
         <Button type="button" size="xs" variant="ghost" onClick={() => navigator.clipboard?.writeText(ddl)}>
           <Copy className="size-3" />
