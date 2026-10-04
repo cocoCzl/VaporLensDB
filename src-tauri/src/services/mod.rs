@@ -2,7 +2,6 @@ pub mod config_store;
 pub mod connection_manager;
 mod connection_tls;
 pub mod driver_catalog;
-pub mod export_service;
 pub mod external_driver;
 pub mod metadata_index;
 pub mod metadata_service;
