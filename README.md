@@ -67,8 +67,7 @@ one statement rather than multi-statement, multi-result scripts. See the
 
 ## Source-first quick start
 
-Prerequisites: Node.js 22, pnpm 10, Rust stable, JDK 21 where JDBC is used,
-and the
+Prerequisites: Node.js 22, pnpm 10, Rust stable, JDK 21, and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
 operating system.
 
@@ -85,6 +84,11 @@ For reproducible validation, install from the lockfile and run:
 pnpm install --frozen-lockfile
 ./build.sh check
 ```
+
+`./build.sh check` and `./build.sh current` build the project's own JDBC bridge,
+so a JDK is required even when you do not configure a vendor JDBC driver. A
+vendor JDBC JAR is only needed later when you create an Oracle or custom JDBC
+data source.
 
 Platform-specific development and local-QA packaging requirements are in the
 [packaging guide](docs/PACKAGING.md). Local packaging does not make an

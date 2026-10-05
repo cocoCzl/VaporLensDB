@@ -57,7 +57,7 @@ ODBC 和完整可配置的危险 SQL 策略目前不在范围内；完整 1.0 �
 
 ## 源码优先快速开始
 
-前提：Node.js 22、pnpm 10、Rust stable、JDBC 场景所需的 JDK 21，以及当前系统所需的
+前提：Node.js 22、pnpm 10、Rust stable、JDK 21，以及当前系统所需的
 [Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
@@ -73,6 +73,10 @@ pnpm tauri dev
 pnpm install --frozen-lockfile
 ./build.sh check
 ```
+
+`./build.sh check` 和 `./build.sh current` 始终会构建项目自有的 JDBC bridge，
+因此即使不配置厂商 JDBC 驱动，这两个命令也需要 JDK。厂商 JDBC JAR 只在创建
+Oracle 或自定义 JDBC 数据源时需要。
 
 平台特定的开发与本地 QA 打包前提见[打包指南](docs/PACKAGING.zh-CN.md)。本地打包
 不代表已有 official installer 可供下载。

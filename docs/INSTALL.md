@@ -23,7 +23,9 @@ pnpm install --frozen-lockfile
 
 Source builds require Node.js 22, pnpm 10, Rust stable, JDK 21, and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the host
-operating system. JDK 21 is required when JDBC drivers are used. See
+operating system. `./build.sh check` and `./build.sh current` always build the
+project's own JDBC bridge, so the JDK is required for those commands even
+without a vendor JDBC driver. See
 [PACKAGING.md](PACKAGING.md) for platform prerequisites and local QA packaging.
 
 ## Platform build targets
@@ -36,7 +38,8 @@ operating system. JDK 21 is required when JDBC drivers are used. See
 
 Windows and Linux prerequisites and build targets are documented, but their
 real desktop runtime validation is still pending. See [PACKAGING.md](PACKAGING.md)
-for the exact native-host requirements. JDK 21 is required where JDBC is used;
+for the exact native-host requirements. A vendor JDBC JAR is only required when
+you configure an Oracle or custom JDBC data source;
 Linux credential persistence additionally needs an active Secret Service session.
 
 ## Local QA, RC, and future stable packages

@@ -16,6 +16,13 @@ command -v jar >/dev/null 2>&1 || {
   exit 1
 }
 
+if [[ "${1:-}" == "--test" ]]; then
+  command -v java >/dev/null 2>&1 || {
+    echo "Missing java. Install a JDK to run the JDBC bridge contract tests." >&2
+    exit 1
+  }
+fi
+
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$TARGET_DIR"
 

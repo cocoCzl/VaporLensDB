@@ -21,8 +21,9 @@ pnpm install --frozen-lockfile
 ```
 
 源码构建需要 Node.js 22、pnpm 10、Rust stable、JDK 21，以及当前系统的
-[Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。JDK 21 仅在使用 JDBC
-驱动时需要。平台前提与本地 QA 打包请参阅 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。
+[Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。`./build.sh check` 和
+`./build.sh current` 始终会构建项目自有的 JDBC bridge，因此即使不配置厂商 JDBC 驱动，
+这两个命令也需要 JDK。平台前提与本地 QA 打包请参阅 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。
 
 ## 平台构建目标
 
@@ -33,7 +34,8 @@ pnpm install --frozen-lockfile
 | Linux | 在 Linux 中运行 `./build.sh linux`；WebKitGTK/GTK/Tauri 打包依赖 | **NOT EXECUTED** |
 
 Windows 和 Linux 的构建前提与目标已文档化，但真实桌面运行时验证仍待完成。精确的
-native-host 前提请见 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。JDK 21 在使用 JDBC 时需要；
+native-host 前提请见 [PACKAGING.zh-CN.md](PACKAGING.zh-CN.md)。厂商 JDBC JAR 只在配置
+Oracle 或自定义 JDBC 数据源时需要；
 Linux 凭据持久化还需要一个活动的 Secret Service 会话。
 
 ## 本地 QA、RC 与未来 stable 安装包
