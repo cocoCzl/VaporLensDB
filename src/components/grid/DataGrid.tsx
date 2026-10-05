@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { writeText as writeNativeClipboardText } from '@tauri-apps/plugin-clipboard-manager'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
+import { readStorageJson, writeStorageJson } from '@/lib/safeStorage'
 import {
   Dialog,
   DialogContent,
@@ -803,21 +804,15 @@ function columnWidthStorageKey(result: QueryResult) {
 }
 
 function readColumnWidths(key: string) {
-  if (typeof window === 'undefined') return {}
-  try {
-    const value = window.localStorage.getItem(key)
-    if (!value) return {}
-    const parsed = JSON.parse(value) as Record<string, number>
-    return Object.fromEntries(
-      Object.entries(parsed).map(([column, width]) => [column, clampWidth(width)]),
-    )
-  } catch {
-    return {}
-  }
+  const stored = readStorageJson(key, isColumnWidthMap)
+  if (!stored.value) return {}
+  return Object.fromEntries(
+    Object.entries(stored.value).map(([column, width]) => [column, clampWidth(width)]),
+  )
 }
 
 function writeColumnWidths(key: string, widths: Record<string, number>) {
-  window.localStorage.setItem(key, JSON.stringify(widths))
+  writeStorageJson(key, widths)
 }
 
 function clampWidth(width: number) {
@@ -826,6 +821,11 @@ function clampWidth(width: number) {
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
+}
+
+function isColumnWidthMap(value: unknown): value is Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value).every((width) => typeof width === 'number' && Number.isFinite(width))
 }
 
 function formatValue(value: unknown) {

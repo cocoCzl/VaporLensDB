@@ -26,6 +26,7 @@ vi.mock('@/ipc/connection', () => connectionMocks)
 
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useEditorStore } from '@/stores/editorStore'
 
 function connection(id: string, name: string): ConnectionConfig {
   return {
@@ -90,6 +91,65 @@ describe('connection store save lifecycle', () => {
     expect(connectionMocks.listConnections).toHaveBeenCalledOnce()
     expect(useConnectionStore.getState().connections).toEqual([saved])
     expect(useConnectionStore.getState().loading).toBe(false)
+  })
+
+  it('filters stale recent and favorite ids using their own storage keys', async () => {
+    const saved = connection('known', 'Known')
+    connectionMocks.listConnections.mockResolvedValue([saved])
+    useConnectionStore.setState({ recentDataSourceIds: ['known', 'deleted'], favoriteDataSourceIds: ['deleted'] })
+    useEditorStore.setState({ tabs: [{ id: 'sql', title: 'SQL', sql: 'SELECT 1', connectionId: 'deleted' }], activeTabId: 'sql' })
+
+    await useConnectionStore.getState().loadConnections()
+
+    expect(useConnectionStore.getState().recentDataSourceIds).toEqual(['known'])
+    expect(useConnectionStore.getState().favoriteDataSourceIds).toEqual([])
+    expect(JSON.parse(window.localStorage.getItem('vaporlensdb.recentDataSources')!)).toEqual(['known'])
+    expect(JSON.parse(window.localStorage.getItem('vaporlensdb.favoriteDataSources')!)).toEqual([])
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({ sql: 'SELECT 1', connectionId: 'deleted', unavailableConnectionName: expect.any(String) })
+    expect(useConnectionStore.getState().browsingConnectionId).toBeNull()
+  })
+
+  it('preserves ids and workspace references when the authoritative connection list fails', async () => {
+    connectionMocks.listConnections.mockRejectedValue(new Error('unavailable'))
+    useConnectionStore.setState({ recentDataSourceIds: ['known'], favoriteDataSourceIds: ['known'] })
+    useEditorStore.setState({ tabs: [{ id: 'sql', title: 'SQL', sql: 'SELECT 1', connectionId: 'known' }], activeTabId: 'sql' })
+
+    await useConnectionStore.getState().loadConnections()
+
+    expect(useConnectionStore.getState().recentDataSourceIds).toEqual(['known'])
+    expect(useConnectionStore.getState().favoriteDataSourceIds).toEqual(['known'])
+    expect(useEditorStore.getState().tabs[0].unavailableConnectionName).toBeUndefined()
+  })
+
+  it('keeps favorite and browsing selection usable when preference writes fail', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError')
+    })
+    try {
+      expect(() => useConnectionStore.getState().toggleFavoriteDataSource('known')).not.toThrow()
+      expect(() => useConnectionStore.getState().setActiveConnection('known')).not.toThrow()
+      expect(useConnectionStore.getState().favoriteDataSourceIds).toEqual(['known'])
+      expect(useConnectionStore.getState().recentDataSourceIds).toEqual(['known'])
+      expect(useConnectionStore.getState().browsingConnectionId).toBe('known')
+    } finally {
+      setItem.mockRestore()
+    }
+  })
+
+  it('persists only datasource ids rather than connection credentials', async () => {
+    const saved = connection('known', 'Known')
+    connectionMocks.createConnection.mockResolvedValue(saved)
+    connectionMocks.listConnections.mockResolvedValue([saved])
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    await useConnectionStore.getState().saveConnection(input('Known'))
+    useConnectionStore.getState().setActiveConnection(saved.id)
+    useConnectionStore.getState().toggleFavoriteDataSource(saved.id)
+    expect(setItem).toHaveBeenCalled()
+    for (const [key, value] of setItem.mock.calls) {
+      expect(['vaporlensdb.recentDataSources', 'vaporlensdb.favoriteDataSources']).toContain(key)
+      expect(JSON.parse(value)).toEqual(['known'])
+      expect(value).not.toContain('secret')
+    }
   })
 
   it('replaces an updated connection without duplicating it', async () => {

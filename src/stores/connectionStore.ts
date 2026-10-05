@@ -18,6 +18,7 @@ import {
   updateConnection,
 } from '@/ipc/connection'
 import { normalizeAppError } from '@/ipc/client'
+import { readStorageJson, writeStorageJson } from '@/lib/safeStorage'
 import { useMetadataStore } from '@/stores/metadataStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -139,7 +140,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       connections,
       dataSourceGroups,
       statuses: indexStatuses(statuses),
-      favoriteDataSourceIds: retainKnownDataSourceIds(state.favoriteDataSourceIds, connections),
+      recentDataSourceIds: connectionsResult.status === 'fulfilled'
+        ? retainKnownDataSourceIds(state.recentDataSourceIds, connections, RECENT_DATA_SOURCES_STORAGE_KEY)
+        : state.recentDataSourceIds,
+      favoriteDataSourceIds: connectionsResult.status === 'fulfilled'
+        ? retainKnownDataSourceIds(state.favoriteDataSourceIds, connections, FAVORITE_DATA_SOURCES_STORAGE_KEY)
+        : state.favoriteDataSourceIds,
       error: loadError || null,
       loading: false,
     }))
@@ -151,7 +157,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       })
     }
     const knownIds = new Set(connections.map((connection) => connection.id))
-    for (const tab of useEditorStore.getState().tabs) {
+    for (const tab of connectionsResult.status === 'fulfilled' ? useEditorStore.getState().tabs : []) {
       if ((tab.kind === 'sql' || !tab.kind) && tab.connectionId && !knownIds.has(tab.connectionId)) {
         useEditorStore.getState().markConnectionUnavailable(
           tab.connectionId,
@@ -424,33 +430,13 @@ function upsertConnection(connections: ConnectionConfig[], saved: ConnectionConf
 }
 
 function readStoredRecentDataSourceIds() {
-  if (typeof window === 'undefined') {
-    return []
-  }
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(RECENT_DATA_SOURCES_STORAGE_KEY) ?? '[]')
-    return Array.isArray(parsed)
-      ? parsed.filter((value): value is string => typeof value === 'string')
-      : []
-  } catch {
-    return []
-  }
+  const stored = readStorageJson(RECENT_DATA_SOURCES_STORAGE_KEY, isStringArray)
+  return stored.value ? uniqueIds(stored.value).slice(0, MAX_RECENT_DATA_SOURCES) : []
 }
 
 function readStoredFavoriteDataSourceIds() {
-  if (typeof window === 'undefined') {
-    return []
-  }
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(FAVORITE_DATA_SOURCES_STORAGE_KEY) ?? '[]')
-    return Array.isArray(parsed)
-      ? parsed.filter((value): value is string => typeof value === 'string')
-      : []
-  } catch {
-    return []
-  }
+  const stored = readStorageJson(FAVORITE_DATA_SOURCES_STORAGE_KEY, isStringArray)
+  return stored.value ? uniqueIds(stored.value) : []
 }
 
 function rememberRecentDataSource(currentIds: string[], id: string) {
@@ -458,17 +444,13 @@ function rememberRecentDataSource(currentIds: string[], id: string) {
     0,
     MAX_RECENT_DATA_SOURCES,
   )
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(RECENT_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
-  }
+  writeStorageJson(RECENT_DATA_SOURCES_STORAGE_KEY, next)
   return next
 }
 
 function forgetRecentDataSource(currentIds: string[], id: string) {
   const next = currentIds.filter((currentId) => currentId !== id)
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(RECENT_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
-  }
+  writeStorageJson(RECENT_DATA_SOURCES_STORAGE_KEY, next)
   return next
 }
 
@@ -476,25 +458,27 @@ function toggleFavoriteDataSource(currentIds: string[], id: string) {
   const next = currentIds.includes(id)
     ? currentIds.filter((currentId) => currentId !== id)
     : [id, ...currentIds]
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(FAVORITE_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
-  }
+  writeStorageJson(FAVORITE_DATA_SOURCES_STORAGE_KEY, next)
   return next
 }
 
 function forgetFavoriteDataSource(currentIds: string[], id: string) {
   const next = currentIds.filter((currentId) => currentId !== id)
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(FAVORITE_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
-  }
+  writeStorageJson(FAVORITE_DATA_SOURCES_STORAGE_KEY, next)
   return next
 }
 
-function retainKnownDataSourceIds(ids: string[], connections: ConnectionConfig[]) {
+function retainKnownDataSourceIds(ids: string[], connections: ConnectionConfig[], storageKey: string) {
   const knownIds = new Set(connections.map((connection) => connection.id))
   const next = ids.filter((id) => knownIds.has(id))
-  if (next.length !== ids.length && typeof window !== 'undefined') {
-    window.localStorage.setItem(FAVORITE_DATA_SOURCES_STORAGE_KEY, JSON.stringify(next))
-  }
+  if (next.length !== ids.length) writeStorageJson(storageKey, next)
   return next
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function uniqueIds(ids: string[]) {
+  return [...new Set(ids)]
 }

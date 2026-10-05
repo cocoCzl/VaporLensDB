@@ -348,7 +348,8 @@
     "clearQueryHistoryFailed": "清空查询历史失败",
     "loadSqlDraftsFailed": "加载最近 SQL 失败",
     "saveSqlDraftFailed": "保存 SQL 草稿失败",
-    "deleteSqlDraftFailed": "删除 SQL 草稿失败"
+    "deleteSqlDraftFailed": "删除 SQL 草稿失败",
+    "workspacePersistenceFailed": "SQL 工作区无法保存到本地。"
   },
   "inspector": {
     "workspace": "对象检查器工作区",
@@ -673,7 +674,8 @@
     "language": {
       "label": "语言",
       "zh": "中文",
-      "en": "English"
+      "en": "English",
+      "persistenceFailed": "语言偏好无法保存到本地。"
     },
     "queryMaxRows": "最大返回行数",
     "dataPreviewRows": "数据预览默认行数",

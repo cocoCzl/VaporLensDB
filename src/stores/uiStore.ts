@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import i18n from '@/i18n'
+import { readStorageJson, readStorageString, writeStorageJson, writeStorageString } from '@/lib/safeStorage'
 import type { AppError } from '@/types/error'
 
 export type Theme = 'light' | 'dark' | 'system'
@@ -202,12 +203,7 @@ export function resolveTheme(theme: Theme, prefersDark = systemPrefersDark()): R
 }
 
 export function readStoredTheme(): Theme {
-  if (typeof window === 'undefined') {
-    return DEFAULT_THEME
-  }
-
-  const value = window.localStorage.getItem(THEME_STORAGE_KEY)
-  return value === 'light' || value === 'dark' || value === 'system' ? value : DEFAULT_THEME
+  return readStorageString(THEME_STORAGE_KEY, isTheme).value ?? DEFAULT_THEME
 }
 
 function systemPrefersDark() {
@@ -217,10 +213,7 @@ function systemPrefersDark() {
 }
 
 function writeStoredTheme(theme: Theme) {
-  if (typeof window === 'undefined') {
-    return
-  }
-  window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+  writeStorageString(THEME_STORAGE_KEY, theme)
 }
 
 function readStoredSettings(): UserSettings {
@@ -241,49 +234,32 @@ function readStoredSettings(): UserSettings {
     }
   }
 
-  try {
-    const value = window.localStorage.getItem(SETTINGS_STORAGE_KEY)
-    const parsed = value ? JSON.parse(value) : {}
-    return {
-      queryMaxRows: clampNumber(parsed.queryMaxRows, 100, MAX_INTERACTIVE_RESULT_ROWS, DEFAULT_QUERY_MAX_ROWS),
-      dataPreviewDefaultRows: clampNumber(
-        parsed.dataPreviewDefaultRows,
-        1,
-        10_000,
-        DEFAULT_DATA_PREVIEW_ROWS,
-      ),
-      editorFontSize: clampNumber(parsed.editorFontSize, 10, 24, DEFAULT_EDITOR_FONT_SIZE),
-      showSystemObjects: parsed.showSystemObjects === true,
-      sidebarWidth: clampNumber(parsed.sidebarWidth, 232, 460, 288),
-      sidebarCollapsed: parsed.sidebarCollapsed === true,
-      // Versions before 2 auto-fitted every result, shrinking one-row queries
-      // to 160px and overwriting the user's preferred layout in local storage.
-      bottomPanelHeight: parsed.resultPanelLayoutVersion === RESULT_PANEL_LAYOUT_VERSION
-        ? clampNumber(parsed.bottomPanelHeight, 160, 800, DEFAULT_RESULT_PANEL_HEIGHT)
-        : DEFAULT_RESULT_PANEL_HEIGHT,
-      bottomPanelCollapsed: parsed.bottomPanelCollapsed === true,
-      resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,
-      exportDirectory: typeof parsed.exportDirectory === 'string' && parsed.exportDirectory.trim()
-        ? parsed.exportDirectory
-        : null,
-      maxLiveSessions: clampNumber(parsed.maxLiveSessions, 1, 20, DEFAULT_MAX_LIVE_SESSIONS),
-      idleReclaimMinutes: parsed.idleReclaimMinutes === null ? null : clampNumber(parsed.idleReclaimMinutes, 5, 120, DEFAULT_IDLE_RECLAIM_MINUTES),
-    }
-  } catch {
-    return {
-      queryMaxRows: DEFAULT_QUERY_MAX_ROWS,
-      dataPreviewDefaultRows: DEFAULT_DATA_PREVIEW_ROWS,
-      editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
-      showSystemObjects: false,
-      sidebarWidth: 288,
-      sidebarCollapsed: false,
-      bottomPanelHeight: DEFAULT_RESULT_PANEL_HEIGHT,
-      bottomPanelCollapsed: false,
-      resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,
-      exportDirectory: null,
-      maxLiveSessions: DEFAULT_MAX_LIVE_SESSIONS,
-      idleReclaimMinutes: DEFAULT_IDLE_RECLAIM_MINUTES,
-    }
+  const stored = readStorageJson(SETTINGS_STORAGE_KEY, isRecord)
+  const parsed = stored.value ?? {}
+  return {
+    queryMaxRows: clampNumber(parsed.queryMaxRows, 100, MAX_INTERACTIVE_RESULT_ROWS, DEFAULT_QUERY_MAX_ROWS),
+    dataPreviewDefaultRows: clampNumber(
+      parsed.dataPreviewDefaultRows,
+      1,
+      10_000,
+      DEFAULT_DATA_PREVIEW_ROWS,
+    ),
+    editorFontSize: clampNumber(parsed.editorFontSize, 10, 24, DEFAULT_EDITOR_FONT_SIZE),
+    showSystemObjects: parsed.showSystemObjects === true,
+    sidebarWidth: clampNumber(parsed.sidebarWidth, 232, 460, 288),
+    sidebarCollapsed: parsed.sidebarCollapsed === true,
+    // Versions before 2 auto-fitted every result, shrinking one-row queries
+    // to 160px and overwriting the user's preferred layout in local storage.
+    bottomPanelHeight: parsed.resultPanelLayoutVersion === RESULT_PANEL_LAYOUT_VERSION
+      ? clampNumber(parsed.bottomPanelHeight, 160, 800, DEFAULT_RESULT_PANEL_HEIGHT)
+      : DEFAULT_RESULT_PANEL_HEIGHT,
+    bottomPanelCollapsed: parsed.bottomPanelCollapsed === true,
+    resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,
+    exportDirectory: typeof parsed.exportDirectory === 'string' && parsed.exportDirectory.trim()
+      ? parsed.exportDirectory
+      : null,
+    maxLiveSessions: clampNumber(parsed.maxLiveSessions, 1, 20, DEFAULT_MAX_LIVE_SESSIONS),
+    idleReclaimMinutes: parsed.idleReclaimMinutes === null ? null : clampNumber(parsed.idleReclaimMinutes, 5, 120, DEFAULT_IDLE_RECLAIM_MINUTES),
   }
 }
 
@@ -305,10 +281,15 @@ function settingsFromState(state: Pick<UiState, 'queryMaxRows' | 'dataPreviewDef
 }
 
 function writeStoredSettings(settings: UserSettings) {
-  if (typeof window === 'undefined') {
-    return
-  }
-  window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+  writeStorageJson(SETTINGS_STORAGE_KEY, settings)
+}
+
+function isTheme(value: string): value is Theme {
+  return value === 'light' || value === 'dark' || value === 'system'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function compactErrorMessage(error: AppError) {
@@ -338,9 +319,8 @@ function clampNumber(
   max: number,
   fallback = min,
 ) {
-  const numberValue = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(numberValue)) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
     return fallback
   }
-  return Math.min(max, Math.max(min, Math.round(numberValue)))
+  return Math.min(max, Math.max(min, Math.round(value)))
 }

@@ -1,6 +1,9 @@
 import { create } from 'zustand'
+import i18n from '@/i18n'
 import { isEmptySqlDraft } from '@/lib/sqlDraftPersistence'
+import { readStorageJson, writeStorageJson } from '@/lib/safeStorage'
 import { useQueryResultStore } from '@/stores/queryResultStore'
+import { useUiStore } from '@/stores/uiStore'
 import type { DataTabSortDirection } from '@/lib/dataTabSql'
 import type { DbObjectKind } from '@/types/metadata'
 import type { ConsoleTransactionState, TransactionMode, TransactionPhase } from '@/types/query'
@@ -139,6 +142,7 @@ interface EditorState {
   closeTab: (id: string) => void
 }
 
+let workspaceRecoveryBaseline: string | null = null
 const restoredWorkspace = readStoredSqlWorkspace()
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -316,6 +320,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
 export function persistSqlWorkspace(tabs: EditorTab[], activeTabId: string | null) {
   if (typeof window === 'undefined') return
+  if (workspaceRecoveryBaseline !== null
+    && workspaceRecoveryBaseline === workspaceRecoveryFingerprint(tabs, activeTabId)) return
   const savedTabs = tabs
     .filter((tab) => tab.kind === 'sql' || !tab.kind)
     .map((tab) => ({
@@ -331,14 +337,16 @@ export function persistSqlWorkspace(tabs: EditorTab[], activeTabId: string | nul
       pinned: tab.pinned ?? false,
       unavailableConnectionName: tab.unavailableConnectionName ?? null,
     }))
-  try {
-    window.localStorage.setItem(SQL_WORKSPACE_STORAGE_KEY, JSON.stringify({
-      tabs: savedTabs,
-      activeTabId: savedTabs.some((tab) => tab.id === activeTabId) ? activeTabId : savedTabs.at(-1)?.id ?? null,
-    }))
-  } catch {
-    // Workspace restoration is best-effort and must never block the editor.
-  }
+  const saved = writeStorageJson(SQL_WORKSPACE_STORAGE_KEY, {
+    tabs: savedTabs,
+    activeTabId: savedTabs.some((tab) => tab.id === activeTabId) ? activeTabId : savedTabs.at(-1)?.id ?? null,
+  }, () => {
+    useUiStore.getState().notify({
+      kind: 'warning',
+      title: i18n.t('notifications.workspacePersistenceFailed'),
+    })
+  })
+  if (saved) workspaceRecoveryBaseline = null
 }
 
 /**
@@ -374,46 +382,76 @@ export function subscribeSqlWorkspacePersistence(
 }
 
 export function readStoredSqlWorkspace(): Pick<EditorState, 'tabs' | 'activeTabId'> {
-  if (typeof window === 'undefined') return { tabs: [], activeTabId: null }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(SQL_WORKSPACE_STORAGE_KEY) ?? '{}')
-    const rawTabs: unknown[] = Array.isArray(parsed.tabs) ? parsed.tabs as unknown[] : []
-    const tabs = rawTabs
-        .filter((tab): tab is Record<string, unknown> => Boolean(tab) && typeof tab === 'object')
-        .filter((tab) => typeof tab.id === 'string' && typeof tab.title === 'string' && typeof tab.sql === 'string')
-        .map((tab): EditorTab => {
-          const sql = tab.sql as string
-          const draftId = typeof tab.draftId === 'string' ? tab.draftId : null
-          const clearedDraftNeedsCleanup = isEmptySqlDraft(sql) && draftId !== null
-          return {
-            id: tab.id as string,
-            kind: 'sql',
-            title: tab.title as string,
-            sql,
-            connectionId: typeof tab.connectionId === 'string' ? tab.connectionId : null,
-            database: typeof tab.database === 'string' ? tab.database : null,
-            schema: typeof tab.schema === 'string' ? tab.schema : null,
-            // An empty open tab still wins recovery. Retain an old draft ID only
-            // long enough to lazily delete its stale native record.
-            draftId,
-            dirty: clearedDraftNeedsCleanup || tab.dirty === true,
-            pinned: tab.pinned === true,
-            unavailableConnectionName: typeof tab.unavailableConnectionName === 'string'
-              ? tab.unavailableConnectionName
-              : null,
-            // Results and live execution state are intentionally never restored.
-            lastQueryId: null,
-            runningQueryId: null,
-            running: false,
-            cancelling: false,
-            error: null,
-          }
-        })
-    const activeTabId = typeof parsed.activeTabId === 'string' && tabs.some((tab) => tab.id === parsed.activeTabId)
-      ? parsed.activeTabId
-      : tabs.at(-1)?.id ?? null
-    return { tabs, activeTabId }
-  } catch {
+  const stored = readStorageJson(SQL_WORKSPACE_STORAGE_KEY, isRecord)
+  if (!stored.value) {
+    workspaceRecoveryBaseline = stored.status === 'missing' ? null : workspaceRecoveryFingerprint([], null)
     return { tabs: [], activeTabId: null }
   }
+
+  const rawTabs: unknown[] = Array.isArray(stored.value.tabs) ? stored.value.tabs : []
+  const seenIds = new Set<string>()
+  const tabs = rawTabs
+      .filter((tab): tab is Record<string, unknown> => isRecord(tab))
+      .filter((tab) => {
+        if (typeof tab.id !== 'string' || !tab.id.trim() || seenIds.has(tab.id)
+          || typeof tab.title !== 'string' || typeof tab.sql !== 'string'
+          || (tab.kind !== undefined && tab.kind !== 'sql')) return false
+        seenIds.add(tab.id)
+        return true
+      })
+      .map((tab): EditorTab => {
+        const sql = tab.sql as string
+        const draftId = typeof tab.draftId === 'string' ? tab.draftId : null
+        const clearedDraftNeedsCleanup = isEmptySqlDraft(sql) && draftId !== null
+        return {
+          id: tab.id as string,
+          kind: 'sql',
+          title: tab.title as string,
+          sql,
+          connectionId: typeof tab.connectionId === 'string' ? tab.connectionId : null,
+          database: typeof tab.database === 'string' ? tab.database : null,
+          schema: typeof tab.schema === 'string' ? tab.schema : null,
+          // An empty open tab still wins recovery. Retain an old draft ID only
+          // long enough to lazily delete its stale native record.
+          draftId,
+          dirty: clearedDraftNeedsCleanup || tab.dirty === true,
+          pinned: tab.pinned === true,
+          unavailableConnectionName: typeof tab.unavailableConnectionName === 'string'
+            ? tab.unavailableConnectionName
+            : null,
+          // Results and live execution state are intentionally never restored.
+          lastQueryId: null,
+          runningQueryId: null,
+          running: false,
+          cancelling: false,
+          error: null,
+        }
+      })
+  const activeTabId = typeof stored.value.activeTabId === 'string' && tabs.some((tab) => tab.id === stored.value?.activeTabId)
+    ? stored.value.activeTabId
+    : tabs.at(-1)?.id ?? null
+  workspaceRecoveryBaseline = !Array.isArray(stored.value.tabs) || tabs.length !== rawTabs.length
+    ? workspaceRecoveryFingerprint(tabs, activeTabId)
+    : null
+  return { tabs, activeTabId }
+}
+
+function workspaceRecoveryFingerprint(tabs: EditorTab[], activeTabId: string | null) {
+  return JSON.stringify({
+    tabs: tabs.filter((tab) => tab.kind === 'sql' || !tab.kind).map((tab) => ({
+      id: tab.id,
+      title: tab.title,
+      sql: tab.sql,
+      connectionId: tab.connectionId,
+      database: tab.database ?? null,
+      schema: tab.schema ?? null,
+      pinned: tab.pinned ?? false,
+    })),
+    activeTabId: tabs.some((tab) => (tab.kind === 'sql' || !tab.kind) && tab.id === activeTabId)
+      ? activeTabId : tabs.filter((tab) => tab.kind === 'sql' || !tab.kind).at(-1)?.id ?? null,
+  })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }

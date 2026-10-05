@@ -27,6 +27,7 @@ import {
 } from '@/lib/dbeaverImport'
 import { openExternalUrl } from '@/lib/openExternalUrl'
 import { normalizeAppError } from '@/ipc/client'
+import { writeStorageString } from '@/lib/safeStorage'
 import { exportDiagnosticsPackage } from '@/ipc/diagnostics'
 import { healthCheck, type HealthCheckResponse } from '@/ipc/health'
 import { setApplicationMenuLanguage } from '@/ipc/settings'
@@ -200,7 +201,9 @@ export function SettingsWorkspacePanel() {
     setEditorFontSize(draft.editorFontSize)
     setExportDirectory(draft.exportDirectory)
     setConnectionSessionPolicy(draft.maxLiveSessions, draft.idleReclaimMinutes)
-    window.localStorage.setItem('vaporlensdb.language', draft.language)
+    writeStorageString('vaporlensdb.language', draft.language, () => {
+      notify({ kind: 'warning', title: t('settings.language.persistenceFailed') })
+    })
     void i18n.changeLanguage(draft.language)
     setApplicationMenuLanguage(draft.language).catch(() => {
       // Native menu sync is best-effort and should not block settings changes.

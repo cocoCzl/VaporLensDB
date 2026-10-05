@@ -6,6 +6,7 @@ import {
   type EditorTab,
   useEditorStore,
 } from '@/stores/editorStore'
+import { useUiStore } from '@/stores/uiStore'
 
 const storageKey = 'vaporlensdb.sqlWorkspace.v1'
 
@@ -172,6 +173,89 @@ describe('SQL workspace persistence', () => {
         schema: 'DEVELOP',
       }],
     })
+  })
+
+  it('recovers from malformed workspace JSON without overwriting the source value', () => {
+    window.localStorage.setItem(storageKey, '{not-json')
+
+    expect(readStoredSqlWorkspace()).toEqual({ tabs: [], activeTabId: null })
+    expect(window.localStorage.getItem(storageKey)).toBe('{not-json')
+    persistSqlWorkspace([], null)
+    expect(window.localStorage.getItem(storageKey)).toBe('{not-json')
+  })
+
+  it('preserves a corrupt workspace through the startup debounce until new valid edits', () => {
+    vi.useFakeTimers()
+    window.localStorage.setItem(storageKey, '{recoverable-source')
+    useEditorStore.setState(readStoredSqlWorkspace())
+    const unsubscribe = subscribeSqlWorkspacePersistence()
+    try {
+      vi.advanceTimersByTime(800)
+      expect(window.localStorage.getItem(storageKey)).toBe('{recoverable-source')
+      useEditorStore.getState().addTab({ id: 'new', title: 'SQL', sql: 'SELECT 1', connectionId: null })
+      vi.advanceTimersByTime(800)
+      expect(readStoredSqlWorkspace()).toMatchObject({ tabs: [{ id: 'new', sql: 'SELECT 1' }] })
+    } finally {
+      unsubscribe()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['null', '[]', '{"tabs":{}}', '{"tabs":[null]}'])('preserves invalid workspace shape: %s', (value) => {
+    window.localStorage.setItem(storageKey, value)
+    const restored = readStoredSqlWorkspace()
+    expect(restored).toEqual({ tabs: [], activeTabId: null })
+    persistSqlWorkspace(restored.tabs, restored.activeTabId)
+    expect(window.localStorage.getItem(storageKey)).toBe(value)
+  })
+
+  it('filters duplicate ids, blank ids, and non-SQL tabs without rewriting partial recovery', () => {
+    const raw = JSON.stringify({ activeTabId: 'tab', tabs: [
+      { id: 'tab', title: 'SQL', sql: 'SELECT 1' },
+      { id: 'tab', title: 'Duplicate', sql: 'SELECT 2' },
+      { id: '', title: 'Blank', sql: '' },
+      { id: 'other', title: 'Other', kind: 'settings', sql: '' },
+    ] })
+    window.localStorage.setItem(storageKey, raw)
+    const restored = readStoredSqlWorkspace()
+    expect(restored.tabs).toHaveLength(1)
+    persistSqlWorkspace(restored.tabs, restored.activeTabId)
+    expect(window.localStorage.getItem(storageKey)).toBe(raw)
+    persistSqlWorkspace(restored.tabs.map((tab) => ({ ...tab, unavailableConnectionName: 'Unavailable', draftId: 'native-draft' })), restored.activeTabId)
+    expect(window.localStorage.getItem(storageKey)).toBe(raw)
+  })
+
+  it('filters invalid tabs and safely falls back from a stale active tab id', () => {
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      activeTabId: 'missing',
+      tabs: [
+        null,
+        { id: 'invalid', title: 'Invalid', sql: 42 },
+        { id: 'valid', title: 'Valid', sql: 'SELECT 1', connectionId: 'deleted-connection' },
+      ],
+    }))
+
+    expect(readStoredSqlWorkspace()).toMatchObject({
+      activeTabId: 'valid',
+      tabs: [{ id: 'valid', connectionId: 'deleted-connection', sql: 'SELECT 1' }],
+    })
+  })
+
+  it('keeps the editor usable when workspace persistence fails', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+
+    useUiStore.setState({ notifications: [] })
+    useEditorStore.setState({ tabs: [{ id: 'tab', title: 'SQL', sql: 'SELECT 1', connectionId: null }], activeTabId: 'tab' })
+    expect(() => persistSqlWorkspace(useEditorStore.getState().tabs, 'tab')).not.toThrow()
+    useEditorStore.getState().updateTabSql('tab', 'SELECT 2')
+    expect(() => persistSqlWorkspace(useEditorStore.getState().tabs, 'tab')).not.toThrow()
+    expect(useEditorStore.getState().tabs[0].sql).toBe('SELECT 2')
+    expect(useUiStore.getState().notifications).toHaveLength(1)
+    setItem.mockRestore()
+    persistSqlWorkspace(useEditorStore.getState().tabs, 'tab')
+    expect(readStoredSqlWorkspace()).toMatchObject({ tabs: [{ sql: 'SELECT 2' }] })
   })
 
   it('keeps an empty open workspace tab ahead of a stale native draft and schedules cleanup', () => {

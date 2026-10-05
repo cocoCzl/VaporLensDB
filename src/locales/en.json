@@ -348,7 +348,8 @@
     "clearQueryHistoryFailed": "Failed to clear query history",
     "loadSqlDraftsFailed": "Failed to load recent SQL",
     "saveSqlDraftFailed": "Failed to save SQL draft",
-    "deleteSqlDraftFailed": "Failed to delete SQL draft"
+    "deleteSqlDraftFailed": "Failed to delete SQL draft",
+    "workspacePersistenceFailed": "SQL workspace could not be saved locally."
   },
   "inspector": {
     "workspace": "Object Inspector workspace",
@@ -673,7 +674,8 @@
     "language": {
       "label": "Language",
       "zh": "中文",
-      "en": "English"
+      "en": "English",
+      "persistenceFailed": "Language preference could not be saved locally."
     },
     "queryMaxRows": "Maximum returned rows",
     "dataPreviewRows": "Default data preview rows",
