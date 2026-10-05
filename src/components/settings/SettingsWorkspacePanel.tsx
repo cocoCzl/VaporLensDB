@@ -1013,7 +1013,7 @@ function DbeaverImportSettings({
       onNotifyError(
         {
           code: 'DBEAVER_IMPORT_PREVIEW_FAILED',
-          message: error instanceof Error ? error.message : t('dbeaver.previewFailedMessage'),
+          message: normalizeAppError(error).message || t('dbeaver.previewFailedMessage'),
         },
         t('dbeaver.previewFailed'),
       )

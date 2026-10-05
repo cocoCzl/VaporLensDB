@@ -291,7 +291,6 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       })
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
-      notifyError(error, i18n.t('notifications.testConnectionFailed'))
       throw error
     }
   },

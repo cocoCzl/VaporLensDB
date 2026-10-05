@@ -123,6 +123,7 @@ export function useQuery() {
       return true
     } catch (error) {
       const appError = normalizeAppError(error)
+      const cancelled = appError.code === 'CANCELLED'
       useQueryResultStore.getState().failStreamResult(queryId)
       void useQueryHistoryStore.getState().addEntry({
         connectionId,
@@ -135,8 +136,10 @@ export function useQuery() {
         errorCode: appError.code,
         errorMessage: appError.message,
       })
-      if (isCurrentQuery(tabId, connectionId, queryId)) setTabQueryState(tabId, queryId, formatLocalError(appError))
-      notify({ kind: 'error', title: i18n.t('notifications.queryFailed') })
+      if (isCurrentQuery(tabId, connectionId, queryId)) {
+        setTabQueryState(tabId, queryId, cancelled ? null : formatLocalError(appError))
+      }
+      if (!cancelled) notify({ kind: 'error', title: i18n.t('notifications.queryFailed') })
       return false
     } finally {
       if (consoleId) {
@@ -161,8 +164,8 @@ export function useQuery() {
       setTabQueryState(tabId, queryId)
     } catch (error) {
       const appError = normalizeAppError(error)
-      setTabQueryState(tabId, queryId, appError.message)
-      notifyError(appError, i18n.t('notifications.explainFailed'))
+      setTabQueryState(tabId, queryId, appError.code === 'CANCELLED' ? null : appError.message)
+      if (appError.code !== 'CANCELLED') notifyError(appError, i18n.t('notifications.explainFailed'))
     } finally {
       if (context.consoleId) {
         try {

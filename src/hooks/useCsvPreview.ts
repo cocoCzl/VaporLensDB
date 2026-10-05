@@ -49,6 +49,7 @@ export function useCsvPreview({
     try {
       await cancelTask(taskId)
     } catch (error) {
+      if (activeTaskId.current === taskId) setStatus('loading')
       callbacks.current.onError(error)
     }
   }, [])

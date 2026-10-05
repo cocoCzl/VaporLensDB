@@ -462,7 +462,7 @@ export function MainPanel() {
       setTabQueryState(
         activeTab.id,
         activeTab.lastQueryId ?? null,
-        error instanceof Error ? error.message : t('workbench.formatSqlFailed'),
+        normalizeAppError(error).message,
       )
     }
   }

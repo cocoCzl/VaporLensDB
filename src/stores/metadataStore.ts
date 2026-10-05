@@ -330,10 +330,9 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
   searchIndex: async (query, connectionId = null) => {
     const requestId = ++latestIndexSearch
-    const searchEpoch = connectionId
-      ? (connectionEpochs.get(connectionId) ?? 0)
-      : globalMetadataEpoch
+    const searchEpoch = globalMetadataEpoch
     const normalized = query.trim()
+    const stale = () => requestId !== latestIndexSearch || globalMetadataEpoch !== searchEpoch
     if (normalized.length < 2) {
       set({ indexResults: [] })
       return []
@@ -341,15 +340,11 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
     try {
       const results = await searchMetadataIndex({ query: normalized, connectionId, limit: 40 })
-      if (
-        requestId !== latestIndexSearch
-        || (connectionId
-          ? (connectionEpochs.get(connectionId) ?? 0) !== searchEpoch
-          : globalMetadataEpoch !== searchEpoch)
-      ) return get().indexResults
+      if (stale()) return get().indexResults
       set({ indexResults: results })
       return results
     } catch (error) {
+      if (stale()) return get().indexResults
       useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.searchMetadataIndexFailed'))
       throw error
     }
@@ -357,7 +352,7 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
 
   clearConnection: (connectionId) => {
     connectionEpochs.set(connectionId, (connectionEpochs.get(connectionId) ?? 0) + 1)
-    globalMetadataEpoch += 1
+    globalMetadataEpoch++
     invalidatePendingLoads(connectionId)
     set((state) => ({
       databases: omitByPrefix(state.databases, connectionId),

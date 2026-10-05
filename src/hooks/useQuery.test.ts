@@ -67,7 +67,22 @@ describe('stream failure lifecycle', () => {
     expect(useQueryResultStore.getState().results[queryId][0]).toMatchObject({ streaming: false, rows: [[1]], rowCount: 1 })
     expect(useQueryHistoryStore.getState().addEntry).toHaveBeenCalledOnce()
     expect(useQueryHistoryStore.getState().addEntry).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', errorCode: code }))
-    expect(useUiStore.getState().notify).toHaveBeenCalledOnce()
+    if (code === 'CANCELLED') {
+      expect(useUiStore.getState().notify).not.toHaveBeenCalled()
+    } else {
+      expect(useUiStore.getState().notify).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('treats a cancelled stream as terminal without a generic failure notification', async () => {
+    vi.mocked(executeQueryStream).mockImplementationOnce(async ({ queryId }) => {
+      errorListener({ queryId, code: 'CANCELLED', message: 'query cancelled' })
+      return { connectionGeneration: 1 }
+    })
+    const { result } = renderHook(() => useQuery())
+    await act(async () => { expect(await result.current.runQuery('stream-tab', 'source', 'SELECT 1')).toBe(false) })
+    expect(useUiStore.getState().notify).not.toHaveBeenCalled()
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({ running: false, error: null })
   })
 
   it('preserves DONE when a late error event and promise rejection follow it', async () => {

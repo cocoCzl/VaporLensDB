@@ -25,6 +25,7 @@ vi.mock('@/ipc/metadata', () => ({
 }))
 
 import { useMetadataStore } from '@/stores/metadataStore'
+import { useUiStore } from '@/stores/uiStore'
 
 function searchResult(name: string): MetadataSearchResult[] {
   return [{
@@ -53,6 +54,7 @@ describe('metadata store resource bounds', () => {
     metadataMocks.getIndexes.mockReset()
     metadataMocks.getTables.mockReset()
     metadataMocks.searchMetadataIndex.mockReset()
+    vi.spyOn(useUiStore.getState(), 'notifyError').mockImplementation(() => {})
     useMetadataStore.setState({
       databases: {},
       columns: {},
@@ -95,7 +97,7 @@ describe('metadata store resource bounds', () => {
 
   it('does not let a search from before connection clear restore stale results', async () => {
     const request = deferred<MetadataSearchResult[]>()
-    metadataMocks.searchMetadataIndex.mockReturnValueOnce(request.promise)
+    metadataMocks.searchMetadataIndex.mockReturnValueOnce(request)
 
     const search = useMetadataStore.getState().searchIndex('old', 'connection-1')
     useMetadataStore.getState().clearConnection('connection-1')
@@ -103,6 +105,19 @@ describe('metadata store resource bounds', () => {
 
     await expect(search).resolves.toEqual([])
     expect(useMetadataStore.getState().indexResults).toEqual([])
+  })
+
+  it('does not notify when a stale metadata search rejects after connection clear', async () => {
+    let reject!: (error: unknown) => void
+    const request = new Promise<MetadataSearchResult[]>((_, rejectPromise) => { reject = rejectPromise })
+    metadataMocks.searchMetadataIndex.mockReturnValueOnce(request)
+
+    const search = useMetadataStore.getState().searchIndex('old', 'connection-1')
+    useMetadataStore.getState().clearConnection('connection-1')
+    reject(new Error('old connection failed'))
+
+    await expect(search).resolves.toEqual([])
+    expect(useUiStore.getState().notifyError).not.toHaveBeenCalled()
   })
 
   it('invalidates an in-flight global search when any connection is cleared', async () => {

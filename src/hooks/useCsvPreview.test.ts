@@ -115,4 +115,22 @@ describe('useCsvPreview', () => {
     expect(result.current.preview?.path).toBe('second.csv')
     expect(mocks.preview).toHaveBeenCalledTimes(2)
   })
+
+  it('returns to loading when the cancellation request fails so the task can be retried', async () => {
+    const pendingPreview = deferred<ImportPreview>()
+    mocks.preview.mockReturnValueOnce(pendingPreview.promise)
+    mocks.cancel.mockRejectedValueOnce(new Error('cancel unavailable'))
+    const failed = vi.fn()
+    const { result } = renderHook(() => useCsvPreview({ onCompleted: vi.fn(), onError: failed }))
+
+    let request!: Promise<void>
+    act(() => { request = result.current.start(input) })
+    await act(async () => { await result.current.cancel() })
+
+    expect(result.current.status).toBe('loading')
+    expect(failed).toHaveBeenCalledOnce()
+    pendingPreview.resolve(preview(input.path, true))
+    await act(async () => { await request })
+    expect(result.current.status).toBe('idle')
+  })
 })

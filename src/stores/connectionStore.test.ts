@@ -215,6 +215,16 @@ describe('connection store save lifecycle', () => {
     expect(useConnectionStore.getState().error).toContain('disk full')
     expect(useUiStore.getState().notifications.at(-1)).toMatchObject({ kind: 'error' })
   })
+
+  it('leaves Test Connection error presentation to the form caller', async () => {
+    connectionMocks.testConnection.mockRejectedValue(new Error('invalid credentials'))
+
+    await expect(useConnectionStore.getState().testConnectionInput(input('mysql'))).rejects.toThrow('invalid credentials')
+
+    expect(useConnectionStore.getState().loading).toBe(false)
+    expect(useConnectionStore.getState().error).toContain('invalid credentials')
+    expect(useUiStore.getState().notifications).toHaveLength(0)
+  })
 })
 
 describe('connection store disconnect lifecycle', () => {
