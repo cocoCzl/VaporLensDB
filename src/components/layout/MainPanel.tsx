@@ -951,7 +951,7 @@ export function MainPanel() {
           ) : activeTab.error ? (
             <span className="inline-flex min-w-0 items-center gap-1 text-destructive"><AlertCircle className="size-3.5 shrink-0" />{t('workbench.queryFailed')}</span>
           ) : undefined}
-          summary={activeResult && !activeExplain && !activeTab.running ? (activeResult.truncated ? largeResultNotice(activeResult) : resultHeaderSummary(activeResult)) : activeExplain ? t('workbench.explainSummary', { elapsedMs: activeExplain.elapsedMs }) : undefined}
+          summary={activeResult && !activeExplain && !activeTab.running ? largeResultNotice(activeResult) : activeExplain ? t('workbench.explainSummary', { elapsedMs: activeExplain.elapsedMs }) : undefined}
           source={activeResultSource ? `${activeResultConnection?.name ?? t('connection.disconnected')}${(activeResultSource.database || activeResultSource.schema) ? ` · ${[activeResultSource.database, activeResultSource.schema].filter(Boolean).join(' / ')}` : ''}${activeResultSource.connectionId === connectionId ? '' : ` · ${t('workbench.previousResult')}`}` : undefined}
           actions={<>
             {activeResult?.columns.length ? <ResultViewTabs value={resultView} onChange={setResultView} /> : null}
@@ -2647,7 +2647,9 @@ function largeResultNotice(result: QueryResult) {
       count: result.rows.length,
     })
   }
-  return i18n.t('workbench.largeResultNotice', { count: result.maxRows ?? result.rowCount })
+  return result.truncated
+    ? i18n.t('workbench.largeResultNotice', { count: result.maxRows ?? result.rowCount })
+    : resultHeaderSummary(result)
 }
 
 function sqlPreview(sql: string) {

@@ -56,6 +56,244 @@ describe('DataGrid', () => {
     expect(screen.getByText('0 rows')).toBeInTheDocument()
   })
 
+  it.each([
+    [{ truncated: false, displayTruncated: false }, false, false],
+    [{ truncated: true, displayTruncated: false }, true, false],
+    [{ truncated: false, displayTruncated: true }, false, true],
+    [{ truncated: true, displayTruncated: true }, true, false],
+  ])('presents backend and renderer truncation separately %#', (flags, backendWarning, rendererWarning) => {
+    render(
+      <DataGrid
+        result={{
+          queryId: 'truncation',
+          columns: [{ name: 'id', dataType: 'integer', nullable: false }],
+          rows: [[1]],
+          rowCount: 2,
+          affectedRows: 0,
+          elapsedMs: 1,
+          maxRows: 1,
+          ...flags,
+        }}
+      />,
+    )
+
+    if (backendWarning) {
+      expect(screen.getByText(/query limit/i)).toBeInTheDocument()
+    } else {
+      expect(screen.queryByText(/query limit/i)).not.toBeInTheDocument()
+    }
+    if (rendererWarning) {
+      expect(screen.getByText(/rows; grid cap/i)).toBeInTheDocument()
+    } else {
+      expect(screen.queryByText(/rows; grid cap/i)).not.toBeInTheDocument()
+    }
+  })
+
+  it('renders and resizes duplicate columns independently', () => {
+    window.localStorage.clear()
+    render(
+      <DataGrid
+        result={{
+          queryId: 'duplicate-columns',
+          columns: [
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'id', dataType: 'integer', nullable: false },
+          ],
+          rows: [[1, 2]],
+          rowCount: 1,
+          affectedRows: 0,
+          elapsedMs: 1,
+          truncated: false,
+        }}
+      />,
+    )
+
+    expect(screen.getAllByText('id')).toHaveLength(2)
+    const handles = screen.getAllByRole('separator', { name: /resize id, [12]/i })
+    expect(handles).toHaveLength(2)
+
+    fireEvent.keyDown(handles[0], { key: 'ArrowRight' })
+    expect(JSON.parse(window.localStorage.getItem('vaporlensdb.grid.widths.id|id')!)).toEqual({ '0': 136 })
+
+    fireEvent.keyDown(handles[1], { key: 'ArrowRight' })
+    expect(JSON.parse(window.localStorage.getItem('vaporlensdb.grid.widths.id|id')!)).toEqual({ '0': 136, '1': 136 })
+  })
+
+  it('migrates unambiguous legacy column widths and prefers position keys', () => {
+    window.localStorage.setItem('vaporlensdb.grid.widths.id|name', JSON.stringify({ id: 120, name: 220 }))
+    render(
+      <DataGrid
+        result={{
+          queryId: 'legacy-widths',
+          columns: [
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'name', dataType: 'text', nullable: true },
+          ],
+          rows: [[1, 'Ada']],
+          rowCount: 1,
+          affectedRows: 0,
+          elapsedMs: 1,
+          truncated: false,
+        }}
+      />,
+    )
+
+    const header = document.querySelector('.data-grid-header') as HTMLElement
+    expect(header.style.gridTemplateColumns).toContain('44px 120px 220px')
+
+    window.localStorage.clear()
+    window.localStorage.setItem('vaporlensdb.grid.widths.id|name', JSON.stringify({ '0': 180, id: 120, name: 220 }))
+    render(
+      <DataGrid
+        result={{
+          queryId: 'new-widths-win',
+          columns: [
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'name', dataType: 'text', nullable: true },
+          ],
+          rows: [[1, 'Ada']],
+          rowCount: 1,
+          affectedRows: 0,
+          elapsedMs: 1,
+          truncated: false,
+        }}
+      />,
+    )
+
+    expect((document.querySelectorAll('.data-grid-header')[1] as HTMLElement).style.gridTemplateColumns).toContain('44px 180px 220px')
+  })
+
+  it('ignores ambiguous legacy widths while migrating unique names in mixed results', () => {
+    window.localStorage.setItem('vaporlensdb.grid.widths.id|id|name', JSON.stringify({ id: 160, name: 200 }))
+    render(
+      <DataGrid
+        result={{
+          queryId: 'ambiguous-legacy-widths',
+          columns: [
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'name', dataType: 'text', nullable: true },
+          ],
+          rows: [[1, 2, 'Ada']],
+          rowCount: 1,
+          affectedRows: 0,
+          elapsedMs: 1,
+          truncated: false,
+        }}
+      />,
+    )
+
+    expect((document.querySelector('.data-grid-header') as HTMLElement).style.gridTemplateColumns).toContain('44px 120px 120px 200px')
+  })
+
+  it('keeps invalid legacy widths safe and clamps valid numeric widths', () => {
+    window.localStorage.setItem('vaporlensdb.grid.widths.id|name', JSON.stringify({ id: 'wide', name: 999 }))
+    const first = render(
+      <DataGrid
+        result={{
+          queryId: 'invalid-legacy-widths',
+          columns: [
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'name', dataType: 'text', nullable: true },
+          ],
+          rows: [[1, 'Ada']],
+          rowCount: 1,
+          affectedRows: 0,
+          elapsedMs: 1,
+          truncated: false,
+        }}
+      />,
+    )
+
+    expect((document.querySelector('.data-grid-header') as HTMLElement).style.gridTemplateColumns).toContain('44px 120px 272px')
+    first.unmount()
+
+    window.localStorage.clear()
+    window.localStorage.setItem('vaporlensdb.grid.widths.id|name', JSON.stringify({ id: 1, name: 999 }))
+    render(
+      <DataGrid
+        result={{
+          queryId: 'clamped-legacy-widths',
+          columns: [
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'name', dataType: 'text', nullable: true },
+          ],
+          rows: [[1, 'Ada']],
+          rowCount: 1,
+          affectedRows: 0,
+          elapsedMs: 1,
+          truncated: false,
+        }}
+      />,
+    )
+
+    expect((document.querySelector('.data-grid-header') as HTMLElement).style.gridTemplateColumns).toContain('44px 72px 640px')
+  })
+
+  it('gives duplicate resize handles distinct accessible names', () => {
+    render(
+      <DataGrid
+        result={{
+          queryId: 'duplicate-accessibility',
+          columns: [
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'id', dataType: 'integer', nullable: false },
+          ],
+          rows: [[1, 2]],
+          rowCount: 1,
+          affectedRows: 0,
+          elapsedMs: 1,
+          truncated: false,
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('separator', { name: 'resize id, 1' })).toBeInTheDocument()
+    expect(screen.getByRole('separator', { name: 'resize id, 2' })).toBeInTheDocument()
+  })
+
+  it('preserves duplicate values in row and JSON range copy', () => {
+    nativeClipboard.writeText.mockResolvedValue(undefined)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
+    render(
+      <DataGrid
+        result={{
+          queryId: 'duplicate-copy',
+          columns: [
+            { name: 'id', dataType: 'integer', nullable: false },
+            { name: 'id', dataType: 'integer', nullable: false },
+          ],
+          rows: [[1, 2]],
+          rowCount: 1,
+          affectedRows: 0,
+          elapsedMs: 1,
+          truncated: false,
+        }}
+      />,
+    )
+
+    const cells = screen.getAllByTitle(/^[12]$/).map((cell) => cell.querySelector('button')!)
+    fireEvent.click(cells[0])
+    fireEvent.click(screen.getByRole('button', { name: /copy row/i }))
+    expect(nativeClipboard.writeText).toHaveBeenLastCalledWith('[["id",1],["id",2]]')
+
+    fireEvent.click(cells[0])
+    fireEvent.click(cells[1], { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }))
+    expect(nativeClipboard.writeText).toHaveBeenLastCalledWith(`[
+  [
+    [
+      "id",
+      1
+    ],
+    [
+      "id",
+      2
+    ]
+  ]
+]`)
+  })
+
   it('renders result-set field metadata without requiring rows', () => {
     render(
       <ResultMetadataGrid

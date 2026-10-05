@@ -36,13 +36,14 @@ export function DataGrid({
   const [includeHeaders, setIncludeHeaders] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [viewerValue, setViewerValue] = useState<{ title: string; value: string } | null>(null)
+  const resultColumns = result?.columns
   const storageKey = useMemo(() => result ? columnWidthStorageKey(result) : null, [result])
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() =>
-    storageKey ? readColumnWidths(storageKey) : {},
+    storageKey ? readColumnWidths(storageKey, resultColumns ?? []) : {},
   )
   useEffect(() => {
-    setColumnWidths(storageKey ? readColumnWidths(storageKey) : {})
-  }, [storageKey])
+    setColumnWidths(storageKey ? readColumnWidths(storageKey, resultColumns ?? []) : {})
+  }, [resultColumns, storageKey])
   const virtualizer = useVirtualizer({
     count: result?.rows.length ?? 0,
     getScrollElement: () => scrollRef.current,
@@ -51,14 +52,12 @@ export function DataGrid({
   })
   const virtualRows = virtualizer.getVirtualItems()
   const gridTemplateColumns = useMemo(() => {
-    const columns = result?.columns ?? []
-    const widths = columns.map((column) => `${columnWidths[column.name] ?? defaultColumnWidth(column)}px`)
+    const widths = (resultColumns ?? []).map((column, index) => `${columnWidths[index] ?? defaultColumnWidth(column)}px`)
     return `${ROW_INDEX_WIDTH}px ${widths.join(' ')}`
-  }, [columnWidths, result?.columns])
+  }, [columnWidths, resultColumns])
   const minGridWidth = useMemo(() => {
-    const columns = result?.columns ?? []
-    return ROW_INDEX_WIDTH + columns.reduce((sum, column) => sum + (columnWidths[column.name] ?? defaultColumnWidth(column)), 0)
-  }, [columnWidths, result?.columns])
+    return ROW_INDEX_WIDTH + (resultColumns ?? []).reduce((sum, column, index) => sum + (columnWidths[index] ?? defaultColumnWidth(column)), 0)
+  }, [columnWidths, resultColumns])
 
   useEffect(() => {
     activeCellRef.current?.focus({ preventScroll: true })
@@ -72,7 +71,9 @@ export function DataGrid({
     )
   }
 
-  if (result.columns.length === 0) {
+  const displayIncomplete = result.truncated || result.displayTruncated
+
+  if (resultColumns!.length === 0) {
     if (result.streaming) {
       return (
         <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
@@ -102,13 +103,11 @@ export function DataGrid({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-auto">
         <div className="relative" style={{ minWidth: minGridWidth }}>
-          {result.truncated && (
+          {displayIncomplete && (
             <div className="sticky top-0 z-30 border-b border-warning/35 bg-warning-bg px-3 py-1.5 text-warning-foreground">
-              {t('result.truncated', {
-                // The backend reports the total rows it streamed, while a large
-                // result may retain only the bounded visual window in memory.
-                count: result.displayTruncated ? result.rows.length : result.rowCount,
-                maxRows: result.maxRows ? t('result.maxRowsSuffix', { count: result.maxRows }) : '',
+              {t(result.truncated ? 'result.truncated' : 'result.visualResultLimitNotice', {
+                count: result.rows.length,
+                maxRows: result.maxRows ?? '',
               })}
             </div>
           )}
@@ -117,14 +116,14 @@ export function DataGrid({
             style={{
               gridTemplateColumns,
               minWidth: minGridWidth,
-              top: result.truncated ? 29 : 0,
+              top: displayIncomplete ? 29 : 0,
             }}
           >
             <div className="data-grid-index flex items-center justify-end border-b border-r border-grid-border/55 px-2.5 font-medium text-muted-foreground">
               #
             </div>
-            {result.columns.map((column) => (
-              <div key={column.name} className="data-grid-column group relative min-w-0 border-b border-r border-grid-border/55 px-3">
+            {resultColumns!.map((column, columnIndex) => (
+              <div key={columnIndex} className="data-grid-column group relative min-w-0 border-b border-r border-grid-border/55 px-3">
                 <div
                   className="flex h-full min-w-0 flex-col justify-center gap-px pr-1"
                   title={columnTooltip(column, t('result.nullable'), t('result.notNullable'))}
@@ -135,12 +134,12 @@ export function DataGrid({
                   </span>
                 </div>
                 <ColumnResizeHandle
-                  columnName={column.name}
-                  currentWidth={columnWidths[column.name] ?? defaultColumnWidth(column)}
+                  resizeLabel={`resize ${column.name}, ${columnIndex + 1}`}
+                  currentWidth={columnWidths[columnIndex] ?? defaultColumnWidth(column)}
                   storageKey={storageKey}
                   onResize={(width) =>
                     setColumnWidths((current) => {
-                      const next = { ...current, [column.name]: width }
+                      const next = { ...current, [columnIndex]: width }
                       if (storageKey) writeColumnWidths(storageKey, next)
                       return next
                     })
@@ -177,7 +176,7 @@ export function DataGrid({
                     <div className="data-grid-index flex items-center justify-end border-b border-r border-grid-border/55 px-2.5 text-right font-mono text-[10px] text-muted-foreground">
                       {virtualRow.index + 1}
                     </div>
-                    {result.columns.map((column, columnIndex) => {
+                    {resultColumns!.map((column, columnIndex) => {
                       const rawValue = formatValue(row[columnIndex])
                       const presentation = presentCellValue(row[columnIndex], column)
                       const selected = selectionContains(selection, virtualRow.index, columnIndex)
@@ -186,7 +185,7 @@ export function DataGrid({
                       const alignment = cellAlignment(column)
                       return (
                         <div
-                          key={`${virtualRow.index}-${column.name}`}
+                          key={`${virtualRow.index}-${columnIndex}`}
                           className={[
                             'data-grid-cell group relative min-w-0 border-b border-r border-grid-border/55 font-mono outline-none',
                             selected ? 'bg-grid-selected text-foreground' : '',
@@ -560,12 +559,12 @@ interface NormalizedSelection {
 }
 
 function ColumnResizeHandle({
-  columnName,
+  resizeLabel,
   currentWidth,
   storageKey,
   onResize,
 }: {
-  columnName: string
+  resizeLabel: string
   currentWidth: number
   storageKey: string | null
   onResize: (width: number) => void
@@ -573,10 +572,10 @@ function ColumnResizeHandle({
   return (
     <span
       role="separator"
-      aria-label={`resize ${columnName}`}
+      aria-label={resizeLabel}
       aria-orientation="vertical"
       tabIndex={0}
-      title={`Drag to resize ${columnName}`}
+      title={resizeLabel}
       className="absolute right-0 top-0 h-full w-1 cursor-col-resize opacity-0 hover:bg-primary/50 group-hover:opacity-100 focus-visible:w-1.5 focus-visible:bg-primary/70 focus-visible:opacity-100"
       onMouseDown={(event) => {
         event.preventDefault()
@@ -709,7 +708,7 @@ function cellContextActions(
 
 function rowClipboardValue(result: QueryResult, rowIndex: number) {
   const row = result.rows[rowIndex] ?? []
-  return JSON.stringify(Object.fromEntries(result.columns.map((column, index) => [column.name, row[index]])))
+  return JSON.stringify(jsonClipboardRow(result.columns, row))
 }
 
 function nextCellSelection(
@@ -759,7 +758,7 @@ function formatRange(
 
   if (format === 'json') {
     return JSON.stringify(
-      rows.map((row) => Object.fromEntries(columns.map((column, index) => [column.name, row[index]]))),
+      rows.map((row) => jsonClipboardRow(columns, row)),
       null,
       2,
     )
@@ -803,12 +802,20 @@ function columnWidthStorageKey(result: QueryResult) {
   return `vaporlensdb.grid.widths.${result.columns.map((column) => column.name).join('|')}`
 }
 
-function readColumnWidths(key: string) {
-  const stored = readStorageJson(key, isColumnWidthMap)
-  if (!stored.value) return {}
-  return Object.fromEntries(
-    Object.entries(stored.value).map(([column, width]) => [column, clampWidth(width)]),
-  )
+function readColumnWidths(key: string, columns: ColumnMeta[]) {
+  const storedWidths = readStorageJson(key, isColumnWidthMap).value
+  if (!storedWidths) return {}
+  const names = columns.map((column) => column.name)
+  const widths = Object.fromEntries(Object.entries(storedWidths)
+    .filter(([name]) => columns[name as unknown as number])
+    .map(([name, width]) => [name, clampWidth(width)])) as Record<string, number>
+  for (const [name, width] of Object.entries(storedWidths)) {
+    const index = names.indexOf(name)
+    if (~index && names.lastIndexOf(name) === index && widths[index] == null) {
+      widths[index] = clampWidth(width)
+    }
+  }
+  return widths
 }
 
 function writeColumnWidths(key: string, widths: Record<string, number>) {
@@ -826,6 +833,12 @@ function clampNumber(value: number, min: number, max: number) {
 function isColumnWidthMap(value: unknown): value is Record<string, number> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   return Object.values(value).every((width) => typeof width === 'number' && Number.isFinite(width))
+}
+
+function jsonClipboardRow(columns: ColumnMeta[], row: unknown[]) {
+  const entries = columns.map((column, index) => [column.name, row[index]])
+  const object = Object.fromEntries(entries)
+  return Object.keys(object).length === columns.length ? object : entries
 }
 
 function formatValue(value: unknown) {
