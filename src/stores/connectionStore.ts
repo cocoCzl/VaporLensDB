@@ -18,6 +18,7 @@ import {
   updateConnection,
 } from '@/ipc/connection'
 import { normalizeAppError } from '@/ipc/client'
+import { settleConnectionGroupMoves, type ConnectionGroupMoveBatchResult } from '@/lib/connectionGroupOperations'
 import { readStorageJson, writeStorageJson } from '@/lib/safeStorage'
 import { useMetadataStore } from '@/stores/metadataStore'
 import { useEditorStore } from '@/stores/editorStore'
@@ -45,13 +46,14 @@ interface ConnectionState {
   busyConnectionIds: Record<string, true>
   loading: boolean
   error: string | null
-  loadConnections: () => Promise<void>
+  loadConnections: (options?: { notifyOnError?: boolean }) => Promise<void>
   loadDataSourceGroups: () => Promise<void>
   createGroup: (name: string) => Promise<DataSourceGroup>
   renameGroup: (id: string, name: string) => Promise<DataSourceGroup>
   reorderGroups: (ids: string[]) => Promise<void>
   deleteGroup: (id: string) => Promise<void>
   moveConnectionToGroup: (connectionId: string, groupId: string | null) => Promise<void>
+  moveConnectionsToGroup: (connectionIds: string[], groupId: string | null) => Promise<ConnectionGroupMoveBatchResult>
   saveConnection: (input: ConnectionInput) => Promise<ConnectionConfig>
   renameConnection: (id: string, name: string) => Promise<ConnectionConfig>
   removeConnection: (id: string) => Promise<void>
@@ -118,7 +120,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   busyConnectionIds: {},
   loading: false,
   error: null,
-  loadConnections: async () => {
+  loadConnections: async (options) => {
     if (get().loading) return
     set({ loading: true, error: null })
     const [connectionsResult, statusesResult, groupsResult] = await Promise.allSettled([
@@ -149,7 +151,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       error: loadError || null,
       loading: false,
     }))
-    if (loadError) {
+    if (loadError && options?.notifyOnError !== false) {
       useUiStore.getState().notify({
         kind: 'error',
         title: i18n.t('notifications.loadConnectionsFailed'),
@@ -175,43 +177,71 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   createGroup: async (name) => {
-    const group = await createDataSourceGroup(name)
-    set((state) => ({ dataSourceGroups: [...state.dataSourceGroups, group] }))
-    return group
+    try {
+      const group = await createDataSourceGroup(name)
+      set((state) => ({ dataSourceGroups: [...state.dataSourceGroups, group] }))
+      return group
+    } catch (error) {
+      throw normalizeAppError(error)
+    }
   },
   renameGroup: async (id, name) => {
-    const group = await renameDataSourceGroup(id, name)
-    set((state) => ({
-      dataSourceGroups: state.dataSourceGroups.map((item) => item.id === id ? group : item),
-      connections: state.connections.map((connection) =>
-        connection.groupId === id ? { ...connection, group: group.name } : connection,
-      ),
-    }))
-    return group
+    try {
+      const group = await renameDataSourceGroup(id, name)
+      set((state) => ({
+        dataSourceGroups: state.dataSourceGroups.map((item) => item.id === id ? group : item),
+        connections: state.connections.map((connection) =>
+          connection.groupId === id ? { ...connection, group: group.name } : connection,
+        ),
+      }))
+      return group
+    } catch (error) {
+      throw normalizeAppError(error)
+    }
   },
   reorderGroups: async (ids) => {
-    const groups = await reorderDataSourceGroups(ids)
-    set({ dataSourceGroups: groups })
+    try {
+      const groups = await reorderDataSourceGroups(ids)
+      set({ dataSourceGroups: groups })
+    } catch (error) {
+      throw normalizeAppError(error)
+    }
   },
   deleteGroup: async (id) => {
-    await deleteDataSourceGroup(id)
-    set((state) => ({
-      dataSourceGroups: state.dataSourceGroups.filter((group) => group.id !== id),
-      connections: state.connections.map((connection) =>
-        connection.groupId === id ? { ...connection, groupId: null, group: null } : connection,
-      ),
-    }))
+    try {
+      await deleteDataSourceGroup(id)
+      set((state) => ({
+        dataSourceGroups: state.dataSourceGroups.filter((group) => group.id !== id),
+        connections: state.connections.map((connection) =>
+          connection.groupId === id ? { ...connection, groupId: null, group: null } : connection,
+        ),
+      }))
+    } catch (error) {
+      throw normalizeAppError(error)
+    }
   },
   moveConnectionToGroup: async (connectionId, groupId) => {
-    await setConnectionDataSourceGroup(connectionId, groupId)
-    set((state) => {
-      const group = groupId ? state.dataSourceGroups.find((item) => item.id === groupId) : null
-      return {
-        connections: state.connections.map((connection) => connection.id === connectionId
-          ? { ...connection, groupId, group: group?.name ?? null }
-          : connection),
-      }
-    })
+    try {
+      await setConnectionDataSourceGroup(connectionId, groupId)
+      set((state) => {
+        const group = groupId ? state.dataSourceGroups.find((item) => item.id === groupId) : null
+        return {
+          connections: state.connections.map((connection) => connection.id === connectionId
+            ? { ...connection, groupId, group: group?.name ?? null }
+            : connection),
+        }
+      })
+    } catch (error) {
+      throw normalizeAppError(error)
+    }
+  },
+  moveConnectionsToGroup: async (connectionIds, groupId) => {
+    const results = await settleConnectionGroupMoves(connectionIds, groupId, get().moveConnectionToGroup)
+    await get().loadConnections({ notifyOnError: false })
+    return {
+      results,
+      refreshFailed: Boolean(get().error),
+    }
   },
   saveConnection: async (input) => {
     if (input.id) advanceLifecycle(input.id)

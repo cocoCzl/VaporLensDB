@@ -61,6 +61,16 @@ function input(name: string, id?: string): ConnectionInput {
   }
 }
 
+function group(id: string, name: string) {
+  return {
+    id,
+    name,
+    sortOrder: 0,
+    createdAt: '2026-10-05T00:00:00Z',
+    updatedAt: '2026-10-05T00:00:00Z',
+  }
+}
+
 describe('connection store save lifecycle', () => {
   beforeEach(() => {
     for (const mock of Object.values(connectionMocks)) mock.mockReset()
@@ -224,6 +234,130 @@ describe('connection store save lifecycle', () => {
     expect(useConnectionStore.getState().loading).toBe(false)
     expect(useConnectionStore.getState().error).toContain('invalid credentials')
     expect(useUiStore.getState().notifications).toHaveLength(0)
+  })
+})
+
+describe('connection group mutation lifecycle', () => {
+  beforeEach(() => {
+    for (const mock of Object.values(connectionMocks)) mock.mockReset()
+    connectionMocks.listConnectionStatuses.mockResolvedValue([])
+    connectionMocks.listDataSourceGroups.mockResolvedValue([])
+    useConnectionStore.setState({
+      connections: [],
+      dataSourceGroups: [],
+      statuses: {},
+      loading: false,
+      error: null,
+      busyConnectionIds: {},
+    })
+    useUiStore.setState({ notifications: [] })
+  })
+
+  it.each([
+    ['create', () => useConnectionStore.getState().createGroup('Operations'), 'createDataSourceGroup'],
+    ['rename', () => useConnectionStore.getState().renameGroup('group-1', 'Production'), 'renameDataSourceGroup'],
+    ['delete', () => useConnectionStore.getState().deleteGroup('group-1'), 'deleteDataSourceGroup'],
+    ['move', () => useConnectionStore.getState().moveConnectionToGroup('connection-1', 'group-1'), 'setConnectionDataSourceGroup'],
+    ['reorder', () => useConnectionStore.getState().reorderGroups(['group-2', 'group-1']), 'reorderDataSourceGroups'],
+  ])('rethrows a normalized %s rejection without store-owned notification', async (_name, operation, mockName) => {
+    const failure = { code: 'GROUP_FAILURE', message: 'backend rejected', detail: 'secret=hidden' }
+    connectionMocks[mockName as keyof typeof connectionMocks].mockRejectedValue(failure)
+
+    await expect(operation()).rejects.toEqual(failure)
+    expect(useUiStore.getState().notifications).toHaveLength(0)
+  })
+
+  it('keeps local state unchanged when a group mutation fails', async () => {
+    const existingGroup = group('group-1', 'Operations')
+    const existingConnection = { ...connection('connection-1', 'MySQL'), groupId: existingGroup.id, group: existingGroup.name }
+    useConnectionStore.setState({ dataSourceGroups: [existingGroup], connections: [existingConnection] })
+    connectionMocks.renameDataSourceGroup.mockRejectedValue(new Error('rename failed'))
+    connectionMocks.deleteDataSourceGroup.mockRejectedValue(new Error('delete failed'))
+    connectionMocks.setConnectionDataSourceGroup.mockRejectedValue(new Error('move failed'))
+    connectionMocks.reorderDataSourceGroups.mockRejectedValue(new Error('reorder failed'))
+
+    await expect(useConnectionStore.getState().renameGroup(existingGroup.id, 'Production')).rejects.toThrow('rename failed')
+    await expect(useConnectionStore.getState().deleteGroup(existingGroup.id)).rejects.toThrow('delete failed')
+    await expect(useConnectionStore.getState().moveConnectionToGroup(existingConnection.id, null)).rejects.toThrow('move failed')
+    await expect(useConnectionStore.getState().reorderGroups([existingGroup.id])).rejects.toThrow('reorder failed')
+
+    expect(useConnectionStore.getState().dataSourceGroups).toEqual([existingGroup])
+    expect(useConnectionStore.getState().connections).toEqual([existingConnection])
+  })
+
+  it('returns full success outcomes and performs an authoritative refresh', async () => {
+    const refreshedConnections = [
+      { ...connection('connection-a', 'A'), groupId: 'group-1', group: 'Operations' },
+      { ...connection('connection-b', 'B'), groupId: 'group-1', group: 'Operations' },
+      { ...connection('connection-c', 'C'), groupId: 'group-1', group: 'Operations' },
+    ]
+    connectionMocks.setConnectionDataSourceGroup.mockResolvedValue(undefined)
+    connectionMocks.listConnections.mockResolvedValue(refreshedConnections)
+    connectionMocks.listDataSourceGroups.mockResolvedValue([group('group-1', 'Operations')])
+
+    const result = await useConnectionStore.getState().moveConnectionsToGroup(
+      ['connection-a', 'connection-b', 'connection-c'],
+      'group-1',
+    )
+
+    expect(result).toEqual({
+      results: [
+        { connectionId: 'connection-a', status: 'success' },
+        { connectionId: 'connection-b', status: 'success' },
+        { connectionId: 'connection-c', status: 'success' },
+      ],
+      refreshFailed: false,
+    })
+    expect(connectionMocks.listConnections).toHaveBeenCalledOnce()
+    expect(useConnectionStore.getState().connections).toEqual(refreshedConnections)
+    expect(useUiStore.getState().notifications).toHaveLength(0)
+  })
+
+  it('returns full failure outcomes without unhandled rejection or false success', async () => {
+    connectionMocks.setConnectionDataSourceGroup.mockRejectedValue(new Error('move failed'))
+    connectionMocks.listConnections.mockResolvedValue([])
+    connectionMocks.listDataSourceGroups.mockResolvedValue([])
+
+    const result = await useConnectionStore.getState().moveConnectionsToGroup(
+      ['connection-a', 'connection-b', 'connection-c'],
+      'group-1',
+    )
+
+    expect(result.results).toEqual([
+      { connectionId: 'connection-a', status: 'failure', error: { code: 'UNKNOWN_ERROR', message: 'move failed' } },
+      { connectionId: 'connection-b', status: 'failure', error: { code: 'UNKNOWN_ERROR', message: 'move failed' } },
+      { connectionId: 'connection-c', status: 'failure', error: { code: 'UNKNOWN_ERROR', message: 'move failed' } },
+    ])
+    expect(result.refreshFailed).toBe(false)
+    expect(connectionMocks.listConnections).toHaveBeenCalledOnce()
+    expect(useUiStore.getState().notifications).toHaveLength(0)
+  })
+
+  it('returns partial outcomes while preserving successful moves and refreshing state', async () => {
+    connectionMocks.setConnectionDataSourceGroup.mockImplementation(async (connectionId: string) => {
+      if (connectionId === 'connection-b') throw new Error('B failed')
+    })
+    const refreshedConnections = [
+      { ...connection('connection-a', 'A'), groupId: 'group-1', group: 'Operations' },
+      { ...connection('connection-b', 'B'), groupId: null, group: null },
+      { ...connection('connection-c', 'C'), groupId: 'group-1', group: 'Operations' },
+    ]
+    connectionMocks.listConnections.mockResolvedValue(refreshedConnections)
+    connectionMocks.listDataSourceGroups.mockResolvedValue([group('group-1', 'Operations')])
+
+    const result = await useConnectionStore.getState().moveConnectionsToGroup(
+      ['connection-a', 'connection-b', 'connection-c'],
+      'group-1',
+    )
+
+    expect(result.results.map(({ connectionId, status }) => ({ connectionId, status }))).toEqual([
+      { connectionId: 'connection-a', status: 'success' },
+      { connectionId: 'connection-b', status: 'failure' },
+      { connectionId: 'connection-c', status: 'success' },
+    ])
+    expect(result.results[1].error).toEqual({ code: 'UNKNOWN_ERROR', message: 'B failed' })
+    expect(connectionMocks.listConnections).toHaveBeenCalledOnce()
+    expect(useConnectionStore.getState().connections).toEqual(refreshedConnections)
   })
 })
 

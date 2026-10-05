@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Database, FolderPlus, Link, Link2Off, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 import { useConnectionStore } from '@/stores/connectionStore'
+import { buildConnectionGroupMoveNotification, runConnectionGroupOperation } from '@/lib/connectionGroupOperations'
+import { useUiStore } from '@/stores/uiStore'
 import type { ConnectionConfig } from '@/types/connection'
 
 export function ConnectionList({
@@ -40,8 +42,10 @@ export function ConnectionList({
     renameGroup,
     reorderGroups,
     deleteGroup,
-    moveConnectionToGroup,
+    moveConnectionsToGroup,
   } = useConnectionStore()
+  const notify = useUiStore((state) => state.notify)
+  const notifyError = useUiStore((state) => state.notifyError)
   const { requestDisconnect, disconnectDialog } = useDisconnectRequest()
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const [selectedConnectionIds, setSelectedConnectionIds] = useState<string[]>([])
@@ -50,6 +54,8 @@ export function ConnectionList({
   const [managerGroup, setManagerGroup] = useState('all')
   const [groupName, setGroupName] = useState('')
   const [groupCreatorOpen, setGroupCreatorOpen] = useState(false)
+  const pendingGroupOperations = useRef(new Set<string>())
+  const [pendingGroupOperationKeys, setPendingGroupOperationKeys] = useState<Record<string, true>>({})
   const managerMode = mode === 'manager'
   const ungroupedLabel = t('connection.ungrouped')
   const filteredConnections = useMemo(() => {
@@ -92,16 +98,67 @@ export function ConnectionList({
     setActiveConnection(connection.id)
   }
 
+  async function runGroupOperation<T>(key: string, title: string, operation: () => Promise<T>) {
+    if (pendingGroupOperations.current.has(key)) return null
+    pendingGroupOperations.current.add(key)
+    setPendingGroupOperationKeys((current) => ({ ...current, [key]: true }))
+    try {
+      return await runConnectionGroupOperation(operation, title, notifyError)
+    } finally {
+      pendingGroupOperations.current.delete(key)
+      setPendingGroupOperationKeys((current) => {
+        const next = { ...current }
+        delete next[key]
+        return next
+      })
+    }
+  }
+
   async function addGroup() {
     const name = groupName.trim()
     if (!name) return
-    try {
-      await createGroup(name)
+    const created = await runGroupOperation('create-group', t('notifications.createGroupFailed'), () => createGroup(name))
+    if (created) {
       setGroupName('')
       setGroupCreatorOpen(false)
-    } catch {
-      // The connection store surfaces a consistent actionable notification.
     }
+  }
+
+  async function moveSelectedConnections(selectedValue: string) {
+    const ids = [...selectedConnectionIds]
+    if (!selectedValue || ids.length === 0) return
+    const targetGroupId = selectedValue === '__ungrouped__' ? null : selectedValue
+    const moved = await runGroupOperation('batch-move', t('notifications.moveConnectionsFailed'), () => moveConnectionsToGroup(ids, targetGroupId))
+    if (!moved) return
+
+    const notification = buildConnectionGroupMoveNotification(
+      moved,
+      Object.fromEntries(connections.map((connection) => [connection.id, connection.name])),
+      {
+        summary: (successCount, failureCount) => t('notifications.connectionMoveSummary', { successCount, failureCount }),
+        listSeparator: t('common.listSeparator'),
+        failedItems: (names) => t('notifications.connectionMoveFailedItems', { names }),
+        moreFailedItems: (count) => t('notifications.connectionMoveMoreFailedItems', { count }),
+        refreshFailed: t('notifications.connectionMoveRefreshFailed'),
+        succeeded: t('notifications.connectionMoveSucceeded'),
+        partial: t('notifications.connectionMovePartial'),
+        failed: t('notifications.moveConnectionsFailed'),
+      },
+    )
+    notify(notification)
+    setSelectedConnectionIds(moved.results.filter((result) => result.status === 'failure').map((result) => result.connectionId))
+  }
+
+  async function reorderGroup(ids: string[]) {
+    await runGroupOperation('reorder-groups', t('notifications.reorderGroupsFailed'), () => reorderGroups(ids))
+  }
+
+  async function renameGroupFromList(id: string, name: string) {
+    await runGroupOperation(`rename-group:${id}`, t('notifications.renameGroupFailed'), () => renameGroup(id, name))
+  }
+
+  async function deleteGroupFromList(id: string) {
+    await runGroupOperation(`delete-group:${id}`, t('notifications.deleteGroupFailed'), () => deleteGroup(id))
   }
 
   return (
@@ -128,11 +185,10 @@ export function ConnectionList({
             value=""
             aria-label={t('connection.moveToGroup')}
             onValueChange={(selectedValue) => {
-              const value = selectedValue || null
               if (!selectedValue) return
-              void Promise.all(selectedConnectionIds.map((id) => moveConnectionToGroup(id, value === '__ungrouped__' ? null : value)))
-                .then(() => setSelectedConnectionIds([]))
+              void moveSelectedConnections(selectedValue)
             }}
+            disabled={Boolean(pendingGroupOperationKeys['batch-move'])}
             options={[{ value: '', label: t('connection.moveToGroup'), disabled: true }, { value: '__ungrouped__', label: t('connection.ungrouped') }, ...dataSourceGroups.map((group) => ({ value: group.id, label: group.name }))]}
           />
           <IconTooltipButton
@@ -252,36 +308,37 @@ export function ConnectionList({
                           size="icon-xs"
                           label={t('common.moveUp')}
                           variant="ghost"
-                          disabled={dataSourceGroups.findIndex((item) => item.id === dataSourceGroup.id) === 0}
+                          disabled={Boolean(pendingGroupOperationKeys['reorder-groups']) || dataSourceGroups.findIndex((item) => item.id === dataSourceGroup.id) < 1}
                           onClick={() => {
                             const index = dataSourceGroups.findIndex((item) => item.id === dataSourceGroup.id)
                             if (index < 1) return
                             const ids = dataSourceGroups.map((item) => item.id)
                             ;[ids[index - 1], ids[index]] = [ids[index], ids[index - 1]]
-                            void reorderGroups(ids)
+                            void reorderGroup(ids)
                           }}
                         ><ArrowUp /></IconTooltipButton>
                         <IconTooltipButton
                           size="icon-xs"
                           label={t('common.moveDown')}
                           variant="ghost"
-                          disabled={dataSourceGroups.findIndex((item) => item.id === dataSourceGroup.id) === dataSourceGroups.length - 1}
+                          disabled={Boolean(pendingGroupOperationKeys['reorder-groups']) || dataSourceGroups.findIndex((item) => item.id === dataSourceGroup.id) === dataSourceGroups.length - 1}
                           onClick={() => {
                             const index = dataSourceGroups.findIndex((item) => item.id === dataSourceGroup.id)
                             if (index < 0 || index === dataSourceGroups.length - 1) return
                             const ids = dataSourceGroups.map((item) => item.id)
                             ;[ids[index], ids[index + 1]] = [ids[index + 1], ids[index]]
-                            void reorderGroups(ids)
+                            void reorderGroup(ids)
                           }}
                         ><ArrowDown /></IconTooltipButton>
                         <IconTooltipButton
                           size="icon-xs"
                           label={t('connection.edit')}
                           variant="ghost"
+                          disabled={Boolean(pendingGroupOperationKeys[`rename-group:${dataSourceGroup.id}`])}
                           onClick={() => {
                             const name = window.prompt(t('connectionForm.groupNamePlaceholder'), dataSourceGroup.name)
                             if (name?.trim() && name.trim() !== dataSourceGroup.name) {
-                              void renameGroup(dataSourceGroup.id, name.trim())
+                              void renameGroupFromList(dataSourceGroup.id, name.trim())
                             }
                           }}
                         >
@@ -291,10 +348,11 @@ export function ConnectionList({
                           size="icon-xs"
                           label={t('common.delete')}
                           variant="ghost"
+                          disabled={Boolean(pendingGroupOperationKeys[`delete-group:${dataSourceGroup.id}`])}
                           onClick={() => {
                             const affected = connections.filter((connection) => connection.groupId === dataSourceGroup.id).length
                             if (window.confirm(`${t('common.delete')} ${dataSourceGroup.name}? ${affected > 0 ? `${affected} ${t('connection.dataSources')} → ${t('connection.ungrouped')}` : ''}`)) {
-                              void deleteGroup(dataSourceGroup.id)
+                              void deleteGroupFromList(dataSourceGroup.id)
                             }
                           }}
                         >

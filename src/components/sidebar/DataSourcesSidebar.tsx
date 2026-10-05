@@ -1,5 +1,5 @@
 import { Plus, Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
@@ -17,9 +17,11 @@ import {
   orderGroupConnections,
 } from '@/components/sidebar/connectionPresentation'
 import { useDisconnectRequest } from '@/hooks/useDisconnectRequest'
+import { runConnectionGroupOperation } from '@/lib/connectionGroupOperations'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useMetadataStore } from '@/stores/metadataStore'
+import { useUiStore } from '@/stores/uiStore'
 import type { ConnectionConfig, ConnectionRuntimeStatus } from '@/types/connection'
 
 /**
@@ -61,6 +63,7 @@ export function DataSourcesSidebar() {
     renameConnection: state.renameConnection,
     saveConnection: state.saveConnection,
   })))
+  const notifyError = useUiStore((state) => state.notifyError)
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
   const setActiveTab = useEditorStore((state) => state.setActiveTab)
@@ -70,6 +73,7 @@ export function DataSourcesSidebar() {
   const [contextMenu, setContextMenu] = useState<{ connection: ConnectionConfig; x: number; y: number } | null>(null)
   const [renameConnectionTarget, setRenameConnectionTarget] = useState<ConnectionConfig | null>(null)
   const [query, setQuery] = useState('')
+  const pendingMoveConnectionIds = useRef(new Set<string>())
 
   useEffect(() => {
     void loadConnections()
@@ -146,17 +150,27 @@ export function DataSourcesSidebar() {
     }
   }
 
-  function moveToGroup(connection: ConnectionConfig) {
+  async function moveToGroup(connection: ConnectionConfig) {
     const groupName = window.prompt(
       `${t('connection.moveToGroup')} (${t('connection.ungrouped')})`,
       dataSourceGroups.find((group) => group.id === connection.groupId)?.name ?? t('connection.ungrouped'),
     )
     if (groupName === null) return
     const destination = dataSourceGroups.find((group) => group.name === groupName.trim())
-    if (groupName.trim() === '' || groupName.trim() === t('connection.ungrouped')) {
-      void moveConnectionToGroup(connection.id, null)
-    } else if (destination) {
-      void moveConnectionToGroup(connection.id, destination.id)
+    const targetGroupId = groupName.trim() === '' || groupName.trim() === t('connection.ungrouped')
+      ? null
+      : destination?.id
+    if (targetGroupId === undefined || pendingMoveConnectionIds.current.has(connection.id)) return
+
+    pendingMoveConnectionIds.current.add(connection.id)
+    try {
+      await runConnectionGroupOperation(
+        () => moveConnectionToGroup(connection.id, targetGroupId),
+        t('notifications.moveConnectionFailed'),
+        notifyError,
+      )
+    } finally {
+      pendingMoveConnectionIds.current.delete(connection.id)
     }
   }
 

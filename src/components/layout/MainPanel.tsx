@@ -7,7 +7,6 @@ import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3,
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
-import { ConnectionList } from '@/components/connection/ConnectionList'
 import { WorkbenchHome } from '@/components/home/WorkbenchHome'
 import { DataGrid, ResultMetadataGrid } from '@/components/grid/DataGrid'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
@@ -56,6 +55,7 @@ import type { EditorTab } from '@/stores/editorStore'
 import type { AppNotification } from '@/stores/uiStore'
 
 type SqlEditorModule = { default: typeof import('@/components/editor/SqlEditor').SqlEditor }
+type ConnectionListModule = { ConnectionList: typeof import('@/components/connection/ConnectionList').ConnectionList }
 
 interface QueryCapabilities {
   canQuery: boolean
@@ -80,6 +80,9 @@ const ERDiagram = lazy(() => import('@/components/diagram/ERDiagram').then((modu
 })))
 const SettingsWorkspacePanel = lazy(() => import('@/components/settings/SettingsWorkspacePanel').then((module) => ({
   default: module.SettingsWorkspacePanel,
+})))
+const ConnectionList = lazy(() => import('@/components/connection/ConnectionList').then((module: ConnectionListModule) => ({
+  default: module.ConnectionList,
 })))
 
 export function MainPanel() {
@@ -1239,11 +1242,13 @@ function DataSourcesManagementPanel() {
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="flex h-full min-h-0">
           <div className="min-w-0 flex-1 overflow-hidden border-r">
-            <ConnectionList
-              mode="manager"
-              managerSelectedConnectionId={editor.mode === 'edit' ? editor.connectionId : null}
-              onManagerSelect={(connection) => requestEditor({ mode: 'edit', connectionId: connection.id })}
-            />
+            <Suspense fallback={<WorkspaceLoading label={t('common.loading')} />}>
+              <ConnectionList
+                mode="manager"
+                managerSelectedConnectionId={editor.mode === 'edit' ? editor.connectionId : null}
+                onManagerSelect={(connection) => requestEditor({ mode: 'edit', connectionId: connection.id })}
+              />
+            </Suspense>
           </div>
           {!compact && <div className="hidden min-w-[34rem] flex-[1.15] md:flex">{editorContent}</div>}
         </div>
