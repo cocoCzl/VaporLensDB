@@ -37,6 +37,41 @@ describe('stream failure lifecycle', () => {
     vi.spyOn(useQueryHistoryStore.getState(), 'addEntry').mockResolvedValue(undefined)
   })
 
+  it('retains partial batch results, provenance and one failed history entry without changing file dirty', async () => {
+    useEditorStore.setState({ tabs: [{ id: 'stream-tab', title: 'file.sql', sql: 'SELECT 1; bad; SELECT 2', connectionId: 'source', transactionMode: 'manual', transactionPhase: 'active', dirty: true, filePath: '/selected/file.sql' }] })
+    vi.mocked(getConsoleTransactionState).mockResolvedValue({ connectionId: 'source', consoleId: 'stream-tab', mode: 'manual', phase: 'failed' })
+    const statements = [
+      { index: 1, preview: 'SELECT 1', status: 'succeeded' as const, resultIndex: 0, elapsedMs: 1 },
+      { index: 2, preview: 'bad', status: 'failed' as const, error: { code: 'QUERY_FAILED', message: 'syntax error' } },
+      { index: 3, preview: 'SELECT 2', status: 'notExecuted' as const },
+    ]
+    vi.mocked(executeQuery).mockResolvedValueOnce({ connectionGeneration: 7, results: [{ columns: [], rows: [[1]], rowCount: 1, affectedRows: 0, elapsedMs: 1, truncated: false }], statements, outcome: 'failed', terminalError: { code: 'QUERY_FAILED', message: 'syntax error' } })
+    const { result } = renderHook(() => useQuery())
+    await act(async () => { await result.current.runQuery('stream-tab', 'source', 'SELECT 1; bad; SELECT 2') })
+    const tab = useEditorStore.getState().tabs[0]
+    const queryId = tab.lastQueryId!
+    expect(useQueryResultStore.getState().results[queryId][0].rows).toEqual([[1]])
+    expect(useQueryResultStore.getState().reports[queryId].statements).toEqual(statements)
+    expect(useQueryResultStore.getState().sources[queryId]).toMatchObject({ connectionId: 'source', connectionGeneration: 7, sql: 'SELECT 1; bad; SELECT 2' })
+    expect(tab).toMatchObject({ dirty: true, filePath: '/selected/file.sql', transactionPhase: 'failed' })
+    expect(useQueryHistoryStore.getState().addEntry).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'failed', sql: 'SELECT 1; bad; SELECT 2' }))
+  })
+
+  it('preserves successful results and one history record when a batch is cancelled', async () => {
+    vi.mocked(executeQuery).mockResolvedValueOnce({ connectionGeneration: 2, results: [{ columns: [], rows: [], rowCount: 0, affectedRows: 1, elapsedMs: 1, truncated: false }], outcome: 'cancelled', terminalError: { code: 'QUERY_FAILED', message: 'execution stopped' }, statements: [
+      { index: 1, preview: 'UPDATE facts', status: 'succeeded', resultIndex: 0 },
+      { index: 2, preview: 'SELECT 2', status: 'cancelled' },
+      { index: 3, preview: 'SELECT 3', status: 'notExecuted' },
+    ] })
+    const { result } = renderHook(() => useQuery())
+    await act(async () => { await result.current.runQuery('stream-tab', 'source', 'UPDATE facts; SELECT 2; SELECT 3') })
+    const queryId = useEditorStore.getState().tabs[0].lastQueryId!
+    expect(useQueryResultStore.getState().reports[queryId].outcome).toBe('cancelled')
+    expect(useQueryResultStore.getState().results[queryId][0].affectedRows).toBe(1)
+    expect(useQueryHistoryStore.getState().addEntry).toHaveBeenCalledOnce()
+    expect(useUiStore.getState().notify).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }))
+  })
+
   it('terminalizes partial rows after an error event and promise rejection without failing the transaction', async () => {
     vi.mocked(executeQueryStream).mockImplementationOnce(async ({ queryId }) => {
       chunkListener({ queryId, columns: [{ name: 'value', dataType: 'INTEGER', nullable: false }], rows: [[1]], rowOffset: 0 })

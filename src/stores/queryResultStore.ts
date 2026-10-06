@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ExplainResult, QueryExecutionSnapshot, QueryResult, QueryResultChunk, QueryStreamDone } from '@/types/query'
+import type { ExecutionReport, ExplainResult, QueryExecutionSnapshot, QueryResult, QueryResultChunk, QueryStreamDone } from '@/types/query'
 import { MAX_INTERACTIVE_RESULT_ROWS } from '@/stores/uiStore'
 
 // The database can stream more rows for counting/export, but the grid keeps a
@@ -10,6 +10,8 @@ const MAX_RETAINED_QUERY_RESULTS = 20
 const utf8Encoder = new TextEncoder()
 
 interface QueryResultState {
+  reports: Record<string, ExecutionReport>
+  setReport: (queryId: string, report: ExecutionReport) => void
   results: Record<string, QueryResult[]>
   explains: Record<string, ExplainResult>
   sources: Record<string, QueryExecutionSnapshot>
@@ -25,6 +27,8 @@ interface QueryResultState {
 }
 
 export const useQueryResultStore = create<QueryResultState>((set) => ({
+  reports: {},
+  setReport: (queryId, report) => set(s => ({ reports: retainNewest({ ...s.reports, [queryId]: report }) })),
   results: {},
   explains: {},
   sources: {},
@@ -41,7 +45,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
           rows.push(row)
           bytes += rowBytes
         }
-        return { ...result, rows, streaming: false, statementKind, displayTruncated: result.displayTruncated || rows.length < result.rows.length }
+        return { ...result, rows, streaming: false, statementKind: result.statementKind ?? statementKind, displayTruncated: result.displayTruncated || rows.length < result.rows.length }
       })
       return retainResultData({ ...s.results, [queryId]: bounded }, { ...s.retainedBytes, [queryId]: bytes })
     }),
@@ -135,6 +139,8 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
   },
   clearResult: (queryId) =>
     set((s) => {
+      const reports = { ...s.reports }
+      delete reports[queryId]
       const results = { ...s.results }
       const explains = { ...s.explains }
       const sources = { ...s.sources }
@@ -143,7 +149,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
       delete explains[queryId]
       delete sources[queryId]
       delete retainedBytes[queryId]
-      return { results, explains, sources, retainedBytes }
+      return { results, explains, sources, retainedBytes, reports }
     }),
 }))
 

@@ -1,4 +1,11 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::Instant,
+};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -36,7 +43,22 @@ const MAX_STREAM_CHUNK_SIZE: usize = 2_000;
 const MAX_INTERACTIVE_STATEMENTS: usize = 32;
 
 #[derive(Default)]
-pub struct QueryEngine;
+pub struct QueryEngine {
+    batch_cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+struct BatchRegistration<'a> {
+    registry: &'a Mutex<HashMap<String, Arc<AtomicBool>>>,
+    id: String,
+}
+impl Drop for BatchRegistration<'_> {
+    fn drop(&mut self) {
+        self.registry
+            .lock()
+            .expect("batch registry")
+            .remove(&self.id);
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +66,21 @@ pub struct ExecuteQueryResponse {
     pub query_id: Option<String>,
     pub results: Vec<QueryResult>,
     pub connection_generation: Option<u64>,
+    pub statements: Vec<StatementExecutionReport>,
+    pub outcome: &'static str,
+    pub terminal_error: Option<AppError>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementExecutionReport {
+    pub index: usize,
+    pub preview: String,
+    pub status: &'static str,
+    pub elapsed_ms: Option<u64>,
+    pub affected_rows: Option<u64>,
+    pub result_index: Option<usize>,
+    pub error: Option<serde_json::Value>,
 }
 
 pub struct StreamQueryRequest {
@@ -71,7 +108,7 @@ pub(crate) enum QueryStreamEvent {
 
 impl QueryEngine {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
     pub async fn execute_query(
@@ -110,6 +147,9 @@ impl QueryEngine {
                 query_id,
                 results: Vec::new(),
                 connection_generation: None,
+                statements: Vec::new(),
+                outcome: "completed",
+                terminal_error: None,
             });
         }
 
@@ -122,17 +162,69 @@ impl QueryEngine {
         let execution_id = query_id
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        for statement in statements {
+        let cancellation_requested = Arc::new(AtomicBool::new(false));
+        self.batch_cancellations
+            .lock()
+            .expect("batch registry")
+            .insert(execution_id.clone(), cancellation_requested.clone());
+        let _registration = BatchRegistration {
+            registry: &self.batch_cancellations,
+            id: execution_id.clone(),
+        };
+        let mut reports = Vec::with_capacity(statements.len());
+        let mut terminal_error = None;
+        let mut outcome = "completed";
+        for (index, statement) in statements.iter().enumerate() {
+            let mut report = StatementExecutionReport {
+                index: index + 1,
+                preview: statement.chars().take(240).collect(),
+                status: "notExecuted",
+                elapsed_ms: None,
+                affected_rows: None,
+                result_index: None,
+                error: None,
+            };
+            if terminal_error.is_some() {
+                reports.push(report);
+                continue;
+            }
+            cancellation_requested.store(false, Ordering::SeqCst);
+            let started = Instant::now();
             let effective_max_rows = per_result_max_rows.min(remaining_rows);
-            let (mut result, retained_bytes) = collect_interactive_result(
+            let collected = collect_interactive_result(
                 driver.as_ref(),
-                &statement,
+                statement,
                 &execution_id,
                 effective_max_rows,
                 remaining_bytes,
                 mode,
             )
-            .await?;
+            .await;
+            report.elapsed_ms = Some(started.elapsed().as_millis() as u64);
+            let (mut result, retained_bytes) = match collected {
+                Ok(result) => result,
+                Err(error) if statements.len() == 1 => return Err(error),
+                Err(error) => {
+                    // This means execution stopped after a user cancellation request;
+                    // the driver does not provide proof that database effects were undone.
+                    report.status = if cancellation_requested.load(Ordering::SeqCst) {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    };
+                    report.error = Some(serde_json::to_value(&error).expect("AppError serializes"));
+                    terminal_error = Some(error);
+                    outcome = report.status;
+                    reports.push(report);
+                    continue;
+                }
+            };
+            report.status = "succeeded";
+            // Drivers expose a numeric count, but zero also means unavailable.
+            // Do not manufacture a zero affected-row claim for DDL/unknown counts.
+            report.affected_rows = (result.affected_rows > 0).then_some(result.affected_rows);
+            report.result_index = Some(results.len());
+            reports.push(report);
             remaining_rows = remaining_rows.saturating_sub(result.row_count);
             remaining_bytes = remaining_bytes.saturating_sub(retained_bytes);
             result.max_rows = Some(per_result_max_rows);
@@ -144,6 +236,9 @@ impl QueryEngine {
             query_id,
             results,
             connection_generation: None,
+            statements: reports,
+            outcome,
+            terminal_error,
         })
     }
 
@@ -337,6 +432,14 @@ impl QueryEngine {
         driver: Arc<dyn DatabaseDriver>,
         query_id: &str,
     ) -> Result<(), AppError> {
+        if let Some(requested) = self
+            .batch_cancellations
+            .lock()
+            .expect("batch registry")
+            .get(query_id)
+        {
+            requested.store(true, Ordering::SeqCst);
+        }
         driver.cancel_query(query_id).await
     }
 }
@@ -540,6 +643,8 @@ mod tests {
         cell_bytes: usize,
         user_cancel: tokio_util::sync::CancellationToken,
         database_failure: bool,
+        calls: AtomicUsize,
+        entered: tokio::sync::Notify,
     }
 
     fn counting_producer(rows: usize, cell_bytes: usize) -> Arc<CountingProducer> {
@@ -549,6 +654,8 @@ mod tests {
             cell_bytes,
             user_cancel: tokio_util::sync::CancellationToken::new(),
             database_failure: false,
+            calls: AtomicUsize::new(0),
+            entered: tokio::sync::Notify::new(),
         })
     }
 
@@ -612,6 +719,17 @@ mod tests {
             let DriverStreamRequest {
                 query_id, max_rows, ..
             } = request;
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if request.sql == "fixture_wait" {
+                self.entered.notify_one();
+                self.user_cancel.cancelled().await;
+            }
+            if request.sql == "fixture_fail" || request.sql == "fixture_wait" {
+                return Err(AppError::QueryFailed {
+                    sql: request.sql.into(),
+                    message: "fixture stopped".into(),
+                });
+            }
             let mut truncated = false;
             for offset in 0..self.rows {
                 if self.user_cancel.is_cancelled() {
@@ -947,6 +1065,181 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(next.results[0].rows, vec![vec![serde_json::json!(7)]]);
+    }
+
+    #[tokio::test]
+    async fn batch_partial_failure_reproduction() {
+        let driver = Arc::new(SqliteDriver::connect(":memory:").await.unwrap());
+        driver
+            .execute_query("CREATE TABLE facts(x INTEGER)", None)
+            .await
+            .unwrap();
+        let response = QueryEngine::new().execute_query(driver.clone(),
+            "INSERT INTO facts VALUES(1); INSERT INTO facts VALUES(2); SELECT * FROM absent; INSERT INTO facts VALUES(4)", None, None).await;
+        let response = response.unwrap();
+        assert_eq!(response.results.len(), 2);
+        assert_eq!(
+            response
+                .statements
+                .iter()
+                .map(|s| s.status)
+                .collect::<Vec<_>>(),
+            vec!["succeeded", "succeeded", "failed", "notExecuted"]
+        );
+        assert_eq!(response.results[0].affected_rows, 1);
+        assert_eq!(response.results[1].affected_rows, 1);
+        let facts = driver
+            .execute_query("SELECT x FROM facts ORDER BY x", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            facts.rows,
+            vec![vec![serde_json::json!(1)], vec![serde_json::json!(2)]]
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_report_stops_at_failure_and_bounds_previews() {
+        for (sql, expected, calls) in [
+            (
+                "SELECT 1; SELECT 2; fixture_fail; SELECT 4",
+                vec!["succeeded", "succeeded", "failed", "notExecuted"],
+                3,
+            ),
+            (
+                "fixture_fail; SELECT 2; SELECT 3",
+                vec!["failed", "notExecuted", "notExecuted"],
+                1,
+            ),
+            ("SELECT 1; SELECT 2", vec!["succeeded", "succeeded"], 2),
+        ] {
+            let driver = counting_producer(1, 1);
+            let response = QueryEngine::new()
+                .execute_query(driver.clone(), sql, None, None)
+                .await
+                .unwrap();
+            assert_eq!(driver.calls.load(Ordering::SeqCst), calls);
+            assert_eq!(
+                response
+                    .statements
+                    .iter()
+                    .map(|s| s.status)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(
+                response.results.len(),
+                expected.iter().filter(|s| **s == "succeeded").count()
+            );
+        }
+        let sql = format!("SELECT '{}'; SELECT 2", "界".repeat(1000));
+        let response = QueryEngine::new()
+            .execute_query(counting_producer(1, 1), &sql, None, None)
+            .await
+            .unwrap();
+        assert_eq!(response.statements[0].preview.chars().count(), 240);
+    }
+
+    #[tokio::test]
+    async fn batch_cancellation_keeps_completed_facts_and_does_not_run_tail() {
+        let driver = counting_producer(1, 1);
+        let engine = QueryEngine::new();
+        let execution = engine.execute_query(
+            driver.clone(),
+            "SELECT 1; fixture_wait; SELECT 3",
+            Some("cancel-batch".into()),
+            None,
+        );
+        let cancel = async {
+            driver.entered.notified().await;
+            engine
+                .cancel_query(driver.clone(), "cancel-batch")
+                .await
+                .unwrap();
+        };
+        let (response, _) = tokio::join!(execution, cancel);
+        let response = response.unwrap();
+        assert_eq!(response.outcome, "cancelled");
+        assert_eq!(
+            response
+                .statements
+                .iter()
+                .map(|s| s.status)
+                .collect::<Vec<_>>(),
+            vec!["succeeded", "cancelled", "notExecuted"]
+        );
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(driver.calls.load(Ordering::SeqCst), 2);
+        assert!(engine.batch_cancellations.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn batch_manual_failure_does_not_commit_or_rollback_earlier_work() {
+        let driver = Arc::new(SqliteDriver::connect(":memory:").await.unwrap());
+        driver
+            .execute_query("CREATE TABLE facts(x)", None)
+            .await
+            .unwrap();
+        driver.begin_transaction().await.unwrap();
+        let response = QueryEngine::new()
+            .execute_query_in_mode(
+                driver.clone(),
+                "INSERT INTO facts VALUES(1); SELECT * FROM absent; INSERT INTO facts VALUES(3)",
+                None,
+                None,
+                StreamTransactionMode::Manual,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response
+                .statements
+                .iter()
+                .map(|s| s.status)
+                .collect::<Vec<_>>(),
+            vec!["succeeded", "failed", "notExecuted"]
+        );
+        assert!(response
+            .terminal_error
+            .as_ref()
+            .unwrap()
+            .affects_transaction());
+        assert_eq!(
+            driver
+                .execute_query("SELECT COUNT(*) FROM facts", None)
+                .await
+                .unwrap()
+                .rows[0][0],
+            serde_json::json!(1)
+        );
+        driver.rollback_transaction().await.unwrap();
+        assert_eq!(
+            driver
+                .execute_query("SELECT COUNT(*) FROM facts", None)
+                .await
+                .unwrap()
+                .rows[0][0],
+            serde_json::json!(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_mixed_results_keep_metadata_and_unknown_counts() {
+        let driver = Arc::new(SqliteDriver::connect(":memory:").await.unwrap());
+        let response = QueryEngine::new()
+            .execute_query(
+                driver,
+                "SELECT 1; CREATE TABLE facts(x); INSERT INTO facts VALUES(3); SELECT x FROM facts",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(response.statements.iter().all(|s| s.status == "succeeded"));
+        assert_eq!(response.statements[0].result_index, Some(0));
+        assert_eq!(response.statements[1].affected_rows, None);
+        assert_eq!(response.statements[2].affected_rows, Some(1));
+        assert_eq!(response.results[3].rows, vec![vec![serde_json::json!(3)]]);
     }
 
     #[tokio::test]

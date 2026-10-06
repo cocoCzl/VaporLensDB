@@ -1035,5 +1035,18 @@
     "focusEditor": "聚焦编辑器",
     "focusResults": "聚焦结果",
     "focusExplorer": "聚焦对象浏览器"
+  },
+  "executionReport": {
+    "noResults": "本次执行未产生结果集。",
+    "title": "执行摘要",
+    "count": "{{total}} 条语句中 {{completed}} 条执行成功",
+    "statement": "语句 {{index}}",
+    "succeeded": "执行成功",
+    "failed": "执行失败",
+    "cancelled": "已取消",
+    "notExecuted": "未执行",
+    "affected": "影响行数：{{count}}",
+    "facts": "语句成功表示已执行，不代表事务已提交。Auto 模式下此前的更改可能已经生效。",
+    "cancelNote": "执行在取消请求后停止。数据库更改可能仍然存在，取消不代表回滚。"
   }
 }

@@ -52,6 +52,8 @@ export function useQuery() {
       notify({ kind: 'error', title: i18n.t('notifications.queryFailed'), message: i18n.t('notifications.unsupportedClientDirective', { directive: unsupportedDirective }) })
       return false
     }
+    let changedMetadata: boolean
+    let terminalError: unknown
     let connectionGeneration: number | undefined
     setTabRunning(tabId, true, queryId)
     try {
@@ -81,6 +83,7 @@ export function useQuery() {
         }
         if (streamState.state.error) throw streamState.state.error
         if (streamState.state.terminal !== 'done') throw { code: 'RESULT_PROCESSING_ERROR', message: i18n.t('notifications.queryStreamFailed') }
+        changedMetadata = containsLikelyDdl(sql)
       } else {
         const response = await executeQuery({
           connectionId,
@@ -94,7 +97,15 @@ export function useQuery() {
           schema: options.schema,
         })
         connectionGeneration = response.connectionGeneration
-        setResults(queryId, response.results, classifyStatement(sql))
+        const statements = splitSqlStatements(sql)
+        setResults(queryId, response.results.map((result, index) => ({ ...result, statementKind: classifyStatement(statements[index] ?? sql) })))
+        if (response.statements && response.statements.length > 1) {
+          useQueryResultStore.getState().setReport(queryId, { statements: response.statements, outcome: response.outcome ?? 'completed' })
+        }
+        terminalError = response.terminalError
+        changedMetadata = response.statements
+          ? response.statements.some(report => report.status === 'succeeded' && containsLikelyDdl(statements[report.index - 1] ?? ''))
+          : !terminalError && containsLikelyDdl(sql)
       }
       if (connectionGeneration !== undefined) setResultSource({
         queryId,
@@ -107,7 +118,7 @@ export function useQuery() {
         transactionMode,
         executedAt: startedAt,
       })
-      if (containsLikelyDdl(sql)) {
+      if (changedMetadata) {
         // The backend invalidates its metadata caches after successful DDL. Mirror that
         // boundary in the renderer so a previously expanded Object Browser does not
         // retain an empty/stale category until the user manually reloads it.
@@ -118,12 +129,13 @@ export function useQuery() {
           message: i18n.t('notifications.refreshObjectStructureHint'),
         })
       }
+      if (terminalError) throw terminalError
       recordQueryHistory(connectionId, sql, queryId, startedAt, performance.now() - startedMs, options)
       if (isCurrentQuery(tabId, connectionId, queryId)) setTabQueryState(tabId, queryId)
       return true
     } catch (error) {
       const appError = normalizeAppError(error)
-      const cancelled = appError.code === 'CANCELLED'
+      const cancelled = appError.code === 'CANCELLED' || useQueryResultStore.getState().reports[queryId]?.outcome === 'cancelled'
       useQueryResultStore.getState().failStreamResult(queryId)
       void useQueryHistoryStore.getState().addEntry({
         connectionId,

@@ -30,7 +30,8 @@ const useQuery = read('src/hooks/useQuery.ts')
 includesAll(
   useQuery,
   [
-    'if (containsLikelyDdl(sql)) {',
+    'if (changedMetadata) {',
+    "report.status === 'succeeded' && containsLikelyDdl",
     "title: i18n.t('notifications.objectStructureChanged')",
     "message: i18n.t('notifications.refreshObjectStructureHint')",
     'function containsLikelyDdl(sql: string)',

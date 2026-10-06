@@ -129,6 +129,29 @@ describe('SQL command entry consistency', () => {
     expect(useSqlCommandState.getState().available).toMatchObject({ runCurrent: false, runAll: false, cancel: driverType === 'postgres' })
     expect(screen.queryByRole('button', { name: 'Cancel Query' }) !== null).toBe(driverType === 'postgres')
   })
+  it('keeps earlier result tabs visible beside a later failure report', async () => {
+    seedScript()
+    ipc.execute.mockResolvedValueOnce({ connectionGeneration: 1, results: [
+      { columns: [{ name: 'first_value', dataType: 'INTEGER', nullable: false }], rows: [[1]], rowCount: 1, affectedRows: 0, elapsedMs: 1, truncated: false },
+      { columns: [{ name: 'second_value', dataType: 'INTEGER', nullable: false }], rows: [[2]], rowCount: 1, affectedRows: 0, elapsedMs: 1, truncated: false },
+    ], outcome: 'failed', terminalError: { code: 'QUERY_FAILED', message: 'fixture syntax error' }, statements: [
+      { index: 1, preview: 'SELECT 1', status: 'succeeded', resultIndex: 0 },
+      { index: 2, preview: 'SELECT 2', status: 'succeeded', resultIndex: 1 },
+      { index: 3, preview: 'bad', status: 'failed', error: { code: 'QUERY_FAILED', message: 'fixture syntax error' } },
+      { index: 4, preview: 'SELECT 4', status: 'notExecuted' },
+    ] })
+    render(<MainPanel />)
+    act(() => dispatchSqlCommand('runAll'))
+    expect(await screen.findByText('Not executed')).toBeVisible()
+    expect(screen.getByText('fixture syntax error')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^Statement 1 / })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Statement 2' }))
+    expect(screen.getByRole('button', { name: /^Statement 2 / })).toHaveClass('bg-background')
+    expect(current().dirty).toBe(true)
+    expect(ipc.file).not.toHaveBeenCalled()
+    expect(useQueryResultStore.getState().sources[current().lastQueryId!].connectionId).toBe('A')
+  })
+
   it('blocks repeated commands while preflight/execution is in progress', async () => {
     seedScript(); render(<MainPanel />)
     await editorAt(14)

@@ -77,6 +77,7 @@ function loadSqlEditor() {
   return sqlEditorPreload
 }
 
+const ExecutionSummary = lazy(() => import('@/components/workspace/ExecutionSummary').then(module => ({ default: module.ExecutionSummary })))
 const SqlEditor = lazy(loadSqlEditor)
 const ERDiagram = lazy(() => import('@/components/diagram/ERDiagram').then((module) => ({
   default: module.ERDiagram,
@@ -223,6 +224,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const activeQueryId = activeTab?.lastQueryId ?? null
+  const activeReport = useQueryResultStore(state => activeQueryId ? state.reports[activeQueryId] : undefined)
   const activeResults = useQueryResultStore((state) => activeQueryId ? state.results[activeQueryId] : undefined)
   const activeExplain = useQueryResultStore((state) => activeQueryId ? state.explains[activeQueryId] : undefined)
   const activeResultSource = useQueryResultStore((state) => activeQueryId ? state.sources[activeQueryId] : undefined)
@@ -1046,8 +1048,10 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
 
         {!bottomPanelCollapsed && <div className="flex min-h-0 flex-1 overflow-hidden">
           <div className="flex h-full min-h-0 min-w-0 flex-1">
-            <div className="min-h-0 min-w-0 flex-1">
-              {activeTab.error ? (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {activeReport && activeQueryId && <Suspense fallback={null}><ExecutionSummary key={activeQueryId} report={activeReport} onSelectResult={index => setResultIndexes(state => ({ ...state, [activeQueryId]: index }))} /></Suspense>}
+              <div className="min-h-0 flex-1">
+              {activeTab.error && !activeReport ? (
                 <ErrorDetails message={activeTab.error} sql={activeTab.sql} onRetry={() => void execute()} />
               ) : activeExplain ? (
                 activeExplain.result ? (
@@ -1063,6 +1067,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                     <ResultSetTabs
                       queryId={activeQueryId}
                       results={activeResults}
+                      statementLabels={Boolean(activeReport)}
                       selectedIndex={selectedResultIndex}
                       onSelect={(index) =>
                         setResultIndexes((state) => ({ ...state, [activeQueryId]: index }))
@@ -1074,8 +1079,9 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                   </div>
                 </div>
               ) : (
-                <EmptyState className="h-full" title={t('workbench.noResultsYet')} description={t('workbench.runQueryToSeeResults')} />
+                <EmptyState className="h-full" title={t(activeReport ? 'executionReport.noResults' : 'workbench.noResultsYet')} description={activeReport ? undefined : t('workbench.runQueryToSeeResults')} />
               )}
+              </div>
             </div>
           </div>
         </div>}
@@ -2425,11 +2431,13 @@ function ErrorDetails({ message, sql, onRetry }: { message: string; sql?: string
 }
 
 function ResultSetTabs({
+  statementLabels = false,
   queryId,
   results,
   selectedIndex,
   onSelect,
 }: {
+  statementLabels?: boolean
   queryId: string
   results: QueryResult[]
   selectedIndex: number
@@ -2452,8 +2460,8 @@ function ResultSetTabs({
             ].join(' ')}
             onClick={() => onSelect(index)}
           >
-            <span className="font-medium">{t('workbench.resultLabel', { index: index + 1 })}</span>
-            <span className="ml-2 text-muted-foreground">{compactResultSummary(result)}</span>
+            <span className="font-medium">{t(statementLabels ? 'executionReport.statement' : 'workbench.resultLabel', { index: index + 1 })}</span>
+            {' '}<span className="ml-2 text-muted-foreground">{compactResultSummary(result)}</span>
           </button>
         )
       })}

@@ -229,7 +229,8 @@ pub async fn execute_query(
                 crate::drivers::trait_def::StreamTransactionMode::Manual,
             )
             .await;
-        update_console_phase_after_execution(
+        // An IPC-successful partial report can still contain the original database error.
+        update_console_phase_after_batch(
             &mut *state.connection_manager.lock().await,
             input.connection_id,
             console_id,
@@ -238,7 +239,7 @@ pub async fn execute_query(
         if let Ok(response) = &mut result {
             response.connection_generation = Some(operation.generation);
         }
-        clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &result).await;
+        clear_metadata_after_batch(&state, input.connection_id, &sql, &result).await;
         return result.map_err(Into::into);
     }
     let operation_start = {
@@ -280,10 +281,7 @@ pub async fn execute_query(
         .query_engine
         .execute_query(operation.driver, &input.sql, input.query_id, input.max_rows)
         .await;
-    if execution
-        .as_ref()
-        .is_err_and(should_retire_stale_connection)
-    {
+    if batch_execution_error(&execution).is_some_and(should_retire_stale_connection) {
         retire_stale_connection(
             &state,
             input.connection_id,
@@ -295,7 +293,7 @@ pub async fn execute_query(
     if let Ok(response) = &mut execution {
         response.connection_generation = Some(generation);
     }
-    clear_metadata_after_successful_ddl(&state, input.connection_id, &sql, &execution).await;
+    clear_metadata_after_batch(&state, input.connection_id, &sql, &execution).await;
     execution.map_err(Into::into)
 }
 
@@ -431,6 +429,48 @@ pub async fn execute_query_stream(
             connection_generation: generation,
         })
         .map_err(String::from)
+}
+
+fn update_console_phase_after_batch(
+    manager: &mut ConnectionManager,
+    connection_id: Uuid,
+    console_id: &str,
+    result: &Result<ExecuteQueryResponse, crate::models::error::AppError>,
+) {
+    if batch_execution_error(result).is_some_and(|error| error.affects_transaction()) {
+        manager.set_console_phase(connection_id, console_id, ConsoleTransactionPhase::Failed);
+    }
+}
+
+fn batch_execution_error(
+    result: &Result<ExecuteQueryResponse, crate::models::error::AppError>,
+) -> Option<&crate::models::error::AppError> {
+    match result {
+        Err(error) => Some(error),
+        Ok(response) => response.terminal_error.as_ref(),
+    }
+}
+
+fn batch_changed_metadata(sql: &str, response: &ExecuteQueryResponse) -> bool {
+    crate::utils::sql_parser::split_sql_statements(sql)
+        .iter()
+        .zip(&response.statements)
+        .any(|(sql, report)| report.status == "succeeded" && contains_metadata_ddl(sql))
+}
+
+async fn clear_metadata_after_batch(
+    state: &State<'_, AppState>,
+    connection_id: Uuid,
+    sql: &str,
+    result: &Result<ExecuteQueryResponse, crate::models::error::AppError>,
+) {
+    if result
+        .as_ref()
+        .is_ok_and(|response| batch_changed_metadata(sql, response))
+    {
+        state.metadata_service.clear_connection(connection_id).await;
+        state.metadata_index.clear_connection(connection_id).await;
+    }
 }
 
 async fn clear_metadata_after_successful_ddl<T, E>(
@@ -892,6 +932,37 @@ mod context_tests {
                 ConsoleTransactionPhase::Active
             );
         }
+        let driver = std::sync::Arc::new(
+            crate::drivers::sqlite::SqliteDriver::connect(":memory:")
+                .await
+                .unwrap(),
+        );
+        let batch = crate::services::query_engine::QueryEngine::new()
+            .execute_query_in_mode(
+                driver,
+                "SELECT 1; SELECT * FROM absent; SELECT 3",
+                None,
+                None,
+                crate::drivers::trait_def::StreamTransactionMode::Manual,
+            )
+            .await;
+        assert_eq!(batch.as_ref().unwrap().statements[0].status, "succeeded");
+        assert!(!super::batch_changed_metadata(
+            "SELECT 1; SELECT * FROM absent; CREATE TABLE skipped(x)",
+            batch.as_ref().unwrap()
+        ));
+        assert!(super::batch_changed_metadata(
+            "CREATE TABLE done(x); SELECT * FROM absent; SELECT 3",
+            batch.as_ref().unwrap()
+        ));
+        super::update_console_phase_after_batch(&mut manager, connection_id, "console", &batch);
+        assert_eq!(
+            manager
+                .console_transaction_state(connection_id, "console")
+                .phase,
+            ConsoleTransactionPhase::Failed
+        );
+        manager.set_console_phase(connection_id, "console", ConsoleTransactionPhase::Active);
         let database_failure: Result<(), _> = Err(AppError::QueryFailed {
             sql: "SELECT missing".into(),
             message: "statement failed".into(),

@@ -1,3 +1,4 @@
+import type { AppError } from './error'
 export interface ColumnMeta {
   name: string
   dataType: string
@@ -27,9 +28,27 @@ export interface QueryResult {
   statementKind?: 'dml' | 'ddl' | 'commit' | 'rollback' | 'other'
 }
 
+export interface StatementExecutionReport {
+  index: number
+  preview: string
+  status: 'succeeded' | 'failed' | 'cancelled' | 'notExecuted'
+  elapsedMs?: number | null
+  affectedRows?: number | null
+  resultIndex?: number | null
+  error?: AppError | null
+}
+
+export interface ExecutionReport {
+  statements: StatementExecutionReport[]
+  outcome: 'completed' | 'failed' | 'cancelled'
+}
+
 export interface ExecuteQueryResponse {
   queryId?: string | null
   results: QueryResult[]
+  statements?: StatementExecutionReport[]
+  outcome?: ExecutionReport['outcome']
+  terminalError?: AppError | null
   connectionGeneration: number
 }
 

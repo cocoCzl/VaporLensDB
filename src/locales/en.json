@@ -1035,5 +1035,18 @@
     "focusEditor": "Focus Editor",
     "focusResults": "Focus Results",
     "focusExplorer": "Focus Explorer"
+  },
+  "executionReport": {
+    "noResults": "No result set was produced.",
+    "title": "Execution summary",
+    "count": "{{completed}} of {{total}} statements succeeded",
+    "statement": "Statement {{index}}",
+    "succeeded": "Succeeded",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+    "notExecuted": "Not executed",
+    "affected": "Affected rows: {{count}}",
+    "facts": "Statement success describes execution, not transaction commit. Earlier Auto-mode changes may already have taken effect.",
+    "cancelNote": "Execution stopped after a cancellation request. Database effects may remain; cancellation does not imply rollback."
   }
 }
