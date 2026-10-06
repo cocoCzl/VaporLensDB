@@ -60,20 +60,21 @@ includesAll(
     'metadata.loadColumns(tab.connectionId, context.schema, context.object, force)',
     'metadata.loadIndexes(tab.connectionId, context.schema, context.object, force)',
     'metadata.loadForeignKeys(tab.connectionId, context.schema, context.object, force)',
-    ".loadSchemaObjects(tab.connectionId, context.schema, 'trigger', force)",
-    '.catch(() => [])',
     'getTableDdl(tab.connectionId, context.schema, context.object)',
     'readOnly',
     'ColumnsView',
     'IndexesView',
     'ForeignKeysView',
-    'TriggersView',
-    "t('workbench.openSourceDdl')",
+    'TableTriggers',
     "t('workbench.refreshStructure')",
     'Structure tab · read-only',
   ],
   'structure tab panel',
 )
+
+const triggers = read('src/components/inspector/TableTriggers.tsx')
+includesAll(triggers, ['getTableTriggers(connectionId, schema, table)', 'UNSUPPORTED_OPERATION', 'current = false', 'state.request !== request', "t('workbench.noTriggers')", "t('workbench.loadTriggersFailed')", "t('workbench.triggersUnsupported')", "t('workbench.openSourceDdl')"], 'table trigger lifecycle')
+assert(!triggers.includes('.catch(() => [])'), 'trigger failures must not become empty results')
 
 const packageJson = read('package.json')
 includesAll(

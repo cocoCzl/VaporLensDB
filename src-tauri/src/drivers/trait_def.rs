@@ -179,6 +179,18 @@ pub trait DatabaseDriver: Send + Sync {
             operation: "get_schema_objects".to_string(),
         })
     }
+    /// Trigger list for one exact schema/table identity. Schema-wide metadata
+    /// cannot be used as a fallback when ownership is unavailable.
+    async fn get_table_triggers(
+        &self,
+        _schema: &str,
+        _table: &str,
+    ) -> Result<Vec<DbObjectInfo>, AppError> {
+        Err(AppError::UnsupportedOperation {
+            driver: self.driver_name().to_string(),
+            operation: "get_table_triggers".to_string(),
+        })
+    }
     async fn get_object_ddl(
         &self,
         schema: &str,

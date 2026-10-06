@@ -12,6 +12,7 @@ import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
 import { WorkbenchHome } from '@/components/home/WorkbenchHome'
 import { DataGrid, ResultMetadataGrid } from '@/components/grid/DataGrid'
+import { TableTriggers } from '@/components/inspector/TableTriggers'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ResultPanel } from '@/components/workspace/ResultPanel'
@@ -1799,14 +1800,13 @@ function StructureTabPanel({
     loadColumns: state.loadColumns,
     loadIndexes: state.loadIndexes,
     loadForeignKeys: state.loadForeignKeys,
-    loadSchemaObjects: state.loadSchemaObjects,
   })))
   const notifyError = useUiStore((state) => state.notifyError)
   const [section, setSection] = useState<StructureSection>('columns')
   const [columns, setColumns] = useState<ColumnInfo[]>([])
   const [indexes, setIndexes] = useState<IndexInfo[]>([])
   const [foreignKeys, setForeignKeys] = useState<ForeignKeyInfo[]>([])
-  const [triggers, setTriggers] = useState<DbObjectInfo[]>([])
+  const [triggerRefresh, setTriggerRefresh] = useState(0)
   const [ddl, setDdl] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1820,22 +1820,15 @@ function StructureTabPanel({
     setLoading(true)
     setError(null)
     try {
-      const [coreStructure, nextTriggers] = await Promise.all([
-        Promise.all([
-          metadata.loadColumns(tab.connectionId, context.schema, context.object, force),
-          metadata.loadIndexes(tab.connectionId, context.schema, context.object, force),
-          metadata.loadForeignKeys(tab.connectionId, context.schema, context.object, force),
-          getTableDdl(tab.connectionId, context.schema, context.object),
-        ]),
-        metadata
-          .loadSchemaObjects(tab.connectionId, context.schema, 'trigger', force)
-          .catch(() => []),
+      const [nextColumns, nextIndexes, nextForeignKeys, nextDdl] = await Promise.all([
+        metadata.loadColumns(tab.connectionId, context.schema, context.object, force),
+        metadata.loadIndexes(tab.connectionId, context.schema, context.object, force),
+        metadata.loadForeignKeys(tab.connectionId, context.schema, context.object, force),
+        getTableDdl(tab.connectionId, context.schema, context.object),
       ])
-      const [nextColumns, nextIndexes, nextForeignKeys, nextDdl] = coreStructure
       setColumns(nextColumns)
       setIndexes(nextIndexes)
       setForeignKeys(nextForeignKeys)
-      setTriggers(nextTriggers)
       setDdl(nextDdl)
     } catch (loadError) {
       const appError = normalizeAppError(loadError)
@@ -1883,7 +1876,7 @@ function StructureTabPanel({
           size="sm"
           variant="outline"
           disabled={loading}
-          onClick={() => loadStructure(true)}
+          onClick={() => { setTriggerRefresh((value) => value + 1); void loadStructure(true) }}
         >
           <RefreshCw />
           {loading ? t('workbench.refreshing') : t('workbench.refreshStructure')}
@@ -1910,7 +1903,16 @@ function StructureTabPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {error ? (
+        {section === 'triggers' ? (
+          <TableTriggers
+            key={JSON.stringify([tab.connectionId, context.schema, context.object])}
+            connectionId={tab.connectionId ?? ''}
+            schema={context.schema}
+            table={context.object}
+            refresh={triggerRefresh}
+            onOpenDefinition={openTriggerDefinition}
+          />
+        ) : error ? (
           <ErrorDetails message={error} />
         ) : loading && columns.length === 0 && ddl.length === 0 ? (
           <div className="grid h-full place-items-center text-xs text-muted-foreground">
@@ -1922,8 +1924,7 @@ function StructureTabPanel({
           <IndexesView indexes={indexes} />
         ) : section === 'foreignKeys' ? (
           <ForeignKeysView foreignKeys={foreignKeys} />
-        ) : section === 'triggers' ? (
-          <TriggersView triggers={triggers} onOpenDefinition={openTriggerDefinition} />
+
         ) : (
           <textarea
             className="h-full w-full resize-none bg-card p-3 font-mono text-xs leading-5 outline-none"
@@ -2014,50 +2015,6 @@ function ForeignKeysView({ foreignKeys }: { foreignKeys: ForeignKeyInfo[] }) {
       ]}
       rows={foreignKeyDisplayRows(foreignKeys)}
     />
-  )
-}
-
-function TriggersView({
-  triggers,
-  onOpenDefinition,
-}: {
-  triggers: DbObjectInfo[]
-  onOpenDefinition: (trigger: DbObjectInfo) => void
-}) {
-  const { t } = useTranslation()
-  if (triggers.length === 0) {
-    return <StructureEmpty label={t('workbench.noTriggers')} />
-  }
-
-  return (
-    <div className="min-w-[720px] text-xs">
-      <div className="grid grid-cols-[minmax(220px,1fr)_160px_120px_120px] border-b bg-muted/45 font-medium">
-        <div className="border-r px-2 py-1.5">{t('workbench.structureHeaders.trigger')}</div>
-        <div className="border-r px-2 py-1.5">{t('workbench.structureHeaders.type')}</div>
-        <div className="border-r px-2 py-1.5">{t('workbench.structureHeaders.status')}</div>
-        <div className="px-2 py-1.5">{t('workbench.structureHeaders.definition')}</div>
-      </div>
-      {triggers.map((trigger) => (
-        <div
-          key={`${trigger.schema ?? ''}.${trigger.name}`}
-          className="grid grid-cols-[minmax(220px,1fr)_160px_120px_120px] border-b hover:bg-accent/35"
-        >
-          <div className="min-w-0 truncate border-r px-2 py-1.5 font-mono">{trigger.name}</div>
-          <div className="min-w-0 truncate border-r px-2 py-1.5">{trigger.objectType ?? 'trigger'}</div>
-          <div className="min-w-0 truncate border-r px-2 py-1.5">{trigger.status ?? ''}</div>
-          <div className="px-2 py-1">
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              onClick={() => onOpenDefinition(trigger)}
-            >
-              {t('workbench.openSourceDdl')}
-            </Button>
-          </div>
-        </div>
-      ))}
-    </div>
   )
 }
 

@@ -322,6 +322,13 @@
     "status": "active"
   },
   {
+    "name": "get_table_triggers",
+    "namespace": "metadata",
+    "args": "{ connectionId: string; schema: string; table: string }",
+    "response": "DbObjectInfo[]",
+    "status": "active"
+  },
+  {
     "name": "get_object_ddl",
     "namespace": "metadata",
     "args": "{ connectionId: string; schema: string; name: string; kind: DbObjectKind; force?: boolean }",

@@ -75,6 +75,7 @@ export const COMMANDS = {
   getFunctions: 'get_functions',
   getTableDdl: 'get_table_ddl',
   getSchemaObjects: 'get_schema_objects',
+  getTableTriggers: 'get_table_triggers',
   getObjectDdl: 'get_object_ddl',
   startMetadataIndexTask: 'start_metadata_index_task',
   searchMetadataIndex: 'search_metadata_index',

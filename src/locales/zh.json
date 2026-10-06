@@ -535,6 +535,9 @@
     "noColumns": "暂无列",
     "noIndexes": "暂无索引",
     "noForeignKeys": "暂无外键",
+    "loadingTriggers": "正在加载触发器…",
+    "triggersUnsupported": "此连接不支持触发器元数据。",
+    "loadTriggersFailed": "无法加载触发器。",
     "noTriggers": "暂无触发器",
     "structureHeaders": {
       "position": "#",

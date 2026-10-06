@@ -454,6 +454,34 @@ impl DatabaseDriver for SqliteDriver {
         .await
     }
 
+    async fn get_table_triggers(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<DbObjectInfo>, AppError> {
+        let schema = schema.to_string();
+        let table = table.to_string();
+        self.with_connection("metadata table triggers", move |connection| {
+            // SQLite identifiers cannot be bound. Quote the database name;
+            // table identity is a value predicate on sqlite_master.tbl_name.
+            let sql = format!(
+                "SELECT name FROM \"{}\".sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name",
+                schema.replace('"', "\"\"")
+            );
+            let mut statement = connection.prepare(&sql)?;
+            let rows = statement.query_map([&table], |row| {
+                Ok(DbObjectInfo {
+                    schema: Some(schema.clone()),
+                    name: row.get(0)?,
+                    kind: DbObjectKind::Trigger,
+                    object_type: Some("trigger".to_string()),
+                    status: None,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+        }).await
+    }
+
     async fn get_object_ddl(
         &self,
         _schema: &str,

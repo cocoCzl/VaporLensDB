@@ -84,6 +84,7 @@ Native Tier-A below means PostgreSQL/MySQL/SQLite, not their optional JDBC paths
 | --- | --- | --- | --- | --- | --- |
 | Query cancellation | Native supported path | Not promised | Not promised | Advertised by bridge; best-effort, driver-dependent, not Tier-A | Not promised |
 | Auto / Manual transactions | Supported | Supported; server/engine semantics apply | Supported | Implemented; driver-dependent | Implemented; runtime unverified |
+| Table Structure triggers | Table-scoped catalog query | Table-scoped information_schema query | Database-scoped sqlite_master / tbl_name query | Unsupported for table ownership; schema-object support does not imply table-trigger support | Unsupported for table-trigger metadata |
 | Metadata / DDL | Implemented within vendor/type/privilege limits | Implemented within vendor/version/privilege limits | Implemented within SQLite limits | Metadata SQL/driver-dependent; DDL capability follows configured templates | Implemented; runtime unverified |
 | Explain | Supported result inspection | Supported result inspection | Supported result inspection | Oracle path implemented; custom not generally advertised | Implemented; runtime unverified |
 | Generated / identity flags | Structured metadata where available | Structured metadata where available | Structured metadata where available | Driver/template-dependent; no parity promise | No Tier-A acceptance promise |
@@ -96,6 +97,14 @@ imply editable grid support. CSV task/preview cancellation is a separate
 cooperative lifecycle, not proof that a driver can interrupt an active query.
 JDBC cancellation being advertised does not give it PostgreSQL's native
 cancellation guarantee. Cancellation behavior is not uniform across vendors.
+
+Table Structure loads triggers for an exact schema/table request, separately from
+schema-wide object browsing. Loading, successful empty, unsupported, and failed
+requests have distinct UI states; refresh hides previous data until it completes.
+Catalog visibility remains subject to database privileges. Timing/event fields
+and trigger create/edit/drop are not introduced. Definition opening keeps the
+existing vendor-limited, name-based DDL path; it is not a new ownership guarantee
+for same-named trigger definitions or attached-database DDL.
 
 SSH uses the local SSH integration; a build or unit test does not establish
 all OS/authentication/URL combinations. PostgreSQL/MySQL encryption-only TLS

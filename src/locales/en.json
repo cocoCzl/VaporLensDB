@@ -535,6 +535,9 @@
     "noColumns": "No columns",
     "noIndexes": "No indexes",
     "noForeignKeys": "No foreign keys",
+    "loadingTriggers": "Loading triggers…",
+    "triggersUnsupported": "Trigger metadata is not supported for this connection.",
+    "loadTriggersFailed": "Unable to load triggers.",
     "noTriggers": "No triggers",
     "structureHeaders": {
       "position": "#",

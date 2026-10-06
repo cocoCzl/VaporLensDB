@@ -571,6 +571,34 @@ impl DatabaseDriver for MysqlDriver {
             .collect())
     }
 
+    async fn get_table_triggers(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<DbObjectInfo>, AppError> {
+        let sql = r#"
+            SELECT trigger_name
+            FROM information_schema.triggers
+            WHERE event_object_schema = ? AND event_object_table = ?
+            ORDER BY trigger_name
+        "#;
+        let mut conn = self.conn.lock().await;
+        let rows: Vec<String> = conn
+            .exec(sql, (schema, table))
+            .await
+            .map_err(|error| map_mysql_query_error(sql, error))?;
+        Ok(rows
+            .into_iter()
+            .map(|name| DbObjectInfo {
+                schema: Some(schema.to_string()),
+                name,
+                kind: DbObjectKind::Trigger,
+                object_type: Some("TRIGGER".to_string()),
+                status: None,
+            })
+            .collect())
+    }
+
     async fn get_object_ddl(
         &self,
         schema: &str,

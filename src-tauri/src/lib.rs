@@ -372,6 +372,7 @@ pub fn run() {
             commands::metadata::get_functions,
             commands::metadata::get_table_ddl,
             commands::metadata::get_schema_objects,
+            commands::metadata::get_table_triggers,
             commands::metadata::get_object_ddl,
             commands::metadata::start_metadata_index_task,
             commands::metadata::search_metadata_index,

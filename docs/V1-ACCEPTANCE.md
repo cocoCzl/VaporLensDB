@@ -40,7 +40,8 @@ claims. Historical version entries are not rewritten as new release notes.
    metadata; no CSV values or absolute source paths in logs/diagnostics. Verify
    partial/full failure, cancellation and report-write behavior without changing
    import transaction or parameterization semantics. See the policy below.
-2. **Trigger presentation correctness:** table Structure must show only triggers
+2. **Trigger presentation correctness (closed by Phase 12C implementation and tests):**
+   table Structure must show only triggers
    proven to belong to that table, or explicitly explain unavailable association.
    Schema-wide objects must not masquerade as table objects. Metadata failure
    must display an error/retry state, never successful “No triggers”. Verify two
@@ -106,6 +107,8 @@ scan. The bounded CSV preview still intentionally contains sample data. See
 
 ## Trigger and Inspector audit
 
+The trigger findings below record the Phase 12A baseline, before Phase 12C.
+
 - `MainPanel.tsx` table Structure calls `loadSchemaObjects(connectionId, schema,
   'trigger')`, then stores the result without table filtering. The backend
   `get_schema_objects` command accepts schema/kind, not table. PostgreSQL's
@@ -114,6 +117,22 @@ scan. The bounded CSV preview still intentionally contains sample data. See
   current table. Filtering by trigger name is not a safe fix.
 - The same frontend call uses `.catch(() => [])`, disguising a failed request
   as an empty result. Both findings belong to MUST gate 2.
+
+Phase 12C closes gate 2: the dedicated `get_table_triggers(schema, table)` native
+queries restrict ownership in PostgreSQL/MySQL/SQLite, with no schema-wide
+fallback or frontend name guessing. Other drivers return UnsupportedOperation.
+Table Structure has independent loading/empty/data/unsupported/error states;
+refresh clears stale data, and stale successes/errors cannot replace the current
+request. SQLite cross-schema fixtures and frontend lifecycle/error tests verify
+these contracts. Existing trigger definition behavior is unchanged. This does
+not close the separate latest packaged-desktop acceptance gate.
+
+PostgreSQL live two-table fixture passed. MySQL reached a successful empty
+metadata query, but creating the fixture trigger was blocked by server error
+1419 (binary logging / SUPER privilege); its UUID-owned tables were cleaned up.
+MySQL populated-trigger live acceptance remains an environment validation gap;
+no server privilege or global setting was changed to bypass it.
+
 - `ObjectInspectorPanel.tsx` DDL Copy directly calls
   `navigator.clipboard?.writeText(ddl)` without the hardened clipboard helper
   or rejection feedback. This is a narrow SHOULD fix, not a claim that all
@@ -162,8 +181,8 @@ optimization; broader non-PG cancellation guarantees; broader vendor tooling.
 
 - **Scope Locked: Yes.** Option A; editing excluded.
 - **Product functionality ready: Not yet.** CSV privacy remediation is implemented
-  pending checkpoint acceptance; trigger correctness and latest desktop acceptance
-  remain open.
+  pending checkpoint acceptance; trigger scope/error gate is closed by Phase 12C
+  implementation and tests. Latest desktop acceptance remains open.
 - **Environment validation remaining:** latest macOS arm64 native QA and the
   sandbox-blocked socket checks. Other OS runtime QA is required only before
   promoting their support claims. Future binary upgrade/signing QA is separate.

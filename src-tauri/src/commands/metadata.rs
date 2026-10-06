@@ -172,6 +172,23 @@ pub async fn get_schema_objects(
 }
 
 #[tauri::command]
+pub async fn get_table_triggers(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    table: String,
+) -> Result<Vec<DbObjectInfo>, String> {
+    // Use the metadata operation lease, but no schema-wide cache: refresh must
+    // retry the current table and preserve UnsupportedOperation / real errors.
+    let operation = metadata_operation(&state.connection_manager, connection_id).await?;
+    operation
+        .driver
+        .get_table_triggers(&schema, &table)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 pub async fn get_object_ddl(
     state: State<'_, AppState>,
     connection_id: Uuid,

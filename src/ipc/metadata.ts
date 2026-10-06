@@ -61,6 +61,10 @@ export function getSchemaObjects(connectionId: string, schema: string, kind: DbO
   return invokeCommand<DbObjectInfo[]>(COMMANDS.getSchemaObjects, { connectionId, schema, kind })
 }
 
+export function getTableTriggers(connectionId: string, schema: string, table: string) {
+  return invokeCommand<DbObjectInfo[]>(COMMANDS.getTableTriggers, { connectionId, schema, table })
+}
+
 export function getObjectDdl(
   connectionId: string,
   schema: string,

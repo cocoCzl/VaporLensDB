@@ -797,6 +797,49 @@ impl DatabaseDriver for PostgresDriver {
             .collect())
     }
 
+    async fn get_table_triggers(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<DbObjectInfo>, AppError> {
+        let sql = "
+            SELECT
+                n.nspname AS schema_name,
+                t.tgname AS trigger_name,
+                CASE t.tgenabled
+                    WHEN 'O' THEN 'ENABLED'
+                    WHEN 'D' THEN 'DISABLED'
+                    WHEN 'R' THEN 'REPLICA'
+                    WHEN 'A' THEN 'ALWAYS'
+                    ELSE NULL
+                END AS status
+            FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = $1
+              AND c.relname = $2
+              AND NOT t.tgisinternal
+            ORDER BY t.tgname
+        ";
+
+        let rows = self
+            .client
+            .query(sql, &[&schema, &table])
+            .await
+            .map_err(|error| self.map_query_error(sql, error))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| DbObjectInfo {
+                schema: Some(row.get(0)),
+                name: row.get(1),
+                kind: DbObjectKind::Trigger,
+                object_type: Some("TRIGGER".to_string()),
+                status: row.get(2),
+            })
+            .collect())
+    }
+
     async fn get_object_ddl(
         &self,
         schema: &str,
