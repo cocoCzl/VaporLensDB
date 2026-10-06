@@ -146,18 +146,16 @@ impl MetadataIndexService {
         };
 
         let mut entries = vec![connection_entry(connection)];
-        if !on_progress(MetadataIndexProgress {
+        let mut progress = MetadataIndexProgress {
             current: 0,
             total: None,
-        }) {
-            return Err(AppError::ConfigError(
-                "metadata indexing cancelled".to_string(),
-            ));
-        }
+        };
+        check_cancel(&mut on_progress, progress)?;
 
         let mut capacity_reached = false;
         if has_capacity(&entries, capacity) {
-            let databases = supported_metadata(driver.get_databases().await)?;
+            let databases =
+                checked_metadata(driver.get_databases(), &mut on_progress, progress).await?;
             for database in &databases {
                 push_index_entry(&mut entries, database_entry(connection, database), capacity);
                 if !has_capacity(&entries, capacity) {
@@ -170,22 +168,25 @@ impl MetadataIndexService {
         }
 
         let schemas = if has_capacity(&entries, capacity) {
-            supported_metadata(driver.get_schemas(connection.database.as_deref()).await)?
+            checked_metadata(
+                driver.get_schemas(connection.database.as_deref()),
+                &mut on_progress,
+                progress,
+            )
+            .await?
         } else {
             Vec::new()
         };
         let schema_total = schemas.len() as u64;
-        if !on_progress(MetadataIndexProgress {
+        progress = MetadataIndexProgress {
             current: 0,
             total: Some(schema_total),
-        }) {
-            return Err(AppError::ConfigError(
-                "metadata indexing cancelled".to_string(),
-            ));
-        }
+        };
+        check_cancel(&mut on_progress, progress)?;
 
         let mut current = 0_u64;
         for schema in &schemas {
+            check_cancel(&mut on_progress, progress)?;
             if !has_capacity(&entries, capacity) {
                 capacity_reached = true;
                 break;
@@ -196,9 +197,12 @@ impl MetadataIndexService {
                 break;
             }
 
-            let tables = supported_metadata(driver.get_tables(&schema.name).await)?;
+            let tables =
+                checked_metadata(driver.get_tables(&schema.name), &mut on_progress, progress)
+                    .await?;
 
             for table in &tables {
+                check_cancel(&mut on_progress, progress)?;
                 push_index_entry(
                     &mut entries,
                     table_entry(connection, schema, table),
@@ -208,7 +212,13 @@ impl MetadataIndexService {
                     capacity_reached = true;
                     break;
                 }
-                append_columns(connection, schema, table, &mut entries, &driver, capacity).await?;
+                let columns = checked_metadata(
+                    driver.get_columns(&schema.name, &table.name),
+                    &mut on_progress,
+                    progress,
+                )
+                .await?;
+                append_columns(connection, schema, table, &mut entries, columns, capacity);
                 if !has_capacity(&entries, capacity) {
                     capacity_reached = true;
                     break;
@@ -218,14 +228,23 @@ impl MetadataIndexService {
                 break;
             }
 
-            let views = supported_metadata(driver.get_views(&schema.name).await)?;
+            let views =
+                checked_metadata(driver.get_views(&schema.name), &mut on_progress, progress)
+                    .await?;
             for view in &views {
+                check_cancel(&mut on_progress, progress)?;
                 push_index_entry(&mut entries, view_entry(connection, schema, view), capacity);
                 if !has_capacity(&entries, capacity) {
                     capacity_reached = true;
                     break;
                 }
-                append_columns(connection, schema, view, &mut entries, &driver, capacity).await?;
+                let columns = checked_metadata(
+                    driver.get_columns(&schema.name, &view.name),
+                    &mut on_progress,
+                    progress,
+                )
+                .await?;
+                append_columns(connection, schema, view, &mut entries, columns, capacity);
                 if !has_capacity(&entries, capacity) {
                     capacity_reached = true;
                     break;
@@ -235,7 +254,12 @@ impl MetadataIndexService {
                 break;
             }
 
-            let functions = supported_metadata(driver.get_functions(&schema.name).await)?;
+            let functions = checked_metadata(
+                driver.get_functions(&schema.name),
+                &mut on_progress,
+                progress,
+            )
+            .await?;
             for function in functions {
                 push_index_entry(
                     &mut entries,
@@ -249,14 +273,11 @@ impl MetadataIndexService {
             }
 
             current += 1;
-            if !on_progress(MetadataIndexProgress {
+            progress = MetadataIndexProgress {
                 current,
                 total: Some(schema_total),
-            }) {
-                return Err(AppError::ConfigError(
-                    "metadata indexing cancelled".to_string(),
-                ));
-            }
+            };
+            check_cancel(&mut on_progress, progress)?;
 
             // Keep the task responsive between schemas for cancellation checks in callers.
             if current < schema_total {
@@ -266,6 +287,7 @@ impl MetadataIndexService {
 
         let entry_count = entries.len();
         let mut indexed = self.state.write().await;
+        check_cancel(&mut on_progress, progress)?;
         if indexed.generations.get(&connection.id).copied() != Some(generation) {
             return Err(AppError::ConfigError(
                 "metadata index invalidated; retry the index".to_string(),
@@ -406,18 +428,36 @@ fn supported_metadata<T>(result: Result<Vec<T>, AppError>) -> Result<Vec<T>, App
     }
 }
 
-async fn append_columns(
+fn check_cancel(
+    on_progress: &mut impl FnMut(MetadataIndexProgress) -> bool,
+    progress: MetadataIndexProgress,
+) -> Result<(), AppError> {
+    if on_progress(progress) {
+        Ok(())
+    } else {
+        Err(AppError::ConfigError("metadata indexing cancelled".into()))
+    }
+}
+
+async fn checked_metadata<T>(
+    call: impl std::future::Future<Output = Result<Vec<T>, AppError>>,
+    on_progress: &mut (impl FnMut(MetadataIndexProgress) -> bool + Send),
+    progress: MetadataIndexProgress,
+) -> Result<Vec<T>, AppError> {
+    check_cancel(on_progress, progress)?;
+    let result = call.await;
+    check_cancel(on_progress, progress)?;
+    supported_metadata(result)
+}
+
+fn append_columns(
     connection: &ConnectionConfig,
     schema: &SchemaInfo,
     table: &TableInfo,
     entries: &mut Vec<MetadataIndexEntry>,
-    driver: &Arc<dyn DatabaseDriver>,
+    columns: Vec<ColumnInfo>,
     capacity: usize,
-) -> Result<(), AppError> {
-    if !has_capacity(entries, capacity) {
-        return Ok(());
-    }
-    let columns = supported_metadata(driver.get_columns(&schema.name, &table.name).await)?;
+) {
     for column in columns {
         push_index_entry(
             entries,
@@ -428,7 +468,6 @@ async fn append_columns(
             break;
         }
     }
-    Ok(())
 }
 
 fn has_capacity(entries: &[MetadataIndexEntry], capacity: usize) -> bool {
@@ -626,12 +665,425 @@ mod tests {
         error: fn() -> AppError,
         empty: bool,
         calls: Option<Arc<Mutex<Vec<String>>>>,
+        catalog: Option<Arc<Catalog>>,
+    }
+
+    #[derive(Default)]
+    struct Catalog {
+        tables: usize,
+        columns: usize,
+        views: bool,
+        cancel: Option<(crate::services::task_manager::TaskManager, Uuid)>,
+        pause: Option<(
+            &'static str,
+            Arc<tokio::sync::Notify>,
+            Arc<tokio::sync::Notify>,
+        )>,
+    }
+
+    impl Catalog {
+        async fn boundary(&self, stage: &str) {
+            if let Some((at, started, resume)) = &self.pause {
+                if *at == stage {
+                    started.notify_one();
+                    resume.notified().await;
+                }
+            }
+        }
+        fn objects(&self, views: bool) -> Vec<TableInfo> {
+            (0..if self.views == views { self.tables } else { 0 })
+                .map(|ordinal| TableInfo {
+                    name: format!("object_{ordinal}"),
+                    schema: Some("public".into()),
+                    table_type: if views {
+                        TableType::View
+                    } else {
+                        TableType::Table
+                    },
+                    row_count: None,
+                })
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_capacity_overlap_retains_previous_index() {
+        use crate::services::task_manager::{TaskManager, TaskStatus};
+        let service = MetadataIndexService::new();
+        let config = config();
+        let driver = |catalog| {
+            Arc::new(IndexDriver {
+                fail_at: None,
+                error: permission_error,
+                empty: false,
+                calls: None,
+                catalog: Some(Arc::new(catalog)),
+            })
+        };
+        let old = service
+            .index_connection(
+                &config,
+                driver(Catalog {
+                    tables: 1,
+                    columns: 10,
+                    ..Catalog::default()
+                }),
+                true,
+                |_| true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(old.entry_count, 14);
+        let manager = TaskManager::new();
+        let task = manager.create_task("metadata-index", "overlap", None).await;
+        let handle = manager.handle(task.id).await.unwrap();
+        let result = service
+            .index_connection(
+                &config,
+                driver(Catalog {
+                    tables: 6000,
+                    columns: 50_000,
+                    views: false,
+                    cancel: Some((manager.clone(), task.id)),
+                    ..Catalog::default()
+                }),
+                true,
+                |_| !handle.is_cancel_requested(),
+            )
+            .await;
+        assert!(
+            matches!(&result, Err(AppError::ConfigError(message)) if message == "metadata indexing cancelled")
+        );
+        let terminal =
+            crate::commands::metadata::finish_metadata_index_task(&manager, &handle, result)
+                .await
+                .unwrap();
+        assert_eq!(terminal.status, TaskStatus::Cancelled);
+        assert_eq!(service.state.read().await.entries[&config.id].len(), 14);
     }
 
     fn permission_error() -> AppError {
         AppError::QueryFailed {
             sql: "metadata fixture".into(),
             message: "permission denied".into(),
+        }
+    }
+
+    fn catalog_driver(
+        catalog: Catalog,
+        calls: &Arc<Mutex<Vec<String>>>,
+    ) -> Arc<dyn DatabaseDriver> {
+        Arc::new(IndexDriver {
+            fail_at: None,
+            error: permission_error,
+            empty: false,
+            calls: Some(calls.clone()),
+            catalog: Some(Arc::new(catalog)),
+        })
+    }
+
+    #[tokio::test]
+    async fn mid_schema_cancel_stops_table_and_view_columns() {
+        use crate::services::task_manager::{TaskManager, TaskStatus};
+        for views in [false, true] {
+            for existing in [false, true] {
+                let service = MetadataIndexService::new();
+                let config = config();
+                let calls = Arc::new(Mutex::new(Vec::new()));
+                if existing {
+                    service
+                        .index_connection(
+                            &config,
+                            catalog_driver(
+                                Catalog {
+                                    tables: 1,
+                                    columns: 10,
+                                    ..Catalog::default()
+                                },
+                                &calls,
+                            ),
+                            true,
+                            |_| true,
+                        )
+                        .await
+                        .unwrap();
+                }
+                let before =
+                    serde_json::to_value(service.state.read().await.entries.get(&config.id))
+                        .unwrap();
+                calls.lock().unwrap().clear();
+                let manager = TaskManager::new();
+                let task = manager
+                    .create_task("metadata-index", "mid-schema", None)
+                    .await;
+                let handle = manager.handle(task.id).await.unwrap();
+                let result = service
+                    .index_connection(
+                        &config,
+                        catalog_driver(
+                            Catalog {
+                                tables: 1000,
+                                columns: 1,
+                                views,
+                                cancel: Some((manager.clone(), task.id)),
+                                ..Catalog::default()
+                            },
+                            &calls,
+                        ),
+                        true,
+                        |_| !handle.is_cancel_requested(),
+                    )
+                    .await;
+                assert!(result.is_err());
+                let terminal = crate::commands::metadata::finish_metadata_index_task(
+                    &manager, &handle, result,
+                )
+                .await
+                .unwrap();
+                assert_eq!(terminal.status, TaskStatus::Cancelled);
+                let count = calls
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|call| *call == "columns")
+                    .count();
+                assert_eq!(count, 1);
+                assert_eq!(
+                    serde_json::to_value(service.state.read().await.entries.get(&config.id))
+                        .unwrap(),
+                    before
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn capacity_only_commits_and_skips_remaining_calls() {
+        use crate::services::task_manager::{TaskManager, TaskStatus};
+        let service = MetadataIndexService::new();
+        let config = config();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let result = service
+            .index_connection(
+                &config,
+                catalog_driver(
+                    Catalog {
+                        tables: 6000,
+                        columns: 10,
+                        ..Catalog::default()
+                    },
+                    &calls,
+                ),
+                true,
+                |_| true,
+            )
+            .await;
+        let summary = result.as_ref().unwrap();
+        assert_eq!(summary.entry_count, 50_000);
+        assert!(summary.capacity_reached);
+        assert_eq!(service.state.read().await.entries[&config.id].len(), 50_000);
+        let recorded = calls.lock().unwrap().clone();
+        assert_eq!(
+            recorded.iter().filter(|call| *call == "columns").count(),
+            4546
+        );
+        assert!(!recorded
+            .iter()
+            .any(|call| call == "views" || call == "functions"));
+        let manager = TaskManager::new();
+        let task = manager
+            .create_task("metadata-index", "capacity", None)
+            .await;
+        let handle = manager.handle(task.id).await.unwrap();
+        let terminal =
+            crate::commands::metadata::finish_metadata_index_task(&manager, &handle, result)
+                .await
+                .unwrap();
+        assert_eq!(terminal.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_work_and_during_every_metadata_call_never_commits() {
+        use crate::services::task_manager::TaskManager;
+        for stage in [
+            "before",
+            "databases",
+            "schemas",
+            "tables",
+            "columns",
+            "views",
+            "functions",
+        ] {
+            let service = MetadataIndexService::new();
+            let config = config();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let manager = TaskManager::new();
+            let task = manager.create_task("metadata-index", stage, None).await;
+            let handle = manager.handle(task.id).await.unwrap();
+            let started = Arc::new(tokio::sync::Notify::new());
+            let resume = Arc::new(tokio::sync::Notify::new());
+            if stage == "before" {
+                manager.request_cancel(task.id).await.unwrap();
+            }
+            let driver = catalog_driver(
+                Catalog {
+                    tables: 1,
+                    columns: 1,
+                    pause: Some((stage, started.clone(), resume.clone())),
+                    ..Catalog::default()
+                },
+                &calls,
+            );
+            let (result, ()) = tokio::join!(
+                service.index_connection(&config, driver, true, |_| !handle.is_cancel_requested()),
+                async {
+                    if stage != "before" {
+                        started.notified().await;
+                        manager.request_cancel(task.id).await.unwrap();
+                        resume.notify_one();
+                    }
+                }
+            );
+            assert!(
+                matches!(result, Err(AppError::ConfigError(message)) if message == "metadata indexing cancelled")
+            );
+            assert!(!service.state.read().await.entries.contains_key(&config.id));
+            if stage == "before" {
+                assert!(calls.lock().unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_waiting_to_commit_preserves_old_index() {
+        use crate::services::task_manager::TaskManager;
+        let service = MetadataIndexService::new();
+        let config = config();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        service
+            .index_connection(
+                &config,
+                catalog_driver(
+                    Catalog {
+                        tables: 1,
+                        columns: 10,
+                        ..Catalog::default()
+                    },
+                    &calls,
+                ),
+                true,
+                |_| true,
+            )
+            .await
+            .unwrap();
+        let manager = TaskManager::new();
+        let task = manager.create_task("metadata-index", "commit", None).await;
+        let handle = manager.handle(task.id).await.unwrap();
+        let started = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let driver = catalog_driver(
+            Catalog {
+                pause: Some(("functions", started.clone(), resume.clone())),
+                ..Catalog::default()
+            },
+            &calls,
+        );
+        let mut build = Box::pin(
+            service.index_connection(&config, driver, true, |_| !handle.is_cancel_requested()),
+        );
+        tokio::select! {
+            _ = started.notified() => {}
+            result = &mut build => panic!("unexpected completion: {result:?}"),
+        }
+        let guard = service.state.write().await;
+        resume.notify_one();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut build)
+                .await
+                .is_err()
+        );
+        manager.request_cancel(task.id).await.unwrap();
+        drop(guard);
+        assert!(build.await.is_err());
+        assert_eq!(service.state.read().await.entries[&config.id].len(), 14);
+    }
+
+    #[tokio::test]
+    async fn final_guard_rejects_capacity_even_after_all_loop_checks_pass() {
+        let service = MetadataIndexService::new();
+        let config = config();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let result = service
+            .index_connection_with_limit(
+                &config,
+                catalog_driver(Catalog::default(), &calls),
+                true,
+                1,
+                |_| service.state.try_read().is_ok(),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(AppError::ConfigError(message)) if message == "metadata indexing cancelled")
+        );
+        assert!(!service.state.read().await.entries.contains_key(&config.id));
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalidated_builds_never_commit() {
+        for clear in [false, true] {
+            let service = MetadataIndexService::new();
+            let config = config();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let started = Arc::new(tokio::sync::Notify::new());
+            let resume = Arc::new(tokio::sync::Notify::new());
+            let driver = catalog_driver(
+                Catalog {
+                    pause: Some(("functions", started.clone(), resume.clone())),
+                    ..Catalog::default()
+                },
+                &calls,
+            );
+            let (result, ()) = tokio::join!(
+                service.index_connection(&config, driver, true, |_| true),
+                async {
+                    started.notified().await;
+                    if clear {
+                        service.clear_connection(config.id).await;
+                    } else {
+                        service
+                            .index_connection(
+                                &config,
+                                catalog_driver(
+                                    Catalog {
+                                        tables: 1,
+                                        columns: 10,
+                                        ..Catalog::default()
+                                    },
+                                    &calls,
+                                ),
+                                true,
+                                |_| true,
+                            )
+                            .await
+                            .unwrap();
+                    }
+                    resume.notify_one();
+                }
+            );
+            assert!(
+                matches!(result, Err(AppError::ConfigError(message)) if message.contains("invalidated"))
+            );
+            assert_eq!(
+                service
+                    .state
+                    .read()
+                    .await
+                    .entries
+                    .get(&config.id)
+                    .map(Vec::len),
+                if clear { None } else { Some(14) }
+            );
         }
     }
 
@@ -686,9 +1138,15 @@ mod tests {
             Err(self.unsupported())
         }
         async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, AppError> {
+            if let Some(catalog) = &self.catalog {
+                catalog.boundary("databases").await;
+            }
             self.metadata("databases", vec![DatabaseInfo { name: "app".into() }])
         }
         async fn get_schemas(&self, _: Option<&str>) -> Result<Vec<SchemaInfo>, AppError> {
+            if let Some(catalog) = &self.catalog {
+                catalog.boundary("schemas").await;
+            }
             self.metadata(
                 "schemas",
                 vec![SchemaInfo {
@@ -698,6 +1156,10 @@ mod tests {
             )
         }
         async fn get_tables(&self, _: &str) -> Result<Vec<TableInfo>, AppError> {
+            if let Some(catalog) = &self.catalog {
+                catalog.boundary("tables").await;
+                return self.metadata("tables", catalog.objects(false));
+            }
             self.metadata(
                 "tables",
                 vec![TableInfo {
@@ -709,12 +1171,29 @@ mod tests {
             )
         }
         async fn get_views(&self, _: &str) -> Result<Vec<TableInfo>, AppError> {
+            if let Some(catalog) = &self.catalog {
+                catalog.boundary("views").await;
+                return self.metadata("views", catalog.objects(true));
+            }
             self.metadata("views", Vec::new())
         }
         async fn get_functions(&self, _: &str) -> Result<Vec<String>, AppError> {
+            if let Some(catalog) = &self.catalog {
+                catalog.boundary("functions").await;
+            }
             self.metadata("functions", Vec::new())
         }
         async fn get_columns(&self, _: &str, _: &str) -> Result<Vec<ColumnInfo>, AppError> {
+            if let Some(catalog) = &self.catalog {
+                catalog.boundary("columns").await;
+                if let Some((manager, task_id)) = &catalog.cancel {
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    manager.request_cancel(*task_id).await.unwrap();
+                }
+                return self.metadata("columns", (0..catalog.columns).map(|ordinal| {
+                    serde_json::from_value(serde_json::json!({ "table": "large", "name": format!("column_{ordinal}"), "ordinalPosition": ordinal + 1, "dataType": "INTEGER", "nullable": false, "isPrimaryKey": false })).unwrap()
+                }).collect());
+            }
             self.metadata("columns", vec![serde_json::from_value(serde_json::json!({ "table": "kept", "name": "id", "ordinalPosition": 1, "dataType": "INTEGER", "nullable": false, "isPrimaryKey": true })).unwrap()])
         }
         async fn get_indexes(&self, _: &str, _: &str) -> Result<Vec<IndexInfo>, AppError> {
@@ -756,6 +1235,7 @@ mod tests {
                     error: permission_error,
                     empty: false,
                     calls: Some(calls.clone()),
+                    catalog: None,
                 }),
                 true,
                 4,
@@ -789,6 +1269,7 @@ mod tests {
                             error: permission_error,
                             empty: false,
                             calls: None,
+                            catalog: None,
                         }),
                         false,
                         |_| true,
@@ -806,6 +1287,7 @@ mod tests {
                         error,
                         empty: false,
                         calls: None,
+                        catalog: None,
                     }),
                     true,
                     |_| true,
@@ -878,6 +1360,7 @@ mod tests {
                         },
                         empty: false,
                         calls: None,
+                        catalog: None,
                     }),
                     true,
                     |_| true,
@@ -900,6 +1383,7 @@ mod tests {
                     error: permission_error,
                     empty: true,
                     calls: None,
+                    catalog: None,
                 }),
                 false,
                 |_| true,

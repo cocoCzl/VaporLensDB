@@ -11,8 +11,8 @@ use crate::{
     },
     services::{
         connection_manager::{ConnectionManager, QueryOperation, QueryOperationStart},
-        metadata_index::{MetadataIndexProgress, MetadataSearchResult},
-        task_manager::TaskHandle,
+        metadata_index::{MetadataIndexProgress, MetadataIndexSummary, MetadataSearchResult},
+        task_manager::{TaskHandle, TaskInfo, TaskManager},
     },
     AppState,
 };
@@ -279,9 +279,14 @@ pub async fn start_metadata_index_task(
             // Waiting is cancellable without interrupting the operation currently
             // using this connection. Keep the lease through the entire index walk.
             let operation = wait_metadata_index_operation(operation, &handle).await?;
+            let mut last_progress = None;
             index
                 .index_connection(&connection, operation.driver.clone(), force, |progress| {
-                    let _ = progress_tx.send(progress);
+                    let position = (progress.current, progress.total);
+                    if last_progress != Some(position) {
+                        let _ = progress_tx.send(progress);
+                        last_progress = Some(position);
+                    }
                     !handle.is_cancel_requested()
                 })
                 .await
@@ -290,28 +295,7 @@ pub async fn start_metadata_index_task(
         drop(progress_tx);
         let _ = progress_task.await;
 
-        let final_task = if handle.is_cancel_requested() {
-            manager
-                .finish_cancelled(handle.id, "Metadata indexing cancelled")
-                .await
-        } else {
-            match result {
-                Ok(summary) => {
-                    let suffix = if summary.capacity_reached {
-                        "; index capacity reached"
-                    } else {
-                        ""
-                    };
-                    manager
-                        .finish_success(
-                            handle.id,
-                            format!("Indexed {} metadata objects{}", summary.entry_count, suffix),
-                        )
-                        .await
-                }
-                Err(error) => manager.finish_failed(handle.id, error.to_string()).await,
-            }
-        };
+        let final_task = finish_metadata_index_task(&manager, &handle, result).await;
 
         if let Ok(task) = final_task {
             emit_task_update(&app_for_task, &task);
@@ -320,6 +304,34 @@ pub async fn start_metadata_index_task(
 
     emit_task_update(&app, &task);
     Ok(task)
+}
+
+pub(crate) async fn finish_metadata_index_task(
+    manager: &TaskManager,
+    handle: &TaskHandle,
+    result: Result<MetadataIndexSummary, AppError>,
+) -> Result<TaskInfo, AppError> {
+    match result {
+        Ok(summary) => {
+            let suffix = if summary.capacity_reached {
+                "; index capacity reached"
+            } else {
+                ""
+            };
+            manager
+                .finish_success(
+                    handle.id,
+                    format!("Indexed {} metadata objects{}", summary.entry_count, suffix),
+                )
+                .await
+        }
+        Err(_) if handle.is_cancel_requested() => {
+            manager
+                .finish_cancelled(handle.id, "Metadata indexing cancelled")
+                .await
+        }
+        Err(error) => manager.finish_failed(handle.id, error.to_string()).await,
+    }
 }
 
 #[tauri::command]
@@ -423,6 +435,65 @@ mod tests {
         let info = manager.create_task("metadata-index", "test", None).await;
         let handle = manager.handle(info.id).await.unwrap();
         (manager, handle)
+    }
+
+    #[tokio::test]
+    async fn committed_index_stays_succeeded_when_cancel_arrives_after_service_return() {
+        use crate::services::task_manager::TaskStatus;
+        let (connections, config) = connection().await;
+        let operation = metadata_operation(&connections, config.id).await.unwrap();
+        let index = MetadataIndexService::new();
+        let (manager, handle) = task().await;
+        let result = index
+            .index_connection(&config, operation.driver.clone(), true, |_| {
+                !handle.is_cancel_requested()
+            })
+            .await;
+        assert!(result.is_ok());
+        manager.request_cancel(handle.id).await.unwrap();
+        let terminal = finish_metadata_index_task(&manager, &handle, result)
+            .await
+            .unwrap();
+        assert_eq!(terminal.status, TaskStatus::Succeeded);
+        assert!(!index
+            .search(&config.name, Some(config.id), 20)
+            .await
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelled_service_and_invalidated_service_have_distinct_task_statuses() {
+        use crate::services::task_manager::TaskStatus;
+        let (connections, config) = connection().await;
+        let operation = metadata_operation(&connections, config.id).await.unwrap();
+        let index = MetadataIndexService::new();
+        let (manager, handle) = task().await;
+        manager.request_cancel(handle.id).await.unwrap();
+        let result = index
+            .index_connection(&config, operation.driver.clone(), true, |_| {
+                !handle.is_cancel_requested()
+            })
+            .await;
+        assert!(result.is_err());
+        let terminal = finish_metadata_index_task(&manager, &handle, result)
+            .await
+            .unwrap();
+        assert_eq!(terminal.status, TaskStatus::Cancelled);
+        assert!(index
+            .search(&config.name, Some(config.id), 20)
+            .await
+            .is_empty());
+        let (manager, handle) = task().await;
+        let terminal = finish_metadata_index_task(
+            &manager,
+            &handle,
+            Err(AppError::ConfigError(
+                "metadata index invalidated; retry the index".into(),
+            )),
+        )
+        .await
+        .unwrap();
+        assert_eq!(terminal.status, TaskStatus::Failed);
     }
 
     #[tokio::test]
