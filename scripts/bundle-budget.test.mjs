@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  AUDITED_BASELINE,
   classifyApplicationChunks,
   evaluateBudget,
+  HARD_LIMITS,
   measureApplicationChunks,
+  REGRESSION_MARGIN,
 } from './bundle-budget.mjs'
 
 const manifest = {
@@ -95,4 +98,41 @@ test('keeps total application JS informational', () => {
     evaluateBudget(metrics, { startupApplicationJsGzip: 150, largestLazyChunkGzip: 70 }),
     [],
   )
+})
+
+test('reviewed baseline and small growth pass the default five-percent policy', () => {
+  assert.equal(REGRESSION_MARGIN, 0.05)
+  for (const growth of [0, 0.01, 0.04]) {
+    assert.deepEqual(evaluateBudget({
+      startupApplicationJsGzip: Math.ceil(AUDITED_BASELINE.startupApplicationJsGzip * (1 + growth)),
+      largestLazyChunkGzip: AUDITED_BASELINE.largestLazyChunkGzip,
+      totalApplicationJsGzip: 10_000_000,
+    }), [])
+  }
+})
+
+test('six-percent startup growth still fails the default policy', () => {
+  const startupApplicationJsGzip = Math.ceil(AUDITED_BASELINE.startupApplicationJsGzip * 1.06)
+  assert.deepEqual(evaluateBudget({
+    startupApplicationJsGzip,
+    largestLazyChunkGzip: AUDITED_BASELINE.largestLazyChunkGzip,
+  }), [`startupApplicationJsGzip: ${startupApplicationJsGzip} > ${HARD_LIMITS.startupApplicationJsGzip}`])
+})
+
+test('rounded startup limit is inclusive, but one byte above it fails', () => {
+  const limit = Math.ceil(AUDITED_BASELINE.startupApplicationJsGzip * (1 + REGRESSION_MARGIN))
+  const metrics = { startupApplicationJsGzip: limit, largestLazyChunkGzip: 0 }
+  assert.deepEqual(evaluateBudget(metrics), [])
+  assert.deepEqual(evaluateBudget({ ...metrics, startupApplicationJsGzip: limit + 1 }), [
+    `startupApplicationJsGzip: ${limit + 1} > ${limit}`,
+  ])
+})
+
+test('startup rebaseline preserves the independent lazy limit', () => {
+  assert.equal(AUDITED_BASELINE.largestLazyChunkGzip, 74_022)
+  assert.equal(HARD_LIMITS.largestLazyChunkGzip, 77_724)
+  assert.deepEqual(evaluateBudget({
+    startupApplicationJsGzip: AUDITED_BASELINE.startupApplicationJsGzip,
+    largestLazyChunkGzip: 77_725,
+  }), ['largestLazyChunkGzip: 77725 > 77724'])
 })

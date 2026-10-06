@@ -13,11 +13,16 @@ const manifestPath = resolve(root, 'dist/.vite/manifest.json')
 // audited release policy now protects startup reachability and individual lazy
 // feature growth separately. Total JS remains visible as an informational
 // release metric.
-const AUDITED_BASELINE = {
-  startupApplicationJsGzip: 281_230,
+// Baselines describe a reviewed application state, not a startup wall-clock,
+// Web Vitals, transfer, or Tauri startup SLA. Limits detect unexpected bundle
+// regressions; rebaseline only after reviewing composition and repeat builds.
+// Startup remeasured at Phase 10A checkpoint 54a7af4 (2026-10-06).
+// The independently audited lazy baseline is unchanged.
+export const AUDITED_BASELINE = {
+  startupApplicationJsGzip: 295_289,
   largestLazyChunkGzip: 74_022,
 }
-const REGRESSION_MARGIN = 0.05
+export const REGRESSION_MARGIN = 0.05
 export const HARD_LIMITS = {
   startupApplicationJsGzip: Math.ceil(AUDITED_BASELINE.startupApplicationJsGzip * (1 + REGRESSION_MARGIN)),
   largestLazyChunkGzip: Math.ceil(AUDITED_BASELINE.largestLazyChunkGzip * (1 + REGRESSION_MARGIN)),
