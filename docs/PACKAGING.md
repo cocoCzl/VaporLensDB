@@ -2,11 +2,11 @@
 
 [简体中文](PACKAGING.zh-CN.md) · [Back to README](../README.md)
 
-VaporLensDB packages must be built on their target operating system. This
-repository does not currently automate releases, code signing, or macOS
-notarization. VaporLensDB remains in **Pre-1.0 Development / RC testing**. A
-normal package build creates a local QA artifact, while an explicitly approved
-release-candidate flow may publish test artifacts as a GitHub Pre-release.
+Current development distribution is **source-first**. Build packages on their
+target operating system for local use. Public binary releases and DMG uploads,
+Developer ID signing, and notarization are deferred. The RC/upload/formal-release
+sections below are retained engineering procedures, not the current installation
+path or authorization to publish. Start with [INSTALL.md](INSTALL.md).
 
 Do not commit installers or checksums or attach them to pull requests. Local QA
 artifacts must not be uploaded directly to a GitHub Release. The manually
@@ -29,7 +29,9 @@ artifacts/macos/aarch64/
 └── SHA256SUMS.txt
 ```
 
-Intel Macs use `artifacts/macos/x86_64/`. Verify the DMG checksum with:
+The accepted fresh-clone/package path is Apple Silicon macOS. The Intel target
+stages under `artifacts/macos/x86_64/`, but Intel runtime/package acceptance is
+not established by that evidence. Verify the local DMG checksum with:
 
 ```bash
 cd artifacts/macos/aarch64
@@ -64,11 +66,14 @@ below.
 
 ## Prerequisites
 
-All build machines need:
+Use the [toolchain policy](INSTALL.md#toolchain-policy): a current Node 22.x patch
+(at least 22.22.2) or 24.x patch (at least 24.15.0) following locked test dependency
+requirements, pnpm 10, current stable Rust with rustfmt/clippy, and JDK 21 for the
+project-owned JDBC bridge. The documented choices are not a promise of a fully
+tested compatibility range. Vendor JDBC JARs are not build prerequisites.
 
-- Node.js 22 and pnpm 10
-- Rust stable
-- JDK 21 for the JDBC bridge
+The verified Apple Silicon source build needs no full Xcode, Apple Developer
+Program membership, Developer ID certificate, or notarization credentials.
 
 macOS builds also need Xcode Command Line Tools. Windows builds also need
 Microsoft C++ Build Tools with the MSVC toolchain, Microsoft Edge WebView2
@@ -238,8 +243,8 @@ A pre-1.0 RC may be published only after explicit approval:
    before making the Pre-release visible.
 
 An RC is a test distribution, not a stable or production-ready release. The
-approved plan and release-specific facts for the current candidate are recorded
-in [the 0.9.1 RC 1 release plan](release/0.9.1-rc.1.md); future candidates must
+historical proposal and its recorded evidence are retained in
+[the deferred 0.9.1 RC 1 plan](release/0.9.1-rc.1.md); future candidates must
 use their own release-specific plan rather than copying its tag or platform
 scope into this general guide.
 

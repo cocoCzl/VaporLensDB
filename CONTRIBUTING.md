@@ -6,17 +6,23 @@ command behavior.
 
 ## Development Setup
 
-Install the required toolchains:
+Current distribution is source-first. Follow the [installation guide](docs/INSTALL.md)
+for clone instructions, platform prerequisites, and the detailed toolchain policy:
 
-- Node.js 22
-- pnpm 10
-- Rust stable
-- JDK 21 for the lightweight JDBC bridge
+- A current Node 22.x patch (at least 22.22.2) or 24.x patch (at least 24.15.0),
+  following the locked test dependencies; CI is configured for Node 22.
+- pnpm 10, matching CI; no exact patch pin is adopted.
+- Current stable Rust with rustfmt and clippy; no project MSRV is declared.
+- JDK 21 for the project-owned JDBC bridge; vendor JDBC JARs are only needed
+  when configuring the corresponding runtime data source.
+- Host-specific Tauri prerequisites, including Xcode Command Line Tools on macOS.
+  The verified Apple Silicon source path does not require full Xcode or Apple
+  Developer signing/notarization credentials.
 
-Install dependencies:
+Install dependencies from the repository root:
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
 Run the frontend:
@@ -31,16 +37,22 @@ Run the desktop app:
 pnpm tauri dev
 ```
 
+For JDBC during desktop development, first run `./build.sh jdbc-bridge`.
+Neither development command creates an installer; `pnpm build` builds frontend
+assets only.
+
 ## Verification
 
-Before opening a pull request or publishing a release, run:
+Before opening a pull request, run:
 
 ```bash
 ./build.sh check
 ```
 
-That command builds the JDBC bridge and runs frontend lint, frontend build,
-Rust clippy with warnings denied, and Rust tests.
+That command builds and tests the JDBC bridge, runs the sensitive-information
+scan, frontend lint/tests/build, packaging tests, workflow smoke checks, bundle
+budgets, Rust formatting, clippy with warnings denied, and deterministic Rust
+tests. It does not create an installer or need private database configuration.
 
 GitHub Actions runs the default clone-safe checks on pushes and pull requests
 to `main` and `master`, including the sensitive information scan, frontend
@@ -54,9 +66,11 @@ test is:
 pnpm test:object-tree-workflow
 ```
 
-For local QA packaging, artifact locations, and future 1.0 formal-distribution
-procedures, see `docs/PACKAGING.md`. Pre-1.0 development does not publish
-installers, checksums, tags, or GitHub Releases.
+For a local packaged app, run `./build.sh current`; it validates again before
+packaging. Artifact locations and separately scoped future distribution
+procedures are in [PACKAGING.md](docs/PACKAGING.md). Local installers and
+checksums are build outputs; the current stage does not publish GitHub binary
+Releases or upload DMGs.
 
 ## Live Database Tests
 

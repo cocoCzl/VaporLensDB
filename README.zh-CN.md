@@ -10,33 +10,68 @@ VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数
 
 ## 项目状态
 
-**Pre-1.0 Development / RC testing。** VaporLensDB 仍处于开发阶段，不是 stable 或
-production-ready 软件，源码构建仍是主要验证方式。对于已经有 runtime evidence 的平台，
-项目可以提供明确标记为 GitHub Pre-release 的 RC 测试产物；它们是公开测试构建，不是
-稳定版本。
+**Pre-1.0 Development。** VaporLensDB 仍处于开发阶段，不是 stable 或
+production-ready 软件。
 
-## 分发方式
+## 当前分发方式：源码构建
 
-如需从源码体验 VaporLensDB，请 clone 本仓库并在本地运行。若已有获准发布的 RC，只能从
-项目 GitHub Releases 页面获取，并确认 GitHub 将其标记为 **Pre-release**。请阅读
-[安装指南](docs/INSTALL.zh-CN.md)，其中区分本地 QA artifact、RC 测试 artifact 与未来
-stable release。
+当前开发阶段采用 **source-first**：clone 仓库，在自己的机器上构建 VaporLensDB。
+本阶段不进行公开二进制发布、DMG 上传、Developer ID 签名或 notarization。未来的
+二进制发布流程单独保留在工程文档中，不是使用源码的前置条件。
+
+### 前提、clone 与本地构建
+
+建议使用当前 Node.js 22 补丁版本（22.x 中的 22.22.2 或更新版本）或 Node.js 24
+补丁版本（24.x 中的 24.15.0 或更新版本）、pnpm 10、当前 stable Rust/cargo
+（包含 rustfmt 和 clippy）以及 JDK 21。Node 补丁建议来自锁定的测试依赖，
+不代表项目对整个版本范围的兼容承诺。CI 配置、本地实测版本与最低要求的区别见
+[工具链政策](docs/INSTALL.zh-CN.md#工具链政策)。
+
+macOS 需要 Xcode Command Line Tools。已验证的 Apple Silicon 源码构建不需要
+完整 Xcode、Apple Developer Program 会员、Developer ID 证书或公证凭据。
+其他系统还需安装对应的 [Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。
+
+```bash
+git clone https://github.com/cocoCzl/VaporLensDB.git
+cd VaporLensDB
+pnpm install --frozen-lockfile
+./build.sh current
+```
+
+`current` 先执行确定性校验，再为当前平台打包。没有 `node_modules` 时脚本会自动
+按 lockfile 安装依赖；保留上面的显式安装步骤，也能让已有 checkout 与 lockfile 同步。
+本地构建和 `./build.sh check` 均不需要 `.env`、数据库凭据或厂商 JDBC JAR。
+
+Apple Silicon macOS 的本地产物为：
+
+```text
+artifacts/macos/aarch64/VaporLensDB.app
+artifacts/macos/aarch64/VaporLensDB.dmg
+artifacts/macos/aarch64/SHA256SUMS.txt
+```
+
+这些是本地构建产物，不是公开二进制 release。校验和打包会构建项目自有的 JDBC bridge，
+因此即使不用 JDBC 数据源也需要 JDK 21。Oracle/自定义厂商 JAR 只在运行时配置对应
+数据源时提供。
+
+平台细节见[安装与首次使用](docs/INSTALL.zh-CN.md)。
 
 ## 平台与数据库状态
 
 唯一的当前状态来源是[支持矩阵](docs/SUPPORT.md)。它将“已实现”、自动化证据、各平台运行时
 证据和 1.0 支持等级明确分开。
 
-VaporLensDB 是一款跨平台数据库管理工具，面向 macOS、Windows 和 Linux。当前 macOS 已完成核心运行时验证，Windows/Linux 正处于构建与运行时验证阶段。
+已验证的 fresh clone → 校验 → 本地打包路径是 **macOS Apple Silicon / arm64**。
+Intel macOS、Windows 和 Linux 有原生源码构建目标，但不属于这份验收证据的覆盖范围。
 
-| 平台 | 构建目标 | 运行时验证 |
+| 平台 | 构建目标 | 桌面运行时验证 |
 | --- | --- | --- |
-| macOS | 是 | 已验证 |
+| macOS Apple Silicon / arm64 | 是 | Tier-A 已验证 |
+| macOS Intel / x86_64 | 是 | 当前验收未覆盖 |
 | Windows | 是 | **NOT EXECUTED** |
 | Linux | 是 | **NOT EXECUTED** |
 
-- macOS 的 MySQL、PostgreSQL、SQLite 已完成 Tier-A runtime 验证。
-- Windows 和 Linux 的桌面运行时均为 **NOT EXECUTED**。
+- macOS arm64 的 MySQL、PostgreSQL、SQLite 已完成 Tier-A runtime 验证。
 - Oracle JDBC 与自定义 JDBC 是 Experimental / Best-effort，不是 Tier-A。
 - SQL Server 已实现，但不会作为 1.0 Tier-A 宣传目标。
 
@@ -55,67 +90,30 @@ VaporLensDB 是一款跨平台数据库管理工具，面向 macOS、Windows 和
 ODBC 和完整可配置的危险 SQL 策略目前不在范围内；完整 1.0 边界见
 [支持矩阵](docs/SUPPORT.md)。
 
-## 源码优先快速开始
+## 开发、校验与本地打包
 
-前提：Node.js 22、pnpm 10、Rust stable、JDK 21，以及当前系统所需的
-[Tauri 前提条件](https://v2.tauri.app/start/prerequisites/)。
+安装依赖后，在仓库根目录按需执行：
 
-```bash
-git clone https://github.com/cocoCzl/VaporLensDB.git
-cd VaporLensDB
-pnpm install
-pnpm tauri dev
-```
+| 用途 | 命令 | 结果 |
+| --- | --- | --- |
+| 前端开发 | `pnpm dev` | Vite 开发服务器；桌面命令需要 Tauri |
+| 桌面开发 | `pnpm tauri dev` | Tauri 开发应用，不生成 DMG |
+| 校验 | `./build.sh check` | 完整确定性 gate，不生成安装包 |
+| 本地打包 | `./build.sh current` | 校验后生成当前平台安装包 |
 
-如需可复现地校验本地 checkout，请使用 lockfile：
+桌面开发中需要 JDBC 时，先运行 `./build.sh jdbc-bridge`。`pnpm build` 只构建
+前端资源；`pnpm build:app` 和不带参数的 `./build.sh` 均等价于 `./build.sh current`。
 
-```bash
-pnpm install --frozen-lockfile
-./build.sh check
-```
+Windows 和 Linux 的本地产物分别整理到 `artifacts/windows/<architecture>/`
+和 `artifacts/linux/<architecture>/`。原生平台前提及包型见
+[打包指南](docs/PACKAGING.zh-CN.md)。真实数据库集成测试是独立的 opt-in 工作，
+见[测试说明](docs/TESTING.md)，不是 fresh clone 构建的必需步骤。
 
-`./build.sh check` 和 `./build.sh current` 始终会构建项目自有的 JDBC bridge，
-因此即使不配置厂商 JDBC 驱动，这两个命令也需要 JDK。厂商 JDBC JAR 只在创建
-Oracle 或自定义 JDBC 数据源时需要。
-
-平台特定的开发与本地 QA 打包前提见[打包指南](docs/PACKAGING.zh-CN.md)。本地打包
-不代表已有 official installer 可供下载。
-
-从源码启动应用后：
+启动应用后：
 
 1. 打开“新建连接”，选择数据库类型并填写连接信息，然后点击“测试”和“保存并连接”。
 2. 在数据源浏览器中查看 Schema 和表，或新建 SQL 标签页执行查询。SQL 标签页会保持
    自己的执行数据源，因此浏览其他连接不会改变执行目标；可在“设置”中切换界面语言和主题。
-
-Oracle 和自定义 JDBC 连接需要本地 JDBC 驱动 JAR，创建连接时应用会提示添加。
-
-## 本地校验与 QA 打包
-
-本地打包前运行确定性开发校验：
-
-```bash
-./build.sh check
-./build.sh live-tests --mysql --oracle  # 显式选择真实数据库集成测试
-```
-
-在目标操作系统上构建：
-
-```bash
-./build.sh mac       # macOS：.app 和 .dmg
-./build.sh windows   # Windows：.msi 和 NSIS .exe
-./build.sh linux     # Linux：AppImage、DEB 和 RPM
-```
-
-`pnpm build:app` 会为当前平台打包：macOS 生成 App 和 DMG，Windows 生成 MSI 和 NSIS，
-Linux 生成 AppImage、DEB 和 RPM。不带参数运行 `./build.sh` 等价于 `./build.sh current`。
-
-PostgreSQL、MySQL、Oracle 与 JDBC 联网测试是独立的显式 opt-in suite。需要运行时，
-将 `.env.example` 复制为已被 Git 忽略的 `.env`，再明确选择要执行的数据库集成测试；普通
-校验和打包不会加载私密数据库配置。所需权限和安全说明见测试文档。
-
-这些输出默认是本地 QA artifact。只有经过[打包与发布指南](docs/PACKAGING.zh-CN.md)
-中明确批准的 clean build、checksum、tag 和 GitHub Pre-release 流程，才会成为公开 RC
-测试 artifact。
 
 ## Road to 1.0
 

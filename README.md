@@ -11,19 +11,58 @@ Current version: **0.9.1**
 
 ## Project status
 
-**Pre-1.0 Development / RC testing.** VaporLensDB is still under development
-and is not stable or production-ready. Source builds remain the primary way to
-evaluate it. Explicitly marked GitHub Pre-releases may provide release-candidate
-artifacts for platforms with recorded runtime evidence; they are public test
-builds, not stable releases.
+**Pre-1.0 Development.** VaporLensDB is still under development and is not
+stable or production-ready.
 
-## Distribution
+## Current distribution: source build
 
-To build from source, clone this repository and run it locally. When an approved
-RC is available, obtain it only from the project's GitHub Releases page and
-confirm that GitHub marks it as a **Pre-release**. See the
-[installation guide](docs/INSTALL.md) for the distinction between local QA
-artifacts, RC test artifacts, and future stable releases.
+Current development distribution is **source-first**: clone the repository and
+build VaporLensDB on your own machine. Public binary releases and DMG uploads,
+Developer ID signing, and notarization are not part of this stage. Future binary
+release procedures remain documented separately; they are not prerequisites
+for using the source.
+
+### Prerequisites, clone, and local build
+
+Use a current Node.js 22 patch (22.22.2 or newer within 22.x) or Node.js 24 patch
+(24.15.0 or newer within 24.x), pnpm 10, current stable Rust/cargo with rustfmt
+and clippy, and JDK 21. These Node patch recommendations follow the locked test
+dependencies; they are not a project-wide compatibility guarantee. See the
+[toolchain policy](docs/INSTALL.md#toolchain-policy) for CI configuration,
+locally tested versions, and the distinction from minimum requirements.
+
+On macOS, install Xcode Command Line Tools. The verified Apple Silicon source
+build does not require full Xcode, an Apple Developer Program membership,
+a Developer ID certificate, or notarization credentials. Other hosts need their
+[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+
+```bash
+git clone https://github.com/cocoCzl/VaporLensDB.git
+cd VaporLensDB
+pnpm install --frozen-lockfile
+./build.sh current
+```
+
+`current` runs the deterministic checks and then packages for the host platform.
+It installs from the lockfile automatically if `node_modules` is absent; the
+explicit install above also synchronizes an existing checkout with the lockfile.
+Neither this build nor `./build.sh check` needs `.env`, database credentials, or
+vendor JDBC JARs.
+
+On Apple Silicon macOS, local outputs are:
+
+```text
+artifacts/macos/aarch64/VaporLensDB.app
+artifacts/macos/aarch64/VaporLensDB.dmg
+artifacts/macos/aarch64/SHA256SUMS.txt
+```
+
+These are local build artifacts, not published binary releases. The project-owned
+JDBC bridge is built as part of validation and packaging, so JDK 21 is needed
+even without JDBC data sources. Oracle/custom vendor JARs are supplied only when
+configuring those data sources at runtime.
+
+See [installation and first use](docs/INSTALL.md) for platform details.
 
 ## Platform and database status
 
@@ -31,19 +70,18 @@ The canonical [support matrix](docs/SUPPORT.md) records implementation,
 automated evidence, per-platform runtime evidence, and 1.0 support tier as
 separate facts.
 
-VaporLensDB is a cross-platform database management tool for macOS, Windows,
-and Linux. macOS has completed real runtime validation for the Tier-A database
-scope. Windows and Linux build targets are available, while real desktop runtime
-validation is still pending.
+The verified fresh-clone → validation → local package path is **macOS Apple
+Silicon / arm64**. Intel macOS, Windows, and Linux have native source build
+targets, but are not covered by that acceptance evidence.
 
-| Platform | Build Target | Runtime Verification |
+| Platform | Build Target | Desktop Runtime Verification |
 | --- | --- | --- |
-| macOS | Yes | Verified |
+| macOS Apple Silicon / arm64 | Yes | Tier-A verified |
+| macOS Intel / x86_64 | Yes | Not covered by current acceptance |
 | Windows | Yes | **NOT EXECUTED** |
 | Linux | Yes | **NOT EXECUTED** |
 
-- macOS Tier-A runtime is verified for MySQL, PostgreSQL, and SQLite.
-- Windows and Linux desktop runtime are **NOT EXECUTED**.
+- macOS arm64 Tier-A runtime is verified for MySQL, PostgreSQL, and SQLite.
 - Oracle JDBC and Custom JDBC are experimental / best-effort, not Tier-A.
 - SQL Server is implemented but is not advertised as a 1.0 Tier-A target.
 
@@ -65,76 +103,34 @@ is not supported for SQL Server or JDBC drivers, and full-query export accepts
 one statement rather than multi-statement, multi-result scripts. See the
 [support matrix](docs/SUPPORT.md) for the complete 1.0 limits.
 
-## Source-first quick start
+## Development, validation, and local packaging
 
-Prerequisites: Node.js 22, pnpm 10, Rust stable, JDK 21, and the
-[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
-operating system.
+From the repository root, after installing dependencies:
 
-```bash
-git clone https://github.com/cocoCzl/VaporLensDB.git
-cd VaporLensDB
-pnpm install
-pnpm tauri dev
-```
+| Purpose | Command | Result |
+| --- | --- | --- |
+| Frontend development | `pnpm dev` | Vite development server; desktop commands require Tauri |
+| Desktop development | `pnpm tauri dev` | Tauri development app, no DMG |
+| Validation | `./build.sh check` | Complete deterministic gate, no installer |
+| Local packaged build | `./build.sh current` | Validation plus host-platform packages |
 
-For reproducible validation, install from the lockfile and run:
+For JDBC during desktop development, first run `./build.sh jdbc-bridge`.
+`pnpm build` builds frontend assets only. `pnpm build:app` and `./build.sh`
+without a target are alternatives to `./build.sh current`.
 
-```bash
-pnpm install --frozen-lockfile
-./build.sh check
-```
+Windows and Linux local packages are staged under
+`artifacts/windows/<architecture>/` and `artifacts/linux/<architecture>/`.
+See [packaging](docs/PACKAGING.md) for native-host prerequisites and formats.
+Real-database integration tests are separate opt-in work described in
+[testing](docs/TESTING.md); they are not required to build from a fresh clone.
 
-`./build.sh check` and `./build.sh current` build the project's own JDBC bridge,
-so a JDK is required even when you do not configure a vendor JDBC driver. A
-vendor JDBC JAR is only needed later when you create an Oracle or custom JDBC
-data source.
-
-Platform-specific development and local-QA packaging requirements are in the
-[packaging guide](docs/PACKAGING.md). Local packaging does not make an
-official installer available.
-
-After starting the app from source:
+After launching the app:
 
 1. Open **New Connection**, choose a database type, enter the connection
    details, then select **Test** and **Save & Connect**.
 2. Browse schemas and tables in the Data Source explorer, or create a SQL tab
    and run a query. A SQL tab keeps its own execution target while you browse
    other connections. Change the interface language or theme in **Settings**.
-
-Oracle and custom JDBC connections require a local JDBC driver JAR. The app
-guides you to add it when creating the connection.
-
-## Local validation and QA packaging
-
-Run the deterministic development gate before local packaging:
-
-```bash
-./build.sh check
-./build.sh live-tests --mysql --oracle  # Explicit live integration selection
-```
-
-Build on the target operating system:
-
-```bash
-./build.sh mac       # macOS: .app and .dmg
-./build.sh windows   # Windows: .msi and NSIS .exe
-./build.sh linux     # Linux: AppImage, DEB, and RPM
-```
-
-`pnpm build:app` packages for the current platform. On macOS it creates an App
-and DMG; on Windows it creates MSI and NSIS installers; on Linux it creates
-AppImage, DEB, and RPM packages. Running `./build.sh` without a target is
-equivalent to `./build.sh current`.
-
-Live PostgreSQL, MySQL, Oracle, and JDBC tests are separate opt-in suites.
-Copy `.env.example` to the Git-ignored `.env`, then explicitly select the
-database integrations to run. Ordinary checks and packaging never load private
-database configuration. See the testing guide for permissions and safety.
-
-These outputs are local QA artifacts. They become public RC artifacts only
-through the explicitly approved clean-build, checksum, tag, and GitHub
-Pre-release process in the [packaging guide](docs/PACKAGING.md).
 
 ## Road to 1.0
 

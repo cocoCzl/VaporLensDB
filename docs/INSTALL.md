@@ -2,103 +2,136 @@
 
 [简体中文](INSTALL.zh-CN.md) · [Back to README](../README.md)
 
-## Current pre-1.0 use: source builds and RC testing
+## Current distribution: source build
 
-VaporLensDB 0.9.1 is in **Pre-1.0 Development / RC testing**. It is not stable
-or production-ready. Source builds remain available for development, and an
-explicitly marked GitHub Pre-release may provide an RC test artifact for a
-platform with recorded runtime evidence. To run from source:
+VaporLensDB 0.9.1 is in **Pre-1.0 Development**, not stable or production-ready.
+Current distribution is **source-first**: clone and build locally. Public binary
+releases, DMG uploads, Developer ID signing, and notarization are deferred.
+Historical RC plans and future formal-release procedures are engineering
+references, not the current installation path.
+
+## Toolchain policy
+
+Install Git and the following tools before building. Version labels distinguish
+repository policy, dependency constraints, and observed results; they do not
+promise compatibility with every version of a tool.
+
+| Tool | Current policy and evidence |
+| --- | --- |
+| Node.js | CI is configured for Node 22. For a new setup, use a current 22.x patch at least 22.22.2, or a 24.x patch at least 24.15.0, to satisfy the locked test dependencies. No project-wide supported range is declared. |
+| pnpm | Use pnpm 10, matching all current CI install jobs. The lockfile format is `9.0`; that alone does not select an exact pnpm patch or establish a minimum version. |
+| Rust/cargo | Use current stable Rust with rustfmt and clippy, matching CI. The crate uses edition 2021 but declares no `rust-version`/MSRV. Edition alone does not establish the minimum compiler for the dependency graph. |
+| JDK | Use JDK 21 for the project-owned JDBC bridge, matching CI and the documented build policy. Ensure `java`, `javac`, and `jar` resolve to that JDK. |
+
+The local tools recorded during this audit were Node **24.11.1**, pnpm
+**10.33.0**, Rust **1.94.1**, and JDK **21.0.9**. These are observed versions,
+not exact pins. Frontend tests/build passed on that Node version, but it is below
+jsdom's declared 24.x range; this is not a reason to recommend that older patch
+for a new installation.
+The fresh-clone local-package path has been accepted on Apple Silicon macOS;
+CI configuration is not evidence of a completed desktop runtime test.
+
+The locked Vite 8.2.2 declares Node `^20.19.0 || >=22.12.0`, while jsdom 30.0.1
+used by tests declares `^22.22.2 || ^24.15.0 || >=26.0.0`. Thus “Node 22” without
+a patch qualification is insufficient for the full gate. The recommendation
+above follows dependency declarations; other Node majors have no project
+compatibility commitment.
+
+The repository intentionally retains the existing policy rather than adding
+`packageManager`, `engines`, or `rust-toolchain.toml` in this phase. CI selects
+pnpm's major explicitly; no authoritative exact pnpm patch has been adopted.
+No verified project-wide Node/pnpm minimum or compiler incompatibility justifies
+new enforcement. Install pnpm 10 using the
+[pnpm installation instructions](https://pnpm.io/installation); this workflow
+does not assume that Node bundles Corepack or require `corepack enable`.
+`build.sh` checks required commands and retains its existing version behavior.
+
+The bridge script invokes `javac` without `--release`, `-source`, or `-target`,
+so emitted bytecode follows the selected JDK. JDK 21 remains the build policy,
+not a newly proven Java language minimum. Lower JDK compatibility has not been
+established; this phase does not change the Java target. When using JDBC data
+sources, keep a compatible Java runtime available as well.
+
+## Platform prerequisites and verification
+
+| Platform | Native-host prerequisites | Verification |
+| --- | --- | --- |
+| macOS Apple Silicon / arm64 | Xcode Command Line Tools | Fresh-clone validation and local App/DMG build passed; Tier-A runtime verified |
+| macOS Intel / x86_64 | Xcode Command Line Tools | Build target exists; current source-package/runtime acceptance does not cover Intel |
+| Windows | Git Bash, MSVC C++ Build Tools, WebView2 | Build target exists; desktop runtime **NOT EXECUTED** |
+| Linux | Tauri WebKitGTK/GTK development dependencies and `rpm` packaging tool | Build target exists; desktop runtime **NOT EXECUTED** |
+
+Follow the host-specific [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+and [packaging guide](PACKAGING.md). Build on the target OS; the script does not
+cross-compile packages. The [support matrix](SUPPORT.md) is the canonical runtime
+record. Linux credential persistence also needs an active Secret Service session.
+
+The verified macOS source path needs **Xcode Command Line Tools**, not full
+Xcode. It does not require Apple Developer Program membership, a Developer ID
+certificate, notarization credentials, or a formal release-signing environment.
+Local macOS builds use ad hoc signing; this is not Developer ID signing or
+Apple notarization.
+
+## Clone, validate, and build locally
+
+From a terminal (Git Bash on Windows):
 
 ```bash
-pnpm install
-pnpm tauri dev
-```
-
-For reproducible validation, use the lockfile before the deterministic gate:
-
-```bash
+git clone https://github.com/cocoCzl/VaporLensDB.git
+cd VaporLensDB
 pnpm install --frozen-lockfile
 ./build.sh check
+./build.sh current
 ```
 
-Source builds require Node.js 22, pnpm 10, Rust stable, JDK 21, and the
-[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the host
-operating system. `./build.sh check` and `./build.sh current` always build the
-project's own JDBC bridge, so the JDK is required for those commands even
-without a vendor JDBC driver. See
-[PACKAGING.md](PACKAGING.md) for platform prerequisites and local QA packaging.
+`check` validates without making an installer. `current` runs the deterministic
+checks again and packages for the host OS; omit the separate `check` when only
+a validated local package is wanted. Both commands build the project JDBC bridge
+and therefore need the JDK even without JDBC data sources. Neither loads `.env`
+or requires database credentials or vendor JDBC JARs.
 
-## Platform build targets
+If `node_modules` is missing, `build.sh` performs `pnpm install --frozen-lockfile`
+automatically. The explicit install is still useful for an existing checkout,
+because the script does not synchronize an already-present dependency directory.
 
-| Platform | Build target / prerequisites | Runtime verification |
-| --- | --- | --- |
-| macOS | `./build.sh mac`; Xcode Command Line Tools | Tier-A verified |
-| Windows | `./build.sh windows` on Windows/Git Bash; MSVC Build Tools and WebView2 | **NOT EXECUTED** |
-| Linux | `./build.sh linux` on Linux; WebKitGTK/GTK/Tauri packaging packages | **NOT EXECUTED** |
+## Local artifacts and launch
 
-Windows and Linux prerequisites and build targets are documented, but their
-real desktop runtime validation is still pending. See [PACKAGING.md](PACKAGING.md)
-for the exact native-host requirements. A vendor JDBC JAR is only required when
-you configure an Oracle or custom JDBC data source;
-Linux credential persistence additionally needs an active Secret Service session.
+On Apple Silicon macOS:
 
-## Local QA, RC, and future stable packages
+```text
+artifacts/macos/aarch64/VaporLensDB.app
+artifacts/macos/aarch64/VaporLensDB.dmg
+artifacts/macos/aarch64/SHA256SUMS.txt
+```
 
-`./build.sh current` creates local QA artifacts; those files are not public
-releases. An approved RC is published separately as a GitHub **Pre-release**
-after a release commit, tag, clean build, and checksum verification. A stable
-release requires its own release gate. Obtain any published package only from
-the project's [GitHub Releases](https://github.com/cocoCzl/VaporLensDB/releases)
-page and use the accompanying `SHA256SUMS.txt`.
-Verify the downloaded installer before opening it:
+Open the staged `.app` locally, or open your locally built DMG and drag
+**VaporLensDB** to **Applications**. To verify the local DMG, from the repository
+root run:
 
 ```bash
-# macOS
-shasum -a 256 VaporLensDB.dmg
-
-# Windows PowerShell
-Get-FileHash .\VaporLensDB-* -Algorithm SHA256
-
-# Linux
-sha256sum VaporLensDB.AppImage VaporLensDB.deb VaporLensDB.rpm
+(cd artifacts/macos/aarch64 && shasum -a 256 -c SHA256SUMS.txt)
 ```
 
-Compare the resulting hash with the matching entry in `SHA256SUMS.txt`.
+Intel macOS stages under `artifacts/macos/x86_64/`. Windows stages MSI/NSIS
+installers under `artifacts/windows/<architecture>/`; Linux stages AppImage,
+DEB, and RPM under `artifacts/linux/<architecture>/`, each with `SHA256SUMS.txt`.
+These are **local build artifacts**, not current official downloadable releases.
+`dist/` contains frontend assets; it is not the application installer directory.
+See [PACKAGING.md](PACKAGING.md) for artifact details and separately scoped
+future release procedures.
 
-## macOS
+## Development without packaging
 
-1. For an RC test or future stable release, download only the DMG whose CPU
-   architecture is explicitly listed by that release.
-2. Open the DMG and drag **VaporLensDB** to **Applications**.
-3. Open VaporLensDB from Applications.
+After installing dependencies, use either command as needed:
 
-The current 0.9.1 RC plan is macOS arm64 only. Its App is ad hoc signed and is
-**not Apple notarized**, so Gatekeeper may warn about or block the downloaded
-DMG/App. This is a known RC-testing limitation, not evidence of a Developer ID
-signed release. Verify the SHA-256 and release source; do not disable Gatekeeper
-or use an automated security-bypass script.
+```bash
+pnpm dev        # Frontend development server; desktop commands need Tauri
+pnpm tauri dev  # Desktop development app, without creating a DMG
+```
 
-## Windows
-
-1. After a formal release, download the `.msi` installer. Use the NSIS `.exe` installer if MSI is
-   restricted by your environment.
-2. Run the installer and follow its prompts.
-3. Start **VaporLensDB** from the Start menu.
-
-Verify the SHA-256 and that the file came from the project's formal GitHub
-Release before installing it. Ask your administrator if software installation
-is managed by your organization.
-
-## Linux
-
-- AppImage: run `chmod +x VaporLensDB.AppImage`, then start it with
-  `./VaporLensDB.AppImage`.
-- Debian/Ubuntu: install with `sudo apt install ./VaporLensDB.deb`.
-- Fedora/RHEL: install with `sudo dnf install ./VaporLensDB.rpm`.
-
-Choose the package matching the distribution and CPU architecture. Linux
-packages depend on the platform WebKitGTK runtime; use the AppImage when a
-system package is not appropriate.
+For JDBC in desktop development, run `./build.sh jdbc-bridge` first.
+`pnpm build` builds frontend assets only. Daily development does not require
+`./build.sh current`; run `./build.sh check` when validating changes.
 
 ## First connection
 

@@ -1,5 +1,11 @@
 # VaporLensDB Release Candidate Checklist
 
+Current distribution is source-first. This checklist retains historical QA
+records and future release-engineering requirements; checked items do not mean
+that public binary distribution is active. Developer ID signing, notarization,
+GitHub binary Releases, and DMG uploads are deferred. Source users should follow
+[INSTALL.md](INSTALL.md), without release credentials.
+
 This checklist records release-candidate evidence without expanding the frozen
 1.0 scope. It applies to explicitly marked pre-1.0 RC testing as well as later
 1.0 candidates; an RC is not a stable release. `SUPPORT.md` is the canonical
@@ -85,7 +91,10 @@ Cargo's package version. Packaging fixture tests also contain the current
 version in expected artifact names. Update them together only after release
 approval; `build.sh` rejects a mismatch among the three primary sources.
 
-## Approved 0.9.1 RC distribution plan
+## Historical 0.9.1 RC distribution plan — deferred
+
+The earlier plan below is retained for reference, not current publication
+authorization. Any future binary release requires a new explicit decision.
 
 - Application version remains `0.9.1`; the planned RC tag is `v0.9.1-rc.1`.
 - GitHub distribution must be marked **Pre-release** and described as RC testing,
@@ -100,7 +109,7 @@ approval; `build.sh` rejects a mismatch among the three primary sources.
   and must not provide an automated security bypass.
 - Stable 1.0 still requires its own release gate; this RC does not satisfy it.
 
-## Current RC audit record
+## Historical local-build audit record
 
 On 2026-09-28, `./build.sh current` passed both in the working candidate and in
 an isolated source snapshot created without `.env`, pre-existing dependencies,

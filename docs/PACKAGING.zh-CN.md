@@ -2,10 +2,10 @@
 
 [English](PACKAGING.md) · [返回 README](../README.zh-CN.md)
 
-VaporLensDB 必须在目标操作系统上构建对应安装包。当前仓库不自动发布，也不包含
-代码签名或 macOS 公证流程。VaporLensDB 仍处于 **Pre-1.0 Development / RC testing**。
-普通打包成功只会生成本地 QA artifact；经过明确批准的 release-candidate 流程可以将测试
-artifact 发布为 GitHub Pre-release。
+当前开发阶段采用 **source-first**，在目标操作系统上构建供本地使用的安装包。
+公开二进制 release、DMG 上传、Developer ID 签名和 notarization 均暂缓。下文的
+RC、上传和正式发布章节保留为工程流程，不是当前安装入口，也不构成发布授权。
+使用者请从 [INSTALL.zh-CN.md](INSTALL.zh-CN.md) 开始。
 
 不得将安装包或校验和提交到仓库或附加到 Pull Request，也不得把本地 QA artifact 直接
 上传到 GitHub Release。手动打包工作流生成的 Actions 产物保留 7 天。
@@ -27,7 +27,8 @@ artifacts/macos/aarch64/
 └── SHA256SUMS.txt
 ```
 
-Intel Mac 使用 `artifacts/macos/x86_64/`。校验 DMG：
+已验收的 fresh clone/打包路径是 Apple Silicon macOS。Intel 目标使用
+`artifacts/macos/x86_64/`，但上述证据不代表 Intel runtime/打包已验收。校验本地 DMG：
 
 ```bash
 cd artifacts/macos/aarch64
@@ -57,11 +58,13 @@ canonical staging 目录。
 
 ## 前提条件
 
-所有构建机器都需要：
+请遵循[工具链政策](INSTALL.zh-CN.md#工具链政策)：按锁定测试依赖的要求使用当前
+Node 22.x 补丁（至少 22.22.2）或 24.x 补丁（至少 24.15.0）、pnpm 10、
+包含 rustfmt/clippy 的当前 stable Rust，以及用于项目自有 JDBC bridge 的 JDK 21。
+这些选择不代表承诺已完整测试整个兼容范围，厂商 JDBC JAR 不是构建前提。
 
-- Node.js 22 和 pnpm 10
-- Rust stable
-- JDK 21（用于 JDBC bridge）
+已验证的 Apple Silicon 源码构建不需要完整 Xcode、Apple Developer Program 会员、
+Developer ID 证书或公证凭据。
 
 macOS 还需要 Xcode Command Line Tools。Windows 还需要带 MSVC 工具链的 Microsoft
 C++ Build Tools、Microsoft Edge WebView2 Runtime 和 Git Bash。Linux 还需要 Tauri
@@ -214,8 +217,8 @@ Pre-1.0 RC 只有在获得明确批准后才能发布：
    与 checksum 验证方式。
 6. 在公开 Pre-release 前，将已上传 asset 下载到新目录并重新验证 checksum。
 
-RC 是测试分发，不是 stable 或 production-ready release。当前候选版本获准的计划及具体
-事实记录在 [0.9.1 RC 1 release plan](release/0.9.1-rc.1.md)；后续候选版本应维护各自的
+RC 是测试分发，不是 stable 或 production-ready release。历史提案与已有证据保留在
+[已暂缓的 0.9.1 RC 1 计划](release/0.9.1-rc.1.md)；后续候选版本应维护各自的
 release-specific plan，不应把该文件中的 tag 或平台范围复制为本通用指南的永久规则。
 
 ## 手动上传 GitHub Release asset
