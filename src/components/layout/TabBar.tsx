@@ -141,7 +141,9 @@ export function TabBar() {
                       setActiveConnection(tab.connectionId)
                     }
                   }}
+                  title={tab.filePath}
                   onDoubleClick={() => {
+                    if (tab.filePath) return
                     setEditingTabId(tab.id)
                     setEditingTitle(tab.title)
                   }}

@@ -55,6 +55,14 @@ pub fn set_application_menu<R: Runtime>(
         .separator()
         .item(&quit)
         .build()?;
+    let file_open_sql = menu_item(app, "open-sql-file", labels.open_sql, "CmdOrCtrl+O")?;
+    let file_save_sql = menu_item(app, "save-sql-file", labels.save_sql, "CmdOrCtrl+S")?;
+    let file_save_sql_as = menu_item(
+        app,
+        "save-sql-file-as",
+        labels.save_sql_as,
+        "CmdOrCtrl+Shift+S",
+    )?;
     let file_new_sql = menu_item(app, FILE_NEW_SQL_ID, labels.new_sql, "CmdOrCtrl+N")?;
     let file_new_connection = menu_item(
         app,
@@ -91,6 +99,9 @@ pub fn set_application_menu<R: Runtime>(
     let view_settings = menu_item(app, VIEW_SETTINGS_ID, labels.settings, "CmdOrCtrl+,")?;
     let file_menu = SubmenuBuilder::new(app, labels.file)
         .item(&file_new_sql)
+        .item(&file_open_sql)
+        .item(&file_save_sql)
+        .item(&file_save_sql_as)
         .item(&file_new_connection)
         .separator()
         .item(&file_close_tab)
@@ -161,6 +172,7 @@ pub fn set_application_menu<R: Runtime>(
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
     let id = event.id().0.as_str();
     match id {
+        "open-sql-file" | "save-sql-file" | "save-sql-file-as" => emit_workspace_command(app, id),
         FILE_NEW_SQL_ID => emit_workspace_command(app, "new-sql"),
         FILE_NEW_CONNECTION_ID => emit_workspace_command(app, "new-connection"),
         FILE_CLOSE_TAB_ID => emit_workspace_command(app, "close-tab"),
@@ -226,6 +238,9 @@ struct AppMenuLabels {
     quit: &'static str,
     file: &'static str,
     database: &'static str,
+    open_sql: &'static str,
+    save_sql: &'static str,
+    save_sql_as: &'static str,
     new_sql: &'static str,
     new_connection: &'static str,
     close_tab: &'static str,
@@ -263,6 +278,9 @@ fn labels(language: AppMenuLanguage) -> AppMenuLabels {
             quit: "退出 VaporLensDB",
             file: "文件",
             database: "数据库",
+            open_sql: "打开 SQL 文件…",
+            save_sql: "保存",
+            save_sql_as: "另存为…",
             new_sql: "新建 SQL",
             new_connection: "新建数据源",
             close_tab: "关闭标签页",
@@ -297,6 +315,9 @@ fn labels(language: AppMenuLanguage) -> AppMenuLabels {
             quit: "Quit VaporLensDB",
             file: "File",
             database: "Database",
+            open_sql: "Open SQL File…",
+            save_sql: "Save",
+            save_sql_as: "Save As…",
             new_sql: "New SQL",
             new_connection: "New Data Source",
             close_tab: "Close Tab",

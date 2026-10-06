@@ -12,3 +12,5 @@ pub mod query_history;
 pub mod settings;
 pub mod sql_draft;
 pub mod task;
+
+pub mod sql_file;

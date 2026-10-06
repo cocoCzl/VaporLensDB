@@ -495,5 +495,12 @@
     "args": "void",
     "response": "void",
     "status": "active"
+  },
+  {
+    "name": "sql_file",
+    "namespace": "sqlDraft",
+    "args": "{ input: SqlFileInput }",
+    "response": "SqlFileDocument | null",
+    "status": "active"
   }
 ]

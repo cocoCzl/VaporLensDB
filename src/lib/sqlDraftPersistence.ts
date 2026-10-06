@@ -38,7 +38,7 @@ export async function persistDirtySqlDrafts({
   completeTabPersistence,
 }: PersistDirtySqlDraftsInput): Promise<void> {
   for (const tab of tabs) {
-    if ((tab.kind && tab.kind !== 'sql') || !tab.dirty) continue
+    if (tab.filePath || (tab.kind && tab.kind !== 'sql') || !tab.dirty) continue
 
     const connection = connections.find((item) => item.id === tab.connectionId) ?? null
     const result = await saveTabDraft(tab, {

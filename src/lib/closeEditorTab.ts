@@ -1,3 +1,4 @@
+import { chooseSqlFileAction } from './sqlFileChoice'
 import i18n from '@/i18n'
 import { normalizeAppError } from '@/ipc/client'
 import { rollbackConsoleTransaction, setConsoleTransactionMode } from '@/ipc/query'
@@ -38,7 +39,7 @@ export async function closeEditorTabs(
 async function closeTab(id: string, options?: { confirmTransaction?: boolean }): Promise<boolean> {
   const initial = getTab(id)
   if (!initial) return true
-  if (initial.running || initial.transactionBusy) {
+  if (initial.running || initial.transactionBusy || initial.fileBusy) {
     warn('closeTabBusy')
     return false
   }
@@ -53,6 +54,11 @@ async function closeTab(id: string, options?: { confirmTransaction?: boolean }):
     && (tab.draftRevision ?? 0) === (initial.draftRevision ?? 0)
     && !tab.running && !tab.transactionBusy)
   try {
+    if (initial.filePath && initial.dirty) {
+      const choice = await chooseSqlFileAction('close', ['save', 'discard', 'cancel'], initial.filePath)
+      if (choice === 'cancel') return false
+      if (choice === 'save' && !(await (await import('./sqlFileWorkflow')).saveSqlFile(id, false, true))) return false
+    }
     if (initial.connectionId && initial.transactionMode === 'manual') {
       if (initial.transactionPhase !== 'idle') {
         const next = await rollbackConsoleTransaction(initial.connectionId, id)
@@ -67,7 +73,7 @@ async function closeTab(id: string, options?: { confirmTransaction?: boolean }):
     }
     const tab = getTab(id)
     if (!unchanged(tab)) { warn('closeTabChanged'); return false }
-    if (!tab.kind || tab.kind === 'sql') {
+    if (!tab.filePath && (!tab.kind || tab.kind === 'sql')) {
       const connection = useConnectionStore.getState().connections.find((item) => item.id === tab.connectionId) ?? null
       const result = await useSqlDraftStore.getState().saveTabDraft(tab, {
         connection,

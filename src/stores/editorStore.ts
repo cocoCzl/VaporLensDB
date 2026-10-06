@@ -47,6 +47,14 @@ export interface EditorTab {
   error?: string | null
   draftId?: string | null
   dirty?: boolean
+  filePath?: string
+  fileSavedText?: string
+  fileFingerprint?: string
+  fileBom?: boolean
+  fileEol?: 'lf' | 'crlf'
+  /** Session-only native grant; never restored from browser storage. */
+  fileToken?: string
+  fileBusy?: boolean
   /** Monotonic within this workspace session; guards async draft acknowledgements. */
   draftRevision?: number
   pinned?: boolean
@@ -174,7 +182,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   renameTab: (id, title) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
-        t.id === id
+        t.id === id && !t.filePath
           ? { ...t, title: title.trim() || t.title, draftRevision: (t.draftRevision ?? 0) + 1, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty }
           : t,
       ),
@@ -182,7 +190,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   updateTabSql: (id, sql) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
-        t.id === id ? { ...t, sql, draftRevision: (t.draftRevision ?? 0) + 1, dirty: t.kind === 'sql' || !t.kind ? true : t.dirty } : t,
+        t.id === id && !t.fileBusy && !(t.filePath && t.closing) ? { ...t, sql, draftRevision: (t.draftRevision ?? 0) + 1, dirty: t.filePath ? sql.replace(/\r\n/g, '\n') !== t.fileSavedText : t.kind === 'sql' || !t.kind ? true : t.dirty } : t,
       ),
     })),
   updateDataTabLimit: (id, limit, sql) =>
@@ -215,7 +223,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               transactionPhase: 'idle',
               unavailableConnectionName: null,
               draftRevision: (t.draftRevision ?? 0) + 1,
-              dirty: t.kind === 'sql' || !t.kind ? true : t.dirty,
+              dirty: t.filePath ? t.dirty : t.kind === 'sql' || !t.kind ? true : t.dirty,
             }
           : t,
       ),
@@ -227,13 +235,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         || ('schema' in context && context.schema !== t.schema)
       ) ? {
         ...t, ...context, draftRevision: (t.draftRevision ?? 0) + 1,
-        dirty: t.kind === 'sql' || !t.kind ? true : t.dirty,
+        dirty: t.filePath ? t.dirty : t.kind === 'sql' || !t.kind ? true : t.dirty,
       } : t),
     })),
   setTabDraft: (id, draftId, savedRevision) =>
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? {
-        ...t, draftId, dirty: (t.draftRevision ?? 0) === savedRevision ? false : t.dirty,
+        ...t, draftId, dirty: t.filePath ? t.dirty : (t.draftRevision ?? 0) === savedRevision ? false : t.dirty,
       } : t)),
     })),
   setRecordsConnectionFilter: (id, connectionId) =>
@@ -329,6 +337,7 @@ export function persistSqlWorkspace(tabs: EditorTab[], activeTabId: string | nul
       kind: 'sql' as const,
       title: tab.title,
       sql: tab.sql,
+      ...fileSnapshot(tab),
       connectionId: tab.connectionId,
       database: tab.database ?? null,
       schema: tab.schema ?? null,
@@ -414,7 +423,8 @@ export function readStoredSqlWorkspace(): Pick<EditorState, 'tabs' | 'activeTabI
           // An empty open tab still wins recovery. Retain an old draft ID only
           // long enough to lazily delete its stale native record.
           draftId,
-          dirty: clearedDraftNeedsCleanup || tab.dirty === true,
+          ...fileSnapshot(tab),
+          dirty: typeof tab.filePath === 'string' ? sql.replace(/\r\n/g, '\n') !== tab.fileSavedText : clearedDraftNeedsCleanup || tab.dirty === true,
           pinned: tab.pinned === true,
           unavailableConnectionName: typeof tab.unavailableConnectionName === 'string'
             ? tab.unavailableConnectionName
@@ -442,6 +452,7 @@ function workspaceRecoveryFingerprint(tabs: EditorTab[], activeTabId: string | n
       id: tab.id,
       title: tab.title,
       sql: tab.sql,
+      ...fileSnapshot(tab),
       connectionId: tab.connectionId,
       database: tab.database ?? null,
       schema: tab.schema ?? null,
@@ -454,4 +465,15 @@ function workspaceRecoveryFingerprint(tabs: EditorTab[], activeTabId: string | n
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function fileSnapshot(tab: { [key: string]: unknown } | EditorTab) {
+  if (typeof tab.filePath !== 'string') return {}
+  return {
+    filePath: tab.filePath,
+    fileSavedText: typeof tab.fileSavedText === 'string' ? tab.fileSavedText : undefined,
+    fileFingerprint: typeof tab.fileFingerprint === 'string' ? tab.fileFingerprint : undefined,
+    fileBom: tab.fileBom === true,
+    fileEol: tab.fileEol === 'crlf' ? 'crlf' as const : 'lf' as const,
+  }
 }

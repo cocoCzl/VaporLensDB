@@ -55,6 +55,17 @@ includesAll(
   'native menu builder',
 )
 
+for (const command of ['open-sql-file', 'save-sql-file', 'save-sql-file-as']) {
+  assert(appMenu.includes(command) && read('src/App.tsx').includes(command), `SQL file command is not wired: ${command}`)
+}
+for (const accelerator of ['CmdOrCtrl+O', 'CmdOrCtrl+S', 'CmdOrCtrl+Shift+S']) {
+  assert(appMenu.split(`"${accelerator}"`).length === 2, `SQL file shortcut missing or duplicated: ${accelerator}`)
+}
+for (const surface of ['src/components/editor/EditorToolbar.tsx', 'src/components/common/WorkspaceCommandPalette.tsx']) {
+  assert(read(surface).includes('dispatchSqlFileAction'), `SQL file actions missing from ${surface}`)
+}
+assert(read('src/lib/sqlDraftPersistence.ts').includes('tab.filePath ||'), 'File-backed autosave must remain workspace-only')
+
 for (const prohibitedPattern of [
   'document.execCommand',
   'minimize_with_text',

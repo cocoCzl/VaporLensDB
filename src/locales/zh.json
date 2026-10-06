@@ -1001,5 +1001,27 @@
     "backendChecking": "后端: 检查中",
     "backendUnavailable": "后端: 不可用",
     "backendOther": "后端: {{status}}"
+  },
+  "sqlFile": {
+    "open": "打开 SQL 文件…",
+    "save": "保存",
+    "saveAs": "另存为…",
+    "cancel": "取消",
+    "discard": "放弃更改",
+    "reload": "从磁盘重新加载",
+    "overwrite": "仍然保存",
+    "close": "保存 SQL 文件更改？",
+    "closeDescription": "保存会写入 SQL 文件。放弃更改将关闭此标签页，不写入文件。",
+    "changed": "磁盘文件已更改",
+    "changedDescription": "文件已在 VaporLensDB 外部修改或删除。重新加载会放弃编辑内容；仍然保存将覆盖或重新创建所选文件。",
+    "readFailed": "无法读取 SQL 文件，现有标签页保持不变。",
+    "saveFailed": "无法保存 SQL 文件，编辑内容和文件路径已保留。",
+    "encoding": "不支持此编码，请选择有效的 UTF-8 SQL 文件。",
+    "extension": "请选择 .sql 文件。",
+    "tooLarge": "SQL 文件不能超过 16 MiB。",
+    "missing": "SQL 文件已不存在，请使用另存为选择目标路径。",
+    "alreadyOpen": "该文件已由另一个 SQL 标签页打开，请选择其他路径。",
+    "changedDuringSave": "保存期间文件再次发生变化，未执行替换。请重试并检查冲突。",
+    "quit": "{{count}} 个 SQL 文件标签页尚未保存到磁盘。退出前会逐个询问保存、放弃更改或取消。"
   }
 }

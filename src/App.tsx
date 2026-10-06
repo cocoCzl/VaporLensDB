@@ -1,3 +1,5 @@
+import { SqlFileDialog } from './components/editor/SqlFileDialog'
+import { dispatchSqlFileAction } from './lib/sqlFileActions'
 import { useEffect, useState } from 'react'
 import { Sidebar } from './components/layout/Sidebar'
 import { MainPanel } from './components/layout/MainPanel'
@@ -183,6 +185,9 @@ export default function App() {
         else editor.addTab({ id: crypto.randomUUID(), kind: 'settings', title: i18n.t('settings.title'), sql: '', connectionId: null })
       }
       switch (payload) {
+        case 'open-sql-file': dispatchSqlFileAction('open'); break
+        case 'save-sql-file': dispatchSqlFileAction('save'); break
+        case 'save-sql-file-as': dispatchSqlFileAction('saveAs'); break
         case 'new-sql': {
           const connectionId = activeTab?.kind === 'sql' || !activeTab?.kind
             ? activeTab?.connectionId ?? connections.browsingConnectionId
@@ -230,6 +235,7 @@ export default function App() {
       </div>
       <StatusBar backendStatus={backendStatus} />
       <NotificationBridge />
+      <SqlFileDialog />
       <WorkspaceCommandPalette />
       {showSplash && <SplashScreen />}
     </div>

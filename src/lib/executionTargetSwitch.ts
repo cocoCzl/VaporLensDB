@@ -9,7 +9,7 @@ export type SwitchOutcome = 'confirm' | 'switched'
 /** One tab reservation, shared with query/close/transaction controls. No global queue. */
 export function beginExecutionTargetSwitch(tabId: string, targetId: string | null) {
   const initial = useEditorStore.getState().tabs.find((tab) => tab.id === tabId)
-  if (!initial || initial.connectionId === targetId || initial.running || initial.closing || initial.transactionBusy) return null
+  if (!initial || initial.connectionId === targetId || initial.running || initial.closing || initial.fileBusy || initial.transactionBusy) return null
   const sourceId = initial.connectionId
   let busy = false
   let finished = false

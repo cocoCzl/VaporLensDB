@@ -856,6 +856,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
           >
             <SqlEditor
               key={activeTab.id}
+              readOnly={Boolean(activeTab.fileBusy || (activeTab.filePath && activeTab.closing))}
               value={activeTab.sql}
               connectionId={queryCapabilities.canComplete ? connectionId : null}
               schema={selectedSchema}
@@ -870,6 +871,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         ) : (
           <div className="flex h-full flex-col bg-card">
             <textarea
+              readOnly={Boolean(activeTab.fileBusy || (activeTab.filePath && activeTab.closing))}
               className="min-h-0 flex-1 resize-none bg-card p-3 font-mono text-[13px] leading-5 text-foreground outline-none"
               style={{ fontSize: editorFontSize, lineHeight: `${Math.max(18, editorFontSize + 7)}px` }}
               value={activeTab.sql}

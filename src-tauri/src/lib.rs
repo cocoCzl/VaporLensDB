@@ -305,6 +305,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             app_menu::handle_menu_event(app, &event);
         })
+        .manage(commands::sql_file::SqlFileGrants::default())
         .manage(ApplicationCloseRequestBridge::default())
         .manage(AppState {
             config_store,
@@ -325,6 +326,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::contract::list_command_contracts,
+            commands::sql_file::sql_file,
             commands::health::health_check,
             commands::lifecycle::shutdown_application,
             commands::lifecycle::application_close_listener_ready,

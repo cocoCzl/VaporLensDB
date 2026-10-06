@@ -1,3 +1,4 @@
+import { dispatchSqlFileAction } from '@/lib/sqlFileActions'
 import { Check, ChartNoAxesCombined, ChevronDown, GitBranch, History, ListFilter, Maximize2, Minimize2, MoreHorizontal, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -206,6 +207,7 @@ function SqlMoreActions({
       <PopoverTrigger render={<IconTooltipButton label={t('editor.moreActions')} variant={open ? 'secondary' : 'ghost'}><MoreHorizontal /></IconTooltipButton>} />
       <PopoverContent align="end" className="w-60 gap-0 p-1.5">
         <div className="grid gap-0.5">
+          {(['open', 'save', 'saveAs'] as const).map((action) => <button key={action} type="button" className={itemClass} onClick={() => { setOpen(false); dispatchSqlFileAction(action) }}>{t(`sqlFile.${action}`)}</button>)}
           <button type="button" className={itemClass} disabled={explainDisabled} onClick={() => onExplain()}><ChartNoAxesCombined className="size-3.5" />{explainTitle}</button>
           <button type="button" className={itemClass} disabled={formatDisabled} onClick={() => onFormat()}><Wand2 className="size-3.5" />{t('editor.format')}</button>
           <button type="button" className={itemClass} aria-pressed={historyOpen} onClick={() => { onHistoryToggle?.(); setOpen(false) }}><History className="size-3.5" />{t('sql.history')}</button>

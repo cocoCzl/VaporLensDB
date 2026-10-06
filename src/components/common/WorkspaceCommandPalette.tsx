@@ -1,3 +1,4 @@
+import { dispatchSqlFileAction } from '@/lib/sqlFileActions'
 import { Database, FileCode2, History, Moon, PanelTop, SearchX, Settings, Sun, Table2, type LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -180,6 +181,11 @@ export function WorkspaceCommandPalette() {
   }, [addTab, connections])
 
   const workspaceItems = useMemo<PaletteItem[]>(() => [
+    ...(['open', 'save', 'saveAs'] as const).map((action): PaletteItem => ({
+      id: `sql-file-${action}`, group: 'workspace', label: t(`sqlFile.${action}`),
+      searchText: `${t(`sqlFile.${action}`)} sql file ${action}`, icon: FileCode2,
+      onSelect: () => closeAnd(() => dispatchSqlFileAction(action)),
+    })),
     {
       id: 'new-sql',
       group: 'workspace',

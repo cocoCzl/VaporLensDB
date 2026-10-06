@@ -16,6 +16,7 @@ export function requestApplicationClose(): Promise<boolean> {
 async function closeApplication(): Promise<boolean> {
   const tabs = useEditorStore.getState().tabs
   const dirtyCount = tabs.filter((tab) => (!tab.kind || tab.kind === 'sql') && tab.dirty).length
+  const fileCount = tabs.filter((tab) => tab.filePath && tab.dirty).length
   const transactionCount = tabs.filter((tab) => tab.connectionId
     && tab.transactionMode === 'manual'
     && tab.transactionPhase !== 'idle').length
@@ -23,7 +24,7 @@ async function closeApplication(): Promise<boolean> {
   if ((dirtyCount > 0 || transactionCount > 0) && !window.confirm(i18n.t('workbench.closeApplicationConfirm', {
     dirtyCount,
     transactionCount,
-  }))) return false
+  }) + (fileCount ? `\n${i18n.t('sqlFile.quit', { count: fileCount })}` : ''))) return false
 
   const closed = await closeEditorTabs(tabs.map((tab) => tab.id), { confirmTransaction: false })
   if (!closed) return false

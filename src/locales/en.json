@@ -1001,5 +1001,27 @@
     "backendChecking": "Backend: checking",
     "backendUnavailable": "Backend: unavailable",
     "backendOther": "Backend: {{status}}"
+  },
+  "sqlFile": {
+    "open": "Open SQL File…",
+    "save": "Save",
+    "saveAs": "Save As…",
+    "cancel": "Cancel",
+    "discard": "Discard",
+    "reload": "Reload from Disk",
+    "overwrite": "Save Anyway",
+    "close": "Save changes to SQL file?",
+    "closeDescription": "Save writes to the SQL file. Discard closes this tab without writing.",
+    "changed": "File changed on disk",
+    "changedDescription": "The file was modified or removed outside VaporLensDB. Reload discards editor changes; Save Anyway replaces or recreates the selected file.",
+    "readFailed": "Unable to read SQL file. Your open tabs are unchanged.",
+    "saveFailed": "Unable to save SQL file. Your editor content and file identity are preserved.",
+    "encoding": "Unsupported encoding. Select a valid UTF-8 SQL file.",
+    "extension": "Select a .sql file.",
+    "tooLarge": "SQL files must be no larger than 16 MiB.",
+    "missing": "The SQL file no longer exists. Use Save As to choose a destination.",
+    "alreadyOpen": "This file is already owned by another open SQL tab. Choose another path.",
+    "changedDuringSave": "The file changed again during saving. No replacement was made; retry to review the conflict.",
+    "quit": "{{count}} SQL file tab(s) have unsaved disk changes. Each file will ask to Save, Discard or Cancel before quitting."
   }
 }

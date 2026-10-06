@@ -27,6 +27,7 @@ export interface CommandContract {
 export const COMMAND_CONTRACTS = commandContracts as CommandContract[]
 
 export const COMMANDS = {
+  sqlFile: 'sql_file',
   listCommandContracts: 'list_command_contracts',
   healthCheck: 'health_check',
   shutdownApplication: 'shutdown_application',
