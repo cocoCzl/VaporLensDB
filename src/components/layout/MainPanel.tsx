@@ -26,9 +26,7 @@ import {
   exportQueryResultCsv,
   exportQueryCsv,
   exportTableCsv,
-  importTableCsv,
 } from '@/ipc/export'
-import { useCsvPreview } from '@/hooks/useCsvPreview'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
 import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
 import { splitSqlStatements } from '@/lib/sqlLexer'
@@ -77,6 +75,7 @@ function loadSqlEditor() {
   return sqlEditorPreload
 }
 
+const CsvImportWorkflow = lazy(() => import('@/components/workspace/CsvImportWorkflow').then(module => ({ default: module.CsvImportWorkflow })))
 const ExecutionSummary = lazy(() => import('@/components/workspace/ExecutionSummary').then(module => ({ default: module.ExecutionSummary })))
 const SqlEditor = lazy(loadSqlEditor)
 const ERDiagram = lazy(() => import('@/components/diagram/ERDiagram').then((module) => ({
@@ -1560,8 +1559,8 @@ function DataTabPanel({
   const upsertTask = useTaskStore((state) => state.upsertTask)
   const [limitText, setLimitText] = useState(String(tab.dataContext.limit))
   const [whereText, setWhereText] = useState(tab.dataContext.wherePredicate ?? '')
-  const [importPath, setImportPath] = useState('')
-  const [importBusy, setImportBusy] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importLoaded, setImportLoaded] = useState(false)
   const page = Math.floor(tab.dataContext.offset / tab.dataContext.limit) + 1
   const displayResult = result ? dataTabDisplayResult(result, tab.dataContext.limit) : undefined
   const hasNextPage = result ? result.rows.length > tab.dataContext.limit : false
@@ -1569,18 +1568,6 @@ function DataTabPanel({
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length > 0
   const hasNoStableOrder =
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length === 0
-  const csvPreview = useCsvPreview({
-    onCompleted: (preview) => notify({
-      kind: preview.canImport && preview.invalidRows.length === 0 ? 'info' : 'warning',
-      title: t('workbench.csvImportPreviewComplete'),
-      message: t('workbench.csvPreviewSummary', {
-        valid: preview.validRows.toLocaleString(),
-        total: preview.totalRows.toLocaleString(),
-      }),
-    }),
-    onError: (error) => notifyError(normalizeAppError(error), t('workbench.csvImportPreviewFailed')),
-  })
-  const importPreview = csvPreview.preview
 
   function applyLimit() {
     const value = Number(limitText)
@@ -1638,49 +1625,6 @@ function DataTabPanel({
     }
   }
 
-  async function previewCsvImport() {
-    if (!tab.connectionId || !importPath.trim()) {
-      return
-    }
-
-    await csvPreview.start({
-      connectionId: tab.connectionId,
-      schema: tab.dataContext.schema,
-      table: tab.dataContext.object,
-      path: importPath.trim(),
-      hasHeader: true,
-      previewRows: 20,
-    })
-  }
-
-  async function startCsvImport() {
-    if (!tab.connectionId || !importPreview?.canImport) {
-      return
-    }
-
-    setImportBusy(true)
-    try {
-      const task = await importTableCsv({
-        connectionId: tab.connectionId,
-        driverType: tab.dataContext.driverType,
-        schema: tab.dataContext.schema,
-        table: tab.dataContext.object,
-        path: importPreview.path,
-        hasHeader: true,
-        emptyAsNull: true,
-      })
-      upsertTask(task)
-      notify({
-        kind: 'info',
-        title: t('workbench.csvImportStarted'),
-        message: t('workbench.csvRowsQueued', { count: importPreview.validRows.toLocaleString() }),
-      })
-    } catch (importError) {
-      notifyError(normalizeAppError(importError), t('workbench.startCsvImportFailed'))
-    } finally {
-      setImportBusy(false)
-    }
-  }
 
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-background">
@@ -1816,65 +1760,10 @@ function DataTabPanel({
             <ChevronRight />
           </IconTooltipButton>
         </div>
-        <div className="flex min-h-10 items-center gap-2 border-b bg-muted/10 px-3 py-1.5 text-xs">
-          <Upload className="size-3.5 shrink-0 text-muted-foreground" />
-          <input
-            className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-[11px]"
-            placeholder={t('workbench.csvImportPathPlaceholder')}
-            value={importPath}
-            onChange={(event) => {
-              setImportPath(event.target.value)
-              csvPreview.clear()
-            }}
-          />
-          <Button
-            type="button"
-            size="xs"
-            variant="secondary"
-            disabled={importBusy || csvPreview.status !== 'idle' || !importPath.trim()}
-            onClick={() => void previewCsvImport()}
-          >
-            {t('workbench.previewImport')}
-          </Button>
-          {csvPreview.status !== 'idle' && (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              disabled={csvPreview.status === 'cancelling'}
-              onClick={() => void csvPreview.cancel()}
-            >
-              {csvPreview.status === 'cancelling' ? t('workbench.cancelRequested') : t('common.cancel')}
-            </Button>
-          )}
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            disabled={importBusy || csvPreview.status !== 'idle' || !importPreview?.canImport}
-            onClick={() => void startCsvImport()}
-          >
-            {t('workbench.runImport')}
-          </Button>
-          {importPreview && (
-            <span
-              className={
-                importPreview.invalidRows.length > 0
-                  ? 'max-w-80 truncate text-warning'
-                  : 'max-w-80 truncate text-muted-foreground'
-              }
-              title={importPreview.invalidRows[0]?.message}
-            >
-              {t('workbench.csvPreviewSummary', {
-                valid: importPreview.validRows.toLocaleString(),
-                total: importPreview.totalRows.toLocaleString(),
-              })}
-              {importPreview.invalidRows.length > 0
-                ? t('workbench.csvInvalidSummary', { count: (importPreview.totalRows - importPreview.validRows).toLocaleString() })
-                : ''}
-            </span>
-          )}
+        <div className="border-b px-3 py-1.5">
+          <Button size="xs" variant="outline" onClick={() => { setImportLoaded(true); setImportOpen(value => !value) }}><Upload className="size-3.5" />{t('csvImport.title')}</Button>
         </div>
+        {importLoaded && tab.connectionId && <div hidden={!importOpen} className="shrink-0"><Suspense fallback={null}><CsvImportWorkflow key={`${tab.connectionId}:${tab.dataContext.database}:${tab.dataContext.schema}:${tab.dataContext.object}`} connectionId={tab.connectionId} context={tab.dataContext} /></Suspense></div>}
         <textarea
           className="h-20 shrink-0 resize-none border-b bg-muted/20 p-2 font-mono text-[11px] text-muted-foreground outline-none"
           readOnly

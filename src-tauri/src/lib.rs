@@ -360,6 +360,7 @@ pub fn run() {
             commands::export::export_query_csv,
             commands::export::export_table_csv,
             commands::export::preview_table_csv_import,
+            commands::export::get_csv_import_result,
             commands::export::import_table_csv,
             commands::metadata::get_databases,
             commands::metadata::get_schemas,

@@ -62,6 +62,7 @@ export const COMMANDS = {
   exportQueryResultCsv: 'export_query_result_csv',
   exportQueryCsv: 'export_query_csv',
   exportTableCsv: 'export_table_csv',
+  getCsvImportResult: 'get_csv_import_result',
   previewTableCsvImport: 'preview_table_csv_import',
   importTableCsv: 'import_table_csv',
   getDatabases: 'get_databases',

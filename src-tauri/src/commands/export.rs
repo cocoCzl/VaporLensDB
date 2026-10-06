@@ -101,7 +101,13 @@ pub struct PreviewTableCsvImportInput {
     pub path: String,
     #[serde(default = "default_has_header")]
     pub has_header: bool,
+    pub delimiter: Option<String>,
+    pub mapping: Option<Vec<Option<String>>>,
+    #[serde(default = "default_empty_as_null")]
+    pub empty_as_null: bool,
     pub preview_rows: Option<usize>,
+    #[serde(default)]
+    pub sample_only: bool,
     #[serde(default)]
     pub task_id: Option<Uuid>,
 }
@@ -116,6 +122,8 @@ pub struct ImportTableCsvInput {
     pub path: String,
     #[serde(default = "default_has_header")]
     pub has_header: bool,
+    pub delimiter: Option<String>,
+    pub mapping: Option<Vec<Option<String>>>,
     #[serde(default = "default_empty_as_null")]
     pub empty_as_null: bool,
 }
@@ -140,6 +148,7 @@ pub struct ImportPreview {
     pub invalid_rows: Vec<RowReport>,
     pub can_import: bool,
     pub cancelled: bool,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,6 +172,68 @@ pub struct ImportReport {
     pub failed_write_count: u64,
     pub failed_writes_omitted: u64,
     pub failed_writes: Vec<RowReport>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvImportResult {
+    inserted_rows: u64,
+    failed_rows: u64,
+    failures: Vec<RowReport>,
+}
+
+static CSV_RESULTS: std::sync::Mutex<Vec<(Uuid, CsvImportResult)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn csv_ui_report(report: &ImportReport) -> CsvImportResult {
+    CsvImportResult {
+        inserted_rows: report.inserted_rows,
+        failed_rows: report.invalid_row_count + report.failed_write_count,
+        failures: report
+            .invalid_rows
+            .iter()
+            .chain(&report.failed_writes)
+            .take(100)
+            .map(|row| RowReport {
+                row_number: row.row_number,
+                message: row.message.chars().take(1000).collect(),
+                values: Vec::new(),
+            })
+            .collect(),
+    }
+}
+
+fn remember_csv_report(id: Uuid, report: &ImportReport) {
+    let mut reports = CSV_RESULTS.lock().expect("CSV reports");
+    reports.push((id, csv_ui_report(report)));
+    if reports.len() > 20 {
+        reports.remove(0);
+    }
+}
+
+#[tauri::command]
+pub fn get_csv_import_result(task_id: Uuid) -> Option<CsvImportResult> {
+    CSV_RESULTS
+        .lock()
+        .expect("CSV reports")
+        .iter()
+        .find(|(id, _)| *id == task_id)
+        .map(|(_, report)| report.clone())
+}
+
+// Remove echoed field values as well as credentials before surfacing a row error.
+fn csv_row_error(error: &AppError, row: &[String]) -> String {
+    let mut message = error.safe_message();
+    let mut values: Vec<&str> = row
+        .iter()
+        .map(String::as_str)
+        .filter(|v| !v.is_empty())
+        .collect();
+    values.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    for value in values {
+        message = message.replace(value, "[REDACTED VALUE]");
+    }
+    message
 }
 
 #[derive(Default)]
@@ -594,12 +665,21 @@ pub async fn import_table_csv(
             table: input.table.clone(),
             path: input.path.clone(),
             has_header: input.has_header,
+            delimiter: input.delimiter.clone(),
+            mapping: input.mapping.clone(),
+            empty_as_null: input.empty_as_null,
             preview_rows: Some(IMPORT_PREVIEW_ROWS),
+            sample_only: false,
             task_id: None,
         },
         &columns,
     )
     .await?;
+    resolve_csv_mapping(
+        &preview.headers,
+        &preview.target_columns,
+        input.mapping.as_deref(),
+    )?;
     if !preview.can_import {
         return Err(AppError::ConfigError(
             "CSV has no valid importable rows; fix the column mapping or row errors first".into(),
@@ -626,6 +706,7 @@ pub async fn import_table_csv(
         let result = import_csv_rows(&input, operation, columns, &manager, &handle).await;
         match result {
             Ok(report) => {
+                remember_csv_report(handle.id, &report);
                 let failed = report.invalid_row_count + report.failed_write_count;
                 let message = if failed == 0 {
                     format!(
@@ -634,8 +715,8 @@ pub async fn import_table_csv(
                     )
                 } else {
                     format!(
-                        "Imported {} rows into {}; {} rows reported in {}",
-                        report.inserted_rows, report.table, failed, report.path
+                        "Imported {} rows into {}; {} rows failed",
+                        report.inserted_rows, report.table, failed
                     )
                 };
                 if let Ok(task) = manager.finish_success(handle.id, message).await {
@@ -1128,6 +1209,7 @@ fn cancelled_import_preview(path: &str) -> ImportPreview {
         invalid_rows: Vec::new(),
         can_import: false,
         cancelled: true,
+        has_more: false,
     }
 }
 
@@ -1169,10 +1251,14 @@ async fn preview_csv_reader_with_cancel<R: AsyncRead + Unpin>(
     handle: Option<&TaskHandle>,
 ) -> Result<ImportPreview, PreviewCsvError> {
     ensure_preview_not_cancelled(handle)?;
-    let mut reader = CsvRecordReader::new(reader, IMPORT_MAX_RECORD_BYTES);
+    let mut reader = CsvRecordReader::new(reader, IMPORT_MAX_RECORD_BYTES)
+        .with_delimiter(input.delimiter.as_deref())?;
     let first = reader.next_row().await?;
     let headers = match &first {
         Some(row) if input.has_header => row.clone(),
+        Some(row) if input.mapping.is_some() => {
+            (1..=row.len()).map(|i| format!("Column {i}")).collect()
+        }
         Some(_) => target_columns.clone(),
         None => Vec::new(),
     };
@@ -1181,8 +1267,15 @@ async fn preview_csv_reader_with_cancel<R: AsyncRead + Unpin>(
     // the message. Reserve a conservative per-report budget before cloning.
     let header_report_bytes = row_storage_bytes(&headers) * 2 + 256;
     let header_report_limit = sample_limit.min(IMPORT_PREVIEW_SAMPLE_BYTES / header_report_bytes);
-    let validation =
-        validate_import_rows_sampled(&headers, &[], 1, &target_columns, header_report_limit);
+    let validation = if input.mapping.is_some() {
+        ImportValidation {
+            reports: Vec::new(),
+            header_invalid: false,
+            invalid_data_rows: 0,
+        }
+    } else {
+        validate_import_rows_sampled(&headers, &[], 1, &target_columns, header_report_limit)
+    };
     debug_assert_eq!(validation.invalid_data_rows, 0);
     let mut error_bytes_left =
         IMPORT_PREVIEW_SAMPLE_BYTES - validation.reports.len() * header_report_bytes;
@@ -1197,6 +1290,7 @@ async fn preview_csv_reader_with_cancel<R: AsyncRead + Unpin>(
         invalid_rows: validation.reports,
         can_import: false,
         cancelled: false,
+        has_more: false,
     };
     let mut next = if input.has_header {
         reader.next_row().await?
@@ -1204,6 +1298,11 @@ async fn preview_csv_reader_with_cancel<R: AsyncRead + Unpin>(
         first
     };
     while let Some(row) = next {
+        if input.sample_only && !preview.rows.is_empty() && row_storage_bytes(&row) > row_bytes_left
+        {
+            preview.has_more = true;
+            break;
+        }
         preview.total_rows += 1;
         if row.len() == preview.headers.len() {
             if !validation.header_invalid {
@@ -1235,6 +1334,10 @@ async fn preview_csv_reader_with_cancel<R: AsyncRead + Unpin>(
             ensure_preview_not_cancelled(handle)?;
         }
         next = reader.next_row().await?;
+        if input.sample_only && preview.total_rows >= sample_limit.max(1) as u64 {
+            preview.has_more = next.is_some();
+            break;
+        }
     }
     preview.can_import = preview.valid_rows > 0;
     Ok(preview)
@@ -1278,6 +1381,7 @@ fn build_import_preview(
         invalid_rows: validation.reports,
         can_import: valid_rows > 0,
         cancelled: false,
+        has_more: false,
     }
 }
 
@@ -1353,25 +1457,23 @@ async fn import_csv_rows_in_transaction(
     let target_columns = require_importable_column_names(&columns)?;
     let file_snapshot = import_file_snapshot(Path::new(&input.path)).await?;
     let file = File::open(&input.path).await.map_err(AppError::from)?;
-    let mut reader = CsvRecordReader::new(file, IMPORT_MAX_RECORD_BYTES);
+    let mut reader = CsvRecordReader::new(file, IMPORT_MAX_RECORD_BYTES)
+        .with_delimiter(input.delimiter.as_deref())?;
     let first = reader
         .next_row_checked(|| ensure_import_active(handle))
         .await?;
     let headers = match &first {
         Some(row) if input.has_header => row.clone(),
+        Some(row) if input.mapping.is_some() => {
+            (1..=row.len()).map(|i| format!("Column {i}")).collect()
+        }
         Some(_) | None => target_columns.clone(),
     };
+    let source_width = headers.len();
     let first_data_row = if input.has_header { 2 } else { 1 };
-    // Recheck after rereading the file: preview is not an authorization to use
-    // an invalid header if the file changed before this background task began.
-    if !validate_import_rows(&headers, &[], first_data_row, &target_columns).is_empty() {
-        return Err(AppError::ConfigError(
-            "CSV column mapping is invalid; no rows were imported".into(),
-        )
-        .into());
-    }
+    let mapping = resolve_csv_mapping(&headers, &target_columns, input.mapping.as_deref())?;
+    let import_columns: Vec<String> = mapping.iter().map(|(_, name)| name.clone()).collect();
     let mut invalid_rows = BoundedRowReports::default();
-    let import_columns = headers;
     let table = qualified_table(input.driver_type, &input.schema, &input.table);
     let mut total_rows = 0_u64;
     let mut next = if input.has_header {
@@ -1389,14 +1491,10 @@ async fn import_csv_rows_in_transaction(
             return Err(ExportTaskError::Cancelled);
         }
 
-        if row.len() != import_columns.len() {
+        if row.len() != source_width {
             invalid_rows.push(RowReport {
                 row_number,
-                message: format!(
-                    "Expected {} fields, found {}",
-                    import_columns.len(),
-                    row.len()
-                ),
+                message: format!("Expected {} fields, found {}", source_width, row.len()),
                 values: row,
             });
         }
@@ -1422,7 +1520,8 @@ async fn import_csv_rows_in_transaction(
     file.seek(SeekFrom::Start(0))
         .await
         .map_err(AppError::from)?;
-    let mut reader = CsvRecordReader::new(file, IMPORT_MAX_RECORD_BYTES);
+    let mut reader = CsvRecordReader::new(file, IMPORT_MAX_RECORD_BYTES)
+        .with_delimiter(input.delimiter.as_deref())?;
     if input.has_header {
         reader
             .next_row_checked(|| ensure_import_active(handle))
@@ -1564,7 +1663,7 @@ async fn import_csv_rows_in_transaction(
                         ensure_import_active(handle)?;
                         failed_writes.push(RowReport {
                             row_number,
-                            message: error.to_string(),
+                            message: csv_row_error(&error, &row),
                             values: row,
                         });
                     }
@@ -1588,7 +1687,11 @@ async fn import_csv_rows_in_transaction(
         if current == 1 || current.is_multiple_of(100) {
             ensure_import_file_unchanged(Path::new(&input.path), &file_snapshot).await?;
         }
-        if row.len() == import_columns.len() {
+        if row.len() == source_width {
+            let row: Vec<String> = mapping
+                .iter()
+                .map(|(index, _)| row[*index].clone())
+                .collect();
             let row_number = first_data_row + current - 1;
             if supports_multi_row_insert {
                 batch_bytes = batch_bytes.saturating_add(row_storage_bytes(&row));
@@ -1633,7 +1736,7 @@ async fn import_csv_rows_in_transaction(
                     Ok(_) => inserted_rows += 1,
                     Err(error) => failed_writes.push(RowReport {
                         row_number,
-                        message: error.to_string(),
+                        message: csv_row_error(&error, &row),
                         values: row,
                     }),
                 }
@@ -1764,6 +1867,8 @@ struct CsvRecordReader<R> {
     reader: BufReader<R>,
     skip_lf: bool,
     max_record_bytes: usize,
+    delimiter: char,
+    first_record: bool,
 }
 
 impl<R: AsyncRead + Unpin> CsvRecordReader<R> {
@@ -1772,7 +1877,14 @@ impl<R: AsyncRead + Unpin> CsvRecordReader<R> {
             reader: BufReader::new(reader),
             skip_lf: false,
             max_record_bytes,
+            delimiter: ',',
+            first_record: true,
         }
+    }
+
+    fn with_delimiter(mut self, delimiter: Option<&str>) -> Result<Self, AppError> {
+        self.delimiter = csv_delimiter(delimiter)?;
+        Ok(self)
     }
 
     fn into_inner(self) -> R {
@@ -1834,38 +1946,78 @@ impl<R: AsyncRead + Unpin> CsvRecordReader<R> {
         let mut record = String::from_utf8(record).map_err(|error| {
             AppError::SerializationError(format!("CSV is not valid UTF-8: {error}"))
         })?;
+        if self.first_record {
+            self.first_record = false;
+            if record.starts_with('\u{feff}') {
+                record.remove(0);
+            }
+        }
         // Terminate even an empty record, preserving an empty quoted EOF field.
         record.push('\n');
         check()?;
-        let mut rows = parse_csv(&record)?;
+        let mut rows = parse_csv_delimited(&record, self.delimiter)?;
         check()?;
         Ok(rows.pop())
     }
 }
 
+fn csv_delimiter(value: Option<&str>) -> Result<char, AppError> {
+    match value.unwrap_or(",") {
+        "," => Ok(','),
+        "\t" => Ok('\t'),
+        ";" => Ok(';'),
+        "|" => Ok('|'),
+        _ => Err(AppError::ConfigError(
+            "CSV delimiter must be comma, tab, semicolon or pipe".into(),
+        )),
+    }
+}
+
+#[cfg(test)]
 fn parse_csv(content: &str) -> Result<Vec<Vec<String>>, AppError> {
+    parse_csv_delimited(content, ',')
+}
+
+fn parse_csv_delimited(content: &str, delimiter: char) -> Result<Vec<Vec<String>>, AppError> {
     let mut rows = Vec::new();
     let mut row = Vec::new();
     let mut cell = String::new();
     let mut chars = content.chars().peekable();
     let mut in_quotes = false;
     let mut record_started = false;
+    let mut quote_closed = false;
 
     while let Some(ch) = chars.next() {
         record_started = true;
+        if quote_closed && ch != delimiter && !matches!(ch, '\r' | '\n') {
+            return Err(AppError::SerializationError(
+                "CSV has characters after a closing quote".into(),
+            ));
+        }
         match ch {
             '"' if in_quotes && chars.peek() == Some(&'"') => {
                 cell.push('"');
                 chars.next();
             }
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
+            '"' if in_quotes => {
+                in_quotes = false;
+                quote_closed = true;
+            }
+            '"' if cell.is_empty() => in_quotes = true,
+            '"' => {
+                return Err(AppError::SerializationError(
+                    "CSV has a quote inside an unquoted field".into(),
+                ))
+            }
+            ch if ch == delimiter && !in_quotes => {
+                quote_closed = false;
                 row.push(std::mem::take(&mut cell));
             }
             '\n' if !in_quotes => {
                 row.push(std::mem::take(&mut cell));
                 rows.push(std::mem::take(&mut row));
                 record_started = false;
+                quote_closed = false;
             }
             '\r' if !in_quotes => {
                 if chars.peek() == Some(&'\n') {
@@ -1874,6 +2026,7 @@ fn parse_csv(content: &str) -> Result<Vec<Vec<String>>, AppError> {
                 row.push(std::mem::take(&mut cell));
                 rows.push(std::mem::take(&mut row));
                 record_started = false;
+                quote_closed = false;
             }
             _ => cell.push(ch),
         }
@@ -1911,6 +2064,48 @@ fn csv_headers_and_rows(
         // columns. Require the complete width rather than guessing a subset.
         (target_columns.to_vec(), parsed, 1)
     }
+}
+
+fn resolve_csv_mapping(
+    headers: &[String],
+    targets: &[String],
+    mapping: Option<&[Option<String>]>,
+) -> Result<Vec<(usize, String)>, AppError> {
+    let Some(mapping) = mapping else {
+        if !validate_import_rows(headers, &[], 1, targets).is_empty() {
+            return Err(AppError::ConfigError(
+                "CSV column mapping is invalid".into(),
+            ));
+        }
+        return Ok(headers
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (i, name.clone()))
+            .collect());
+    };
+    if mapping.len() != headers.len() {
+        return Err(AppError::ConfigError(
+            "CSV mapping width does not match source columns".into(),
+        ));
+    }
+    let mut seen = HashSet::new();
+    let mut resolved = Vec::new();
+    for (index, target) in mapping.iter().enumerate() {
+        if let Some(target) = target {
+            if !targets.contains(target) || !seen.insert(target) {
+                return Err(AppError::ConfigError(
+                    "CSV mapping contains a duplicate or non-writable target".into(),
+                ));
+            }
+            resolved.push((index, target.clone()));
+        }
+    }
+    if resolved.is_empty() {
+        return Err(AppError::ConfigError(
+            "CSV mapping must select at least one writable target".into(),
+        ));
+    }
+    Ok(resolved)
 }
 
 fn validate_import_rows(
@@ -2685,7 +2880,11 @@ mod tests {
             table: "items".into(),
             path: "preview.csv".into(),
             has_header: true,
+            delimiter: None,
+            mapping: None,
+            empty_as_null: true,
             preview_rows: Some(20),
+            sample_only: false,
             task_id: None,
         }
     }
@@ -2698,7 +2897,11 @@ mod tests {
                 table: "items".into(),
                 path: "preview.csv".into(),
                 has_header,
+                delimiter: None,
+                mapping: None,
+                empty_as_null: true,
                 preview_rows: Some(500),
+                sample_only: false,
                 task_id: None,
             },
             parse_csv(content).unwrap(),
@@ -2847,7 +3050,11 @@ mod tests {
                         table: "items".into(),
                         path: "preview.csv".into(),
                         has_header,
+                        delimiter: None,
+                        mapping: None,
+                        empty_as_null: true,
                         preview_rows: Some(sample_limit),
+                        sample_only: false,
                         task_id: None,
                     };
                     let columns = vec!["id".into(), "name".into()];
@@ -2876,7 +3083,11 @@ mod tests {
             table: "items".into(),
             path: "preview.csv".into(),
             has_header: true,
+            delimiter: None,
+            mapping: None,
+            empty_as_null: true,
             preview_rows: Some(1),
+            sample_only: false,
             task_id: None,
         };
         let content = format!("id,name\n{}\"unterminated", "1,Ada\n".repeat(150));
@@ -2897,7 +3108,11 @@ mod tests {
             table: "items".into(),
             path: "preview.csv".into(),
             has_header: true,
+            delimiter: None,
+            mapping: None,
+            empty_as_null: true,
             preview_rows: Some(100),
+            sample_only: false,
             task_id: None,
         };
         let wide = "x".repeat(100_000);
@@ -3408,6 +3623,8 @@ mod stream_lifecycle_tests {
                 table: "items".into(),
                 path: path.0.to_string_lossy().into_owned(),
                 has_header: true,
+                delimiter: None,
+                mapping: None,
                 empty_as_null: true,
             },
             operation,
@@ -3525,6 +3742,8 @@ mod stream_lifecycle_tests {
             table: "items".into(),
             path: path.0.to_string_lossy().into_owned(),
             has_header: true,
+            delimiter: None,
+            mapping: None,
             empty_as_null: true,
         };
         let importer = import_csv_rows(&input, operation, columns, &tasks, &handle);
@@ -3738,6 +3957,8 @@ mod stream_lifecycle_tests {
                 table: table_name.clone(),
                 path: path.0.to_string_lossy().into_owned(),
                 has_header: true,
+                delimiter: None,
+                mapping: None,
                 empty_as_null: true,
             },
             operation,
@@ -3774,6 +3995,8 @@ mod stream_lifecycle_tests {
                 table: table_name.clone(),
                 path: empty_path.0.to_string_lossy().into_owned(),
                 has_header: true,
+                delimiter: None,
+                mapping: None,
                 empty_as_null: false,
             },
             operation,
@@ -3853,6 +4076,8 @@ mod stream_lifecycle_tests {
                     table: wide_name,
                     path: wide_path.0.to_string_lossy().into_owned(),
                     has_header: true,
+                    delimiter: None,
+                    mapping: None,
                     empty_as_null: true,
                 },
                 operation,
@@ -4294,7 +4519,11 @@ mod stream_lifecycle_tests {
                     table: "items".into(),
                     path: path.0.to_string_lossy().into_owned(),
                     has_header: true,
+                    delimiter: None,
+                    mapping: None,
+                    empty_as_null: true,
                     preview_rows: None,
+                    sample_only: false,
                     task_id: None,
                 },
                 &columns,
@@ -4321,6 +4550,8 @@ mod stream_lifecycle_tests {
                     table: "items".into(),
                     path: path.0.to_string_lossy().into_owned(),
                     has_header: true,
+                    delimiter: None,
+                    mapping: None,
                     empty_as_null: true,
                 },
                 operation,
@@ -4344,6 +4575,147 @@ mod stream_lifecycle_tests {
                 result.rows[0][0],
                 serde_json::json!(if scenario == "success" { 2 } else { 0 })
             );
+            connections.disconnect(id).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn csv_workflow_options_preview_and_import_share_semantics() {
+        for delimiter in [",", "\t", ";", "|"] {
+            for has_header in [true, false] {
+                for empty_as_null in [true, false] {
+                    let (mut connections, id) = connection().await;
+                    let operation = connections
+                        .begin_query_operation(id, "csv-options")
+                        .unwrap()
+                        .wait()
+                        .await
+                        .unwrap();
+                    operation.driver.execute_query("CREATE TABLE items (id INTEGER, note TEXT, optional TEXT DEFAULT 'default', generated TEXT GENERATED ALWAYS AS (note) VIRTUAL)", None).await.unwrap();
+                    let columns = operation.driver.get_columns("main", "items").await.unwrap();
+                    let path = ExportTestPath::new();
+                    let csv = format!("{}1{delimiter}{delimiter}extra\n2{delimiter}\"\"{delimiter}extra\n3{delimiter}NULL{delimiter}extra\n", if has_header { format!("\u{feff}source_id{delimiter}note{delimiter}ignored\n") } else { "\u{feff}".into() });
+                    tokio::fs::write(&path.0, csv).await.unwrap();
+                    let mapping = vec![Some("id".into()), Some("note".into()), None];
+                    let preview_input = PreviewTableCsvImportInput {
+                        connection_id: id,
+                        schema: "main".into(),
+                        table: "items".into(),
+                        path: path.0.to_string_lossy().into(),
+                        has_header,
+                        delimiter: Some(delimiter.into()),
+                        mapping: Some(mapping.clone()),
+                        empty_as_null,
+                        preview_rows: Some(20),
+                        sample_only: false,
+                        task_id: None,
+                    };
+                    let preview = preview_csv_import(&preview_input, &columns).await.unwrap();
+                    assert_eq!(preview.total_rows, 3);
+                    assert_eq!(
+                        preview.headers[0],
+                        if has_header { "source_id" } else { "Column 1" }
+                    );
+                    assert_eq!(preview.rows[0], vec!["1", "", "extra"]);
+                    assert_eq!(preview.rows[1][1], ""); // Quote origin is intentionally not retained.
+                    assert_eq!(preview.rows[2][1], "NULL");
+                    assert!(!preview.target_columns.contains(&"generated".to_string()));
+                    let (manager, handle) = task().await;
+                    let report = import_csv_rows(
+                        &ImportTableCsvInput {
+                            connection_id: id,
+                            driver_type: DriverType::Sqlite,
+                            schema: "main".into(),
+                            table: "items".into(),
+                            path: preview_input.path,
+                            has_header,
+                            delimiter: preview_input.delimiter,
+                            mapping: preview_input.mapping,
+                            empty_as_null: preview_input.empty_as_null,
+                        },
+                        operation,
+                        columns,
+                        &manager,
+                        &handle,
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(report.inserted_rows, 3);
+                    let result = connections
+                        .driver(id)
+                        .unwrap()
+                        .execute_query("SELECT note, optional FROM items ORDER BY id", None)
+                        .await
+                        .unwrap();
+                    let expected = if empty_as_null {
+                        serde_json::Value::Null
+                    } else {
+                        json!("")
+                    };
+                    assert_eq!(result.rows[0][0], expected);
+                    assert_eq!(result.rows[1][0], expected);
+                    assert_eq!(result.rows[2][0], json!("NULL"));
+                    assert_eq!(result.rows[2][1], json!("default"));
+                    connections.disconnect(id).unwrap();
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn csv_workflow_partial_and_full_failure_report_row_numbers() {
+        for csv in [
+            "id,note\n1,first\n1,second\n2,third",
+            "id,note\n0,first\n0,second",
+        ] {
+            let (mut connections, id) = connection().await;
+            let operation = connections
+                .begin_query_operation(id, "csv-report")
+                .unwrap()
+                .wait()
+                .await
+                .unwrap();
+            operation
+                .driver
+                .execute_query(
+                    "CREATE TABLE items (id INTEGER PRIMARY KEY CHECK(id > 0), note TEXT)",
+                    None,
+                )
+                .await
+                .unwrap();
+            let columns = operation.driver.get_columns("main", "items").await.unwrap();
+            let path = ExportTestPath::new();
+            tokio::fs::write(&path.0, csv).await.unwrap();
+            let (manager, handle) = task().await;
+            let report = import_csv_rows(
+                &ImportTableCsvInput {
+                    connection_id: id,
+                    driver_type: DriverType::Sqlite,
+                    schema: "main".into(),
+                    table: "items".into(),
+                    path: path.0.to_string_lossy().into(),
+                    has_header: true,
+                    delimiter: None,
+                    mapping: Some(vec![Some("id".into()), Some("note".into())]),
+                    empty_as_null: true,
+                },
+                operation,
+                columns,
+                &manager,
+                &handle,
+            )
+            .await
+            .unwrap();
+            let ui = csv_ui_report(&report);
+            if csv.contains("third") {
+                assert_eq!((ui.inserted_rows, ui.failed_rows), (2, 1));
+                assert_eq!(ui.failures[0].row_number, 3);
+            } else {
+                assert_eq!((ui.inserted_rows, ui.failed_rows), (0, 2));
+                assert_eq!(ui.failures[0].row_number, 2);
+            }
+            assert!(ui.failures.iter().all(|row| row.values.is_empty()));
+            let _ = tokio::fs::remove_file(&report.path).await;
             connections.disconnect(id).unwrap();
         }
     }
@@ -4384,6 +4756,8 @@ mod stream_lifecycle_tests {
                 table: "items".into(),
                 path: path.0.to_string_lossy().into_owned(),
                 has_header: true,
+                delimiter: None,
+                mapping: None,
                 empty_as_null: true,
             },
             operation,
@@ -4453,6 +4827,8 @@ mod stream_lifecycle_tests {
                 table: "items".into(),
                 path: path.0.to_string_lossy().into_owned(),
                 has_header: true,
+                delimiter: None,
+                mapping: None,
                 empty_as_null: true,
             },
             operation,
@@ -4697,5 +5073,108 @@ mod stream_lifecycle_tests {
         assert!(
             matches!(result, Err(ExportTaskError::DatabaseFailed(AppError::ConfigError(message))) if message == "simulated driver error")
         );
+    }
+}
+
+#[cfg(test)]
+mod csv_workflow_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn strict_csv_options_fail_in_preview_before_import() {
+        let mut input: PreviewTableCsvImportInput = serde_json::from_value(serde_json::json!({
+            "connectionId": Uuid::nil(), "schema": "main", "table": "items", "path": "fixture.csv", "mapping": []
+        })).unwrap();
+        for bytes in [
+            &b"a\n\xff"[..],
+            &b"a\nx\"y"[..],
+            &b"a\n\"x\"tail"[..],
+            &b"a\n\"x"[..],
+        ] {
+            assert!(preview_csv_reader(&input, bytes, vec!["a".into()])
+                .await
+                .is_err());
+        }
+        let preview = preview_csv_reader(&input, &b"a,b\n1\n"[..], vec!["a".into()])
+            .await
+            .unwrap();
+        assert_eq!(preview.invalid_rows[0].row_number, 2);
+        input.delimiter = Some("||".into());
+        assert!(preview_csv_reader(&input, &b"a\n1"[..], vec!["a".into()])
+            .await
+            .is_err());
+        input.path = std::env::temp_dir()
+            .join(format!("missing-{}.csv", Uuid::new_v4()))
+            .to_string_lossy()
+            .into();
+        assert!(preview_csv_import(&input, &[]).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn ui_preview_returns_a_bounded_prefix_without_requiring_full_scan() {
+        let input: PreviewTableCsvImportInput = serde_json::from_value(serde_json::json!({
+            "connectionId": Uuid::nil(), "schema": "main", "table": "items", "path": "fixture.csv",
+            "mapping": [], "sampleOnly": true, "previewRows": 2
+        }))
+        .unwrap();
+        let preview = preview_csv_reader(&input, &b"id\n1\n2\n3\n\xff"[..], vec!["id".into()])
+            .await
+            .unwrap();
+        assert_eq!(preview.rows, vec![vec!["1"], vec!["2"]]);
+        assert_eq!(preview.total_rows, 2); // Scanned count, not a claim about the full file.
+        assert!(preview.has_more);
+        assert!(preview.can_import);
+    }
+
+    #[test]
+    fn explicit_mapping_is_exact_unique_and_can_ignore_sources() {
+        let headers = vec!["renamed".into(), "extra".into()];
+        let targets = vec!["name".into(), "optional".into()];
+        assert_eq!(
+            resolve_csv_mapping(&headers, &targets, Some(&[Some("name".into()), None])).unwrap(),
+            vec![(0, "name".into())]
+        );
+        for mapping in [
+            vec![Some("name".into()), Some("name".into())],
+            vec![Some("NAME".into()), None],
+            vec![None, None],
+            vec![Some("name".into())],
+        ] {
+            assert!(resolve_csv_mapping(&headers, &targets, Some(&mapping)).is_err());
+        }
+    }
+
+    #[test]
+    fn ui_report_is_bounded_and_does_not_include_business_values_or_path() {
+        let error = AppError::ConfigError(
+            "duplicate private-business-value; password=fixture-secret".into(),
+        );
+        let message = csv_row_error(&error, &["private-business-value".into()]);
+        assert!(!message.contains("private-business-value"));
+        assert!(!message.contains("fixture-secret"));
+        let report = ImportReport {
+            path: "/private/input.csv".into(),
+            table: "items".into(),
+            total_rows: 150,
+            inserted_rows: 0,
+            invalid_row_count: 0,
+            invalid_rows_omitted: 0,
+            invalid_rows: vec![],
+            failed_write_count: 150,
+            failed_writes_omitted: 0,
+            failed_writes: (1..=150)
+                .map(|i| RowReport {
+                    row_number: i,
+                    message: message.clone(),
+                    values: vec!["private-business-value".into()],
+                })
+                .collect(),
+        };
+        let ui = csv_ui_report(&report);
+        assert_eq!(ui.failures.len(), 100);
+        assert_eq!(ui.failed_rows, 150);
+        let serialized = serde_json::to_string(&ui).unwrap();
+        assert!(!serialized.contains("private-business-value"));
+        assert!(!serialized.contains("/private/input.csv"));
     }
 }

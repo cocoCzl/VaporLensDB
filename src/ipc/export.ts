@@ -36,7 +36,11 @@ export interface PreviewTableCsvImportInput {
   schema: string
   table: string
   path: string
+  delimiter?: string
+  mapping?: (string | null)[]
   hasHeader?: boolean
+  emptyAsNull?: boolean
+  sampleOnly?: boolean
   previewRows?: number
   taskId?: string
 }
@@ -47,6 +51,8 @@ export interface ImportTableCsvInput {
   schema: string
   table: string
   path: string
+  delimiter?: string
+  mapping?: (string | null)[]
   hasHeader?: boolean
   emptyAsNull?: boolean
 }
@@ -67,6 +73,7 @@ export interface ImportPreview {
   invalidRows: RowReport[]
   canImport: boolean
   cancelled: boolean
+  hasMore?: boolean
 }
 
 export function exportQueryResultCsv(input: ExportQueryResultCsvInput) {
@@ -87,4 +94,14 @@ export function previewTableCsvImport(input: PreviewTableCsvImportInput) {
 
 export function importTableCsv(input: ImportTableCsvInput) {
   return invokeCommand<TaskInfo>(COMMANDS.importTableCsv, { input })
+}
+
+export interface CsvImportResult {
+  insertedRows: number
+  failedRows: number
+  failures: RowReport[]
+}
+
+export function getCsvImportResult(taskId: string) {
+  return invokeCommand<CsvImportResult | null>(COMMANDS.getCsvImportResult, { taskId })
 }

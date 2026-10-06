@@ -77,17 +77,15 @@ includesAll(
   mainPanel,
   [
     'exportTableCsv({',
-    'useCsvPreview({',
-    'csvPreview.start({',
-    'csvPreview.cancel()',
-    'importTableCsv({',
+    'CsvImportWorkflow',
     "t('workbench.exportTable')",
-    "t('workbench.csvImportPathPlaceholder')",
-    "t('workbench.previewImport')",
-    "t('workbench.runImport')",
+    "t('csvImport.title')",
   ],
   'Data tab table import/export UI',
 )
+
+const workflow = read('src/components/workspace/CsvImportWorkflow.tsx')
+includesAll(workflow, ['useCsvPreview({', 'csvPreview.cancel()', 'importTableCsv({', 'validCsvMapping', 'emptyAsNull', 'mapping', 'directory: false'], 'CSV workflow')
 
 const previewHook = read('src/hooks/useCsvPreview.ts')
 includesAll(

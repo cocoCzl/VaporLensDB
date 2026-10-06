@@ -133,4 +133,33 @@ describe('useCsvPreview', () => {
     await act(async () => { await request })
     expect(result.current.status).toBe('idle')
   })
+  it('invalidates an in-flight preview when options or file selection clear it', async () => {
+    const pending = deferred<ImportPreview>()
+    mocks.preview.mockReturnValueOnce(pending.promise)
+    mocks.cancel.mockResolvedValue(undefined)
+    const completed = vi.fn()
+    const { result } = renderHook(() => useCsvPreview({ onCompleted: completed, onError: vi.fn() }))
+    let request!: Promise<void>
+    act(() => { request = result.current.start(input) })
+    act(() => result.current.clear())
+    await act(async () => { pending.resolve(preview(input.path)); await request })
+    expect(result.current.preview).toBeNull()
+    expect(result.current.status).toBe('idle')
+    expect(completed).not.toHaveBeenCalled()
+    expect(mocks.cancel).toHaveBeenCalledOnce()
+  })
+
+  it('removes previous successful preview while reparsing and after failure', async () => {
+    mocks.preview.mockResolvedValueOnce(preview(input.path))
+    const { result } = renderHook(() => useCsvPreview({ onCompleted: vi.fn(), onError: vi.fn() }))
+    await act(() => result.current.start(input))
+    const pending = deferred<ImportPreview>()
+    mocks.preview.mockReturnValueOnce(pending.promise)
+    let request!: Promise<void>
+    act(() => { request = result.current.start({ ...input, delimiter: ';', hasHeader: false, emptyAsNull: false }) })
+    expect(result.current.preview).toBeNull()
+    await act(async () => { pending.reject(new Error('invalid UTF-8')); await request })
+    expect(result.current.preview).toBeNull()
+  })
+
 })

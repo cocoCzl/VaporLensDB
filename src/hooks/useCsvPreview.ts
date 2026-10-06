@@ -21,6 +21,7 @@ export function useCsvPreview({
   }, [onCompleted, onError])
 
   const start = useCallback(async (input: Omit<PreviewTableCsvImportInput, 'taskId'>) => {
+    setPreview(null)
     const requestGeneration = ++generation.current
     const taskId = crypto.randomUUID()
     activeTaskId.current = taskId
@@ -54,7 +55,20 @@ export function useCsvPreview({
     }
   }, [])
 
-  const clear = useCallback(() => setPreview(null), [])
+  const clear = useCallback(() => {
+    generation.current++
+    const taskId = activeTaskId.current
+    activeTaskId.current = null
+    setPreview(null)
+    setStatus('idle')
+    if (taskId) void cancelTask(taskId).catch(() => { /* An obsolete preview cannot authorize import. */ })
+  }, [])
+
+  useEffect(() => () => {
+    generation.current++
+    const taskId = activeTaskId.current
+    if (taskId) void cancelTask(taskId).catch(() => {})
+  }, [])
 
   return { preview, status, start, cancel, clear }
 }
