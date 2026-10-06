@@ -27,6 +27,7 @@ interface EditorToolbarProps {
   canExplain?: boolean
   explainUnsupportedReason?: string
   disabled?: boolean
+  contextDisabled?: boolean
   formatDisabled?: boolean
   historyOpen?: boolean
   onConnectionChange: (connectionId: string | null) => void
@@ -63,6 +64,7 @@ export function EditorToolbar({
   canExplain = true,
   explainUnsupportedReason,
   disabled = false,
+  contextDisabled = false,
   formatDisabled = false,
   onConnectionChange,
   onDatabaseChange,
@@ -89,7 +91,7 @@ export function EditorToolbar({
           groups={dataSourceGroups}
           statuses={connectionStatuses}
           connectionId={connectionId}
-          disabled={running}
+          disabled={running || contextDisabled}
           onChange={onConnectionChange}
         />
         <span className="ide-toolbar-separator" aria-hidden="true" />
@@ -98,7 +100,7 @@ export function EditorToolbar({
           className="workspace-context-select h-8 w-36 shrink-0"
           aria-label={t('metadata.database')}
           value={database ?? ''}
-          disabled={!connectionId || databases.length === 0}
+          disabled={running || contextDisabled || !connectionId || databases.length === 0}
           title={t('editor.databaseSelectHint')}
           onValueChange={(value) => onDatabaseChange?.(value || null)}
           options={[...(!database ? [{ value: '', label: t('metadata.database') }] : []), ...databases.map((item) => ({ value: item.name, label: item.name }))]}
@@ -110,7 +112,7 @@ export function EditorToolbar({
           className="workspace-context-select h-8 w-32 shrink-0"
           aria-label={t('metadata.schema')}
           value={schema ?? ''}
-          disabled={!connectionId || schemas.length === 0}
+          disabled={running || contextDisabled || !connectionId || schemas.length === 0}
           onValueChange={(value) => onSchemaChange?.(value || null)}
           options={[...(!schema ? [{ value: '', label: t('metadata.schema') }] : []), ...schemas.map((item) => ({ value: item.name, label: item.name }))]}
         />
@@ -123,13 +125,13 @@ export function EditorToolbar({
         ) : running ? (
           <Button type="button" size="sm" variant="secondary" className="workspace-run-action" disabled><Play />{t('editor.running')}</Button>
         ) : (
-          <Button type="button" size="sm" disabled={disabled} className="workspace-run-action" onClick={() => onRun()} title={`${t('editor.run')} (${runShortcut})`}><Play className="size-3.5" />{t('editor.run')}<kbd className="hidden font-mono text-[10px] opacity-75 lg:inline">{runShortcut}</kbd></Button>
+          <Button type="button" size="sm" disabled={disabled || contextDisabled} className="workspace-run-action" onClick={() => onRun()} title={`${t('editor.run')} (${runShortcut})`}><Play className="size-3.5" />{t('editor.run')}<kbd className="hidden font-mono text-[10px] opacity-75 lg:inline">{runShortcut}</kbd></Button>
         )}
         <SqlMoreActions
           maxRows={maxRows}
           onMaxRowsChange={onMaxRowsChange}
           explainTitle={explainTitle}
-          explainDisabled={disabled || running || !canExplain}
+          explainDisabled={disabled || contextDisabled || running || !canExplain}
           onExplain={onExplain}
           formatDisabled={formatDisabled || running}
           onFormat={onFormat}

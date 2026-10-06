@@ -52,8 +52,8 @@ includesAll(
   [
     '<WorkbenchHome',
     'const connectionId = activeTab?.connectionId ?? null',
-    'updateTabConnection(activeTab.id, id, {',
-    'database: nextConnection?.database ?? null',
+    'onSwitchConnection(activeTab.id, id)',
+    'useExecutionTargetSwitch',
     'schema: null',
     '<SqlHistoryPanel',
     'useQueryHistoryStore',
@@ -67,6 +67,7 @@ includesAll(
   ],
   'main workspace opening workflow',
 )
+includesAll(read('src/lib/executionTargetSwitch.ts'), ['getConsoleTransactionState', 'setConsoleTransactionMode', 'database: target?.database ?? null', 'schema: null'], 'transaction-aware execution target switching')
 includesAll(workbenchHome, ["t('home.welcomeTitle')", '<HomeQuickActions', '<RecentConnections', '<RecentQueries'], 'home opening workflow')
 assert(
   !mainPanel.includes('ensureTab(activeConnectionId)'),

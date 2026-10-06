@@ -959,6 +959,27 @@
     "unsupportedDriver": "不支持的驱动",
     "unknownDriver": "未知驱动"
   },
+  "executionContext": {
+    "title": "执行上下文",
+    "execution": "执行连接",
+    "browsing": "浏览连接",
+    "target": "切换到",
+    "none": "未选择",
+    "defaultSchema": "默认",
+    "auto": "自动提交",
+    "idle": "手动事务 · 空闲",
+    "active": "手动事务 · 事务进行中",
+    "failed": "手动事务 · 事务失败",
+    "switchTitle": "切换执行连接",
+    "switchDescription": "请先处理当前事务，再切换连接。取消后，此 SQL 标签页仍使用当前连接。",
+    "commitSwitch": "提交并切换",
+    "rollbackSwitch": "回滚并切换",
+    "cancelSwitch": "取消切换",
+    "retrySwitch": "重试切换",
+    "switching": "正在处理事务并切换连接…",
+    "switchPending": "正在处理操作…",
+    "switchFailed": "切换未完成，执行连接保持不变。请查看事务状态后重试；服务器不可用时显示最后确认的状态。"
+  },
   "runtime": {
     "tauriUnavailable": "当前页面不在 Tauri 桌面运行时中，请使用 pnpm tauri dev 启动应用"
   },

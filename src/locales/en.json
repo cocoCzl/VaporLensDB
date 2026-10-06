@@ -959,6 +959,27 @@
     "unsupportedDriver": "Unsupported driver",
     "unknownDriver": "Unknown driver"
   },
+  "executionContext": {
+    "title": "Execution context",
+    "execution": "Execution",
+    "browsing": "Browsing",
+    "target": "Switch to",
+    "none": "Not selected",
+    "defaultSchema": "Default",
+    "auto": "Auto",
+    "idle": "Manual · Idle",
+    "active": "Manual · Active transaction",
+    "failed": "Manual · Failed transaction",
+    "switchTitle": "Switch execution connection",
+    "switchDescription": "Resolve the current transaction before switching. Cancelling keeps this SQL tab on its current connection.",
+    "commitSwitch": "Commit and switch",
+    "rollbackSwitch": "Rollback and switch",
+    "cancelSwitch": "Cancel switch",
+    "retrySwitch": "Retry switch",
+    "switching": "Finishing the transaction and switching…",
+    "switchPending": "Operation in progress…",
+    "switchFailed": "The switch did not complete. The execution connection is unchanged. Review the transaction state and retry; if the server is unavailable, the last confirmed state is shown."
+  },
   "runtime": {
     "tauriUnavailable": "This page is not running inside the Tauri desktop runtime. Start the app with pnpm tauri dev."
   },

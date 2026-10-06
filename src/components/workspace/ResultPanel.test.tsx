@@ -6,6 +6,7 @@ function renderPanel({ collapsed, fillAvailableSpace = false }: { collapsed: boo
   return render(
     <ResultPanel
       title="Results"
+      source="Connection A · db-A / schema-A · Previous result"
       actions={<button type="button">Action</button>}
       collapsed={collapsed}
       fillAvailableSpace={fillAvailableSpace}
@@ -22,6 +23,10 @@ describe('ResultPanel visibility contract', () => {
     renderPanel({ collapsed: true })
 
     expect(screen.getByText('Results')).toBeInTheDocument()
+    const source = screen.getByText('Connection A · db-A / schema-A · Previous result')
+    expect(source).toBeVisible()
+    expect(source).not.toHaveClass('hidden')
+    expect(source).toHaveAttribute('title', source.textContent)
     expect(screen.queryByText('value header')).not.toBeInTheDocument()
     expect(screen.queryByText('row value 1')).not.toBeInTheDocument()
   })

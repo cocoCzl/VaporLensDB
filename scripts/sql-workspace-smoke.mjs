@@ -23,7 +23,7 @@ assert(toolbar.includes('<SqlMoreActions'), 'secondary SQL actions must be conso
 assert(toolbar.includes('<PopoverContent align="end" className="w-60 gap-0 p-1.5">'), 'SQL More Actions must override the shared popover gap without changing nested popovers')
 assert(toolbar.includes('aria-label={`${label}: ${currentValue}`}') && toolbar.includes('<span>{currentValue}</span><ChevronDown'), 'row limit control must expose its current value and menu affordance')
 assert(toolbar.includes('<span>{modeLabel}</span><ChevronDown') && toolbar.includes("variant=\"outline\" className=\"border-border/70 bg-surface disabled:border-border/55"), 'transaction controls must expose the current mode and visible button boundaries')
-assert(toolbar.includes("<Button type=\"button\" size=\"sm\" disabled={disabled}"), 'Run must remain an explicit primary action')
+assert(toolbar.includes("<Button type=\"button\" size=\"sm\" disabled={disabled || contextDisabled}"), 'Run must remain an explicit primary action')
 assert(toolbar.includes("t('editor.maximizeResults')") && toolbar.includes("t('editor.restoreSplit')"), 'More must expose workspace layout controls')
 assert(workspace.includes('SqlWorkspaceView') && workspace.includes('editor/results spatial relationship'), 'workspace frame must own the editor/result layout contract')
 assert(results.includes('data-first shell') && results.includes('fillAvailableSpace'), 'result panel must support normal and maximized layouts')

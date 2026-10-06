@@ -42,7 +42,7 @@ export function ResultPanel({
           <span className="shrink-0 text-[13px] font-semibold tracking-[-0.012em]">{title}</span>
           {status}
           {summary ? <span className="result-panel-summary truncate">{summary}</span> : null}
-          {source ? <span className="hidden truncate text-[11px] text-muted-foreground xl:inline">{source}</span> : null}
+          {source ? <span className="max-w-72 truncate text-[11px] text-muted-foreground" title={typeof source === 'string' ? source : undefined}>{source}</span> : null}
         </div>
         <div className="ml-auto flex h-full shrink-0 items-center gap-1">{actions}</div>
       </header>

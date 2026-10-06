@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
 import { AlertCircle, ArrowDownAZ, ArrowUpAZ, ChevronLeft, ChevronRight, Clock3, Copy, Database as DatabaseIcon, Download, FileCode2, Loader2, LockKeyhole, Maximize2, PanelBottomClose, PanelBottomOpen, RefreshCw, Repeat2, Search, Trash2, Upload, X } from 'lucide-react'
 import { IconTooltipButton } from '@/components/common/IconTooltipButton'
+import { ExecutionContextBar } from '@/components/editor/ExecutionContextBar'
+import { useExecutionTargetSwitch } from '@/hooks/useExecutionTargetSwitch'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
 import { WorkbenchHome } from '@/components/home/WorkbenchHome'
@@ -86,6 +88,11 @@ const ConnectionList = lazy(() => import('@/components/connection/ConnectionList
 })))
 
 export function MainPanel() {
+  const { request, dialog } = useExecutionTargetSwitch()
+  return <><MainPanelContent onSwitchConnection={request} />{dialog}</>
+}
+
+function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: string, targetId: string | null) => void }) {
   const { t } = useTranslation()
   const { connections, dataSourceGroups, statuses, connectConnection, setActiveConnection } = useConnectionStore(useShallow((state) => ({
     connections: state.connections,
@@ -100,7 +107,6 @@ export function MainPanel() {
     addTab,
     updateTabSql,
     updateDataTabContext,
-    updateTabConnection,
     updateSqlTabContext,
     setTabDraft,
     setTabQueryState,
@@ -110,7 +116,6 @@ export function MainPanel() {
     addTab: state.addTab,
     updateTabSql: state.updateTabSql,
     updateDataTabContext: state.updateDataTabContext,
-    updateTabConnection: state.updateTabConnection,
     updateSqlTabContext: state.updateSqlTabContext,
     setTabDraft: state.setTabDraft,
     setTabQueryState: state.setTabQueryState,
@@ -390,7 +395,8 @@ export function MainPanel() {
   ])
 
   async function execute(sqlOverride?: string) {
-    if (!activeTab || !connectionId || !queryCapabilities.canQuery) {
+    if (!activeTab || !connectionId || !queryCapabilities.canQuery
+      || useEditorStore.getState().tabs.find((tab) => tab.id === activeTab.id)?.transactionBusy) {
       return
     }
     const sql = (sqlOverride ?? sqlToRun()).trim()
@@ -762,6 +768,7 @@ export function MainPanel() {
   return (
     <main className="flex flex-1 overflow-hidden bg-background">
       <SqlWorkspace view={workspaceView}>
+        <ExecutionContextBar />
         <EditorToolbar
         connections={connections}
         dataSourceGroups={dataSourceGroups}
@@ -780,38 +787,8 @@ export function MainPanel() {
         explainUnsupportedReason={t('workbench.explainUnsupported')}
         disabled={!canRun}
         formatDisabled={!canFormat}
-        onConnectionChange={(id) => {
-          if (id === connectionId) return
-          void (async () => {
-            // Prepare the target first. A failed on-demand connection must not
-            // alter this tab's SQL, result, or previous execution target.
-            if (id) {
-              try {
-                // `connected` is a cached UI status. The backend validates an
-                // existing driver before reuse, replacing a stale JDBC/native
-                // session before this tab adopts the new execution context.
-                await connectConnection(id, { selectForBrowsing: false })
-              } catch {
-                return
-              }
-            }
-            const nextConnection = id
-              ? connections.find((connection) => connection.id === id)
-              : null
-            updateTabConnection(activeTab.id, id, {
-              database: nextConnection?.database ?? null,
-              schema: null,
-            })
-          if (id) {
-            setCatalogSchemaPath({
-              connectionId: id,
-              database: nextConnection?.database ?? null,
-              schema: null,
-              schemaListAvailable: true,
-            })
-          }
-          })()
-        }}
+        onConnectionChange={(id) => onSwitchConnection(activeTab.id, id)}
+        contextDisabled={Boolean(activeTab.closing || activeTab.transactionBusy)}
         onDatabaseChange={(database) => {
           if (!connectionId) return
           updateSqlTabContext(activeTab.id, { database, schema: null })

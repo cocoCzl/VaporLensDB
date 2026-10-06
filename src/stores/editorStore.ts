@@ -200,7 +200,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   updateTabConnection: (id, connectionId, context = {}) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
-        t.id === id && !t.closing && !t.transactionBusy
+        t.id === id && !t.closing && !t.running && !t.transactionBusy && t.transactionMode !== 'manual'
           ? {
               ...t,
               connectionId,
@@ -222,7 +222,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })),
   updateSqlTabContext: (id, context) =>
     set((s) => ({
-      tabs: s.tabs.map((t) => t.id === id && (
+      tabs: s.tabs.map((t) => t.id === id && !t.transactionBusy && !t.closing && !t.running && (
         ('database' in context && context.database !== t.database)
         || ('schema' in context && context.schema !== t.schema)
       ) ? {

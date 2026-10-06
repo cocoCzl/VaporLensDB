@@ -100,8 +100,8 @@ describe('SQL workspace persistence', () => {
         connectionId: 'mysql-id',
         database: 'mysql_app',
         schema: 'mysql_app',
-        transactionMode: 'manual',
-        transactionPhase: 'active',
+        transactionMode: 'auto',
+        transactionPhase: 'idle',
       }],
       activeTabId: 'oracle-tab',
     })
