@@ -1,6 +1,7 @@
 use serde::Deserialize;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
 use crate::{
@@ -237,6 +238,11 @@ pub async fn start_metadata_index_task(
             None,
         )
         .await;
+    let task = state
+        .task_manager
+        .update_metadata_progress(task.id, MetadataIndexProgress::starting(&connection.name))
+        .await
+        .map_err(String::from)?;
     let handle = state
         .task_manager
         .handle(task.id)
@@ -255,38 +261,32 @@ pub async fn start_metadata_index_task(
             emit_task_update(&app_for_task, &task);
         }
 
-        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel::<MetadataIndexProgress>();
+        // A single latest-value slot bounds memory even when thousands of
+        // objects finish between samples. No per-object IPC or task log entries.
+        let (progress_tx, progress_rx) = watch::channel(None);
         let progress_manager = manager.clone();
         let progress_app = app_for_task.clone();
         let progress_task_id = handle.id;
         let progress_task = tokio::spawn(async move {
-            while let Some(progress) = progress_rx.recv().await {
-                if let Ok(task) = progress_manager
-                    .update_progress_with_total(
-                        progress_task_id,
-                        progress.current,
-                        progress.total,
-                        "Indexing metadata",
-                    )
-                    .await
-                {
-                    emit_task_update(&progress_app, &task);
-                }
-            }
+            forward_metadata_progress(progress_rx, &progress_manager, progress_task_id, |task| {
+                emit_task_update(&progress_app, task);
+            })
+            .await;
         });
 
         let result = async {
             // Waiting is cancellable without interrupting the operation currently
             // using this connection. Keep the lease through the entire index walk.
             let operation = wait_metadata_index_operation(operation, &handle).await?;
-            let mut last_progress = None;
             index
                 .index_connection(&connection, operation.driver.clone(), force, |progress| {
-                    let position = (progress.current, progress.total);
-                    if last_progress != Some(position) {
-                        let _ = progress_tx.send(progress);
-                        last_progress = Some(position);
-                    }
+                    progress_tx.send_if_modified(|latest| {
+                        if latest.as_ref() == Some(progress) {
+                            return false;
+                        }
+                        *latest = Some(progress.clone());
+                        true
+                    });
                     !handle.is_cancel_requested()
                 })
                 .await
@@ -306,6 +306,49 @@ pub async fn start_metadata_index_task(
     Ok(task)
 }
 
+async fn forward_metadata_progress(
+    mut receiver: watch::Receiver<Option<MetadataIndexProgress>>,
+    manager: &TaskManager,
+    task_id: Uuid,
+    mut emit: impl FnMut(&TaskInfo),
+) {
+    let mut interval = tokio::time::interval(Duration::from_millis(200));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_progress = None;
+    loop {
+        // Closure flushes the final snapshot before the terminal event without
+        // a tail delay. A close racing a tick is handled on the next iteration.
+        let closed = tokio::select! {
+            _ = progress_tx_closed(&mut receiver) => true,
+            _ = interval.tick() => false,
+        };
+        if let Some(progress) = take_metadata_progress(&mut receiver, &mut last_progress) {
+            if let Ok(task) = manager.update_metadata_progress(task_id, progress).await {
+                emit(&task);
+            }
+        }
+        if closed {
+            break;
+        }
+    }
+}
+
+async fn progress_tx_closed(receiver: &mut watch::Receiver<Option<MetadataIndexProgress>>) {
+    while receiver.changed().await.is_ok() {}
+}
+
+fn take_metadata_progress(
+    receiver: &mut watch::Receiver<Option<MetadataIndexProgress>>,
+    last: &mut Option<MetadataIndexProgress>,
+) -> Option<MetadataIndexProgress> {
+    let latest = receiver.borrow_and_update();
+    if *latest == *last {
+        return None;
+    }
+    *last = latest.clone();
+    latest.clone()
+}
+
 pub(crate) async fn finish_metadata_index_task(
     manager: &TaskManager,
     handle: &TaskHandle,
@@ -313,6 +356,9 @@ pub(crate) async fn finish_metadata_index_task(
 ) -> Result<TaskInfo, AppError> {
     match result {
         Ok(summary) => {
+            manager
+                .set_metadata_capacity_reached(handle.id, summary.capacity_reached)
+                .await?;
             let suffix = if summary.capacity_reached {
                 "; index capacity reached"
             } else {
@@ -402,6 +448,148 @@ async fn wait_metadata_index_operation(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn progress_worker_flushes_a_burst_once_and_cached_path_emits_nothing() {
+        let manager = TaskManager::new();
+        for objects in [0, 1000] {
+            let task = manager.create_task("metadata-index", "fixture", None).await;
+            let (tx, rx) = watch::channel(None);
+            for ordinal in 1..=objects {
+                let mut progress = MetadataIndexProgress::starting("fixture");
+                progress.stage = crate::services::metadata_index::MetadataIndexStage::TableColumns;
+                progress.object_current = Some(ordinal);
+                progress.object_total = Some(objects);
+                tx.send_replace(Some(progress));
+            }
+            drop(tx);
+            let mut events = Vec::new();
+            forward_metadata_progress(rx, &manager, task.id, |task| events.push(task.clone()))
+                .await;
+            assert_eq!(events.len(), usize::from(objects > 0));
+            if objects > 0 {
+                assert_eq!(
+                    events[0].progress.metadata.as_ref().unwrap().object_current,
+                    Some(1000)
+                );
+                assert_eq!(
+                    events[0].logs.len(),
+                    1,
+                    "object updates must not accumulate logs"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn progress_sampling_coalesces_one_thousand_objects_without_a_queue() {
+        use super::{take_metadata_progress, MetadataIndexProgress};
+        use crate::services::metadata_index::MetadataIndexStage;
+        let (tx, mut rx) = tokio::sync::watch::channel(None);
+        let mut last = None;
+        let mut events = Vec::new();
+        let mut progress = MetadataIndexProgress::starting("fixture");
+        progress.stage = MetadataIndexStage::TableColumns;
+        progress.total = Some(1);
+        progress.schema_name = Some("public".into());
+        progress.object_total = Some(1000);
+        // Deterministic frames, not a wall-clock speed requirement. The same
+        // sampler is used by the 200ms production timer.
+        for ordinal in 1..=1000 {
+            progress.object_current = Some(ordinal);
+            progress.object_name = Some(format!("table_{ordinal}"));
+            tx.send_replace(Some(progress.clone()));
+            if ordinal == 1 || ordinal % 200 == 0 {
+                events.push(take_metadata_progress(&mut rx, &mut last).unwrap());
+                assert!(take_metadata_progress(&mut rx, &mut last).is_none());
+            }
+        }
+        assert_eq!(events.len(), 6);
+        assert_eq!(events.last().unwrap().object_current, Some(1000));
+        progress.stage = MetadataIndexStage::Finalizing;
+        progress.object_current = None;
+        progress.object_total = None;
+        progress.object_name = None;
+        tx.send_replace(Some(progress));
+        drop(tx);
+        events.push(take_metadata_progress(&mut rx, &mut last).unwrap());
+        assert_eq!(events.len(), 7);
+        assert!(rx.has_changed().is_err());
+        assert!(take_metadata_progress(&mut rx, &mut last).is_none());
+    }
+
+    #[tokio::test]
+    async fn metadata_progress_preserves_cancelling_and_terminal_outcomes() {
+        use super::{finish_metadata_index_task, MetadataIndexProgress, MetadataIndexSummary};
+        use crate::services::{
+            metadata_index::MetadataIndexStage,
+            task_manager::{TaskManager, TaskStatus},
+        };
+        let manager = TaskManager::new();
+        for status in [
+            TaskStatus::Succeeded,
+            TaskStatus::Cancelled,
+            TaskStatus::Failed,
+        ] {
+            let task = manager.create_task("metadata-index", "fixture", None).await;
+            let handle = manager.handle(task.id).await.unwrap();
+            manager.start_task(task.id, "starting").await.unwrap();
+            let mut progress = MetadataIndexProgress::starting("fixture");
+            progress.stage = MetadataIndexStage::TableColumns;
+            if status == TaskStatus::Cancelled {
+                assert_eq!(
+                    manager.request_cancel(task.id).await.unwrap().status,
+                    TaskStatus::Cancelling
+                );
+                assert_eq!(
+                    manager
+                        .update_metadata_progress(task.id, progress.clone())
+                        .await
+                        .unwrap()
+                        .status,
+                    TaskStatus::Cancelling
+                );
+            }
+            manager
+                .update_metadata_progress(task.id, progress.clone())
+                .await
+                .unwrap();
+            let result = if status == TaskStatus::Succeeded {
+                Ok(MetadataIndexSummary {
+                    connection_id: uuid::Uuid::new_v4(),
+                    entry_count: 50_000,
+                    capacity_reached: true,
+                })
+            } else {
+                Err(crate::models::error::AppError::ConfigError(
+                    "fixture stopped".into(),
+                ))
+            };
+            let terminal = finish_metadata_index_task(&manager, &handle, result)
+                .await
+                .unwrap();
+            assert_eq!(terminal.status, status);
+            assert!(terminal.finished_at.is_some());
+            assert_eq!(
+                terminal.progress.metadata_capacity_reached,
+                if status == TaskStatus::Succeeded {
+                    Some(true)
+                } else {
+                    None
+                }
+            );
+            progress.stage = MetadataIndexStage::Finalizing;
+            let late = manager
+                .update_metadata_progress(task.id, progress)
+                .await
+                .unwrap();
+            assert_eq!(late.status, status);
+            assert_eq!(
+                late.progress.metadata.unwrap().stage,
+                MetadataIndexStage::TableColumns
+            );
+        }
+    }
+
     use super::*;
     use crate::{
         models::connection::ConnectionConfig,

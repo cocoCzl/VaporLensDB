@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
+use super::metadata_index::MetadataIndexProgress;
 use crate::{models::error::AppError, utils::error_redaction::sanitize_diagnostic_error};
 
 #[derive(Clone, Default)]
@@ -29,6 +30,10 @@ pub struct TaskProgress {
     pub current: u64,
     pub total: Option<u64>,
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<MetadataIndexProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_capacity_reached: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +104,8 @@ impl TaskManager {
                 current: 0,
                 total,
                 message: None,
+                metadata: None,
+                metadata_capacity_reached: None,
             },
             logs: vec![TaskLogEntry {
                 at: now,
@@ -141,6 +148,8 @@ impl TaskManager {
                 current: 0,
                 total: None,
                 message: Some("Running".to_string()),
+                metadata: None,
+                metadata_capacity_reached: None,
             },
             logs: vec![TaskLogEntry {
                 at: now,
@@ -258,6 +267,36 @@ impl TaskManager {
             info.progress.message = Some(message.into());
         })
         .await
+    }
+
+    pub async fn update_metadata_progress(
+        &self,
+        id: Uuid,
+        progress: MetadataIndexProgress,
+    ) -> Result<TaskInfo, AppError> {
+        self.update_task(id, |info| {
+            if matches!(
+                info.status,
+                TaskStatus::Pending | TaskStatus::Running | TaskStatus::Cancelling
+            ) {
+                info.progress.current = progress.current;
+                info.progress.total = progress.total;
+                info.progress.metadata = Some(progress);
+            }
+        })
+        .await
+    }
+
+    pub async fn set_metadata_capacity_reached(
+        &self,
+        id: Uuid,
+        reached: bool,
+    ) -> Result<(), AppError> {
+        self.update_task(id, |info| {
+            info.progress.metadata_capacity_reached = Some(reached)
+        })
+        .await?;
+        Ok(())
     }
 
     pub async fn request_cancel(&self, id: Uuid) -> Result<TaskInfo, AppError> {

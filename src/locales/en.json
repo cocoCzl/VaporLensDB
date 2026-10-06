@@ -424,7 +424,35 @@
   "tasks": {
     "cancel": "Cancel background task",
     "status": "Background task status",
-    "idle": "Background tasks: idle"
+    "idle": "Background tasks: idle",
+    "metadata": {
+      "title": "Indexing metadata",
+      "status": {
+        "pending": "Waiting to index",
+        "running": "Indexing metadata",
+        "cancelling": "Cancelling…",
+        "cancelled": "Cancelled",
+        "succeeded": "Metadata index ready",
+        "failed": "Metadata indexing failed"
+      },
+      "stage": {
+        "starting": "Preparing metadata index",
+        "databases": "Listing databases",
+        "schemas": "Listing schemas",
+        "tables": "Listing tables",
+        "tableColumns": "Reading table columns",
+        "views": "Listing views",
+        "viewColumns": "Reading view columns",
+        "functions": "Listing functions",
+        "finalizing": "Finalizing index"
+      },
+      "schema": "Schema: {{name}}",
+      "schemaPosition": "Schema {{current}} of {{total}}",
+      "tablePosition": "Table {{current}} of {{total}}",
+      "viewPosition": "View {{current}} of {{total}}",
+      "cancelWaiting": "Waiting for the current metadata operation to finish.",
+      "capacityReached": "Index complete (capacity limit reached)."
+    }
   },
   "workbench": {
     "previousResult": "previous result",

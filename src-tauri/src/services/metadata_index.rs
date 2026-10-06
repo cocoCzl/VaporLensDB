@@ -70,10 +70,55 @@ pub struct MetadataIndexSummary {
     pub capacity_reached: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum MetadataIndexStage {
+    Starting,
+    Databases,
+    Schemas,
+    Tables,
+    TableColumns,
+    Views,
+    ViewColumns,
+    Functions,
+    Finalizing,
+}
+
+/// Schema counts are not an estimate of overall work. Object counts describe
+/// the current table/view within its already fetched list, not completed work.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct MetadataIndexProgress {
     pub current: u64,
     pub total: Option<u64>,
+    pub stage: MetadataIndexStage,
+    pub connection_name: String,
+    pub schema_name: Option<String>,
+    pub object_name: Option<String>,
+    pub object_current: Option<u64>,
+    pub object_total: Option<u64>,
+}
+
+impl MetadataIndexProgress {
+    pub fn starting(connection_name: &str) -> Self {
+        Self {
+            current: 0,
+            total: None,
+            stage: MetadataIndexStage::Starting,
+            connection_name: connection_name.to_string(),
+            schema_name: None,
+            object_name: None,
+            object_current: None,
+            object_total: None,
+        }
+    }
+
+    fn stage(&mut self, stage: MetadataIndexStage) {
+        self.stage = stage;
+        self.object_name = None;
+        self.object_current = None;
+        self.object_total = None;
+    }
 }
 
 impl MetadataIndexService {
@@ -89,7 +134,7 @@ impl MetadataIndexService {
         on_progress: F,
     ) -> Result<MetadataIndexSummary, AppError>
     where
-        F: FnMut(MetadataIndexProgress) -> bool + Send,
+        F: FnMut(&MetadataIndexProgress) -> bool + Send,
     {
         self.index_connection_with_capacity(
             connection,
@@ -111,7 +156,7 @@ impl MetadataIndexService {
         on_progress: F,
     ) -> Result<MetadataIndexSummary, AppError>
     where
-        F: FnMut(MetadataIndexProgress) -> bool + Send,
+        F: FnMut(&MetadataIndexProgress) -> bool + Send,
     {
         self.index_connection_with_capacity(connection, driver, force, capacity, on_progress)
             .await
@@ -126,7 +171,7 @@ impl MetadataIndexService {
         mut on_progress: F,
     ) -> Result<MetadataIndexSummary, AppError>
     where
-        F: FnMut(MetadataIndexProgress) -> bool + Send,
+        F: FnMut(&MetadataIndexProgress) -> bool + Send,
     {
         let capacity = capacity.max(1);
         let generation = {
@@ -146,16 +191,14 @@ impl MetadataIndexService {
         };
 
         let mut entries = vec![connection_entry(connection)];
-        let mut progress = MetadataIndexProgress {
-            current: 0,
-            total: None,
-        };
-        check_cancel(&mut on_progress, progress)?;
+        let mut progress = MetadataIndexProgress::starting(&connection.name);
+        progress.stage(MetadataIndexStage::Databases);
+        check_cancel(&mut on_progress, &progress)?;
 
         let mut capacity_reached = false;
         if has_capacity(&entries, capacity) {
             let databases =
-                checked_metadata(driver.get_databases(), &mut on_progress, progress).await?;
+                checked_metadata(driver.get_databases(), &mut on_progress, &progress).await?;
             for database in &databases {
                 push_index_entry(&mut entries, database_entry(connection, database), capacity);
                 if !has_capacity(&entries, capacity) {
@@ -167,26 +210,26 @@ impl MetadataIndexService {
             capacity_reached = true;
         }
 
+        progress.stage(MetadataIndexStage::Schemas);
         let schemas = if has_capacity(&entries, capacity) {
             checked_metadata(
                 driver.get_schemas(connection.database.as_deref()),
                 &mut on_progress,
-                progress,
+                &progress,
             )
             .await?
         } else {
             Vec::new()
         };
         let schema_total = schemas.len() as u64;
-        progress = MetadataIndexProgress {
-            current: 0,
-            total: Some(schema_total),
-        };
-        check_cancel(&mut on_progress, progress)?;
+        progress.total = Some(schema_total);
+        check_cancel(&mut on_progress, &progress)?;
 
         let mut current = 0_u64;
         for schema in &schemas {
-            check_cancel(&mut on_progress, progress)?;
+            progress.schema_name = Some(schema.name.clone());
+            progress.stage(MetadataIndexStage::Tables);
+            check_cancel(&mut on_progress, &progress)?;
             if !has_capacity(&entries, capacity) {
                 capacity_reached = true;
                 break;
@@ -198,11 +241,15 @@ impl MetadataIndexService {
             }
 
             let tables =
-                checked_metadata(driver.get_tables(&schema.name), &mut on_progress, progress)
+                checked_metadata(driver.get_tables(&schema.name), &mut on_progress, &progress)
                     .await?;
 
-            for table in &tables {
-                check_cancel(&mut on_progress, progress)?;
+            for (ordinal, table) in tables.iter().enumerate() {
+                progress.stage = MetadataIndexStage::TableColumns;
+                progress.object_name = Some(table.name.clone());
+                progress.object_current = Some(ordinal as u64 + 1);
+                progress.object_total = Some(tables.len() as u64);
+                check_cancel(&mut on_progress, &progress)?;
                 push_index_entry(
                     &mut entries,
                     table_entry(connection, schema, table),
@@ -215,7 +262,7 @@ impl MetadataIndexService {
                 let columns = checked_metadata(
                     driver.get_columns(&schema.name, &table.name),
                     &mut on_progress,
-                    progress,
+                    &progress,
                 )
                 .await?;
                 append_columns(connection, schema, table, &mut entries, columns, capacity);
@@ -228,11 +275,16 @@ impl MetadataIndexService {
                 break;
             }
 
+            progress.stage(MetadataIndexStage::Views);
             let views =
-                checked_metadata(driver.get_views(&schema.name), &mut on_progress, progress)
+                checked_metadata(driver.get_views(&schema.name), &mut on_progress, &progress)
                     .await?;
-            for view in &views {
-                check_cancel(&mut on_progress, progress)?;
+            for (ordinal, view) in views.iter().enumerate() {
+                progress.stage = MetadataIndexStage::ViewColumns;
+                progress.object_name = Some(view.name.clone());
+                progress.object_current = Some(ordinal as u64 + 1);
+                progress.object_total = Some(views.len() as u64);
+                check_cancel(&mut on_progress, &progress)?;
                 push_index_entry(&mut entries, view_entry(connection, schema, view), capacity);
                 if !has_capacity(&entries, capacity) {
                     capacity_reached = true;
@@ -241,7 +293,7 @@ impl MetadataIndexService {
                 let columns = checked_metadata(
                     driver.get_columns(&schema.name, &view.name),
                     &mut on_progress,
-                    progress,
+                    &progress,
                 )
                 .await?;
                 append_columns(connection, schema, view, &mut entries, columns, capacity);
@@ -254,10 +306,11 @@ impl MetadataIndexService {
                 break;
             }
 
+            progress.stage(MetadataIndexStage::Functions);
             let functions = checked_metadata(
                 driver.get_functions(&schema.name),
                 &mut on_progress,
-                progress,
+                &progress,
             )
             .await?;
             for function in functions {
@@ -273,11 +326,9 @@ impl MetadataIndexService {
             }
 
             current += 1;
-            progress = MetadataIndexProgress {
-                current,
-                total: Some(schema_total),
-            };
-            check_cancel(&mut on_progress, progress)?;
+            progress.current = current;
+            progress.schema_name = None;
+            check_cancel(&mut on_progress, &progress)?;
 
             // Keep the task responsive between schemas for cancellation checks in callers.
             if current < schema_total {
@@ -285,9 +336,14 @@ impl MetadataIndexService {
             }
         }
 
+        progress.stage(MetadataIndexStage::Finalizing);
+        progress.schema_name = None;
+        // Presentation only; the existing cancellation guard still runs under
+        // the commit lock below.
+        check_cancel(&mut on_progress, &progress)?;
         let entry_count = entries.len();
         let mut indexed = self.state.write().await;
-        check_cancel(&mut on_progress, progress)?;
+        check_cancel(&mut on_progress, &progress)?;
         if indexed.generations.get(&connection.id).copied() != Some(generation) {
             return Err(AppError::ConfigError(
                 "metadata index invalidated; retry the index".to_string(),
@@ -429,8 +485,8 @@ fn supported_metadata<T>(result: Result<Vec<T>, AppError>) -> Result<Vec<T>, App
 }
 
 fn check_cancel(
-    on_progress: &mut impl FnMut(MetadataIndexProgress) -> bool,
-    progress: MetadataIndexProgress,
+    on_progress: &mut impl FnMut(&MetadataIndexProgress) -> bool,
+    progress: &MetadataIndexProgress,
 ) -> Result<(), AppError> {
     if on_progress(progress) {
         Ok(())
@@ -441,8 +497,8 @@ fn check_cancel(
 
 async fn checked_metadata<T>(
     call: impl std::future::Future<Output = Result<Vec<T>, AppError>>,
-    on_progress: &mut (impl FnMut(MetadataIndexProgress) -> bool + Send),
-    progress: MetadataIndexProgress,
+    on_progress: &mut (impl FnMut(&MetadataIndexProgress) -> bool + Send),
+    progress: &MetadataIndexProgress,
 ) -> Result<Vec<T>, AppError> {
     check_cancel(on_progress, progress)?;
     let result = call.await;
@@ -703,6 +759,131 @@ mod tests {
                     row_count: None,
                 })
                 .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn single_schema_progress_fixture() {
+        let service = MetadataIndexService::new();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let driver = catalog_driver(
+            Catalog {
+                tables: 1000,
+                columns: 1,
+                ..Catalog::default()
+            },
+            &calls,
+        );
+        let mut during_columns = Vec::new();
+        service
+            .index_connection(&config(), driver, true, |progress| {
+                if calls
+                    .lock()
+                    .unwrap()
+                    .last()
+                    .is_some_and(|call| call == "columns")
+                {
+                    during_columns.push((progress.current, progress.total));
+                }
+                true
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|call| call.as_str() == "columns")
+                .count(),
+            1000
+        );
+        assert!(during_columns.len() >= 1000);
+        assert!(during_columns
+            .iter()
+            .all(|position| *position == (0, Some(1))));
+    }
+
+    #[tokio::test]
+    async fn object_progress_is_monotonic_and_stages_describe_known_work() {
+        use super::MetadataIndexStage::*;
+        for views in [false, true] {
+            let service = MetadataIndexService::new();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let mut updates = Vec::new();
+            let config = config();
+            let driver = catalog_driver(
+                Catalog {
+                    tables: 1000,
+                    columns: 1,
+                    views,
+                    ..Catalog::default()
+                },
+                &calls,
+            );
+            service
+                .index_connection(&config, driver.clone(), true, |progress| {
+                    if updates.last() != Some(progress) {
+                        updates.push(progress.clone());
+                    }
+                    true
+                })
+                .await
+                .unwrap();
+            let mut stages: Vec<_> = updates.iter().map(|p| p.stage).collect();
+            stages.dedup();
+            assert_eq!(
+                stages,
+                if views {
+                    vec![
+                        Databases,
+                        Schemas,
+                        Tables,
+                        Views,
+                        ViewColumns,
+                        Functions,
+                        Finalizing,
+                    ]
+                } else {
+                    vec![
+                        Databases,
+                        Schemas,
+                        Tables,
+                        TableColumns,
+                        Views,
+                        Functions,
+                        Finalizing,
+                    ]
+                }
+            );
+            let objects: Vec<_> = updates
+                .iter()
+                .filter(|p| p.stage == if views { ViewColumns } else { TableColumns })
+                .collect();
+            assert_eq!(objects.len(), 1000);
+            for (ordinal, progress) in objects.iter().enumerate() {
+                assert_eq!(progress.object_current, Some(ordinal as u64 + 1));
+                assert_eq!(progress.object_total, Some(1000));
+                assert_eq!(progress.schema_name.as_deref(), Some("public"));
+                assert_eq!(progress.object_name, Some(format!("object_{ordinal}")));
+                assert_eq!((progress.current, progress.total), (0, Some(1)));
+            }
+            assert!(updates.iter().all(|p| p.object_total != Some(0)));
+            let finalizing = updates.last().unwrap();
+            assert_eq!(finalizing.stage, Finalizing);
+            assert_eq!(finalizing.current, 1);
+            assert!(finalizing.object_name.is_none());
+            let calls_before = calls.lock().unwrap().len();
+            let mut cached_updates = 0;
+            service
+                .index_connection(&config, driver, false, |_| {
+                    cached_updates += 1;
+                    true
+                })
+                .await
+                .unwrap();
+            assert_eq!(cached_updates, 0);
+            assert_eq!(calls.lock().unwrap().len(), calls_before);
         }
     }
 
@@ -1240,7 +1421,7 @@ mod tests {
                 true,
                 4,
                 |value| {
-                    progress.push(value);
+                    progress.push(value.clone());
                     true
                 },
             )

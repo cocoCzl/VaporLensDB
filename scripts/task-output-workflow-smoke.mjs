@@ -19,7 +19,8 @@ includesAll(taskManager, ['output_path', 'create_task_with_output', 'clear_compl
 assert(!taskManager.includes('"No-op"'), 'no-op task should be removed')
 
 const taskPanel = read('src/components/layout/StatusBar.tsx')
-includesAll(taskPanel, ['clearCompleted', 'revealTaskOutput', 'task.outputPath', 'status.clearCompleted', 'status.revealOutput'], 'task panel controls')
+includesAll(taskPanel, ['clearCompleted', 'revealTaskOutput', 'status.clearCompleted', 'status.revealOutput'], 'task panel controls')
+includesAll(read('src/components/common/TaskRow.tsx'), ['task.outputPath', 'onReveal', 'revealLabel'], 'task row output controls')
 assert(!taskPanel.includes('startNoop'), 'test task control should be removed')
 
 const settings = read('src/components/settings/SettingsWorkspacePanel.tsx')

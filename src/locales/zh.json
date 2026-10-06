@@ -424,7 +424,35 @@
   "tasks": {
     "cancel": "取消后台任务",
     "status": "后台任务状态",
-    "idle": "后台任务: 空闲"
+    "idle": "后台任务: 空闲",
+    "metadata": {
+      "title": "元数据索引",
+      "status": {
+        "pending": "等待索引",
+        "running": "正在建立元数据索引",
+        "cancelling": "正在取消…",
+        "cancelled": "已取消",
+        "succeeded": "元数据索引已就绪",
+        "failed": "元数据索引失败"
+      },
+      "stage": {
+        "starting": "正在准备元数据索引",
+        "databases": "正在获取数据库",
+        "schemas": "正在获取 Schema",
+        "tables": "正在获取表",
+        "tableColumns": "正在读取表字段",
+        "views": "正在获取视图",
+        "viewColumns": "正在读取视图字段",
+        "functions": "正在获取函数",
+        "finalizing": "正在完成索引"
+      },
+      "schema": "Schema：{{name}}",
+      "schemaPosition": "Schema {{current}} / {{total}}",
+      "tablePosition": "表 {{current}} / {{total}}",
+      "viewPosition": "视图 {{current}} / {{total}}",
+      "cancelWaiting": "等待当前元数据操作返回后完成取消。",
+      "capacityReached": "索引已完成，已达到容量上限。"
+    }
   },
   "workbench": {
     "previousResult": "旧数据源结果",
