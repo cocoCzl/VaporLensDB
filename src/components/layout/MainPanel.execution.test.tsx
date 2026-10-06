@@ -53,7 +53,7 @@ describe('MainPanel execution target integration', () => {
     expect(screen.getByText('Execution: Connection A')).toBeVisible()
     expect(screen.getByText('Browsing: Connection B')).toBeVisible()
     fireEvent.click(screen.getByText('Run fixture'))
-    await waitFor(() => expect(ipc.execute).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'A', consoleId: 'tab', database: 'db-A', schema: 'schema-A', sql: current().sql })))
+    await waitFor(() => expect(ipc.execute).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'A', consoleId: 'tab', database: 'db-A', schema: 'schema-A', sql: current().sql.replace(/;$/, '') })))
     await waitFor(() => expect(current().running).toBe(false))
     expect(current().transactionPhase).toBe('active')
   })

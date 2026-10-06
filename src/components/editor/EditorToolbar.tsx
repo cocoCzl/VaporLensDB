@@ -1,3 +1,4 @@
+import { sqlCommandShortcut } from '@/lib/sqlCommands'
 import { dispatchSqlFileAction } from '@/lib/sqlFileActions'
 import { Check, ChartNoAxesCombined, ChevronDown, GitBranch, History, ListFilter, Maximize2, Minimize2, MoreHorizontal, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
@@ -35,6 +36,9 @@ interface EditorToolbarProps {
   onDatabaseChange?: (database: string | null) => void
   onSchemaChange?: (schema: string | null) => void
   onMaxRowsChange: (maxRows: number) => void
+  hasSelection?: boolean
+  runAllDisabled?: boolean
+  onRunAll?: () => void
   onRun: () => void
   onCancel: () => void
   onExplain: () => void
@@ -71,6 +75,9 @@ export function EditorToolbar({
   onDatabaseChange,
   onSchemaChange,
   onMaxRowsChange,
+  hasSelection = false,
+  runAllDisabled = false,
+  onRunAll,
   onRun,
   onCancel,
   onExplain,
@@ -122,13 +129,15 @@ export function EditorToolbar({
 
       <div className="flex shrink-0 items-center gap-1.5">
         {running && canCancel ? (
-          <Button type="button" size="sm" variant="destructive" className="workspace-run-action" onClick={onCancel}><Square />{t('editor.cancel')}</Button>
+          <Button type="button" size="sm" variant="destructive" className="workspace-run-action" onClick={onCancel}><Square />{t('sqlCommands.cancel')}</Button>
         ) : running ? (
           <Button type="button" size="sm" variant="secondary" className="workspace-run-action" disabled><Play />{t('editor.running')}</Button>
         ) : (
-          <Button type="button" size="sm" disabled={disabled || contextDisabled} className="workspace-run-action" onClick={() => onRun()} title={`${t('editor.run')} (${runShortcut})`}><Play className="size-3.5" />{t('editor.run')}<kbd className="hidden font-mono text-[10px] opacity-75 lg:inline">{runShortcut}</kbd></Button>
+          <Button type="button" size="sm" disabled={disabled || contextDisabled} className="workspace-run-action" onClick={() => onRun()} aria-label={t(hasSelection ? 'sqlCommands.runSelection' : 'sqlCommands.runCurrent')} title={`${t(hasSelection ? 'sqlCommands.runSelection' : 'sqlCommands.runCurrent')} (${runShortcut})`}><Play className="size-3.5" />{t(hasSelection ? 'sqlCommands.runSelection' : 'sqlCommands.runCurrent')}<kbd className="hidden font-mono text-[10px] opacity-75 lg:inline">{runShortcut}</kbd></Button>
         )}
         <SqlMoreActions
+          onRunAll={onRunAll}
+          runAllDisabled={runAllDisabled || running || contextDisabled}
           maxRows={maxRows}
           onMaxRowsChange={onMaxRowsChange}
           explainTitle={explainTitle}
@@ -162,6 +171,8 @@ function ContextSelect({ label, className, children }: { label: string; classNam
 }
 
 function SqlMoreActions({
+  onRunAll,
+  runAllDisabled,
   maxRows,
   onMaxRowsChange,
   explainTitle,
@@ -180,6 +191,8 @@ function SqlMoreActions({
   workspaceView,
   onWorkspaceViewChange,
 }: {
+  onRunAll?: () => void
+  runAllDisabled: boolean
   maxRows: number
   onMaxRowsChange: (maxRows: number) => void
   explainTitle: string
@@ -207,9 +220,10 @@ function SqlMoreActions({
       <PopoverTrigger render={<IconTooltipButton label={t('editor.moreActions')} variant={open ? 'secondary' : 'ghost'}><MoreHorizontal /></IconTooltipButton>} />
       <PopoverContent align="end" className="w-60 gap-0 p-1.5">
         <div className="grid gap-0.5">
+          <button type="button" className={itemClass} disabled={runAllDisabled} onClick={() => { onRunAll?.(); setOpen(false) }}><Play className="size-3.5" />{t('sqlCommands.runAll')}</button>
           {(['open', 'save', 'saveAs'] as const).map((action) => <button key={action} type="button" className={itemClass} onClick={() => { setOpen(false); dispatchSqlFileAction(action) }}>{t(`sqlFile.${action}`)}</button>)}
           <button type="button" className={itemClass} disabled={explainDisabled} onClick={() => onExplain()}><ChartNoAxesCombined className="size-3.5" />{explainTitle}</button>
-          <button type="button" className={itemClass} disabled={formatDisabled} onClick={() => onFormat()}><Wand2 className="size-3.5" />{t('editor.format')}</button>
+          <button type="button" className={itemClass} disabled={formatDisabled} onClick={() => onFormat()}><Wand2 className="size-3.5" />{t('editor.format')}{sqlCommandShortcut('format') && <kbd className="ml-auto text-[10px]">{sqlCommandShortcut('format')}</kbd>}</button>
           <button type="button" className={itemClass} aria-pressed={historyOpen} onClick={() => { onHistoryToggle?.(); setOpen(false) }}><History className="size-3.5" />{t('sql.history')}</button>
         </div>
         <div className="my-1 border-t" />

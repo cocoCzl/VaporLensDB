@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { dispatchSqlCommand, sqlCommandShortcut, registerSqlCommands, executionSql, EMPTY_CURSOR, focusElement, type SqlCursor } from '@/lib/sqlCommands'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import i18n from '@/i18n'
 import { useTranslation } from 'react-i18next'
@@ -146,7 +147,16 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   const setBottomPanelHeight = useUiStore((state) => state.setBottomPanelHeight)
   const setBottomPanelCollapsed = useUiStore((state) => state.setBottomPanelCollapsed)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
-  const [selectedSql, setSelectedSql] = useState({ tabId: null as string | null, sql: '' })
+  const [cursor, setCursor] = useState<{ tabId: string | null; value: SqlCursor }>({ tabId: null, value: EMPTY_CURSOR })
+  const cursorRef = useRef(cursor)
+  const focusEditorRef = useRef<(() => void) | null>(null)
+  const executing = useRef(new Set<string>())
+  const [preparingIds, setPreparingIds] = useState<string[]>([])
+  function updateCursor(tabId: string, value: SqlCursor) {
+    cursorRef.current = { tabId, value }
+    setCursor({ tabId, value })
+  }
+  function currentCursor() { return cursorRef.current.tabId === activeTab?.id ? cursorRef.current.value : EMPTY_CURSOR }
   const [editorLoaded, setEditorLoaded] = useState(false)
   const [editorShouldFocus, setEditorShouldFocus] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -230,13 +240,14 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   const connectionIsConnected = Boolean(
     connectionId && statuses[connectionId]?.status === 'connected',
   )
+  const preparing = Boolean(activeTab && preparingIds.includes(activeTab.id))
   const canRun = Boolean(
     activeTab &&
       connectionId &&
       queryCapabilities.canQuery &&
-      sqlForToolbarExecution(activeTab, selectedSql).trim(),
+      activeTab.sql.trim(),
   )
-  const canFormat = Boolean(activeTab && sqlForToolbarExecution(activeTab, selectedSql).trim())
+  const canFormat = Boolean(activeTab?.sql.trim())
   const rawResultIndex = activeQueryId ? resultIndexes[activeQueryId] ?? 0 : 0
   const selectedResultIndex = activeResults?.length
     ? Math.min(rawResultIndex, activeResults.length - 1)
@@ -298,7 +309,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   }, [connections, saveTabDraft, setTabDraft, tabs])
 
   function sqlToRun() {
-    return activeTab ? sqlForToolbarExecution(activeTab, selectedSql).trim() : ''
+    return activeTab ? executionSql(activeTab.sql, currentCursor(), 'current') : ''
   }
 
   useEffect(() => {
@@ -395,8 +406,8 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   ])
 
   async function execute(sqlOverride?: string) {
-    if (!activeTab || !connectionId || !queryCapabilities.canQuery
-      || useEditorStore.getState().tabs.find((tab) => tab.id === activeTab.id)?.transactionBusy) {
+    const liveTab = useEditorStore.getState().tabs.find((tab) => tab.id === activeTab?.id)
+    if (!liveTab || liveTab.running || liveTab.closing || liveTab.fileBusy || liveTab.transactionBusy || executing.current.has(liveTab.id) || !activeTab || !connectionId || !queryCapabilities.canQuery) {
       return
     }
     const sql = (sqlOverride ?? sqlToRun()).trim()
@@ -404,38 +415,43 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
       return
     }
 
-    if (!connectionIsConnected) {
-      try {
-        await connectConnection(connectionId, { selectForBrowsing: false })
-      } catch {
-        return
-      }
-    }
-
+    executing.current.add(activeTab.id)
+    setPreparingIds(ids => [...ids, activeTab.id])
     try {
-      const risk = await analyzeSqlRisk(sql)
-      if (risk.dangerous && !confirmDangerousSql(risk)) {
+      if (!connectionIsConnected) {
+        try {
+          await connectConnection(connectionId, { selectForBrowsing: false })
+        } catch {
+          return
+        }
+      }
+
+      try {
+        const risk = await analyzeSqlRisk(sql)
+        if (risk.dangerous && !confirmDangerousSql(risk)) {
+          return
+        }
+      } catch (error) {
+        notifyError(normalizeAppError(error), t('workbench.sqlRiskCheckFailed'))
         return
       }
-    } catch (error) {
-      notifyError(normalizeAppError(error), t('workbench.sqlRiskCheckFailed'))
-      return
-    }
 
-    revealQueryResults()
-    runQuery(activeTab.id, connectionId, sql, {
-      database: selectedDatabase,
-      schema: selectedSchema,
-      maxRows: queryMaxRows,
-      connectionName: activeConnection?.name,
-    })
+      revealQueryResults()
+      await runQuery(activeTab.id, connectionId, sql, {
+        database: selectedDatabase,
+        schema: selectedSchema,
+        maxRows: queryMaxRows,
+        connectionName: activeConnection?.name,
+      })
+    } finally { executing.current.delete(activeTab.id); setPreparingIds(ids => ids.filter(id => id !== activeTab.id)) }
   }
 
   async function explain() {
     if (!activeTab || !connectionId || !queryCapabilities.canExplain) {
       return
     }
-    const sql = sqlToRun()
+    const position = currentCursor()
+    const sql = (position.start !== position.end ? activeTab.sql.slice(position.start, position.end) : activeTab.sql).trim()
     if (!sql) return
     if (!connectionIsConnected) {
       try {
@@ -460,11 +476,16 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   }
 
   async function formatSql() {
-    if (!activeTab) {
+    const current = useEditorStore.getState().tabs.find(tab => tab.id === activeTab?.id)
+    if (!activeTab || !current || current.running || current.closing || current.transactionBusy || current.fileBusy || executing.current.has(current.id)) {
       return
     }
+    executing.current.add(activeTab.id)
+    setPreparingIds(ids => [...ids, activeTab.id])
     try {
       const { format } = await import('sql-formatter')
+      const latest = useEditorStore.getState().tabs.find(tab => tab.id === activeTab.id)
+      if (!latest || latest.sql !== activeTab.sql || latest.running || latest.closing || latest.fileBusy || latest.transactionBusy) return
       updateTabSql(activeTab.id, format(activeTab.sql, { language: sqlFormatterLanguage(activeDriverType) }))
       setTabQueryState(activeTab.id, activeTab.lastQueryId ?? null)
     } catch (error) {
@@ -473,8 +494,29 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         activeTab.lastQueryId ?? null,
         normalizeAppError(error).message,
       )
-    }
+    } finally { executing.current.delete(activeTab.id); setPreparingIds(ids => ids.filter(id => id !== activeTab.id)) }
   }
+
+  useLayoutEffect(() => {
+    const sqlTab = activeTab && (!activeTab.kind || activeTab.kind === 'sql')
+    const busy = Boolean(activeTab?.running || activeTab?.closing || activeTab?.transactionBusy || activeTab?.fileBusy || preparing)
+    return registerSqlCommands(sqlTab ? {
+      tabId: activeTab.id, cursor: currentCursor, run: execute, cancel, format: formatSql,
+      focus: (target) => {
+        if (target === 'editor') {
+          setWorkspaceView(view => view === 'results' ? 'split' : view)
+          requestAnimationFrame(() => { if (focusEditorRef.current) focusEditorRef.current(); else focusElement(document.querySelector('[data-sql-editor] textarea')) })
+        } else { revealQueryResults(); requestAnimationFrame(() => focusElement(document.querySelector('.workspace-results-panel'))) }
+      },
+    } : null, {
+      runCurrent: Boolean(sqlTab && canRun && !busy),
+      runAll: Boolean(sqlTab && connectionId && queryCapabilities.canQuery && activeTab.sql.trim() && !busy),
+      cancel: Boolean(sqlTab && activeTab.running && activeTab.runningQueryId && !activeTab.cancelling && queryCapabilities.canCancel),
+      format: Boolean(sqlTab && canFormat && !busy),
+      focusEditor: Boolean(sqlTab), focusResults: Boolean(sqlTab && activeTab.lastQueryId),
+      selection: cursor.tabId === activeTab?.id && cursor.value.start !== cursor.value.end,
+    })
+  })
 
   if (!activeTab) {
     return (
@@ -782,13 +824,16 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         schemas={toolbarSchemas}
         maxRows={queryMaxRows}
         running={activeTab.running}
-        canCancel={Boolean(activeTab.runningQueryId && queryCapabilities.canCancel)}
+        canCancel={Boolean(activeTab.runningQueryId && !activeTab.cancelling && queryCapabilities.canCancel)}
         canExplain={queryCapabilities.canExplain}
         explainUnsupportedReason={t('workbench.explainUnsupported')}
-        disabled={!canRun}
-        formatDisabled={!canFormat}
+        disabled={!canRun || preparing}
+        hasSelection={cursor.tabId === activeTab.id && cursor.value.start !== cursor.value.end}
+        runAllDisabled={!connectionId || !queryCapabilities.canQuery || !activeTab.sql.trim() || preparing || Boolean(activeTab.running || activeTab.closing || activeTab.transactionBusy || activeTab.fileBusy)}
+        onRunAll={() => dispatchSqlCommand('runAll')}
+        formatDisabled={!canFormat || preparing || Boolean(activeTab.fileBusy || activeTab.closing || activeTab.transactionBusy)}
         onConnectionChange={(id) => onSwitchConnection(activeTab.id, id)}
-        contextDisabled={Boolean(activeTab.closing || activeTab.transactionBusy)}
+        contextDisabled={Boolean(activeTab.closing || activeTab.transactionBusy || activeTab.fileBusy)}
         onDatabaseChange={(database) => {
           if (!connectionId) return
           updateSqlTabContext(activeTab.id, { database, schema: null })
@@ -810,10 +855,10 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
           })
         }}
         onMaxRowsChange={setQueryMaxRows}
-        onRun={execute}
-        onCancel={cancel}
+        onRun={() => dispatchSqlCommand('runCurrent')}
+        onCancel={() => dispatchSqlCommand('cancel')}
         onExplain={explain}
-        onFormat={formatSql}
+        onFormat={() => dispatchSqlCommand('format')}
         historyOpen={historyOpen}
         onHistoryToggle={() => setHistoryOpen((open) => !open)}
         transactionMode={activeTab.transactionMode ?? 'auto'}
@@ -845,7 +890,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
 
         <div className="relative min-h-0 flex-1">
         <div className="flex h-full min-w-0 flex-col overflow-hidden">
-        <div className={workspaceView === 'results' ? 'hidden' : 'ide-editor-surface min-h-0 flex-1'}>
+        <div data-sql-editor className={workspaceView === 'results' ? 'hidden' : 'ide-editor-surface min-h-0 flex-1'}>
         {editorLoaded ? (
           <Suspense
             fallback={
@@ -863,8 +908,10 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
               driverType={activeDriverType}
               showSystemObjects={showSystemObjects}
               onChange={(sql) => updateTabSql(activeTab.id, sql)}
-              onRun={execute}
-              onSelectionChange={(sql) => setSelectedSql({ tabId: activeTab.id, sql })}
+              onRun={() => dispatchSqlCommand('runCurrent')}
+              onScopeChange={(value) => updateCursor(activeTab.id, value)}
+              onFormat={() => dispatchSqlCommand('format')}
+              onFocusReady={(focus) => { focusEditorRef.current = focus }}
               autoFocus={editorShouldFocus}
             />
           </Suspense>
@@ -884,15 +931,14 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
               onChange={(event) => updateTabSql(activeTab.id, event.target.value)}
               onSelect={(event) => {
                 const target = event.currentTarget
-                setSelectedSql({
-                  tabId: activeTab.id,
-                  sql: target.value.slice(target.selectionStart, target.selectionEnd),
-                })
+                updateCursor(activeTab.id, { start: target.selectionStart, end: target.selectionEnd, cursor: target.selectionDirection === 'backward' ? target.selectionStart : target.selectionEnd })
               }}
               onKeyDown={(event) => {
+                if (sqlCommandShortcut('format') && event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'f') { event.preventDefault(); dispatchSqlCommand('format'); return }
                 if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                   event.preventDefault()
-                  void execute()
+                  updateCursor(activeTab.id, { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd, cursor: event.currentTarget.selectionEnd })
+                  dispatchSqlCommand('runCurrent')
                 }
               }}
             />
@@ -2543,12 +2589,6 @@ function emptyQueryCapabilities(): QueryCapabilities {
   }
 }
 
-function sqlForToolbarExecution(
-  tab: EditorTab,
-  selectedSql: { tabId: string | null; sql: string },
-) {
-  return selectedSql.tabId === tab.id && selectedSql.sql.trim() ? selectedSql.sql : tab.sql
-}
 
 function formatSqlRiskReason(reason: SqlRiskReason) {
   switch (reason) {

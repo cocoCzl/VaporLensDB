@@ -1023,5 +1023,17 @@
     "alreadyOpen": "该文件已由另一个 SQL 标签页打开，请选择其他路径。",
     "changedDuringSave": "保存期间文件再次发生变化，未执行替换。请重试并检查冲突。",
     "quit": "{{count}} 个 SQL 文件标签页尚未保存到磁盘。退出前会逐个询问保存、放弃更改或取消。"
+  },
+  "sqlCommands": {
+    "runCurrent": "执行当前语句",
+    "runSelection": "执行选中 SQL",
+    "runAll": "执行全部 SQL",
+    "cancel": "取消查询",
+    "format": "格式化 SQL",
+    "nextTab": "下一个 SQL 标签页",
+    "previousTab": "上一个 SQL 标签页",
+    "focusEditor": "聚焦编辑器",
+    "focusResults": "聚焦结果",
+    "focusExplorer": "聚焦对象浏览器"
   }
 }

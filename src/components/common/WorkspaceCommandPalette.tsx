@@ -1,3 +1,4 @@
+import { SQL_COMMANDS, sqlCommandShortcut, dispatchSqlCommand, useSqlCommandState } from '@/lib/sqlCommands'
 import { dispatchSqlFileAction } from '@/lib/sqlFileActions'
 import { Database, FileCode2, History, Moon, PanelTop, SearchX, Settings, Sun, Table2, type LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -55,6 +56,7 @@ const MAX_HISTORY_RESULTS = 16
  */
 export function WorkspaceCommandPalette() {
   const { t } = useTranslation()
+  const commandAvailability = useSqlCommandState(state => state.available)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [connectionDialogOpen, setConnectionDialogOpen] = useState(false)
@@ -181,6 +183,15 @@ export function WorkspaceCommandPalette() {
   }, [addTab, connections])
 
   const workspaceItems = useMemo<PaletteItem[]>(() => [
+    ...SQL_COMMANDS.filter(command => command === 'focusExplorer' || ((command === 'nextTab' || command === 'previousTab')
+      ? tabs.filter(tab => !tab.kind || tab.kind === 'sql').length > 1 : commandAvailability[command]))
+      .map((command): PaletteItem => ({
+        id: `sql-command-${command}`, group: 'workspace',
+        label: t(`sqlCommands.${command === 'runCurrent' && commandAvailability.selection ? 'runSelection' : command}`),
+        searchText: `${t(`sqlCommands.${command}`)} sql ${command}`, icon: FileCode2,
+        metadata: sqlCommandShortcut(command),
+        onSelect: () => closeAnd(() => dispatchSqlCommand(command)),
+      })),
     ...(['open', 'save', 'saveAs'] as const).map((action): PaletteItem => ({
       id: `sql-file-${action}`, group: 'workspace', label: t(`sqlFile.${action}`),
       searchText: `${t(`sqlFile.${action}`)} sql file ${action}`, icon: FileCode2,
@@ -242,7 +253,7 @@ export function WorkspaceCommandPalette() {
       icon: theme === 'dark' ? Sun : Moon,
       onSelect: () => closeAnd(() => setTheme(theme === 'dark' ? 'light' : 'dark')),
     },
-  ], [openNewSql, openTab, setTheme, t, theme])
+  ], [commandAvailability, tabs, openNewSql, openTab, setTheme, t, theme])
 
   const connectionItems = useMemo<PaletteItem[]>(() => connections.map((connection) => ({
     id: `connection-${connection.id}`,

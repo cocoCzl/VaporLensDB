@@ -10,8 +10,9 @@ function assert(condition, message) {
 
 const sqlEditor = readFileSync(resolve(root, 'src/components/editor/SqlEditor.tsx'), 'utf8')
 assert(sqlEditor.includes('const onRunRef = useRef(onRun)'), 'shortcut must retain the latest run callback')
-assert(sqlEditor.includes('onRunRef.current(sqlAtCursor(instance))'), 'shortcut must execute editor selection or cursor statement')
-assert(sqlEditor.includes("import { statementAtOffset } from '@/lib/sqlLexer'"), 'cursor extraction must use the shared lexer')
+assert(sqlEditor.includes('onRunRef.current()'), 'shortcut must dispatch the shared primary action')
+const commands = readFileSync(resolve(root, 'src/lib/sqlCommands.ts'), 'utf8')
+assert(commands.includes('statementAtOffset'), 'shared execution scope must reuse the existing lexer')
 const queryHook = readFileSync(resolve(root, 'src/hooks/useQuery.ts'), 'utf8')
 assert(queryHook.includes("from '@/lib/sqlLexer'"), 'stream selection must use the shared lexer')
 const lexerTests = readFileSync(resolve(root, 'src/lib/sqlLexer.test.ts'), 'utf8')
@@ -19,10 +20,10 @@ assert(lexerTests.includes('sql-lexer-cases.json'), 'frontend must exercise the 
 assert(lexerTests.includes("toBe('SELECT 2')"), 'cursor after a delimiter and Unicode offsets must have regression coverage')
 
 const mainPanel = readFileSync(resolve(root, 'src/components/layout/MainPanel.tsx'), 'utf8')
-assert(mainPanel.includes('async function execute(sqlOverride?: string)'), 'SQL execution must accept shortcut SQL')
-assert(mainPanel.includes('const sql = (sqlOverride ?? sqlToRun()).trim()'), 'toolbar execution must retain its existing SQL selection behavior')
-assert(mainPanel.includes('function sqlForToolbarExecution('), 'toolbar execution must choose a script when no SQL is selected')
-assert(mainPanel.includes('selectedSql.sql.trim() ? selectedSql.sql : tab.sql'), 'empty selections must fall back to the full SQL script')
+for (const command of ['runCurrent', 'runAll', 'cancel', 'format']) {
+  assert(mainPanel.includes(`dispatchSqlCommand('${command}')`), `workspace must use shared ${command} command`)
+}
+assert(!mainPanel.includes('sqlForToolbarExecution'), 'obsolete whole-script fallback must not return')
 
 const toolbar = readFileSync(resolve(root, 'src/components/editor/EditorToolbar.tsx'), 'utf8')
 assert(toolbar.includes('maxRows'), 'SQL toolbar must keep the row limit visible')

@@ -49,7 +49,7 @@ includesAll(
   [
     'readOnly?: boolean',
     'readOnly = false',
-    'if (!readOnly)',
+    'if (readOnlyRef.current) return',
     'readOnly,',
     'domReadOnly: readOnly',
   ],

@@ -1023,5 +1023,17 @@
     "alreadyOpen": "This file is already owned by another open SQL tab. Choose another path.",
     "changedDuringSave": "The file changed again during saving. No replacement was made; retry to review the conflict.",
     "quit": "{{count}} SQL file tab(s) have unsaved disk changes. Each file will ask to Save, Discard or Cancel before quitting."
+  },
+  "sqlCommands": {
+    "runCurrent": "Run Current Statement",
+    "runSelection": "Run Selection",
+    "runAll": "Run All",
+    "cancel": "Cancel Query",
+    "format": "Format SQL",
+    "nextTab": "Next SQL Tab",
+    "previousTab": "Previous SQL Tab",
+    "focusEditor": "Focus Editor",
+    "focusResults": "Focus Results",
+    "focusExplorer": "Focus Explorer"
   }
 }

@@ -1,4 +1,4 @@
-import { statementAtOffset } from '@/lib/sqlLexer'
+import { sqlCommandShortcut, type SqlCursor } from '@/lib/sqlCommands'
 import Editor, { loader, type BeforeMount, type Monaco, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { useEffect, useRef } from 'react'
@@ -18,8 +18,10 @@ interface SqlEditorProps {
   driverType?: DriverType | null
   showSystemObjects?: boolean
   onChange: (value: string) => void
-  onRun: (sql: string) => void
-  onSelectionChange?: (value: string) => void
+  onRun: () => void
+  onFormat?: () => void
+  onScopeChange?: (cursor: SqlCursor) => void
+  onFocusReady?: (focus: (() => void) | null) => void
   readOnly?: boolean
   autoFocus?: boolean
 }
@@ -32,7 +34,9 @@ export function SqlEditor({
   showSystemObjects = false,
   onChange,
   onRun,
-  onSelectionChange,
+  onScopeChange,
+  onFormat,
+  onFocusReady,
   readOnly = false,
   autoFocus = false,
 }: SqlEditorProps) {
@@ -41,7 +45,10 @@ export function SqlEditor({
   const driverTypeRef = useRef(driverType)
   const showSystemObjectsRef = useRef(showSystemObjects)
   const onRunRef = useRef(onRun)
-  const onSelectionChangeRef = useRef(onSelectionChange)
+  const readOnlyRef = useRef(readOnly)
+  const onScopeChangeRef = useRef(onScopeChange)
+  const onFormatRef = useRef(onFormat)
+  const onFocusReadyRef = useRef(onFocusReady)
   const resolvedTheme = useUiStore((state) => state.resolvedTheme)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const monacoRef = useRef<Monaco | null>(null)
@@ -71,11 +78,14 @@ export function SqlEditor({
 
   useEffect(() => {
     onRunRef.current = onRun
-  }, [onRun])
+    readOnlyRef.current = readOnly
+  }, [onRun, readOnly])
 
   useEffect(() => {
-    onSelectionChangeRef.current = onSelectionChange
-  }, [onSelectionChange])
+    onScopeChangeRef.current = onScopeChange
+    onFormatRef.current = onFormat
+    onFocusReadyRef.current = onFocusReady
+  }, [onScopeChange, onFormat, onFocusReady])
 
   const handleMount: OnMount = (instance, monaco) => {
     monacoRef.current = monaco
@@ -83,11 +93,13 @@ export function SqlEditor({
     if (autoFocus) {
       instance.focus()
     }
-    if (!readOnly) {
-      instance.addCommand(MONACO_CTRL_CMD | MONACO_ENTER, () => {
-        onRunRef.current(sqlAtCursor(instance))
-      })
-    }
+    instance.addCommand(MONACO_CTRL_CMD | MONACO_ENTER, () => {
+      if (readOnlyRef.current) return
+      onScopeChangeRef.current?.(cursorSnapshot(instance))
+      onRunRef.current()
+    })
+    if (onFormat && sqlCommandShortcut('format')) instance.addCommand(1024 | 512 | 36, () => { if (!readOnlyRef.current) onFormatRef.current?.() }) // Shift+Alt+F: Monaco Format Document.
+    onFocusReadyRef.current?.(() => instance.focus())
     const completionProvider = registerSqlCompletionProvider(monaco, {
       getConnectionId: () => connectionIdRef.current,
       getSchema: () => schemaRef.current,
@@ -95,9 +107,10 @@ export function SqlEditor({
       getShowSystemObjects: () => showSystemObjectsRef.current,
     })
     instance.onDidChangeCursorSelection(() => {
-      onSelectionChangeRef.current?.(selectedText(instance))
+      onScopeChangeRef.current?.(cursorSnapshot(instance))
     })
     instance.onDidDispose(() => {
+      onFocusReadyRef.current?.(null)
       completionProvider.dispose()
       monacoRef.current = null
     })
@@ -229,25 +242,10 @@ function hslTokenToHex(value: string, fallback: string) {
   return match ? `#${match.slice(1).map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}` : fallback
 }
 
-function selectedText(instance: editor.IStandaloneCodeEditor) {
+function cursorSnapshot(instance: editor.IStandaloneCodeEditor): SqlCursor {
   const selection = instance.getSelection()
-  const model = instance.getModel()
-  if (!selection || !model || selection.isEmpty()) {
-    return ''
-  }
-  return model.getValueInRange(selection)
-}
-
-function sqlAtCursor(instance: editor.IStandaloneCodeEditor) {
-  const selection = selectedText(instance)
-  if (selection) {
-    return selection.trim()
-  }
-
-  const model = instance.getModel()
   const position = instance.getPosition()
-  if (!model || !position) {
-    return ''
-  }
-  return statementAtOffset(model.getValue(), model.getOffsetAt(position))
+  const model = instance.getModel()
+  if (!selection || !position || !model) return { start: 0, end: 0, cursor: 0 }
+  return { start: model.getOffsetAt(selection.getStartPosition()), end: model.getOffsetAt(selection.getEndPosition()), cursor: model.getOffsetAt(position) }
 }
