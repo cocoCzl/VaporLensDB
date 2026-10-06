@@ -12,6 +12,19 @@ This checklist records release-candidate evidence without expanding the frozen
 capability matrix. Re-run an expensive or mutation-capable acceptance test only
 when its affected implementation has changed.
 
+## Current source-product acceptance
+
+The [SQL-first 1.0 scope](V1-SCOPE.md) and [current acceptance record](V1-ACCEPTANCE.md)
+govern source-product readiness. Scope is locked; product acceptance is **not yet**
+complete. The checked evidence below is historical and does not certify every
+later workflow or the current candidate. In particular, latest SQL-file,
+execution-report, and CSV desktop acceptance must be recorded separately.
+
+Source-product gates cover scope, correctness, verified support, documentation,
+and fresh-clone build evidence. Public binary distribution is a separate,
+deferred gate; signing is not a current source-development blocker. Version
+`0.9.1` remains unchanged until a separate version decision is approved.
+
 ## Source quality
 
 - [x] `git diff --check`

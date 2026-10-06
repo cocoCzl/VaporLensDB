@@ -9,6 +9,9 @@ VaporLensDB 0.9.1 处于 **Pre-1.0 Development**，不是 stable 或 production-
 Developer ID 签名和 notarization 均暂缓。历史 RC 计划与未来正式发布流程是工程参考，
 不是当前安装入口。
 
+[SQL-first 1.0 范围](V1-SCOPE.md)将产品验收与二进制发布准备分开。scope 已锁定，
+验收尚未完成；这不代表版本变更，也不扩大已验证平台范围。
+
 ## 工具链政策
 
 构建前安装 Git 及以下工具。版本说明区分仓库政策、依赖约束和实际测试结果，

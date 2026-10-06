@@ -2,9 +2,11 @@
 
 ## Product Design
 
-VaporLensDB is designed as a desktop database IDE with a compact, work-focused
-interface. The primary flow is grouped Data Source navigation, Object Tree
-browsing, workspace tabs, and task/status feedback.
+VaporLensDB is a SQL-first database client for developers with a compact,
+work-focused interface. The [1.0 scope](V1-SCOPE.md) excludes Table Data Editing;
+that future feature requires its own mutation and concurrency safety model.
+The primary flow is grouped Data Source navigation, Object Tree browsing,
+workspace tabs, and task/status feedback.
 
 The UI favors dense operational screens over marketing-style surfaces. Common
 actions are discoverable through toolbar controls, context menus, workspace

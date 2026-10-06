@@ -2,10 +2,9 @@
 
 [简体中文](README.zh-CN.md)
 
-VaporLensDB is a lightweight cross-platform database IDE built with Tauri 2,
-Rust, and React. It helps developers and data engineers connect to databases,
-browse objects, run SQL, and inspect results without becoming a heavy
-administration console.
+VaporLensDB is a SQL-first database client for developers, focused on reliable
+querying, transactions, result inspection, schema exploration, and data exchange.
+It is built with Tauri 2, Rust, and React.
 
 Current version: **0.9.1**
 
@@ -97,7 +96,9 @@ targets, but are not covered by that acceptance evidence.
   grids, Tier-A native parameterized CSV import, result export tasks, SSH
   tunnels, diagnostics export, and English/Chinese UI switching.
 
-The result grid is intentionally read-only. ODBC and a full configurable
+The result grid is intentionally read-only. Table Data Editing (inline edits,
+insert/delete row UI, and Apply/Revert mutations) is excluded from 1.0 and remains
+a post-1.0 major feature. ODBC and a full configurable
 dangerous-SQL policy are outside the current scope. Parameterized CSV import
 is not supported for SQL Server or JDBC drivers, and full-query export accepts
 one statement rather than multi-statement, multi-result scripts. See the
@@ -134,10 +135,12 @@ After launching the app:
 
 ## Road to 1.0
 
-- Keep the Tier-A macOS scope frozen and resolve only release blockers.
-- Complete Windows and Linux runtime QA.
-- Perform formal signing and release preparation only after real cross-platform
-  runtime evidence is available.
+- Follow the [SQL-first 1.0 scope](docs/V1-SCOPE.md) and its bounded
+  [acceptance gates](docs/V1-ACCEPTANCE.md); scope is locked, acceptance is pending.
+- Close confirmed privacy/presentation defects and verify the latest workflows
+  on macOS arm64. Other platforms require runtime QA before support promotion.
+- Keep source-product acceptance separate from future binary distribution,
+  signing, notarization, and an explicitly approved version change.
 
 ## Documentation
 

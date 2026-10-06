@@ -10,6 +10,10 @@ releases, DMG uploads, Developer ID signing, and notarization are deferred.
 Historical RC plans and future formal-release procedures are engineering
 references, not the current installation path.
 
+The [SQL-first 1.0 scope](V1-SCOPE.md) defines product acceptance separately
+from binary release readiness. Scope is locked, but acceptance remains pending;
+this does not change the version or expand verified platform support.
+
 ## Toolchain policy
 
 Install Git and the following tools before building. Version labels distinguish

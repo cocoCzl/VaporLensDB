@@ -2,9 +2,8 @@
 
 [English](README.md)
 
-VaporLensDB 是一个基于 Tauri 2、Rust 和 React 构建的轻量跨平台数据库 IDE。
-它帮助开发者与数据工程师连接数据库、浏览对象、执行 SQL 和查看结果，同时保持
-轻量、专注的工作体验。
+VaporLensDB 是面向开发者的 SQL-first 数据库客户端，重点提供可靠的查询、事务、
+结果查看、结构探索和数据交换工作流，基于 Tauri 2、Rust 和 React 构建。
 
 当前版本：**0.9.1**
 
@@ -87,6 +86,8 @@ Intel macOS、Windows 和 Linux 有原生源码构建目标，但不属于这份
 
 其中参数化 CSV 导入仅属于 Tier-A 原生驱动范围；SQL Server/JDBC 参数化 CSV 导入不受
 支持。全量查询导出仅接受一条语句，不支持多语句多结果集脚本。结果网格有意保持只读。
+Table Data Editing（单元格编辑、新增/删除行 UI、Apply/Revert 写入工作流）不属于
+1.0 范围，保留为 post-1.0 major feature。
 ODBC 和完整可配置的危险 SQL 策略目前不在范围内；完整 1.0 边界见
 [支持矩阵](docs/SUPPORT.md)。
 
@@ -117,9 +118,11 @@ Windows 和 Linux 的本地产物分别整理到 `artifacts/windows/<architectur
 
 ## Road to 1.0
 
-- 冻结 macOS Tier-A 范围，只修复 release blocker。
-- 完成 Windows 和 Linux runtime QA。
-- 取得真实跨平台 runtime 证据后，再进入正式签名与发布准备。
+- 遵循 [SQL-first 1.0 范围](docs/V1-SCOPE.md)和有限的[验收门槛](docs/V1-ACCEPTANCE.md)：
+  scope 已锁定，产品验收尚未完成。
+- 修复已确认的隐私/展示正确性问题，在 macOS arm64 验收最新工作流；其他平台需先完成
+  runtime QA 才能提升支持等级。
+- 源码产品验收与未来二进制分发、签名、公证、单独批准的版本变更分开。
 
 ## 文档
 
