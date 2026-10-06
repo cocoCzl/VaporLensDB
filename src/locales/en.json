@@ -365,6 +365,14 @@
     "workspacePersistenceFailed": "SQL workspace could not be saved locally."
   },
   "inspector": {
+    "generated": "Generated",
+    "identity": "Identity",
+    "autoIncrement": "Auto Increment",
+    "defaultValue": "Default",
+    "primaryKey": "Primary key",
+    "reportedAttributes": "Only reported generation attributes are shown; absence does not mean No or imply editability.",
+    "generationOverlap": "Identity and auto increment can describe the same database mechanism. Flags are shown as reported.",
+    "copyDdlFailed": "Unable to copy DDL. Please try again or check clipboard permissions.",
     "workspace": "Object Inspector workspace",
     "title": "Object Inspector",
     "materializedView": "Materialized View",

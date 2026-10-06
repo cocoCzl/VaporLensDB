@@ -365,6 +365,14 @@
     "workspacePersistenceFailed": "SQL 工作区无法保存到本地。"
   },
   "inspector": {
+    "generated": "生成列",
+    "identity": "标识列",
+    "autoIncrement": "自增",
+    "defaultValue": "默认值",
+    "primaryKey": "主键",
+    "reportedAttributes": "仅显示已报告的生成属性；未显示不代表“否”，也不表示可编辑。",
+    "generationOverlap": "标识列与自增可能描述同一数据库机制，按返回的标记展示。",
+    "copyDdlFailed": "无法复制 DDL，请重试或检查剪贴板权限。",
     "workspace": "对象检查器工作区",
     "title": "对象检查器",
     "materializedView": "物化视图",

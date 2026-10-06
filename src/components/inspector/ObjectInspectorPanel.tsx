@@ -1,6 +1,7 @@
 import { AlertCircle, Copy, FileText, KeyRound, RefreshCw, Table2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { copyToClipboard } from '@/lib/clipboard'
 import { Button } from '@/components/ui/button'
 import { useObjectInspectorStore } from '@/stores/objectInspectorStore'
 import type { ColumnInfo, ForeignKeyInfo, IndexInfo } from '@/types/metadata'
@@ -116,7 +117,7 @@ function ColumnsTable({ columns, loading }: { columns: ColumnInfo[]; loading: bo
 
   return (
     <div className="overflow-hidden rounded-md border">
-      <div className="grid grid-cols-[minmax(120px,1fr)_120px_70px_52px] bg-muted/60 text-[11px] font-medium text-muted-foreground">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_48px_32px] bg-muted/60 text-[11px] font-medium text-muted-foreground">
         <div className="border-r px-2 py-1.5">{t('inspector.columnName')}</div>
         <div className="border-r px-2 py-1.5">{t('inspector.columnType')}</div>
         <div className="border-r px-2 py-1.5">{t('inspector.columnNullable')}</div>
@@ -125,7 +126,7 @@ function ColumnsTable({ columns, loading }: { columns: ColumnInfo[]; loading: bo
       {columns.map((column) => (
         <div
           key={`${column.name}:${column.ordinalPosition}`}
-          className="grid grid-cols-[minmax(120px,1fr)_120px_70px_52px] border-t text-xs"
+          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_48px_32px] border-t text-xs"
         >
           <div className="min-w-0 truncate border-r px-2 py-1.5 font-mono">{column.name}</div>
           <div className="min-w-0 truncate border-r px-2 py-1.5 text-muted-foreground">
@@ -135,10 +136,40 @@ function ColumnsTable({ columns, loading }: { columns: ColumnInfo[]; loading: bo
             {column.nullable ? t('inspector.yes') : t('inspector.no')}
           </div>
           <div className="px-2 py-1.5">
-            {column.isPrimaryKey && <KeyRound className="size-3.5 text-warning" />}
+            {column.isPrimaryKey && <KeyRound className="size-3.5 text-warning" aria-label={t('inspector.primaryKey')} />}
           </div>
+          <ColumnDetails column={column} />
         </div>
       ))}
+      <p className="border-t px-2 py-1.5 text-[11px] text-muted-foreground">{t('inspector.reportedAttributes')}</p>
+    </div>
+  )
+}
+
+function ColumnDetails({ column }: { column: ColumnInfo }) {
+  const { t } = useTranslation()
+  // Drivers may collapse missing metadata to false. Only affirmative flags are facts.
+  const attributes = [
+    { present: column.isGenerated, label: t('inspector.generated') },
+    { present: column.isIdentity, label: t('inspector.identity') },
+    { present: column.isAutoIncrement, label: t('inspector.autoIncrement') },
+  ].filter(({ present }) => present === true)
+  if (attributes.length === 0 && column.defaultValue == null) return null
+  return (
+    <div className="col-span-4 min-w-0 space-y-1 border-t border-dashed px-2 py-1.5 text-[11px]">
+      {attributes.length > 0 && (
+        <div className="flex flex-wrap gap-1" title={t('inspector.generationOverlap')}>
+          {attributes.map(({ label }) => (
+            <span key={label} className="rounded bg-muted px-1.5 py-0.5">{label}: {t('inspector.yes')}</span>
+          ))}
+        </div>
+      )}
+      {column.defaultValue != null && (
+        <div className="flex min-w-0 gap-1 text-muted-foreground">
+          <span className="shrink-0">{t('inspector.defaultValue')}:</span>
+          <code className="min-w-0 truncate" title={column.defaultValue}>{column.defaultValue}</code>
+        </div>
+      )}
     </div>
   )
 }
@@ -205,7 +236,7 @@ function DdlBlock({ ddl, loading }: { ddl: string | null; loading: boolean }) {
           <FileText className="size-3.5" />
           {t('inspector.definition')}
         </span>
-        <Button type="button" size="xs" variant="ghost" onClick={() => navigator.clipboard?.writeText(ddl)}>
+        <Button type="button" size="xs" variant="ghost" onClick={() => { void copyToClipboard(ddl, 'inspector.copyDdlFailed') }}>
           <Copy className="size-3" />
           {t('common.copy')}
         </Button>
