@@ -302,6 +302,7 @@
   "notifications": {
     "operationFailed": "操作失败",
     "copyFailed": "复制失败",
+    "clipboardCopyFailed": "无法复制到剪贴板，请重试或检查剪贴板权限。",
     "loadDatabasesFailed": "加载数据库失败",
     "loadMetadataFailed": "加载元数据失败",
     "loadSchemaFailed": "加载 Schema 失败",

@@ -302,6 +302,7 @@
   "notifications": {
     "operationFailed": "Operation failed",
     "copyFailed": "Copy failed",
+    "clipboardCopyFailed": "Unable to copy to clipboard. Please try again or check clipboard permissions.",
     "loadDatabasesFailed": "Failed to load databases",
     "loadMetadataFailed": "Failed to load metadata",
     "loadSchemaFailed": "Failed to load Schema",

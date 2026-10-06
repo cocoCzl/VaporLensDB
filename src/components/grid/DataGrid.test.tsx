@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DataGrid, ResultMetadataGrid } from '@/components/grid/DataGrid'
 import i18n from '@/i18n'
+import { useUiStore } from '@/stores/uiStore'
 
 const nativeClipboard = vi.hoisted(() => ({
   writeText: vi.fn(),
@@ -279,6 +280,15 @@ describe('DataGrid', () => {
 
     fireEvent.click(cells[0])
     fireEvent.click(cells[1], { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Text' }))
+    expect(nativeClipboard.writeText).toHaveBeenLastCalledWith('1\t2')
+    fireEvent.click(screen.getByRole('button', { name: 'CSV' }))
+    expect(nativeClipboard.writeText).toHaveBeenLastCalledWith('1,2')
+    fireEvent.click(screen.getByRole('checkbox', { name: /include headers/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Text' }))
+    expect(nativeClipboard.writeText).toHaveBeenLastCalledWith('id\tid\n1\t2')
+    fireEvent.click(screen.getByRole('button', { name: 'CSV' }))
+    expect(nativeClipboard.writeText).toHaveBeenLastCalledWith('id,id\n1,2')
     fireEvent.click(screen.getByRole('button', { name: 'JSON' }))
     expect(nativeClipboard.writeText).toHaveBeenLastCalledWith(`[
   [
@@ -539,4 +549,178 @@ describe('DataGrid', () => {
     expect(nativeClipboard.writeText).toHaveBeenCalledWith('native-copy')
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })
+})
+
+
+describe('DataGrid clipboard failure feedback', () => {
+  const payload = 'private-result-value'
+  let clipboardDescriptor: PropertyDescriptor | undefined
+  let commandDescriptor: PropertyDescriptor | undefined
+  const writeText = vi.fn()
+  const execCommand = vi.fn()
+
+  beforeEach(() => {
+    clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    commandDescriptor = Object.getOwnPropertyDescriptor(document, 'execCommand')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+    writeText.mockReset().mockResolvedValue(undefined)
+    execCommand.mockReset().mockReturnValue(true)
+    useUiStore.setState({ notifications: [] })
+  })
+
+  afterEach(async () => {
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    await i18n.changeLanguage('en')
+    if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
+    else Reflect.deleteProperty(navigator, 'clipboard')
+    if (commandDescriptor) Object.defineProperty(document, 'execCommand', commandDescriptor)
+    else Reflect.deleteProperty(document, 'execCommand')
+    useUiStore.setState({ notifications: [] })
+  })
+
+  function renderCopyCell() {
+    render(<DataGrid result={{
+      queryId: 'clipboard-feedback',
+      columns: [{ name: 'value', dataType: 'TEXT', nullable: true }],
+      rows: [[payload]], rowCount: 1, affectedRows: 0, elapsedMs: 1, truncated: false,
+    }} />)
+    const cell = screen.getByTitle(payload).querySelector('button')!
+    fireEvent.click(cell)
+    return cell
+  }
+
+  async function copy(cell: HTMLElement) {
+    await act(async () => { fireEvent.keyDown(cell, { key: 'c', ctrlKey: true }) })
+  }
+
+  it('keeps Clipboard API success quiet without using fallback', async () => {
+    await copy(renderCopyCell())
+    expect(writeText).toHaveBeenCalledWith(payload)
+    expect(execCommand).not.toHaveBeenCalled()
+    expect(useUiStore.getState().notifications).toEqual([])
+  })
+
+  it('absorbs primary rejection when fallback succeeds', async () => {
+    writeText.mockRejectedValue(new DOMException(payload, 'NotAllowedError'))
+    await copy(renderCopyCell())
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(useUiStore.getState().notifications).toEqual([])
+  })
+
+  it('reports exactly one final failure when both strategies fail', async () => {
+    writeText.mockRejectedValue(new DOMException(payload, 'NotAllowedError'))
+    execCommand.mockReturnValue(false)
+    await copy(renderCopyCell())
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(useUiStore.getState().notifications).toHaveLength(1)
+  })
+
+  it.each([true, false])('uses fallback when the Clipboard API is unavailable (success=%s)', async (success) => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    execCommand.mockReturnValue(success)
+    await copy(renderCopyCell())
+    expect(writeText).not.toHaveBeenCalled()
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(useUiStore.getState().notifications).toHaveLength(success ? 0 : 1)
+  })
+
+  it.each(['NotAllowedError', 'SecurityError', 'UnknownError'])('contains %s rejections and keeps payload out of feedback/logs', async (name) => {
+    const logs = [vi.spyOn(console, 'error'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'log')]
+    const unhandled = vi.fn()
+    window.addEventListener('unhandledrejection', unhandled)
+    try {
+      writeText.mockRejectedValue(new DOMException(payload, name))
+      execCommand.mockImplementation(() => { throw new DOMException(payload, name) })
+      const cell = renderCopyCell()
+      await copy(cell)
+      // Allow browser rejection reporting a turn as well; Vitest also fails unhandled rejections.
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+      expect(useUiStore.getState().notifications).toEqual([{
+        id: expect.any(String), kind: 'error', title: 'Copy failed',
+        message: 'Unable to copy to clipboard. Please try again or check clipboard permissions.',
+      }])
+      expect(JSON.stringify(useUiStore.getState().notifications)).not.toContain(payload)
+      expect(unhandled).not.toHaveBeenCalled()
+      for (const log of logs) expect(log).not.toHaveBeenCalled()
+      expect(document.querySelector('textarea')).toBeNull()
+      expect(cell).toHaveFocus()
+    } finally {
+      window.removeEventListener('unhandledrejection', unhandled)
+    }
+  })
+
+  it('absorbs synchronous primary errors and missing fallback support', async () => {
+    writeText.mockImplementation(() => { throw new DOMException(payload, 'SecurityError') })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: undefined })
+    await copy(renderCopyCell())
+    expect(useUiStore.getState().notifications).toHaveLength(1)
+    expect(document.querySelector('textarea')).toBeNull()
+  })
+
+  it.each([true, false])('handles native clipboard rejection through the same fallback (success=%s)', async (success) => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
+    nativeClipboard.writeText.mockReset().mockRejectedValue(new Error(payload))
+    execCommand.mockReturnValue(success)
+    await copy(renderCopyCell())
+    expect(nativeClipboard.writeText).toHaveBeenCalledWith(payload)
+    expect(writeText).not.toHaveBeenCalled()
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(useUiStore.getState().notifications).toHaveLength(success ? 0 : 1)
+  })
+
+  it('allows a successful retry after final failure without another notification', async () => {
+    writeText.mockRejectedValueOnce(new DOMException(payload, 'NotAllowedError'))
+    execCommand.mockReturnValue(false)
+    const cell = renderCopyCell()
+    await copy(cell)
+    expect(useUiStore.getState().notifications).toHaveLength(1)
+    await copy(cell)
+    expect(writeText).toHaveBeenCalledTimes(2)
+    expect(execCommand).toHaveBeenCalledTimes(1)
+    expect(useUiStore.getState().notifications).toHaveLength(1)
+  })
+
+  it('restores the copy button focus and cleans up even when fallback throws', async () => {
+    writeText.mockRejectedValue(new DOMException(payload, 'NotAllowedError'))
+    vi.spyOn(HTMLTextAreaElement.prototype, 'select').mockImplementation(function (this: HTMLTextAreaElement) {
+      this.focus()
+    })
+    execCommand.mockImplementation(() => { throw new DOMException(payload, 'SecurityError') })
+    renderCopyCell()
+    const button = screen.getByRole('button', { name: /copy row/i })
+    button.focus()
+    await act(async () => { fireEvent.click(button) })
+    expect(button).toHaveFocus()
+    expect(document.querySelector('textarea')).toBeNull()
+    expect(useUiStore.getState().notifications).toHaveLength(1)
+  })
+
+  it('reports context menu failures once and returns focus to the selected cell', async () => {
+    writeText.mockRejectedValue(new DOMException(payload, 'NotAllowedError'))
+    execCommand.mockReturnValue(false)
+    const cell = renderCopyCell()
+    fireEvent.contextMenu(cell, { clientX: 100, clientY: 100 })
+    const item = screen.getByRole('menuitem', { name: 'Copy Cell' })
+    item.focus()
+    await act(async () => {
+      fireEvent.click(item)
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(cell).toHaveFocus()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(useUiStore.getState().notifications).toHaveLength(1)
+  })
+
+  it('localizes final clipboard feedback in Chinese', async () => {
+    await i18n.changeLanguage('zh')
+    writeText.mockRejectedValue(new DOMException(payload, 'NotAllowedError'))
+    execCommand.mockReturnValue(false)
+    await copy(renderCopyCell())
+    expect(useUiStore.getState().notifications[0]).toMatchObject({
+      title: i18n.t('notifications.copyFailed'), message: i18n.t('notifications.clipboardCopyFailed'),
+    })
+    expect(useUiStore.getState().notifications[0].title).not.toBe('Copy failed')
+  })
+
 })
