@@ -31,7 +31,6 @@ includesAll(
     'execute_query_stream(',
     'handle.is_cancel_requested()',
     'update_progress(',
-    '.import-report.json',
     'invalid_row_count',
     'invalid_rows_omitted',
     'failed_write_count',
@@ -56,6 +55,8 @@ includesAll(
   'streaming table CSV import',
 )
 assert(!importRows.includes('read_to_string'), 'table CSV import must not buffer the whole file')
+assert(!importRows.includes('.import-report.json'), 'CSV import must not create automatic failure sidecars')
+assert(!importRows.includes('tokio::fs::write') && !importRows.includes('to_string_pretty'), 'CSV failure reports must stay in memory')
 
 const exportIpc = read('src/ipc/export.ts')
 includesAll(

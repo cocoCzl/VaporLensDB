@@ -156,13 +156,11 @@ pub struct ImportPreview {
 pub struct RowReport {
     pub row_number: u64,
     pub message: String,
-    pub values: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportReport {
-    pub path: String,
     pub table: String,
     pub total_rows: u64,
     pub inserted_rows: u64,
@@ -197,9 +195,23 @@ fn csv_ui_report(report: &ImportReport) -> CsvImportResult {
             .map(|row| RowReport {
                 row_number: row.row_number,
                 message: row.message.chars().take(1000).collect(),
-                values: Vec::new(),
             })
             .collect(),
+    }
+}
+
+fn csv_import_completion_message(report: &ImportReport) -> String {
+    let failed = report.invalid_row_count + report.failed_write_count;
+    if failed == 0 {
+        format!(
+            "Imported {} rows into {}",
+            report.inserted_rows, report.table
+        )
+    } else {
+        format!(
+            "Imported {} rows into {}; {} rows failed",
+            report.inserted_rows, report.table, failed
+        )
     }
 }
 
@@ -300,7 +312,7 @@ async fn ensure_import_file_content_unchanged(
 impl BoundedRowReports {
     fn push(&mut self, report: RowReport) {
         self.total += 1;
-        let report_bytes = row_storage_bytes(&report.values) + report.message.len();
+        let report_bytes = std::mem::size_of::<RowReport>() + report.message.len();
         if self.reports.len() >= IMPORT_REPORT_MAX_ROWS_PER_KIND
             || report_bytes > IMPORT_REPORT_MAX_BYTES_PER_KIND - self.retained_bytes
         {
@@ -707,18 +719,7 @@ pub async fn import_table_csv(
         match result {
             Ok(report) => {
                 remember_csv_report(handle.id, &report);
-                let failed = report.invalid_row_count + report.failed_write_count;
-                let message = if failed == 0 {
-                    format!(
-                        "Imported {} rows into {}",
-                        report.inserted_rows, report.table
-                    )
-                } else {
-                    format!(
-                        "Imported {} rows into {}; {} rows failed",
-                        report.inserted_rows, report.table, failed
-                    )
-                };
+                let message = csv_import_completion_message(&report);
                 if let Ok(task) = manager.finish_success(handle.id, message).await {
                     emit_task_update(&app_for_task, &task);
                 }
@@ -1314,13 +1315,12 @@ async fn preview_csv_reader_with_cancel<R: AsyncRead + Unpin>(
                 preview.headers.len(),
                 row.len()
             );
-            let bytes = row_storage_bytes(&row) + message.len();
+            let bytes = std::mem::size_of::<RowReport>() + message.len();
             if bytes <= error_bytes_left {
                 error_bytes_left -= bytes;
                 preview.invalid_rows.push(RowReport {
                     row_number: preview.total_rows + u64::from(input.has_header),
                     message,
-                    values: row.clone(),
                 });
             }
         }
@@ -1495,7 +1495,6 @@ async fn import_csv_rows_in_transaction(
             invalid_rows.push(RowReport {
                 row_number,
                 message: format!("Expected {} fields, found {}", source_width, row.len()),
-                values: row,
             });
         }
         if total_rows.is_multiple_of(100) {
@@ -1664,7 +1663,6 @@ async fn import_csv_rows_in_transaction(
                         failed_writes.push(RowReport {
                             row_number,
                             message: csv_row_error(&error, &row),
-                            values: row,
                         });
                     }
                 }
@@ -1737,7 +1735,6 @@ async fn import_csv_rows_in_transaction(
                     Err(error) => failed_writes.push(RowReport {
                         row_number,
                         message: csv_row_error(&error, &row),
-                        values: row,
                     }),
                 }
             }
@@ -1769,9 +1766,9 @@ async fn import_csv_rows_in_transaction(
     .await?;
     ensure_import_active(handle)?;
 
-    let report_path = format!("{}.import-report.json", input.path);
+    // Failure details remain in memory. Any future row export must be an
+    // explicit user action, never a side effect of importing.
     let report = ImportReport {
-        path: report_path.clone(),
         table,
         total_rows,
         inserted_rows,
@@ -1782,13 +1779,6 @@ async fn import_csv_rows_in_transaction(
         failed_writes_omitted: failed_writes.omitted(),
         failed_writes: failed_writes.reports,
     };
-    if report.invalid_row_count > 0 || report.failed_write_count > 0 {
-        let content = serde_json::to_string_pretty(&report).map_err(AppError::from)?;
-        ensure_import_active(handle)?;
-        tokio::fs::write(&report_path, content)
-            .await
-            .map_err(AppError::from)?;
-    }
 
     Ok(report)
 }
@@ -2158,7 +2148,6 @@ fn validate_import_rows_sampled(
                 reports.push(RowReport {
                     row_number: 1,
                     message,
-                    values: headers.to_vec(),
                 });
             }
         }
@@ -2171,7 +2160,6 @@ fn validate_import_rows_sampled(
                 reports.push(RowReport {
                     row_number: first_data_row + index as u64,
                     message: format!("Expected {} fields, found {}", headers.len(), row.len()),
-                    values: row.clone(),
                 });
             }
         }
@@ -2951,7 +2939,6 @@ mod tests {
             row_limited.push(super::RowReport {
                 row_number,
                 message: "invalid width".into(),
-                values: vec!["x".into()],
             });
         }
         assert_eq!(
@@ -2968,8 +2955,7 @@ mod tests {
         for row_number in 1..=8 {
             byte_limited.push(super::RowReport {
                 row_number,
-                message: "write failed".into(),
-                values: vec!["x".repeat(1024 * 1024)],
+                message: "x".repeat(1024 * 1024),
             });
         }
         assert_eq!(byte_limited.total, 8);
@@ -3124,7 +3110,11 @@ mod tests {
         assert_eq!(preview.total_rows, 100);
         assert_eq!(preview.valid_rows, 0);
         assert!(!preview.rows.is_empty() && preview.rows.len() < 100);
-        assert!(!preview.invalid_rows.is_empty() && preview.invalid_rows.len() < 100);
+        // Error details no longer retain the large rejected source values.
+        assert_eq!(preview.invalid_rows.len(), 100);
+        assert!(!serde_json::to_string(&preview.invalid_rows)
+            .unwrap()
+            .contains("\"values\""));
         assert!(
             preview
                 .rows
@@ -3137,7 +3127,7 @@ mod tests {
             preview
                 .invalid_rows
                 .iter()
-                .map(|report| super::row_storage_bytes(&report.values) + report.message.len())
+                .map(|report| std::mem::size_of::<super::RowReport>() + report.message.len())
                 .sum::<usize>()
                 <= super::IMPORT_PREVIEW_SAMPLE_BYTES
         );
@@ -3581,97 +3571,115 @@ mod stream_lifecycle_tests {
         cancel_after_savepoint: bool,
         dialect: DriverType,
     ) {
-        let (mut connections, id) = connection().await;
-        let mut operation = connections
-            .begin_query_operation(id, "cancel-import")
-            .unwrap()
-            .wait()
-            .await
-            .unwrap();
-        let inner = operation.driver.clone();
-        inner
-            .execute_query(
-                "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)",
-                None,
-            )
-            .await
-            .unwrap();
-        let columns = inner.get_columns("main", "items").await.unwrap();
-        let path = ExportTestPath::new();
-        tokio::fs::write(&path.0, csv).await.unwrap();
-        let report_path = format!("{}.import-report.json", path.0.display());
-        tokio::fs::write(&report_path, "previous report")
-            .await
-            .unwrap();
-        let (tasks, handle) = task().await;
-        tasks.start_task(handle.id, "Importing").await.unwrap();
-        let driver = Arc::new(CancellingImportDriver {
-            inner: inner.clone(),
-            tasks: tasks.clone(),
-            task_id: handle.id,
-            cancel_after_write,
-            cancel_after_savepoint,
-            writes: AtomicUsize::new(0),
-            rollback_gate: None,
-        });
-        operation.driver = driver.clone();
-        let result = import_csv_rows(
-            &ImportTableCsvInput {
-                connection_id: id,
-                driver_type: dialect,
-                schema: "main".into(),
-                table: "items".into(),
-                path: path.0.to_string_lossy().into_owned(),
-                has_header: true,
-                delimiter: None,
-                mapping: None,
-                empty_as_null: true,
-            },
-            operation,
-            columns,
-            &tasks,
-            &handle,
-        )
-        .await;
-        assert!(
-            matches!(result, Err(ExportTaskError::Cancelled)),
-            "cancellation after an in-flight write must not commit"
-        );
-        assert_eq!(
-            driver.writes.load(Ordering::Relaxed),
-            if cancel_after_savepoint {
-                0
-            } else {
-                cancel_after_write
-            }
-        );
-        assert_eq!(
+        for existing_sidecar in [false, true] {
+            let (mut connections, id) = connection().await;
+            let mut operation = connections
+                .begin_query_operation(id, "cancel-import")
+                .unwrap()
+                .wait()
+                .await
+                .unwrap();
+            let inner = operation.driver.clone();
             inner
-                .execute_query("SELECT COUNT(*) FROM items", None)
+                .execute_query(
+                    "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)",
+                    None,
+                )
                 .await
-                .unwrap()
-                .rows[0][0],
-            json!(0)
-        );
-        assert_eq!(
-            tokio::fs::read_to_string(&report_path).await.unwrap(),
-            "previous report"
-        );
-        assert_eq!(
-            tasks
-                .finish_cancelled(handle.id, "Cancelled")
-                .await
-                .unwrap()
-                .status,
-            crate::services::task_manager::TaskStatus::Cancelled
-        );
-        tokio::fs::remove_file(&report_path).await.unwrap();
-        connections.disconnect(id).unwrap();
+                .unwrap();
+            let columns = inner.get_columns("main", "items").await.unwrap();
+            let path = ExportTestPath::new();
+            tokio::fs::write(&path.0, csv).await.unwrap();
+            let report_path = format!("{}.import-report.json", path.0.display());
+            if existing_sidecar {
+                tokio::fs::write(&report_path, "previous report")
+                    .await
+                    .unwrap();
+            }
+            let (tasks, handle) = task().await;
+            tasks.start_task(handle.id, "Importing").await.unwrap();
+            let driver = Arc::new(CancellingImportDriver {
+                inner: inner.clone(),
+                tasks: tasks.clone(),
+                task_id: handle.id,
+                cancel_after_write,
+                cancel_after_savepoint,
+                writes: AtomicUsize::new(0),
+                rollback_gate: None,
+            });
+            operation.driver = driver.clone();
+            let result = import_csv_rows(
+                &ImportTableCsvInput {
+                    connection_id: id,
+                    driver_type: dialect,
+                    schema: "main".into(),
+                    table: "items".into(),
+                    path: path.0.to_string_lossy().into_owned(),
+                    has_header: true,
+                    delimiter: None,
+                    mapping: None,
+                    empty_as_null: true,
+                },
+                operation,
+                columns,
+                &tasks,
+                &handle,
+            )
+            .await;
+            assert!(
+                matches!(result, Err(ExportTaskError::Cancelled)),
+                "cancellation after an in-flight write must not commit"
+            );
+            assert_eq!(
+                driver.writes.load(Ordering::Relaxed),
+                if cancel_after_savepoint {
+                    0
+                } else {
+                    cancel_after_write
+                }
+            );
+            assert_eq!(
+                inner
+                    .execute_query("SELECT COUNT(*) FROM items", None)
+                    .await
+                    .unwrap()
+                    .rows[0][0],
+                json!(0)
+            );
+            if existing_sidecar {
+                assert_eq!(
+                    tokio::fs::read_to_string(&report_path).await.unwrap(),
+                    "previous report"
+                );
+            } else {
+                assert!(!std::path::Path::new(&report_path).exists());
+            }
+            assert_eq!(
+                tasks
+                    .finish_cancelled(handle.id, "Cancelled")
+                    .await
+                    .unwrap()
+                    .status,
+                crate::services::task_manager::TaskStatus::Cancelled
+            );
+            if existing_sidecar {
+                tokio::fs::remove_file(&report_path).await.unwrap();
+            }
+            let logs = serde_json::to_string(&tasks.list_tasks().await).unwrap();
+            assert!(!logs.contains("secret-business-value"));
+            connections.disconnect(id).unwrap();
+        }
     }
 
     #[tokio::test]
     async fn cancellation_after_last_import_batch_rolls_back_instead_of_committing() {
-        assert_cancelled_import("id,name\n1,Ada\n2,Grace", 1, false, DriverType::Sqlite).await;
+        assert_cancelled_import(
+            "id,name\n1,secret-business-value\n2,Grace",
+            1,
+            false,
+            DriverType::Sqlite,
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -4663,60 +4671,131 @@ mod stream_lifecycle_tests {
     }
 
     #[tokio::test]
-    async fn csv_workflow_partial_and_full_failure_report_row_numbers() {
-        for csv in [
-            "id,note\n1,first\n1,second\n2,third",
-            "id,note\n0,first\n0,second",
+    async fn csv_import_privacy_preserves_counts_without_creating_or_overwriting_sidecars() {
+        let markers = [
+            "secret-business-value",
+            "fixture-password-value",
+            "fixture-token-value",
+        ];
+        for (csv, inserted, failed, first_failure) in [
+            (
+                "id,note\n1,secret-business-value\n2,fixture-password-value\n3,fixture-token-value",
+                3,
+                0,
+                None,
+            ),
+            // Duplicate PK forces batch failure and then row-by-row fallback.
+            (
+                "id,note\n1,first\n1,secret-business-value\n2,third",
+                2,
+                1,
+                Some(3),
+            ),
+            (
+                "id,note\n0,fixture-password-value\n0,fixture-token-value",
+                0,
+                2,
+                Some(2),
+            ),
+            // Invalid source width is reported without retaining the rejected row.
+            (
+                "id,note\n1,first\n2,secret-business-value,fixture-token-value",
+                1,
+                1,
+                Some(3),
+            ),
         ] {
-            let (mut connections, id) = connection().await;
-            let operation = connections
-                .begin_query_operation(id, "csv-report")
-                .unwrap()
-                .wait()
-                .await
-                .unwrap();
-            operation
-                .driver
-                .execute_query(
-                    "CREATE TABLE items (id INTEGER PRIMARY KEY CHECK(id > 0), note TEXT)",
-                    None,
+            for existing_sidecar in [false, true] {
+                let directory = ExportTestDirectory::new();
+                let path = directory.0.join("input.csv");
+                let sidecar = directory.0.join("input.csv.import-report.json");
+                tokio::fs::write(&path, csv).await.unwrap();
+                let historical = "historical user-owned report";
+                if existing_sidecar {
+                    tokio::fs::write(&sidecar, historical).await.unwrap();
+                }
+                let (mut connections, id) = connection().await;
+                let operation = connections
+                    .begin_query_operation(id, "csv-privacy")
+                    .unwrap()
+                    .wait()
+                    .await
+                    .unwrap();
+                operation
+                    .driver
+                    .execute_query(
+                        "CREATE TABLE items (id INTEGER PRIMARY KEY CHECK(id > 0), note TEXT)",
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                let columns = operation.driver.get_columns("main", "items").await.unwrap();
+                let (manager, handle) = task().await;
+                let report = import_csv_rows(
+                    &ImportTableCsvInput {
+                        connection_id: id,
+                        driver_type: DriverType::Sqlite,
+                        schema: "main".into(),
+                        table: "items".into(),
+                        path: path.to_string_lossy().into(),
+                        has_header: true,
+                        delimiter: None,
+                        mapping: None,
+                        empty_as_null: true,
+                    },
+                    operation,
+                    columns,
+                    &manager,
+                    &handle,
                 )
                 .await
                 .unwrap();
-            let columns = operation.driver.get_columns("main", "items").await.unwrap();
-            let path = ExportTestPath::new();
-            tokio::fs::write(&path.0, csv).await.unwrap();
-            let (manager, handle) = task().await;
-            let report = import_csv_rows(
-                &ImportTableCsvInput {
-                    connection_id: id,
-                    driver_type: DriverType::Sqlite,
-                    schema: "main".into(),
-                    table: "items".into(),
-                    path: path.0.to_string_lossy().into(),
-                    has_header: true,
-                    delimiter: None,
-                    mapping: Some(vec![Some("id".into()), Some("note".into())]),
-                    empty_as_null: true,
-                },
-                operation,
-                columns,
-                &manager,
-                &handle,
-            )
-            .await
-            .unwrap();
-            let ui = csv_ui_report(&report);
-            if csv.contains("third") {
-                assert_eq!((ui.inserted_rows, ui.failed_rows), (2, 1));
-                assert_eq!(ui.failures[0].row_number, 3);
-            } else {
-                assert_eq!((ui.inserted_rows, ui.failed_rows), (0, 2));
-                assert_eq!(ui.failures[0].row_number, 2);
+                let ui = csv_ui_report(&report);
+                assert_eq!((ui.inserted_rows, ui.failed_rows), (inserted, failed));
+                assert_eq!(ui.failures.first().map(|row| row.row_number), first_failure);
+                let notification = csv_import_completion_message(&report);
+                assert!(notification.contains(&format!("Imported {inserted} rows")));
+                if failed > 0 {
+                    assert!(notification.contains(&format!("{failed} rows failed")));
+                }
+                let completed = manager
+                    .finish_success(handle.id, notification.clone())
+                    .await
+                    .unwrap();
+                for serialized in [
+                    serde_json::to_string(&report).unwrap(),
+                    serde_json::to_string(&ui).unwrap(),
+                    serde_json::to_string(&completed).unwrap(),
+                    notification,
+                ] {
+                    for marker in markers {
+                        assert!(!serialized.contains(marker));
+                    }
+                    assert!(!serialized.contains("\"values\""));
+                    assert!(!serialized.contains(path.to_str().unwrap()));
+                }
+                let count = connections
+                    .driver(id)
+                    .unwrap()
+                    .execute_query("SELECT COUNT(*) FROM items", None)
+                    .await
+                    .unwrap();
+                assert_eq!(count.rows[0][0], json!(inserted));
+                if existing_sidecar {
+                    assert_eq!(
+                        tokio::fs::read_to_string(&sidecar).await.unwrap(),
+                        historical
+                    );
+                } else {
+                    assert!(!sidecar.exists());
+                }
+                // No report, temporary, or recovery files created beside the input.
+                assert_eq!(
+                    std::fs::read_dir(&directory.0).unwrap().count(),
+                    if existing_sidecar { 2 } else { 1 }
+                );
+                connections.disconnect(id).unwrap();
             }
-            assert!(ui.failures.iter().all(|row| row.values.is_empty()));
-            let _ = tokio::fs::remove_file(&report.path).await;
-            connections.disconnect(id).unwrap();
         }
     }
 
@@ -5153,7 +5232,6 @@ mod csv_workflow_tests {
         assert!(!message.contains("private-business-value"));
         assert!(!message.contains("fixture-secret"));
         let report = ImportReport {
-            path: "/private/input.csv".into(),
             table: "items".into(),
             total_rows: 150,
             inserted_rows: 0,
@@ -5166,7 +5244,6 @@ mod csv_workflow_tests {
                 .map(|i| RowReport {
                     row_number: i,
                     message: message.clone(),
-                    values: vec!["private-business-value".into()],
                 })
                 .collect(),
         };
@@ -5175,6 +5252,7 @@ mod csv_workflow_tests {
         assert_eq!(ui.failed_rows, 150);
         let serialized = serde_json::to_string(&ui).unwrap();
         assert!(!serialized.contains("private-business-value"));
-        assert!(!serialized.contains("/private/input.csv"));
+        assert!(!serialized.contains("\"values\""));
+        assert!(!serialized.contains("\"path\""));
     }
 }

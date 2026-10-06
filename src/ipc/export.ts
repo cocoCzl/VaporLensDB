@@ -60,7 +60,6 @@ export interface ImportTableCsvInput {
 export interface RowReport {
   rowNumber: number
   message: string
-  values: string[]
 }
 
 export interface ImportPreview {

@@ -44,6 +44,12 @@ assert(!configCommand.includes('username: connection.username'), 'diagnostics mu
 assert(!configCommand.includes('host: connection.host'), 'diagnostics must not export hosts')
 assert(!configCommand.includes('connection_url: connection.connection_url'), 'diagnostics must not export connection URLs')
 
+// Diagnostics must remain a structured export, never collect CSV sidecars or
+// discover files in user-selected CSV directories (including historical reports).
+const diagnosticsProduction = configCommand.split('#[cfg(test)]')[0]
+assert(!diagnosticsProduction.includes('.import-report.json'), 'diagnostics must not collect CSV failure sidecars')
+assert(!/fs::(?:read|read_to_string|read_dir)|File::open|glob\(/.test(diagnosticsProduction), 'diagnostics must not read or scan user files')
+
 const lib = read('src-tauri/src/lib.rs')
 assert(
   lib.includes('commands::config::export_diagnostics_package'),

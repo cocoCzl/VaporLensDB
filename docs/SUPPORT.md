@@ -62,6 +62,19 @@ multi-statement, multi-result export is unsupported. MySQL CLI `DELIMITER`
 directives and PostgreSQL exotic or multidimensional types are also outside the
 1.0 support scope.
 
+## CSV failure privacy
+
+Normal CSV import does not automatically create a failure sidecar. Counts and
+bounded row-number/sanitized-error details stay in the session report; failed
+source values are not retained in report DTOs or sent as failure details to the
+frontend. The bounded data preview remains available for intentional inspection.
+
+Older builds could create `<CSV path>.import-report.json` beside an input file,
+including business row values. Existing files are neither deleted nor overwritten
+by imports; users decide how to retain or remove them. Diagnostics does not read
+or collect those files. Exporting failed row values is not implemented: any future
+feature must require an explicit user action and destination selection.
+
 ## Capability boundaries
 
 Implementation flags are not evidence of equal vendor behavior or desktop QA.

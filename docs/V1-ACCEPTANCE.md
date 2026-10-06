@@ -34,7 +34,8 @@ claims. Historical version entries are not rewritten as new release notes.
 
 ## MUST before 1.0 (four gates)
 
-1. **CSV failure privacy:** remove automatic persistence of business row values.
+1. **CSV failure privacy (implemented in Phase 12B, pending checkpoint acceptance):**
+   automatic sidecar writing and row-value report fields have been removed.
    Default failure reporting may use only row number, sanitized error and safe
    metadata; no CSV values or absolute source paths in logs/diagnostics. Verify
    partial/full failure, cancellation and report-write behavior without changing
@@ -60,10 +61,11 @@ Evidence: `src-tauri/src/commands/export.rs`, `import_csv_rows`, `RowReport`,
 `ImportReport`, `csv_ui_report`; diagnostics: `src-tauri/src/commands/config.rs`,
 `export_diagnostics_package`.
 
-After the import loop and final batch flush, if invalid-row or failed-write
+**Historical Phase 12A finding (before Phase 12B):** after the import loop and
+final batch flush, if invalid-row or failed-write
 count is nonzero and execution reaches report generation, the backend
-**automatically writes** `<input CSV path>.import-report.json` beside the input.
-There is no separate user export action. It can overwrite a previous report.
+**automatically wrote** `<input CSV path>.import-report.json` beside the input.
+There was no separate user export action. It could overwrite a previous report.
 Cancellation/early errors can exit before this write; not every failed import
 creates a report. A successful import does not remove an older sidecar.
 
@@ -87,13 +89,20 @@ from other software with access to its directory.
 | B: no automatic row values; values only through explicit Export failed rows | Safe default; intentional export can support repair workflows | **Recommended policy** |
 | C: no failure file, bounded in-memory report only | Smallest persistence surface; loses report after session ends | Acceptable initial implementation of the safe default |
 
-Next independent phase: **Phase 12B — CSV Failed-row Privacy**. First eliminate
+Phase 12B policy: **CSV Failed-row Privacy**. Eliminate
 implicit value persistence and prove UI/notification/log/diagnostic boundaries.
 If a metadata-only failure file remains, sanitize it and exclude source paths
 and row values. An explicit value export would require a user-selected path,
 clear disclosure and separate bounded-data/retention design; shipping that new
 feature is **not** required to close this gate. Do not silently delete existing
-user sidecars. No backend changes are made in Phase 12A.
+user sidecars. No backend changes were made in Phase 12A.
+
+Phase 12B implements the no-file variant of the safe default: normal imports
+create no sidecar, and row reports contain only row number and sanitized error.
+Existing sidecars are untouched. Counts, bounded UI failures, and transaction/
+cancellation behavior remain. Diagnostics has no sidecar reader or directory
+scan. The bounded CSV preview still intentionally contains sample data. See
+[SUPPORT.md](SUPPORT.md#csv-failure-privacy) for the user-facing privacy note.
 
 ## Trigger and Inspector audit
 
@@ -152,8 +161,9 @@ optimization; broader non-PG cancellation guarantees; broader vendor tooling.
 ## Acceptance status
 
 - **Scope Locked: Yes.** Option A; editing excluded.
-- **Product functionality ready: Not yet.** Confirmed CSV privacy and trigger
-  correctness defects remain; latest desktop acceptance is incomplete.
+- **Product functionality ready: Not yet.** CSV privacy remediation is implemented
+  pending checkpoint acceptance; trigger correctness and latest desktop acceptance
+  remain open.
 - **Environment validation remaining:** latest macOS arm64 native QA and the
   sandbox-blocked socket checks. Other OS runtime QA is required only before
   promoting their support claims. Future binary upgrade/signing QA is separate.
