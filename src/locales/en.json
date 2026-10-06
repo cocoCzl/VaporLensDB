@@ -912,6 +912,12 @@
     ,"previewDriverTemplates": "Driver templates"
     ,"previewImportReport": "Import report"
     ,"importSummary": "{{imported}} imported / {{failed}} failed / {{skipped}} skipped."
+    ,"retryFailed": "Retry failed"
+    ,"imported": "Imported"
+    ,"itemPending": "Pending"
+    ,"itemImporting": "Importing"
+    ,"itemImported": "Imported"
+    ,"itemFailed": "Failed"
   },
   "runtime": {
     "tauriUnavailable": "This page is not running inside the Tauri desktop runtime. Start the app with pnpm tauri dev."

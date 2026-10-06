@@ -16,14 +16,21 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
+  createDbeaverImportSession,
   dbeaverPreviewToConnectionInput,
+  dbeaverImportErrorMessage,
+  getDbeaverImportableConnections,
   previewDbeaverConfiguration,
+  summarizeDbeaverImportSession,
+  type DbeaverImportItemState,
   type DbeaverImportPreview,
+  type DbeaverImportSessionState,
 } from '@/lib/dbeaverImport'
 import { openExternalUrl } from '@/lib/openExternalUrl'
 import { normalizeAppError } from '@/ipc/client'
@@ -979,7 +986,7 @@ function DriverDefinitionEditor({
   )
 }
 
-function DbeaverImportSettings({
+export function DbeaverImportSettings({
   onImportConnection,
   onNotify,
   onNotifyError,
@@ -990,11 +997,17 @@ function DbeaverImportSettings({
 }) {
   const { t } = useTranslation()
   const [preview, setPreview] = useState<DbeaverImportPreview | null>(null)
+  const [session, setSession] = useState<DbeaverImportSessionState | null>(null)
   const [importing, setImporting] = useState(false)
   const [report, setReport] = useState<{ imported: number; failed: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const importingRef = useRef(false)
 
   async function handlePreview(files: FileList | null) {
+    if (importingRef.current) {
+      return
+    }
+
     setReport(null)
     if (!files?.length) {
       return
@@ -1003,6 +1016,7 @@ function DbeaverImportSettings({
     try {
       const nextPreview = await previewDbeaverConfiguration(Array.from(files))
       setPreview(nextPreview)
+      setSession(createDbeaverImportSession(nextPreview))
       onNotify({
         kind: nextPreview.connections.length > 0 ? 'info' : 'warning',
         title: t('dbeaver.previewComplete'),
@@ -1010,10 +1024,11 @@ function DbeaverImportSettings({
       })
     } catch (error) {
       setPreview(null)
+      setSession(null)
       onNotifyError(
         {
           code: 'DBEAVER_IMPORT_PREVIEW_FAILED',
-          message: normalizeAppError(error).message || t('dbeaver.previewFailedMessage'),
+          message: dbeaverImportErrorMessage(error) || t('dbeaver.previewFailedMessage'),
         },
         t('dbeaver.previewFailed'),
       )
@@ -1025,29 +1040,61 @@ function DbeaverImportSettings({
   }
 
   async function importSupportedConnections() {
-    if (!preview || preview.connections.length === 0) {
+    if (!preview || !session || importingRef.current) {
       return
     }
 
-    setImporting(true)
-    let imported = 0
-    let failed = 0
-    for (const connection of preview.connections) {
-      try {
-        await onImportConnection(dbeaverPreviewToConnectionInput(connection))
-        imported += 1
-      } catch {
-        failed += 1
-      }
+    const connectionsToImport = getDbeaverImportableConnections(preview, session)
+    if (connectionsToImport.length === 0) {
+      return
     }
-    setImporting(false)
-    setReport({ imported, failed })
-    onNotify({
-      kind: failed === 0 ? 'success' : 'warning',
-      title: t('dbeaver.importComplete'),
-      message: `${imported} imported / ${failed} failed / ${preview.skipped.length} skipped`,
-    })
+
+    importingRef.current = true
+    setImporting(true)
+    const nextSession: DbeaverImportSessionState = { ...session }
+
+    try {
+      for (const connection of connectionsToImport) {
+        nextSession[connection.id] = { status: 'importing' }
+        setSession({ ...nextSession })
+        try {
+          await onImportConnection(dbeaverPreviewToConnectionInput(connection))
+          nextSession[connection.id] = { status: 'succeeded' }
+        } catch (error) {
+          nextSession[connection.id] = {
+            status: 'failed',
+            errorMessage: dbeaverImportErrorMessage(error),
+          }
+        }
+        setSession({ ...nextSession })
+      }
+
+      const summary = summarizeDbeaverImportSession(preview, nextSession)
+      setReport({ imported: summary.imported, failed: summary.failed })
+      onNotify({
+        kind: summary.failed === 0 ? 'success' : 'warning',
+        title: t('dbeaver.importComplete'),
+        message: t('dbeaver.importSummary', {
+          imported: summary.imported,
+          failed: summary.failed,
+          skipped: preview.skipped.length,
+        }),
+      })
+    } finally {
+      importingRef.current = false
+      setImporting(false)
+    }
   }
+
+  const sessionSummary = preview && session ? summarizeDbeaverImportSession(preview, session) : null
+  const importableConnections = preview && session ? getDbeaverImportableConnections(preview, session) : []
+  const importLabel = importing
+    ? t('dbeaver.importing')
+    : sessionSummary?.pending === 0 && sessionSummary.failed > 0
+      ? t('dbeaver.retryFailed')
+      : sessionSummary?.pending === 0 && sessionSummary?.failed === 0 && sessionSummary.imported > 0
+        ? t('dbeaver.imported')
+        : t('dbeaver.import')
 
   return (
     <SettingsCard title={t('dbeaver.title')} icon={Upload}>
@@ -1088,13 +1135,13 @@ function DbeaverImportSettings({
             <Button
               type="button"
               size="sm"
-              disabled={importing || preview.connections.length === 0}
+              disabled={importing || importableConnections.length === 0}
               onClick={() => {
                 void importSupportedConnections()
               }}
             >
               <Save className="size-3.5" />
-              {importing ? t('dbeaver.importing') : t('dbeaver.import')}
+              {importLabel}
             </Button>
           </div>
 
@@ -1104,26 +1151,12 @@ function DbeaverImportSettings({
                 <PreviewEmpty label={t('dbeaver.noImportableConnections')} />
               ) : (
                 preview.connections.slice(0, 8).map((connection) => (
-                  <div key={connection.id} className="rounded border bg-background/70 px-2 py-1.5 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate font-medium">{connection.name}</span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {connection.driverType}
-                      </span>
-                    </div>
-                    <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                      {connection.host ?? connection.connectionUrl ?? 'URL only'}
-                      {connection.database ? ` / ${connection.database}` : ''} ·{' '}
-                      {connection.passwordStatus === 'manualEntryRequired'
-                        ? 'password manual entry'
-                        : 'no password'}
-                    </div>
-                    {connection.groupPath && (
-                      <div className="mt-1 truncate text-[10px] text-muted-foreground">
-                        {t('connectionForm.group')}: {connection.groupPath}
-                      </div>
-                    )}
-                  </div>
+                  <DbeaverImportPreviewItem
+                    key={connection.id}
+                    connection={connection}
+                    state={session?.[connection.id] ?? { status: 'pending' }}
+                    t={t}
+                  />
                 ))
               )}
             </PreviewList>
@@ -1171,6 +1204,49 @@ function DbeaverImportSettings({
         </div>
       )}
     </SettingsCard>
+  )
+}
+
+function DbeaverImportPreviewItem({
+  connection,
+  state,
+  t,
+}: {
+  connection: DbeaverImportPreview['connections'][number]
+  state: DbeaverImportItemState
+  t: TFunction
+}) {
+  const statusLabel = {
+    pending: t('dbeaver.itemPending'),
+    importing: t('dbeaver.itemImporting'),
+    succeeded: t('dbeaver.itemImported'),
+    failed: t('dbeaver.itemFailed'),
+  }[state.status]
+
+  return (
+    <div className="rounded border bg-background/70 px-2 py-1.5 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate font-medium">{connection.name}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">{statusLabel}</span>
+      </div>
+      <div className="mt-1 truncate text-[11px] text-muted-foreground">
+        {connection.host ?? connection.connectionUrl ?? 'URL only'}
+        {connection.database ? ` / ${connection.database}` : ''} ·{' '}
+        {connection.passwordStatus === 'manualEntryRequired'
+          ? 'password manual entry'
+          : 'no password'}
+      </div>
+      {connection.groupPath && (
+        <div className="mt-1 truncate text-[10px] text-muted-foreground">
+          {t('connectionForm.group')}: {connection.groupPath}
+        </div>
+      )}
+      {state.status === 'failed' && state.errorMessage && (
+        <div className="mt-1 whitespace-pre-wrap break-words text-[10px] text-warning-foreground">
+          {state.errorMessage}
+        </div>
+      )}
+    </div>
   )
 }
 

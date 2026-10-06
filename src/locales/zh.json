@@ -912,7 +912,13 @@
     "previewConnections": "连接",
     "previewDriverTemplates": "驱动模板",
     "previewImportReport": "导入报告",
-    "importSummary": "已导入 {{imported}} 个，失败 {{failed}} 个，跳过 {{skipped}} 个。"
+    "importSummary": "已导入 {{imported}} 个，失败 {{failed}} 个，跳过 {{skipped}} 个。",
+    "retryFailed": "重试失败项",
+    "imported": "已导入",
+    "itemPending": "待导入",
+    "itemImporting": "导入中",
+    "itemImported": "已导入",
+    "itemFailed": "失败"
   },
   "runtime": {
     "tauriUnavailable": "当前页面不在 Tauri 桌面运行时中，请使用 pnpm tauri dev 启动应用"

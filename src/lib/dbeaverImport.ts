@@ -1,4 +1,5 @@
 import i18n from '@/i18n'
+import { normalizeAppError } from '@/ipc/client'
 import type { ConnectionInput, DriverType } from '@/types/connection'
 import type { DriverBackend } from '@/types/driver'
 import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
@@ -10,6 +11,15 @@ export interface DbeaverImportPreview {
   skipped: DbeaverSkippedEntry[]
   passwordEntries: number
 }
+
+export type DbeaverImportItemStatus = 'pending' | 'importing' | 'succeeded' | 'failed'
+
+export interface DbeaverImportItemState {
+  status: DbeaverImportItemStatus
+  errorMessage?: string
+}
+
+export type DbeaverImportSessionState = Record<string, DbeaverImportItemState>
 
 export interface DbeaverConnectionPreview {
   id: string
@@ -111,6 +121,52 @@ export function dbeaverPreviewToConnectionInput(preview: DbeaverConnectionPrevie
     driverPaths: [],
     group: preview.groupPath ?? null,
   }
+}
+
+export function createDbeaverImportSession(preview: DbeaverImportPreview): DbeaverImportSessionState {
+  return Object.fromEntries(
+    preview.connections.map((connection) => [connection.id, { status: 'pending' }]),
+  )
+}
+
+export function getDbeaverImportableConnections(
+  preview: DbeaverImportPreview,
+  session: DbeaverImportSessionState,
+) {
+  return preview.connections.filter((connection) => {
+    const status = session[connection.id]?.status ?? 'pending'
+    return status === 'pending' || status === 'failed'
+  })
+}
+
+export function summarizeDbeaverImportSession(
+  preview: DbeaverImportPreview,
+  session: DbeaverImportSessionState,
+) {
+  return preview.connections.reduce(
+    (summary, connection) => {
+      const status = session[connection.id]?.status ?? 'pending'
+      if (status === 'succeeded') summary.imported += 1
+      if (status === 'failed') summary.failed += 1
+      if (status === 'pending') summary.pending += 1
+      if (status === 'importing') summary.importing += 1
+      return summary
+    },
+    { imported: 0, failed: 0, pending: 0, importing: 0 },
+  )
+}
+
+export function dbeaverImportErrorMessage(error: unknown) {
+  const appError = normalizeAppError(error)
+  const message = redactDbeaverImportSecrets(appError.message)
+  const detail = appError.detail ? redactDbeaverImportSecrets(appError.detail) : ''
+  return detail && detail !== message ? `${message}\n${detail}` : message
+}
+
+function redactDbeaverImportSecrets(value: string) {
+  return value
+    .replace(/(\b(?:password|passwd|pwd|passphrase|token|secret|access_token)\s*[=:]\s*)([^\s,;&]+)/gi, '$1[redacted]')
+    .replace(/(\b[^\s/:@]+:)[^\s/@]+@/g, '$1[redacted]@')
 }
 
 function parseDbeaverJson(source: string): RawDbeaverConnection[] {
