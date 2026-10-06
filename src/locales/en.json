@@ -936,17 +936,28 @@
     "importComplete": "DBeaver import complete",
     "noImportableConnections": "No importable connections",
     "chooseConfigFile": "Choose a DBeaver data-sources.json or XML configuration file.",
-    "xmlParseFailed": "Failed to parse the DBeaver XML configuration."
-    ,"previewConnections": "Connections"
-    ,"previewDriverTemplates": "Driver templates"
-    ,"previewImportReport": "Import report"
-    ,"importSummary": "{{imported}} imported / {{failed}} failed / {{skipped}} skipped."
-    ,"retryFailed": "Retry failed"
-    ,"imported": "Imported"
-    ,"itemPending": "Pending"
-    ,"itemImporting": "Importing"
-    ,"itemImported": "Imported"
-    ,"itemFailed": "Failed"
+    "xmlParseFailed": "Failed to parse the DBeaver XML configuration.",
+    "previewConnections": "Connections",
+    "previewDriverTemplates": "Driver templates",
+    "previewImportReport": "Import report",
+    "importSummary": "{{imported}} imported / {{failed}} failed / {{skipped}} skipped.",
+    "retryFailed": "Retry failed",
+    "imported": "Imported",
+    "itemPending": "Pending",
+    "itemImporting": "Importing",
+    "itemImported": "Imported",
+    "itemFailed": "Failed",
+    "unsupportedFormat": "Unsupported file format. Choose a DBeaver JSON or XML configuration file.",
+    "jsonParseFailed": "Failed to parse the DBeaver JSON configuration.",
+    "previewSummary": "{{supported}} supported / {{skipped}} skipped",
+    "passwordSummary_one": "{{count}} password needs manual entry",
+    "passwordSummary_other": "{{count}} passwords need manual entry",
+    "passwordManualEntry": "Password must be entered manually",
+    "noPassword": "No password",
+    "urlOnly": "URL only",
+    "unsupported": "Unsupported",
+    "unsupportedDriver": "Unsupported driver",
+    "unknownDriver": "Unknown driver"
   },
   "runtime": {
     "tauriUnavailable": "This page is not running inside the Tauri desktop runtime. Start the app with pnpm tauri dev."

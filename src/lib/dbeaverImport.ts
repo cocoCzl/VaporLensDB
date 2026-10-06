@@ -46,7 +46,7 @@ export interface DbeaverDriverTemplatePreview {
 
 export interface DbeaverSkippedEntry {
   name: string
-  reason: string
+  reason: 'unsupportedDriver'
   sourceDriver?: string | null
 }
 
@@ -86,13 +86,17 @@ const DRIVER_MAPPINGS: Array<{
 export async function previewDbeaverConfiguration(files: File[]) {
   const configFile = files.find((file) => isDbeaverConfigFile(file.name))
   if (!configFile) {
-    throw new Error(i18n.t('dbeaver.chooseConfigFile'))
+    const unsupported = files.some((file) => detectDbeaverFormat(file.name) === 'unsupported')
+    throw new Error(i18n.t(unsupported ? 'dbeaver.unsupportedFormat' : 'dbeaver.chooseConfigFile'))
   }
 
   const source = await configFile.text()
-  const rawConnections = configFile.name.endsWith('.json')
-    ? parseDbeaverJson(source)
-    : parseDbeaverXml(source)
+  let rawConnections: RawDbeaverConnection[]
+  switch (detectDbeaverFormat(configFile.name)) {
+    case 'json': rawConnections = parseDbeaverJson(source); break
+    case 'xml': rawConnections = parseDbeaverXml(source); break
+    default: throw new Error(i18n.t('dbeaver.unsupportedFormat'))
+  }
   const credentialsFile = files.find((file) => /credentials.*\.json$/i.test(file.name))
   const credentialText = credentialsFile ? await credentialsFile.text() : ''
   const credentialConnectionIds = collectCredentialConnectionIds(credentialText)
@@ -170,9 +174,15 @@ function redactDbeaverImportSecrets(value: string) {
 }
 
 function parseDbeaverJson(source: string): RawDbeaverConnection[] {
-  const parsed = JSON.parse(source) as {
+  let parsed: {
     connections?: Record<string, unknown>
     folders?: Record<string, unknown>
+  }
+  try {
+    parsed = JSON.parse(source)
+  } catch {
+    // SyntaxError messages can contain source fragments, including credentials.
+    throw new Error(i18n.t('dbeaver.jsonParseFailed'))
   }
   const connections = parsed.connections ?? {}
   const folderPaths = dbeaverFolderPaths(parsed.folders ?? {})
@@ -276,7 +286,7 @@ function buildPreview(sourceName: string, rawConnections: RawDbeaverConnection[]
       skipped.push({
         name: raw.name,
         sourceDriver: raw.sourceDriver,
-        reason: 'unsupported driver',
+        reason: 'unsupportedDriver',
       })
       continue
     }
@@ -401,6 +411,13 @@ function collectKeys(value: unknown, ids: Set<string>) {
     if (/^[0-9a-f-]{8,}$/i.test(key)) ids.add(key)
     collectKeys(child, ids)
   }
+}
+
+export function detectDbeaverFormat(filename: string): 'json' | 'xml' | 'unsupported' {
+  const normalizedName = filename.toLowerCase()
+  if (normalizedName.endsWith('.json')) return 'json'
+  if (normalizedName.endsWith('.xml')) return 'xml'
+  return 'unsupported'
 }
 
 function isDbeaverConfigFile(name: string) {

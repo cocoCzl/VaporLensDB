@@ -1,9 +1,62 @@
-import { describe, expect, it } from 'vitest'
-import { dbeaverPreviewToConnectionInput, previewDbeaverConfiguration } from './dbeaverImport'
+import { describe, expect, it, vi } from 'vitest'
+import { dbeaverPreviewToConnectionInput, detectDbeaverFormat, previewDbeaverConfiguration } from './dbeaverImport'
+import i18n from '@/i18n'
 
 function configFile(name: string, source: string): File {
   return Object.assign(new File([source], name), { text: async () => source })
 }
+
+describe('DBeaver file extension selection', () => {
+  it.each([
+    ['file.json', 'json'], ['file.JSON', 'json'], ['file.Json', 'json'], ['file.jSoN', 'json'],
+    ['file.xml', 'xml'], ['file.XML', 'xml'], ['file.Xml', 'xml'],
+    ['file.txt', 'unsupported'], ['file.csv', 'unsupported'], ['file.json.bak', 'unsupported'], ['file', 'unsupported'],
+  ])('detects %s as %s', (filename, format) => {
+    expect(detectDbeaverFormat(filename)).toBe(format)
+  })
+
+  it.each(['txt', 'csv', 'random', 'json.bak'])('rejects .%s before trying an XML parser', async (extension) => {
+    const file = configFile(`data-sources.${extension}`, '<data-sources/>')
+    const read = vi.spyOn(file, 'text')
+    await expect(previewDbeaverConfiguration([file])).rejects.toThrow(i18n.t('dbeaver.unsupportedFormat'))
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('keeps the existing configuration-name and optional credential-file selection', async () => {
+    await expect(previewDbeaverConfiguration([configFile('unrelated.json', '{}')])).rejects.toThrow(i18n.t('dbeaver.chooseConfigFile'))
+    await expect(previewDbeaverConfiguration([])).rejects.toThrow(i18n.t('dbeaver.chooseConfigFile'))
+    const preview = await previewDbeaverConfiguration([
+      configFile('credentials-config.JSON', '{"01234567-89ab-cdef-0123-456789abcdef": {"password": "fixture-secret"}}'),
+      configFile('DBeaver-export.Json', '{"connections":{"01234567-89ab-cdef-0123-456789abcdef":{"name":"PG","driver":"postgres"}}}'),
+    ])
+    expect(preview.connections[0].passwordStatus).toBe('manualEntryRequired')
+    expect(JSON.stringify(preview)).not.toContain('fixture-secret')
+  })
+
+  it.each([
+    ['JSON', 'fixture-parse-secret {"password":"fixture-parse-secret"}'],
+    ['XML', '<data-sources password="fixture-parse-secret"><'],
+  ])('reports malformed %s without source fragments or parser internals', async (extension, source) => {
+    await expect(previewDbeaverConfiguration([configFile(`data-sources.${extension}`, source)]))
+      .rejects.toThrow(i18n.t(extension === 'JSON' ? 'dbeaver.jsonParseFailed' : 'dbeaver.xmlParseFailed'))
+  })
+
+  it.each(['json', 'JSON', 'Json', 'jSoN'])('reads .%s configuration through the JSON parser', async (extension) => {
+    const preview = await previewDbeaverConfiguration([configFile(`data-sources.${extension}`, JSON.stringify({
+      connections: { fixture: { name: 'Extension fixture', driver: 'postgres', configuration: { host: 'localhost' } } },
+    }))])
+    expect(preview.connections).toHaveLength(1)
+    expect(preview.connections[0]).toMatchObject({ name: 'Extension fixture', driverType: 'postgres', host: 'localhost' })
+  })
+
+  it.each(['xml', 'XML', 'Xml'])('reads .%s configuration through the XML parser', async (extension) => {
+    const preview = await previewDbeaverConfiguration([configFile(`data-sources.${extension}`,
+      '<data-sources><data-source id="fixture" name="Extension fixture" driver="postgres"><connection host="localhost"/></data-source></data-sources>',
+    )])
+    expect(preview.connections).toHaveLength(1)
+    expect(preview.connections[0]).toMatchObject({ name: 'Extension fixture', driverType: 'postgres', host: 'localhost' })
+  })
+})
 
 describe('DBeaver target connection contract', () => {
   it.each([

@@ -1020,7 +1020,7 @@ export function DbeaverImportSettings({
       onNotify({
         kind: nextPreview.connections.length > 0 ? 'info' : 'warning',
         title: t('dbeaver.previewComplete'),
-        message: `${nextPreview.connections.length} supported / ${nextPreview.skipped.length} skipped`,
+        message: t('dbeaver.previewSummary', { supported: nextPreview.connections.length, skipped: nextPreview.skipped.length }),
       })
     } catch (error) {
       setPreview(null)
@@ -1128,8 +1128,8 @@ export function DbeaverImportSettings({
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{preview.sourceName}</div>
               <div className="text-xs text-muted-foreground">
-                {preview.connections.length} supported · {preview.skipped.length} skipped ·{' '}
-                {preview.passwordEntries} passwords need manual entry
+                {t('dbeaver.previewSummary', { supported: preview.connections.length, skipped: preview.skipped.length })}
+                {' · '}{t('dbeaver.passwordSummary', { count: preview.passwordEntries })}
               </div>
             </div>
             <Button
@@ -1164,7 +1164,7 @@ export function DbeaverImportSettings({
             <PreviewList title={t('dbeaver.previewDriverTemplates')}>
               {preview.driverTemplates.map((template) => (
                 <div key={template.sourceDriver} className="flex items-center justify-between gap-2 rounded border bg-background/70 px-2 py-1.5 text-xs">
-                  <span className="min-w-0 truncate">{template.sourceDriver}</span>
+                  <span className="min-w-0 truncate">{template.sourceDriver === 'unknown' ? t('dbeaver.unknownDriver') : template.sourceDriver}</span>
                   <span
                     className={
                       template.status === 'supported'
@@ -1172,7 +1172,7 @@ export function DbeaverImportSettings({
                         : 'shrink-0 text-[10px] text-warning'
                     }
                   >
-                    {template.mappedDriverDefinitionId ?? 'unsupported'}
+                    {template.mappedDriverDefinitionId ?? t('dbeaver.unsupported')}
                   </span>
                 </div>
               ))}
@@ -1185,7 +1185,7 @@ export function DbeaverImportSettings({
                 <div key={`${skipped.name}:${skipped.sourceDriver}`} className="rounded border border-warning/30 bg-warning-bg px-2 py-1.5 text-xs text-warning-foreground">
                   <div className="truncate font-medium">{skipped.name}</div>
                   <div className="truncate text-[11px]">
-                    {skipped.reason} · {skipped.sourceDriver ?? 'unknown'}
+                    {t(`dbeaver.${skipped.reason}`)} · {skipped.sourceDriver || t('dbeaver.unknownDriver')}
                   </div>
                 </div>
               ))}
@@ -1230,11 +1230,11 @@ function DbeaverImportPreviewItem({
         <span className="shrink-0 text-[10px] text-muted-foreground">{statusLabel}</span>
       </div>
       <div className="mt-1 truncate text-[11px] text-muted-foreground">
-        {connection.host ?? connection.connectionUrl ?? 'URL only'}
+        {connection.host ?? connection.connectionUrl ?? t('dbeaver.urlOnly')}
         {connection.database ? ` / ${connection.database}` : ''} ·{' '}
         {connection.passwordStatus === 'manualEntryRequired'
-          ? 'password manual entry'
-          : 'no password'}
+          ? t('dbeaver.passwordManualEntry')
+          : t('dbeaver.noPassword')}
       </div>
       {connection.groupPath && (
         <div className="mt-1 truncate text-[10px] text-muted-foreground">

@@ -934,8 +934,7 @@
     "previewFailed": "DBeaver 导入预览失败",
     "previewFailedMessage": "DBeaver 配置预览失败。",
     "importComplete": "DBeaver 导入完成",
-    "noImportableConnections": "没有可导入连接"
-    ,
+    "noImportableConnections": "没有可导入连接",
     "chooseConfigFile": "请选择 DBeaver data-sources.json 或 XML 配置文件。",
     "xmlParseFailed": "DBeaver XML 配置解析失败。",
     "previewConnections": "连接",
@@ -947,7 +946,18 @@
     "itemPending": "待导入",
     "itemImporting": "导入中",
     "itemImported": "已导入",
-    "itemFailed": "失败"
+    "itemFailed": "失败",
+    "unsupportedFormat": "不支持此文件格式，请选择 DBeaver JSON 或 XML 配置文件。",
+    "jsonParseFailed": "DBeaver JSON 配置解析失败。",
+    "previewSummary": "可导入 {{supported}} 个 / 已跳过 {{skipped}} 个",
+    "passwordSummary_one": "{{count}} 个密码需手动输入",
+    "passwordSummary_other": "{{count}} 个密码需手动输入",
+    "passwordManualEntry": "密码需手动输入",
+    "noPassword": "无密码",
+    "urlOnly": "仅 URL",
+    "unsupported": "不支持",
+    "unsupportedDriver": "不支持的驱动",
+    "unknownDriver": "未知驱动"
   },
   "runtime": {
     "tauriUnavailable": "当前页面不在 Tauri 桌面运行时中，请使用 pnpm tauri dev 启动应用"
