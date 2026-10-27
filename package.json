@@ -111,6 +111,11 @@
     "tailwind-merge": "^3.6.0",
     "zustand": "^5.0.15"
   },
+  "pnpm": {
+    "overrides": {
+      "monaco-editor>dompurify": "3.4.17"
+    }
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.3.3",
