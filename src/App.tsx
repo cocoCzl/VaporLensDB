@@ -1,12 +1,13 @@
+import './styles/globals.css'
+import { useDriverStore } from './stores/driverStore'
 import { SqlFileDialog } from './components/editor/SqlFileDialog'
 import { dispatchSqlFileAction } from './lib/sqlFileActions'
 import { useEffect, useState } from 'react'
 import { Sidebar } from './components/layout/Sidebar'
-import { MainPanel } from './components/layout/MainPanel'
+import { WorkspacePanel } from './components/layout/WorkspacePanel'
 import { StatusBar } from './components/layout/StatusBar'
 import { TabBar } from './components/layout/TabBar'
 import { AppTopBar } from './components/layout/AppTopBar'
-import { VaporLensMark } from './components/layout/VaporLensMark'
 import { healthCheck } from './ipc/health'
 import { NotificationBridge } from './components/common/NotificationBridge'
 import { WorkspaceCommandPalette } from './components/common/WorkspaceCommandPalette'
@@ -25,12 +26,10 @@ import { subscribeApplicationCloseRequests } from './lib/applicationCloseListene
 import { onConsoleTransactionUpdated } from './ipc/query'
 import type { ConnectionStatus } from './types/connection'
 import { normalizeAppError } from './ipc/client'
-
-const MIN_SPLASH_DURATION_MS = 250
+import { watchAppTheme } from './lib/appTheme'
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
-  const [showSplash, setShowSplash] = useState(true)
   const theme = useUiStore((state) => state.theme)
   const setResolvedTheme = useUiStore((state) => state.setResolvedTheme)
   const maxLiveSessions = useUiStore((state) => state.maxLiveSessions)
@@ -54,12 +53,12 @@ export default function App() {
     return () => { cancelled = true; unlisten?.() }
   }, [])
 
+  useEffect(() => { void useDriverStore.getState().loadDrivers() }, [])
+
   useEffect(subscribeApplicationCloseRequests, [])
 
   useEffect(() => {
     let cancelled = false
-    let splashTimer: number | undefined
-    const splashStartedAt = performance.now()
 
     setApplicationMenuLanguage(normalizedApplicationMenuLanguage(i18n.language)).catch(() => {
       // The app can still run in browser preview or if the native menu is unavailable.
@@ -79,22 +78,8 @@ export default function App() {
           setBackendStatus('unavailable')
         }
       })
-      .finally(() => {
-        const elapsed = performance.now() - splashStartedAt
-        const remaining = Math.max(0, MIN_SPLASH_DURATION_MS - elapsed)
-        splashTimer = window.setTimeout(() => {
-          if (!cancelled) {
-            setShowSplash(false)
-          }
-        }, remaining)
-      })
 
-    return () => {
-      cancelled = true
-      if (splashTimer !== undefined) {
-        window.clearTimeout(splashTimer)
-      }
-    }
+    return () => { cancelled = true }
   }, [idleReclaimMinutes, maxLiveSessions])
 
   useEffect(() => {
@@ -139,20 +124,7 @@ export default function App() {
     }
   }, [])
 
-  useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)')
-    const applyTheme = () => {
-      const resolvedTheme = theme === 'system' ? (media.matches ? 'dark' : 'light') : theme
-      setResolvedTheme(resolvedTheme)
-      document.documentElement.classList.toggle('dark', resolvedTheme === 'dark')
-      document.documentElement.dataset.theme = resolvedTheme
-      document.documentElement.style.colorScheme = resolvedTheme
-    }
-
-    applyTheme()
-    media.addEventListener('change', applyTheme)
-    return () => media.removeEventListener('change', applyTheme)
-  }, [setResolvedTheme, theme])
+  useEffect(() => watchAppTheme(theme, setResolvedTheme), [setResolvedTheme, theme])
 
   useEffect(() => {
     return subscribeSqlWorkspacePersistence()
@@ -230,39 +202,13 @@ export default function App() {
         <Sidebar />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <TabBar />
-          <MainPanel />
+          <WorkspacePanel />
         </div>
       </div>
       <StatusBar backendStatus={backendStatus} />
       <NotificationBridge />
       <SqlFileDialog />
       <WorkspaceCommandPalette />
-      {showSplash && <SplashScreen />}
-    </div>
-  )
-}
-
-function SplashScreen() {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-background text-foreground" role="status" aria-label={i18n.t('app.name') + ' ' + i18n.t('common.loading')}>
-      <div className="app-splash-grid relative flex h-64 w-[440px] max-w-[86vw] overflow-hidden rounded-lg border bg-card shadow-2xl shadow-black/20">
-        <div className="flex min-w-0 flex-1 flex-col justify-between p-8">
-          <div className="flex items-center gap-3">
-            <VaporLensMark />
-            <div>
-              <div className="text-lg font-semibold tracking-[-0.02em]">VaporLensDB</div>
-              <div className="mt-0.5 text-[11px] tracking-wide text-muted-foreground">{i18n.t('app.tagline')}</div>
-            </div>
-          </div>
-          <div className="space-y-3">
-            <div className="h-px w-full overflow-hidden bg-border">
-              <div className="h-full w-2/3 animate-pulse bg-primary" />
-            </div>
-            <div className="text-[11px] text-muted-foreground">{i18n.t('app.preparingWorkspace')}</div>
-          </div>
-        </div>
-        <div className="w-1.5 bg-primary" />
-      </div>
     </div>
   )
 }

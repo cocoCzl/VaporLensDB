@@ -1,3 +1,4 @@
+import { DatabaseProductLabel } from '@/components/common/DatabaseProductLabel'
 import { ChevronDown, ChevronRight, Loader2, MoreHorizontal, Star } from 'lucide-react'
 import type { KeyboardEvent, MouseEvent } from 'react'
 import type { TFunction } from 'i18next'
@@ -89,14 +90,14 @@ export function ConnectionRow({
         {busy ? <Loader2 className="size-3.5 animate-spin" /> : expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
       </button>
       <span className={`ml-0.5 ${connectionStatusDotClass(status)}`} role="img" aria-label={statusLabel} title={statusLabel} />
-      <DatabaseVendorIcon driverType={connection.driverType} className="ml-2 size-[18px] shrink-0" />
+      <DatabaseVendorIcon driverType={connection.productId ?? connection.driverType} className="ml-2 size-[18px] shrink-0" />
       <div className="min-w-0 flex-1 pl-2.5">
         <div className="flex min-w-0 items-center gap-1">
           <span className="min-w-0 flex-1 truncate text-[13px] font-[550] leading-4">{highlightDataSourceMatch(connection.name, query)}</span>
           {favorite && <Star className="size-3 shrink-0 fill-current text-warning" aria-label={t('connection.favorite')} />}
         </div>
         <div className="mt-0.5 truncate text-[11px] leading-3.5 text-muted-foreground/85" title={connectionEndpoint(connection)}>
-          {connectionEndpoint(connection)}
+          {connectionEndpoint(connection)} · <DatabaseProductLabel connection={connection} />
         </div>
       </div>
       <Button

@@ -31,7 +31,8 @@ const input = read('src/components/ui/input.tsx')
 includesAll(
   form,
   [
-    "PRIMARY_DRIVER_IDS: DriverType[] = ['postgres', 'mysql', 'oracle'",
+    'databaseTypeOptions(selectableDrivers, products)',
+    'productId === form.productId',
     'compareDriverChoices',
     "t('connectionForm.description.oracle')",
     'onSaveOnly',
@@ -106,7 +107,7 @@ includesAll(
     "? 'bg-warning'",
     "readinessIssue ? t('connection.notReady')",
     'disabled={busy || Boolean(readinessIssue)}',
-    'Missing local JDBC JAR',
+    'connectionDriverReadiness(connection)',
     "managerMode ? 'grid gap-3'",
     '!managerMode &&',
   ],

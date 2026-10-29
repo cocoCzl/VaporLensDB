@@ -1,3 +1,4 @@
+import { sqlDialectDescriptor } from '@/lib/databaseDialect'
 import type { DriverType } from '@/types/connection'
 
 export type DataTabSortDirection = 'asc' | 'desc'
@@ -15,6 +16,7 @@ export interface DataTabSqlInput {
 }
 
 export function buildDataTabSql(input: DataTabSqlInput) {
+  const dialect = sqlDialectDescriptor(input.driverType)
   const limit = dataTabFetchLimit(input.limit)
   const offset = Math.max(0, Math.round(input.offset ?? 0))
   const lines = [`SELECT *`, `FROM ${qualifiedName(input.driverType, input.schema, input.table)}`]
@@ -49,7 +51,7 @@ export function buildDataTabSql(input: DataTabSqlInput) {
     lines.push('ORDER BY (SELECT NULL)')
   }
 
-  if (input.driverType === 'oracle' || input.driverType === 'mssql') {
+  if (dialect.pagination === 'offsetFetch') {
     lines.push(`OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`)
     return lines.join('\n')
   }
@@ -73,6 +75,5 @@ export function quoteIdentifier(value: string, quote: '"' | '`' | '[') {
 }
 
 function quoteFor(driverType: DriverType) {
-  if (driverType === 'mssql') return '['
-  return driverType === 'mysql' ? '`' : '"'
+  return sqlDialectDescriptor(driverType).quote as '"' | '`' | '['
 }

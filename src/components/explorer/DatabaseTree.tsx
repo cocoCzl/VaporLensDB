@@ -1,3 +1,7 @@
+import { connectionDriverReadiness } from '@/lib/connectionDriverReadiness'
+import { useDriverStore } from '@/stores/driverStore'
+import { connectionProductType } from '@/lib/productPresentation'
+import { connectionSqlDialect } from '@/lib/databaseDialect'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
@@ -77,13 +81,13 @@ const OBJECT_CATEGORY_ORDER: ObjectCategoryDefinition[] = [
     folder: 'tables',
     label: 'Tables',
     kind: 'table',
-    drivers: ['postgres', 'mysql', 'oracle', 'sqlite'],
+    drivers: ['postgres', 'mysql', 'oracle', 'sqlite', 'jdbc', 'mssql'],
   },
   {
     folder: 'views',
     label: 'Views',
     kind: 'view',
-    drivers: ['postgres', 'mysql', 'oracle', 'sqlite'],
+    drivers: ['postgres', 'mysql', 'oracle', 'sqlite', 'jdbc', 'mssql'],
   },
   {
     folder: 'materializedViews',
@@ -204,7 +208,9 @@ export function DatabaseTree({
   const currentConnection = useRef(activeConnectionId)
   const currentView = useRef('')
 
-  const activeConnection = connections.find((connection) => connection.id === activeConnectionId)
+  const registry = useDriverStore()
+  const savedConnection = connections.find((connection) => connection.id === activeConnectionId)
+  const activeConnection = useMemo(() => savedConnection ? { ...savedConnection, driverType: connectionProductType(savedConnection, registry.products) } : undefined, [savedConnection, registry.products])
   const activePath = activeConnectionId ? metadata.catalogSchemaPaths[activeConnectionId] : null
   const connectionRefreshToken = activeConnectionId
     ? metadata.connectionRefreshTokens[activeConnectionId] ?? 0
@@ -214,10 +220,10 @@ export function DatabaseTree({
   const isConnected =
     activeConnectionId != null && activeRuntimeStatus === 'connected'
   const missingExternalDriver = activeConnection
-    ? requiresExternalDriver(activeConnection) && (activeConnection.driverPaths?.length ?? 0) === 0
+    ? Boolean(connectionDriverReadiness(activeConnection, registry))
     : false
   const driverSupportsBrowsing = activeConnection
-    ? hasObjectBrowsingImplementation(activeConnection.driverType)
+    ? registry.drivers.find((d) => d.id === activeConnection.driverDefinitionId)?.capabilities.canReadMetadata ?? hasObjectBrowsingImplementation(activeConnection.driverType)
     : false
   const objectBrowsingSupported = driverSupportsBrowsing && !missingExternalDriver
   const canSearchCurrentConnection = isConnected && objectBrowsingSupported
@@ -601,8 +607,9 @@ export function DatabaseTree({
       return
     }
 
+    if (connectionSqlDialect(connection) === 'jdbc') { notify({ kind: 'warning', title: t('driverRefactor.unknownDialect') }); return }
     const sql = buildDataTabSql({
-      driverType: connection.driverType,
+      driverType: connectionSqlDialect(connection),
       schema: entry.schema,
       table,
       limit: dataPreviewDefaultRows,
@@ -621,7 +628,7 @@ export function DatabaseTree({
         schema: entry.schema,
         object: table,
         objectKind: entry.kind === 'view' ? 'view' : 'table',
-        driverType: connection.driverType,
+        driverType: connectionSqlDialect(connection),
         limit: dataPreviewDefaultRows,
         offset: 0,
         primaryKeyColumns: [],
@@ -635,6 +642,7 @@ export function DatabaseTree({
     if (!activeConnectionId || !activeConnection || !isTableLikeNode(node)) {
       return
     }
+    if (connectionSqlDialect(activeConnection) === 'jdbc') { notify({ kind: 'warning', title: t('driverRefactor.unknownDialect') }); return }
     const tabId = crypto.randomUUID()
     let primaryKeyColumns: string[] = []
     try {
@@ -646,7 +654,7 @@ export function DatabaseTree({
       notifyError(normalizeAppError(error), t('notifications.loadPrimaryKeysFailed'))
     }
     const sql = buildDataTabSql({
-      driverType: activeConnection.driverType,
+      driverType: connectionSqlDialect(activeConnection),
       schema: node.meta.schema,
       table: node.meta.table,
       limit: dataPreviewDefaultRows,
@@ -664,7 +672,7 @@ export function DatabaseTree({
         schema: node.meta.schema,
         object: node.meta.table,
         objectKind: node.kind,
-        driverType: activeConnection.driverType,
+        driverType: connectionSqlDialect(activeConnection),
         limit: dataPreviewDefaultRows,
         offset: 0,
         primaryKeyColumns,
@@ -672,7 +680,7 @@ export function DatabaseTree({
       tableContext: {
         schema: node.meta.schema,
         table: node.meta.table,
-        driverType: activeConnection.driverType,
+        driverType: connectionSqlDialect(activeConnection),
         primaryKeyColumns,
       },
     })
@@ -835,7 +843,8 @@ export function DatabaseTree({
     if (!activeConnectionId || !activeConnection || !isTableLikeNode(node)) {
       return
     }
-    const sql = selectSql(activeConnection.driverType, node.meta.schema, node.meta.table)
+    if (connectionSqlDialect(activeConnection) === 'jdbc') { notify({ kind: 'warning', title: t('driverRefactor.unknownDialect') }); return }
+    const sql = selectSql(connectionSqlDialect(activeConnection), node.meta.schema, node.meta.table)
     addTab({
       id: crypto.randomUUID(),
       title: `${node.meta.table} SELECT`,
@@ -909,7 +918,7 @@ export function DatabaseTree({
         schema,
         object,
         objectKind: node.kind,
-        driverType: activeConnection.driverType,
+        driverType: connectionSqlDialect(activeConnection),
       },
     })
   }
@@ -1780,12 +1789,9 @@ function selectDefaultSchema(
 }
 
 function hasObjectBrowsingImplementation(driverType: DriverType) {
-  return driverType === 'postgres' || driverType === 'mysql' || driverType === 'oracle' || driverType === 'sqlite'
+  return driverType === 'postgres' || driverType === 'mysql' || driverType === 'oracle' || driverType === 'sqlite' || driverType === 'jdbc' || driverType === 'mssql'
 }
 
-function requiresExternalDriver(connection: ConnectionConfig) {
-  return connection.driverType === 'oracle' || connection.driverType === 'jdbc'
-}
 
 function connectionStatusSummary(
   status: ConnectionRuntimeStatus,

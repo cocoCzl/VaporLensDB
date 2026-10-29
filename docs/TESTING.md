@@ -1,246 +1,295 @@
-# VaporLensDB Testing
+# Testing
 
-This file tracks deterministic development validation and explicit integration
-testing for the current IDE workspace. During Pre-1.0 Development it does not
-authorize a binary release, tag, or upload.
+Run commands from the repository root. Source checks, behavior tests, real Java
+bridge tests, vendor integration and desktop observation establish different
+things; skipped/ignored tests are not successes. Keep logs, recordings and
+screenshots outside the repository and review them for secrets before sharing.
 
-## Current Status
+## Daily checks
 
-- The 0.9.1 workspace covers grouped data sources, browsing versus SQL execution
-  context, Object Tree navigation, SQL drafts and query history, command palette,
-  connection readiness, and theme-aware IDE chrome.
-- Existing smoke coverage also covers data preview, structure, definition/source,
-  ER diagrams, import/export, diagnostics, tasks, and sessions.
-- Default CI verification does not require private database endpoints or local JDBC driver JARs.
-- Live database verification is available for PostgreSQL, MySQL, Oracle, SQLite,
-  and JDBC template paths through ignored/manual tests.
-- Use `TEST_ORACLE_*` with a local `ojdbc` JAR when running Oracle live
-  integration tests. The Oracle driver JAR is not committed or required by CI.
+`./build.sh check` builds/tests the JDBC bridge and runs the secret scan,
+frontend lint/behavior tests/build, workflow checks, packaging tests, bundle
+budgets, Rust formatting, warnings-denied clippy and deterministic Rust tests.
+It requires the [build tools](INSTALL.md#requirements), but no private endpoint
+or vendor JAR. `check`, `current`, `mac`, `windows` and `linux` do not load `.env`
+or run external-database tests.
 
-## Deterministic Development Gate
-
-Run the local deterministic gate before local QA packaging or a source change:
+Use focused checks for the affected area; documentation changes do not require
+real databases or desktop packaging:
 
 ```bash
-./build.sh check
-```
-
-This command builds the JDBC bridge and runs the sensitive-information scan,
-frontend lint, behavior tests, the complete workflow smoke suite, frontend build,
-performance and bundle budgets, Rust formatting, clippy, and Rust tests.
-(including TypeScript unused-code checks), Rust clippy with warnings denied,
-and Rust tests.
-
-## Default CI Verification
-
-These commands are safe for GitHub Actions and a fresh clone with Node, pnpm, Rust, and a JDK installed:
-
-```bash
-pnpm install --frozen-lockfile
-! (git ls-files | rg '(^|/)[.]env($|[.])' | rg -v '(^|/)[.]env[.]example$')
-! git ls-files -z | xargs -0 rg -n --hidden --glob '!pnpm-lock.yaml' --glob '!src-tauri/Cargo.lock' '192[.]168[.][0-9]{1,3}[.][0-9]{1,3}|10[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}|172[.](1[6-9]|2[0-9]|3[01])[.][0-9]{1,3}[.][0-9]{1,3}|jdbc:(postgresql|mysql|oracle):.*(192[.]168[.]|10[.]|172[.])|TEST_[A-Z0-9_]*PASS[W]ORD=['"'"'"]?(develop|password|root|admin|changeme)['"'"'"]?($|[[:space:]])|/Users/[A-Za-z0-9._/-]*ojdbc'
-./build.sh jdbc-bridge
+pnpm test:sensitive-info
+pnpm test:smoke                     # Source/contract checks, not desktop tests
+pnpm test:packaging
 pnpm lint
-pnpm build
-pnpm test
-pnpm test:performance-guardrails
-pnpm test:bundle-budget
-pnpm test:object-tree-workflow
+pnpm test                          # Vitest + Testing Library
+pnpm build                         # Includes TypeScript checking
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Vitest and Testing Library exercise stores and rendered components. The
-workflow smoke scripts remain focused source/contract guardrails and do not
-replace behavior tests.
-
-## Smoke Verification
+Individual checks are listed in package.json. CI installs locked dependencies;
+see [CI](../.github/workflows/ci.yml) and [security checks](../SECURITY.md#checks).
+For registry/resolution changes, focused entries include:
 
 ```bash
-pnpm test:v1-ui-scope
-pnpm test:object-tree-workflow
-pnpm test:data-source-switcher
-pnpm test:object-tree-lifecycle
-pnpm test:object-tree-schema-search
-pnpm test:driver-manager
-pnpm test:result-export
-pnpm test:table-import-export
-pnpm test:data-grid-read-only
-pnpm test:er-diagram
-pnpm test:object-inspector-workspace
-pnpm test:session-management
-pnpm test:dbeaver-import
-pnpm test:i18n
-pnpm test:diagnostics-export
-pnpm test:query-history-workflow
-pnpm test:sql-execution-recall
-pnpm test:sql-records-connection-editor
-pnpm test:object-tree-action-discoverability
-pnpm test:p0-opening-workflow
-pnpm test:p1-read-only-result-workflow
-pnpm test:p2-object-understanding-workflow
-pnpm test:command-contracts
-pnpm test:command-palette
-pnpm test:native-menu
-pnpm test:ide-chrome
-pnpm test:workspace-capacity
-pnpm test:performance-guardrails
+pnpm exec vitest run src/components/connection/DatabaseDriverWorkflow.test.tsx src/lib/connectionDriverReadiness.test.ts src/lib/databaseDialect.test.ts
+cargo test --manifest-path src-tauri/Cargo.toml --lib services::driver_registry
+cargo test --manifest-path src-tauri/Cargo.toml --lib migration13
 ```
 
-## Live Database Verification
+## Isolated test environments
 
-Live tests are ignored by default because they require private endpoints,
-credentials, JDBC JARs, and optional database-creation permissions. Keep these
-values in the Git-ignored `.env` or your shell session; never add real values to
-tracked documentation.
+### Docker databases
 
-Create the local configuration and replace every placeholder in each database
-group you want to use. Remove unavailable groups rather than leaving partially
-filled values:
+Docker Compose provides MySQL 8.4 (host port 13306) and PostgreSQL 16 (15432)
+under project `vaporlensdb-qa`. It uses synthetic local-only credentials and
+named volumes; it never reads the repository `.env`.
 
 ```bash
-cp .env.example .env
+./scripts/qa-db.sh up       # Start, wait for health and verify fixtures
+./scripts/qa-db.sh status
+./scripts/qa-db.sh verify
+./scripts/qa-db.sh env > .env.qa
 ```
 
-The database component of each JDBC URL is required. JDBC driver paths must be
-absolute paths to readable JAR files. `VAPORLENSDB_TEST_POSTGRES_URL` and
-`VAPORLENSDB_TEST_MYSQL_URL` are optional unless CREATE/DROP DATABASE behavior
-must be verified; those accounts need `CREATEDB` or CREATE/DROP DATABASE
-permission respectively.
+For different ports, export `VAPORLENSDB_QA_MYSQL_PORT` and
+`VAPORLENSDB_QA_POSTGRES_PORT` **before both `up` and `env`**, using the same values.
+`.env.qa` is ignored by Git. The helper prints exports without modifying `.env`.
 
-Build and local-QA packaging commands are deterministic: `check`, `current`,
-`mac`, `windows`, and `linux` never load `.env` or run external database tests.
-This keeps the gate set stable for the same source commit, toolchain, and
-target platform.
-
-For repeatable local MySQL/PostgreSQL QA, use the disposable Docker stack in
-[Disposable Database QA](QA-DATABASES.md). It has its own synthetic local-only
-configuration and never loads this repository's `.env`.
-
-## Explicit Live Integration
-
-Run selected live integrations explicitly. The MySQL and PostgreSQL selectors
-run both the JDBC metadata fixture and the native production CSV import
-acceptance; the latter is mutation-capable and fails closed unless the
-disposable QA environment variable and database marker are both valid:
+The normal `vaporlensdb_qa` account can modify only its QA fixture databases
+(the MySQL fixture also has `vaporlensdb_qa_alt`); it cannot create/drop databases.
+The separate initialization administrator is only for setup and the explicitly
+selected database-creation suite. Never reuse these credentials outside this stack.
+Fixtures include parent/child tables, keys/indexes, a view, varied nullable
+values and a `vaporlensdb_qa_marker` identifying the disposable environment.
 
 ```bash
-./build.sh live-tests --mysql --oracle
-./build.sh live-tests --postgresql
+./scripts/qa-db.sh reset           # Delete/recreate only this project's QA volumes
+./scripts/qa-db.sh down            # Remove QA containers; keep volumes
+./scripts/qa-db.sh down --volumes  # Also delete this project's QA volumes
 ```
 
-## Explicit Destructive Integration
+`reset` restores the fixture after writes/DDL. These commands do not prune Docker
+or stop unrelated containers. Reset and volume deletion discard QA data.
 
-The MySQL and PostgreSQL JDBC metadata and native CSV acceptance tests use
-uniquely named, short-lived fixture objects in the marked disposable QA
-database. Product-level CREATE/DROP DATABASE verification is a separate
-destructive suite and requires both a disposable environment and an explicit
-confirmation variable:
+### SQLite files
 
 ```bash
-VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 \
+qa_dir="$(./scripts/qa-sqlite-dir.sh create)"
+# Use "$qa_dir/space path/qa fixture.sqlite" and "$qa_dir/测试路径/qa-fixture.sqlite".
+# After all test connections close:
+./scripts/qa-sqlite-dir.sh cleanup "$qa_dir"
+```
+
+The helper removes only its own `vaporlensdb-qa.*` temporary-directory prefixes;
+never substitute a user database directory.
+
+### Application profiles
+
+```bash
+profile_dir="$(./scripts/qa-dev-profile.sh create)"
+./scripts/qa-dev-profile.sh run "$profile_dir"
+# After the app exits:
+./scripts/qa-dev-profile.sh cleanup "$profile_dir"
+```
+
+`run` supplies a temporary HOME and explicitly enables the development key,
+isolating backend configuration, SQLite config and development-key files.
+For macOS credential checks, use `run-keychain "$profile_dir"` instead: it
+sets `VAPORLENSDB_CONFIG_DIR` while retaining the logged-in Keychain. Credential
+operations can affect shared OS items; use QA-only connections.
+
+For a packaged app, launch the exact build with a scoped config override, e.g.
+on macOS arm64, after creating a profile as above:
+
+```bash
+VAPORLENSDB_CONFIG_DIR="$profile_dir/config" VAPORLENSDB_USE_DEV_KEY=1 \
+  artifacts/macos/aarch64/VaporLensDB.app/Contents/MacOS/vapor-lens-db
+```
+
+Omit the development-key override only for intentional system-credential tests.
+A temporary HOME or config directory **does not guarantee isolation of Keychain,
+DPAPI, Secret Service or WebView localStorage**. On macOS, packaged and dev WebKit
+stores may persist outside the override. Inspect/backup before a test, close the
+app before restoring, and never delete a user's real WebView profile as cleanup.
+The logger writes to process output; capture and redact it rather than assuming
+a separate application log directory. Confirm build identity as described in
+[CONTRIBUTING](../CONTRIBUTING.md#build-identity).
+
+## Live database tests
+
+Build the bridge first with `./build.sh jdbc-bridge`. Supply vendor JARs locally;
+never commit or download them implicitly. The live selectors load
+`VAPORLENSDB_LIVE_TEST_ENV_FILE`, defaulting to personal `.env` if omitted.
+**Always select the intended environment file explicitly.** Direct `cargo test`
+does not load an env file: source your own trusted file in a subshell.
+
+### Disposable MySQL and PostgreSQL
+
+After generating `.env.qa` above, set the two absolute JAR paths in the invoking
+shell. JDBC URLs, credentials and database names come from that explicit file.
+
+```bash
+export TEST_MYSQL_JDBC_DRIVER_PATH=/absolute/path/to/mysql-connector-j.jar
+export TEST_PG_JDBC_DRIVER_PATH=/absolute/path/to/postgresql.jar
+VAPORLENSDB_LIVE_TEST_ENV_FILE=.env.qa \
+  ./build.sh live-tests --mysql --postgresql
+```
+
+The selectors require `TEST_MYSQL_JDBC_URL`, `TEST_MYSQL_USER`,
+`TEST_MYSQL_PASSWORD`, `TEST_MYSQL_JDBC_DRIVER_PATH`, or the corresponding
+`TEST_PG_JDBC_URL`, `TEST_PG_USER`, `TEST_PG_PASSWORD`, `TEST_PG_JDBC_DRIVER_PATH`.
+The generated file also sets `TEST_MYSQL_DATABASE`/`TEST_PG_DATABASE` and
+`VAPORLENSDB_QA_ENVIRONMENT=1`. These tests **write fixtures**: each selector runs
+JDBC metadata and native parameterized CSV import tests. They require both the
+QA flag and the exact database/marker; a hostname alone is not proof of safety.
+
+Full native suites also write/perform transactions. Load the QA file and remove
+PostgreSQL's higher-priority URL override so an inherited value cannot select
+another server:
+
+```bash
+(
+  set -e
+  . ./.env.qa
+  unset TEST_PG_URL
+  cargo test --manifest-path src-tauri/Cargo.toml --test postgres_driver -- --ignored
+  cargo test --manifest-path src-tauri/Cargo.toml --test mysql_driver -- --ignored
+)
+```
+
+MySQL trigger fixtures may need privileges unavailable with binary logging
+(error 1419). Record that restriction; do not change server settings or grants
+just to make a check pass.
+
+CREATE/DROP DATABASE is a separate destructive suite. Only after `qa-db.sh verify`
+succeeds, use the local administrator URLs generated in `.env.qa`:
+
+```bash
+VAPORLENSDB_LIVE_TEST_ENV_FILE=.env.qa VAPORLENSDB_ALLOW_DESTRUCTIVE_INTEGRATION=1 \
   ./build.sh destructive-live-tests --mysql --postgresql
 ```
 
-Run this command only against a dedicated disposable test environment. Never
-use it against a production, business, shared, or otherwise non-disposable
-database.
+It requires `VAPORLENSDB_TEST_MYSQL_URL` and/or `VAPORLENSDB_TEST_POSTGRES_URL`
+with database-creation privileges. Do not run fixture-mutating or destructive
+suites against business, production, shared or otherwise non-disposable databases.
 
-Run the deterministic validation or package flow:
+### Oracle and read-only endpoints
 
-```bash
-./build.sh check
-./build.sh          # Same as ./build.sh current
-./build.sh mac      # macOS only
-./build.sh windows  # Windows only
-./build.sh linux    # Linux only
-```
-
-The platform-independent artifact staging tests can be run on any build machine:
+Create an ignored `.env.oracle-qa` from `.env.example`, edit the Oracle group and
+remove unused groups. Use `TEST_ORACLE_JDBC_URL`, `TEST_ORACLE_USER`,
+`TEST_ORACLE_PASSWORD`, `TEST_ORACLE_JDBC_DRIVER_PATH`; URLs must name the service
+or explicitly intended SID and JAR paths must be absolute.
 
 ```bash
-pnpm test:packaging
+VAPORLENSDB_LIVE_TEST_ENV_FILE=.env.oracle-qa ./build.sh live-tests --oracle
 ```
 
-They verify fixed installer names, replacement of stale output, SHA-256
-generation, and failure behavior for missing or duplicate Tauri artifacts.
+This selects only `connects_and_queries_oracle_with_jdbc_bridge` and
+`reads_oracle_metadata_with_jdbc_bridge`. Do not run the entire ignored Oracle
+suite on a read-only endpoint: Explain writes PLAN_TABLE, and other cases may
+need custom SQL, LONG columns or additional privileges.
 
-The PostgreSQL and MySQL suites create uniquely named `vaporlensdb_*` schemas
-or databases, verify metadata and DDL behavior, and remove them afterward. Use
-dedicated test instances and do not interrupt the process during cleanup.
+For the dedicated `driver_readonly_live` probe, create a trusted, ignored
+`.env.readonly` containing all five exported values:
 
-For manual per-target debugging, export or source the same variables and add
-`--ignored` explicitly. Running ordinary `cargo test` never enables ignored
-tests by itself.
-
-Run these from `src-tauri` when your local environment is configured:
+| Variable | Value |
+| --- | --- |
+| `TEST_READONLY_JDBC_URL` | Explicit JDBC URL including database/service/SID |
+| `TEST_READONLY_USER` | Authorized read-only user |
+| `TEST_READONLY_PASSWORD` | Its password |
+| `TEST_READONLY_JDBC_DRIVER_PATH` | Absolute vendor JAR path |
+| `TEST_READONLY_DRIVER_DEFINITION` | `jdbc-postgresql`, `jdbc-mysql`, or `oracle` |
 
 ```bash
-cd src-tauri && cargo test --test postgres_driver -- --ignored
-cd src-tauri && cargo test --test mysql_driver -- --ignored
-cd src-tauri && cargo test --test oracle_jdbc_driver -- --ignored
-cd src-tauri && cargo test --test jdbc_template_driver -- --ignored
+(
+  set -ea
+  . ./.env.readonly
+  set +a
+  VAPORLENSDB_USE_DEV_KEY=1 cargo test --manifest-path src-tauri/Cargo.toml --test driver_readonly_live -- --ignored
+)
 ```
 
-Equivalent root-level commands:
+The probe runs SELECT/schema metadata and, for MySQL/PostgreSQL, concurrent
+Native/JDBC reads. It does not create external fixtures. A supplied endpoint
+alone does not authorize writes. Keep secrets in the ignored file/environment,
+not command arguments, documentation or test logs.
+
+### Local bridge integration
+
+These tests use local in-memory/temporary databases rather than business servers:
 
 ```bash
-TEST_PG_JDBC_URL='jdbc:postgresql://<postgres-host>:5432/<postgres-database>' \
-TEST_PG_USER='<postgres-user>' \
-TEST_PG_PASSWORD='<postgres-password>' \
-TEST_PG_DATABASE='<postgres-database>' \
-cargo test --manifest-path src-tauri/Cargo.toml --test postgres_driver -- --ignored
+export TEST_CUSTOM_JDBC_DRIVER_PATH=/absolute/path/to/h2.jar
+VAPORLENSDB_USE_DEV_KEY=1 cargo test --manifest-path src-tauri/Cargo.toml --test driver_registry_integration --test custom_jdbc_driver -- --include-ignored
 
-TEST_MYSQL_JDBC_URL='jdbc:mysql://<mysql-host>:3306/<mysql-database>' \
-TEST_MYSQL_USER='<mysql-user>' \
-TEST_MYSQL_PASSWORD='<mysql-password>' \
-TEST_MYSQL_DATABASE='<mysql-database>' \
-cargo test --manifest-path src-tauri/Cargo.toml --test mysql_driver -- --ignored
-
-TEST_ORACLE_JDBC_URL='jdbc:oracle:thin:@//<oracle-host>:1521/<oracle-service>' \
-TEST_ORACLE_USER='<oracle-user>' \
-TEST_ORACLE_PASSWORD='<oracle-password>' \
-TEST_ORACLE_JDBC_DRIVER_PATH='/path/to/ojdbc11.jar' \
-cargo test --manifest-path src-tauri/Cargo.toml --test oracle_jdbc_driver -- --ignored
-
-TEST_PG_JDBC_URL='jdbc:postgresql://<postgres-host>:5432/<postgres-database>' \
-TEST_PG_USER='<postgres-user>' \
-TEST_PG_PASSWORD='<postgres-password>' \
-TEST_PG_JDBC_DRIVER_PATH='/path/to/postgresql.jar' \
-cargo test --manifest-path src-tauri/Cargo.toml --test jdbc_template_driver postgres_jdbc_template_queries_and_reads_metadata -- --ignored
-
-TEST_MYSQL_JDBC_URL='jdbc:mysql://<mysql-host>:3306/<mysql-database>' \
-TEST_MYSQL_USER='<mysql-user>' \
-TEST_MYSQL_PASSWORD='<mysql-password>' \
-TEST_MYSQL_JDBC_DRIVER_PATH='/path/to/mysql-connector-j.jar' \
-cargo test --manifest-path src-tauri/Cargo.toml --test jdbc_template_driver mysql_jdbc_template_queries_and_reads_metadata -- --ignored
+export TEST_SQLITE_JDBC_PATH=/absolute/path/to/sqlite-jdbc.jar
+export TEST_SQLITE_SLF4J_PATH=/absolute/path/to/slf4j-api.jar
+VAPORLENSDB_USE_DEV_KEY=1 cargo test --manifest-path src-tauri/Cargo.toml --lib sqlite_jdbc_application_command_chain_file_and_memory -- --ignored
 ```
 
-For JDBC Driver Template verification, attach local JARs through the app or set
-driver-specific environment variables in your shell. Do not commit these values.
-Validate each template against the same behaviors:
+H2 checks product/installation identity, properties and bridge behavior.
+SQLite's application-command test covers Test, save, connect/disconnect,
+configuration reload/reconnect, metadata, missing files, private/named memory
+lifetime and console transaction survival across primary-bridge loss. Direct
+`JdbcDriver` success does not replace that command chain or a desktop test.
 
-- connection test succeeds when the local JAR, driver class, URL, and
-  credentials are valid;
-- SQL execution returns rows;
-- Object Tree metadata loads schemas, tables, and views;
-- Structure metadata loads columns, primary keys, indexes, and foreign keys
-  where the database exposes them;
-- metadata failures leave SQL execution usable and show a clear object browsing
-  failure state.
+To check missing Java without changing PATH in parallel tests, compile
+`cargo test --manifest-path src-tauri/Cargo.toml --test driver_environment --no-run`,
+then run the printed test executable by absolute path with an empty PATH and
+`--include-ignored`. It checks Native SQLite and an explicit JDBC Java-missing error.
 
-SQLite JDBC can be checked with a local SQLite JDBC JAR and a temporary database
-file. PostgreSQL JDBC, MySQL JDBC, and Oracle JDBC should use private endpoints
-from an untracked `.env` or shell session only.
+## Desktop manual checks
 
-## Sensitive Information Check
+Use the exact intended build and isolated configuration. Check normal, narrow
+and maximized windows, continuous resizing/sidebar changes, English/Chinese,
+long product/driver names, keyboard navigation and reachable dialog bottom actions.
+Record logical window/content dimensions; Retina screenshot pixels are not CSS pixels.
+If automation cannot drag native edges, resize manually rather than claiming it passed.
 
-Before publishing, scan tracked files for common leaks:
+- Connections/drivers: two arbitrary products, multiple installations for one
+  product, test/save/connect, restart restoration, editing and deletion-reference guards.
+- SQL files: native Open/Save/Save As, overwrite/external conflicts and dirty close/Quit.
+- Execution: Current/Selection/All, target switching, Manual transaction refusal,
+  explicit Commit/Rollback, cancellation/timeouts, partial failures and retained
+  results. Perform write/transaction checks only on the disposable QA database.
+- CSV: picker, preview/mapping, failure/cancellation and bounded sanitized reports;
+  no automatic sidecars or removal of existing user files.
+- Metadata: loading, cancel, error/retry, successful empty and unsupported states;
+  exact table ownership for triggers; privileges must not be disguised as empty results.
+- Credentials/files: save/quit/restore, SQLite space/Unicode paths, disappeared
+  saved files, reconnect from an old SQL tab, clipboard and Monaco shortcuts.
+- Startup/theme: explicit Light with OS Dark, explicit Dark with OS Light,
+  System mode and live changes, theme change then quit/reopen; observe native title
+  bar, initial canvas, HTML skeleton and React handoff, not only the final screen.
+  Check visible load failures; do not hide waiting with delayed window display.
 
-```bash
-git ls-files | rg '(^|/)[.]env($|[.])' | rg -v '(^|/)[.]env[.]example$'
-git ls-files -z | xargs -0 rg -n --hidden --glob '!pnpm-lock.yaml' --glob '!src-tauri/Cargo.lock' '192[.]168[.][0-9]{1,3}[.][0-9]{1,3}|10[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}|172[.](1[6-9]|2[0-9]|3[01])[.][0-9]{1,3}[.][0-9]{1,3}|jdbc:(postgresql|mysql|oracle):.*(192[.]168[.]|10[.]|172[.])|TEST_[A-Z0-9_]*PASS[W]ORD=['"'"'"]?(develop|password|root|admin|changeme)['"'"'"]?($|[[:space:]])|/Users/[A-Za-z0-9._/-]*ojdbc'
-```
+Unverified combinations require real environments: Oracle SID needs a listener
+and valid SID; real SSH needs an endpoint, credentials and known-host policy;
+vendor transaction/recovery tests need explicit writable disposable QA access.
+Large-result checks need cursor/driver evidence distinguishing protocol chunks
+from bounded fetching, plus attributable memory measurements. Do not estimate
+WebView RSS from unrelated WebKit XPC processes. Missing environments remain
+unverified; mocks and protocol tests do not certify them. See [SUPPORT](SUPPORT.md).
 
-Expected result: no output. If the command reports a tracked file, replace real endpoints, passwords, private JDBC URLs, local `ojdbc` paths, or accidental `.env` references with placeholders before pushing.
+## Startup diagnostics
+
+Set `VAPORLENSDB_STARTUP_TRACE` to a file outside the repository when launching
+the intended app; combine it with the isolated profile above. This opt-in trace
+records numeric process/configuration/WebView/frontend/IPC/layout stages without
+SQL or credentials; disabled launches do not install its observer.
+`loading_interface`/`skeleton_layout` and `empty_root_frame` distinguish the
+HTML shell from React handoff. `first_interface` is a requestAnimationFrame
+observation after Home is available, **not physical screen paint**. Use recording
+where possible to locate native-window/WebView blank frames; report uncaptured stages.
+
+Compare the same machine, build mode, consistent config snapshot and logical
+window size. Repeat at least five times and report median/range separately for
+loading feedback, frontend entry and interactive Home. Do not compare an old
+release to a new dev build. Test first upgrades on an isolated pre-upgrade
+snapshot and subsequent starts separately; never downgrade active user config.
+A constructed schema fixture proves only that fixture's migration path. Restore
+any system appearance or WebView changes after testing; retain no evidence logs
+or operation histories in these maintained instructions.

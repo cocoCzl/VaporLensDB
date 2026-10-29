@@ -41,7 +41,7 @@ includesAll(
   driverTypes,
   [
     'builtIn: boolean',
-    "export type DriverBackend = 'nativeRust' | 'jdbc' | 'planned'",
+    "export type DriverBackend = 'nativeRust' | 'jdbc'",
     "export type DriverStatus = 'ready' | 'configurable' | 'planned'",
     'connectionVariants: DriverConnectionVariant[]',
     'metadataDialectSql?: string | null',
@@ -108,11 +108,11 @@ includesAll(
     'createCustomDriver',
     "setEditing(newCustomDriverDefinition())",
     'DriverDefinitionEditor',
-    "xl:grid-cols-[minmax(0,1fr)_minmax(360px,480px)]",
-    "md:grid-cols-2",
+    "@min-[1200px]/settings:grid-cols-[minmax(0,1fr)_minmax(360px,480px)]",
+    "grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))]",
     'driverStateLabel',
     'driverStateBadgeClass',
-    "2xl:grid-cols-2",
+    "@min-[1400px]/settings:grid-cols-2",
     "ide-input min-h-36 w-full min-w-0 resize-y overflow-auto font-mono text-xs",
     "t('drivers.downloadDriver')",
     'isVisibleJdbcDriver',
@@ -146,12 +146,12 @@ const zh = read('src/locales/zh.json')
 const en = read('src/locales/en.json')
 includesAll(
   zh,
-  ['"title": "JDBC 驱动"', '"summary": "{{count}} 个 JDBC 模板；内置模板只读，自定义可编辑。"', '"viewBuiltIn": "查看内置驱动"', '"editCustom": "编辑自定义驱动"', '"importJar": "导入 JAR"', '"validate": "校验驱动"'],
+  ['"title": "数据库与驱动"', '"summary": "{{count}} 个 JDBC 模板；内置模板只读，自定义可编辑。"', '"viewBuiltIn": "查看内置驱动"', '"editCustom": "编辑自定义驱动"', '"importJar": "导入 JAR"', '"validate": "校验驱动"'],
   'Chinese driver manager locale',
 )
 includesAll(
   en,
-  ['"title": "JDBC Drivers"', '"summary": "{{count}} JDBC templates. Built-in templates are read-only; custom templates are editable."', '"viewBuiltIn": "View built-in driver"', '"editCustom": "Edit custom driver"', '"importJar": "Import JAR"', '"validate": "Validate driver"'],
+  ['"title": "Databases and drivers"', '"summary": "{{count}} JDBC templates. Built-in templates are read-only; custom templates are editable."', '"viewBuiltIn": "View built-in driver"', '"editCustom": "Edit custom driver"', '"importJar": "Import JAR"', '"validate": "Validate driver"'],
   'English driver manager locale',
 )
 
@@ -190,7 +190,7 @@ includesAll(
     'import_jdbc_driver_artifacts',
     'remove_jdbc_driver_artifact',
     'validate_external_driver',
-    'validate_jdbc_prerequisites',
+    'validate_jdbc_driver_class',
     'ensure_managed_jdbc_artifacts_supported',
     'matches!(definition.backend, DriverBackend::Jdbc)',
   ],
@@ -205,7 +205,7 @@ includesAll(
     'download_url',
     "driver_type NOT IN ('mongo', 'redis')",
     "status <> 'planned'",
-    'existing.built_in && !existing.driver_artifacts.is_empty()',
+    'definition = existing;',
   ],
   'driver definition storage filters and artifact preservation',
 )

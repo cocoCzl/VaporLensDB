@@ -1,3 +1,4 @@
+import { DatabaseProductLabel } from '@/components/common/DatabaseProductLabel'
 import { Clock3 } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
@@ -34,10 +35,10 @@ export function RecentSection({ connections, activeConnectionId, onSelect, t }: 
               aria-current={selected ? 'true' : undefined}
               onClick={() => onSelect(connection)}
             >
-              <DatabaseVendorIcon driverType={connection.driverType} className="size-4 shrink-0 opacity-75" />
+              <DatabaseVendorIcon driverType={connection.productId ?? connection.driverType} className="size-4 shrink-0 opacity-75" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[12px] font-[550] leading-4">{connection.name}</span>
-                <span className="mt-0.5 block truncate text-[11px] leading-3.5 text-muted-foreground/85">{connectionEndpoint(connection)}</span>
+                <span className="mt-0.5 block truncate text-[11px] leading-3.5 text-muted-foreground/85">{connectionEndpoint(connection)} · <DatabaseProductLabel connection={connection} /></span>
               </span>
             </button>
           )

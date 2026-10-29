@@ -113,4 +113,6 @@ pub struct DriverCapabilities {
     pub supports_cancel: bool,
     pub supports_ddl: bool,
     pub supports_streaming: bool,
+    pub driver_fetch_status: String,
+    pub fetch_strategy: String,
 }

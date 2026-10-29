@@ -24,6 +24,11 @@ pub struct ConnectionInput {
     pub id: Option<Uuid>,
     pub name: String,
     pub driver_definition_id: Option<String>,
+    pub product_id: Option<String>,
+    pub driver_installation_id: Option<String>,
+    pub connection_mode: Option<String>,
+    #[serde(default)]
+    pub driver_properties: Vec<crate::models::connection::DriverProperty>,
     pub driver_type: DriverType,
     pub driver_dialect: Option<String>,
     pub host: Option<String>,
@@ -74,11 +79,37 @@ async fn create_connection_state(
     extract_url_credentials(&mut input)?;
     let password = input.password.clone();
     let save_password = input.save_password;
-    let config = input_to_config(input, Uuid::new_v4());
+    let mut config = input_to_config(input, Uuid::new_v4());
+    state
+        .config_store
+        .normalize_connection_references(&mut config)
+        .map_err(String::from)?;
     // Explicitly creating a new SQLite datasource retains the product's
     // create-on-open contract. Reconnects use the separate saved-file guard.
-    if config.driver_type == DriverType::Sqlite {
-        test_connection_service(&config, None, None)
+    let incomplete_jdbc = config.driver_installation_id.is_none()
+        && config.driver_definition_id.as_deref().is_some_and(|id| {
+            state
+                .config_store
+                .get_driver_definition(id)
+                .ok()
+                .flatten()
+                .is_some_and(|definition| {
+                    matches!(
+                        definition.backend,
+                        crate::models::driver_catalog::DriverBackend::Jdbc
+                    )
+                })
+        });
+    // Save-only also accepts an incomplete JDBC setup. Do not require Java or
+    // materialize a database until an installation has been selected.
+    if !incomplete_jdbc
+        && state.config_store.connection_product_type(&config).ok() == Some(DriverType::Sqlite)
+    {
+        let (runtime, definition) = state
+            .config_store
+            .resolve_connection(&config)
+            .map_err(String::from)?;
+        test_connection_service(&runtime, password.as_deref(), Some(&definition))
             .await
             .map_err(String::from)?;
     }
@@ -106,7 +137,11 @@ async fn update_connection_state(
         .ok_or_else(|| "connection id is required".to_string())?;
     let password = input.password.clone();
     let save_password = input.save_password;
-    let config = input_to_config(input, id);
+    let mut config = input_to_config(input, id);
+    state
+        .config_store
+        .normalize_connection_references(&mut config)
+        .map_err(String::from)?;
     let mut manager = state.connection_manager.lock().await;
     let existing = state
         .config_store
@@ -142,7 +177,12 @@ fn requires_runtime_invalidation(
             tunnel
         })
     };
-    existing.driver_definition_id != updated.driver_definition_id
+    existing.product_id != updated.product_id
+        || existing.driver_installation_id != updated.driver_installation_id
+        || existing.connection_mode != updated.connection_mode
+        || serde_json::to_string(&existing.driver_properties).ok()
+            != serde_json::to_string(&updated.driver_properties).ok()
+        || existing.driver_definition_id != updated.driver_definition_id
         || existing.driver_type != updated.driver_type
         || existing.driver_dialect != updated.driver_dialect
         || existing.host != updated.host
@@ -202,18 +242,68 @@ pub fn list_connections(state: State<'_, AppState>) -> Result<Vec<ConnectionConf
 #[tauri::command]
 pub async fn test_connection(
     state: State<'_, AppState>,
-    mut input: ConnectionInput,
+    input: ConnectionInput,
 ) -> Result<(), String> {
+    test_connection_state(&state, input).await
+}
+
+async fn test_connection_state(state: &AppState, mut input: ConnectionInput) -> Result<(), String> {
     extract_url_credentials(&mut input)?;
-    let password = input.password.clone();
-    let config = input_to_config(input, Uuid::new_v4());
-    let definition = config
-        .driver_definition_id
-        .as_deref()
-        .map(|id| state.config_store.get_driver_definition(id))
-        .transpose()
-        .map_err(String::from)?
-        .flatten();
+    let supplied_password = input.password.clone().filter(|s| !s.is_empty());
+    let id = input.id.unwrap_or_else(Uuid::new_v4);
+    let mut config = input_to_config(input, id);
+    let existing = state
+        .config_store
+        .get_connection(id)
+        .map_err(String::from)?;
+    let mut password = supplied_password;
+    if let Some(existing) = existing {
+        if password.is_none() {
+            password = state
+                .config_store
+                .decrypt_password(&existing)
+                .map_err(String::from)?;
+        }
+        if let (Some(tunnel), Some(saved)) = (
+            &mut config.ssh_tunnel,
+            state
+                .config_store
+                .decrypt_ssh_tunnel(&existing)
+                .map_err(String::from)?,
+        ) {
+            if tunnel
+                .password_encrypted
+                .as_deref()
+                .is_none_or(str::is_empty)
+            {
+                tunnel.password_encrypted = saved.password_encrypted;
+            }
+            if tunnel
+                .private_key_passphrase_encrypted
+                .as_deref()
+                .is_none_or(str::is_empty)
+            {
+                tunnel.private_key_passphrase_encrypted = saved.private_key_passphrase_encrypted;
+            }
+        }
+        for property in &mut config.driver_properties {
+            if property.sensitive
+                && property.value.as_deref().is_none_or(str::is_empty)
+                && config.driver_definition_id == existing.driver_definition_id
+            {
+                property.encrypted_value = existing
+                    .driver_properties
+                    .iter()
+                    .find(|p| p.name == property.name && p.sensitive)
+                    .and_then(|p| p.encrypted_value.clone());
+            }
+        }
+    }
+    let (config, definition) = state
+        .config_store
+        .resolve_connection(&config)
+        .map_err(String::from)?;
+    let definition = Some(definition);
     if config.driver_type == DriverType::Sqlite {
         test_sqlite_connection(&config, password.as_deref(), definition.as_ref())
             .await
@@ -238,15 +328,12 @@ async fn test_sqlite_connection(
     password: Option<&str>,
     definition: Option<&crate::models::driver_catalog::DriverDefinition>,
 ) -> Result<(), crate::models::error::AppError> {
-    let path = config.connection_url.as_deref().ok_or_else(|| {
-        crate::models::error::AppError::ConfigError("SQLite database path is required".to_string())
-    })?;
-    let target = Path::new(path);
-
-    if path == ":memory:" || target.exists() {
+    let target = sqlite_file_target(config).map_err(crate::models::error::AppError::ConfigError)?;
+    if target.as_ref().is_none_or(|target| target.exists()) {
         return test_connection_service(config, password, definition).await;
     }
 
+    let target = target.expect("non-memory target");
     let parent = target
         .parent()
         .filter(|value| !value.as_os_str().is_empty())
@@ -260,7 +347,18 @@ async fn test_sqlite_connection(
 
     let probe = sqlite_test_probe_path(parent);
     let mut probe_config = config.clone();
-    probe_config.connection_url = Some(probe.to_string_lossy().into_owned());
+    probe_config.connection_url = Some(
+        if definition.is_some_and(|d| {
+            matches!(
+                d.backend,
+                crate::models::driver_catalog::DriverBackend::Jdbc
+            )
+        }) {
+            format!("jdbc:sqlite:{}", probe.to_string_lossy())
+        } else {
+            probe.to_string_lossy().into_owned()
+        },
+    );
     let result = test_connection_service(&probe_config, password, definition).await;
     let cleanup = remove_sqlite_test_probe(&probe);
 
@@ -332,15 +430,19 @@ async fn connect_state(
                     id,
                     driver.driver_name()
                 );
-                state
-                    .connection_manager
-                    .lock()
-                    .await
-                    .invalidate_connection_generation(
+                let mut manager = state.connection_manager.lock().await;
+                if manager.connection_generation(id).ok() == Some(generation) {
+                    // A dead primary session does not authorize dropping a separate
+                    // live console transaction or its in-flight operation.
+                    manager
+                        .preflight_configuration_change(id)
+                        .map_err(String::from)?;
+                    manager.invalidate_connection_generation(
                         id,
                         generation,
                         "stale driver session was replaced",
                     );
+                }
             }
         }
     }
@@ -352,7 +454,7 @@ async fn connect_state(
             .get_connection(id)
             .map_err(String::from)?
             .ok_or_else(|| format!("connection not found: {id}"))?;
-        validate_saved_sqlite_reconnect(&config)?;
+
         let supplied_password = password.filter(|value| !value.is_empty());
         let (password, ssh_tunnel) = match supplied_password {
             Some(password) => (
@@ -368,13 +470,12 @@ async fn connect_state(
                 .map_err(String::from)?,
         };
         config.ssh_tunnel = ssh_tunnel;
-        let definition = config
-            .driver_definition_id
-            .as_deref()
-            .map(|id| state.config_store.get_driver_definition(id))
-            .transpose()
-            .map_err(String::from)?
-            .flatten();
+        let (config, definition) = state
+            .config_store
+            .resolve_connection(&config)
+            .map_err(String::from)?;
+        validate_saved_sqlite_reconnect(&config)?;
+        let definition = Some(definition);
         if let Some(status) = manager.begin_connect(id).map_err(String::from)? {
             return Ok(status);
         }
@@ -402,20 +503,56 @@ fn validate_saved_sqlite_reconnect(config: &ConnectionConfig) -> Result<(), Stri
     if config.driver_type != DriverType::Sqlite {
         return Ok(());
     }
-    let path = config
-        .connection_url
-        .as_deref()
-        .ok_or_else(|| "SQLite database path is required".to_string())?;
-    if path == ":memory:" || Path::new(path).is_file() {
+    if sqlite_file_target(config)?
+        .as_ref()
+        .is_none_or(|path| path.is_file())
+    {
         return Ok(());
     }
-    Err(format!(
-        "SQLite database file not found: {path}. Update the saved connection path or create a new SQLite connection."
-    ))
+    Err("SQLite database file not found. Update the saved connection path or create a new SQLite connection.".into())
+}
+
+/// Interpret the connector target, never Path::new on a JDBC URL.
+fn sqlite_file_target(config: &ConnectionConfig) -> Result<Option<PathBuf>, String> {
+    let value = config
+        .connection_url
+        .as_deref()
+        .ok_or("SQLite database path is required")?;
+    let path = value.strip_prefix("jdbc:sqlite:").unwrap_or(value);
+    if path == ":memory:"
+        || path.starts_with("file::memory:")
+        || (path.starts_with("file:")
+            && path
+                .split('?')
+                .nth(1)
+                .is_some_and(|q| q.split('&').any(|p| p == "mode=memory")))
+    {
+        return Ok(None);
+    }
+    if path.starts_with("file:") {
+        let uri = url::Url::parse(path).map_err(|_| "Invalid SQLite file URI")?;
+        if let Ok(path) = uri.to_file_path() {
+            return Ok(Some(path));
+        }
+        return Ok(Some(PathBuf::from(
+            path.trim_start_matches("file:")
+                .split('?')
+                .next()
+                .unwrap_or_default(),
+        )));
+    }
+    if path.starts_with("jdbc:") {
+        return Err("SQLite driver URL does not describe a SQLite file".into());
+    }
+    Ok(Some(PathBuf::from(path)))
 }
 
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>, id: Uuid) -> Result<ConnectionStatus, String> {
+    disconnect_state(&state, id).await
+}
+
+async fn disconnect_state(state: &AppState, id: Uuid) -> Result<ConnectionStatus, String> {
     let status = state
         .connection_manager
         .lock()
@@ -482,6 +619,10 @@ fn input_to_config(input: ConnectionInput, id: Uuid) -> ConnectionConfig {
         id,
         name: input.name,
         driver_definition_id: input.driver_definition_id,
+        product_id: input.product_id,
+        driver_installation_id: input.driver_installation_id,
+        connection_mode: input.connection_mode,
+        driver_properties: input.driver_properties,
         driver_type: input.driver_type,
         driver_dialect: input.driver_dialect,
         host,
@@ -761,6 +902,10 @@ mod tests {
             id: None,
             name: "test".to_string(),
             driver_definition_id: None,
+            product_id: None,
+            driver_installation_id: None,
+            connection_mode: None,
+            driver_properties: Vec::new(),
             driver_type: DriverType::Postgres,
             driver_dialect: None,
             host: None,
@@ -1759,5 +1904,260 @@ mod tests {
 
         assert!(path.is_file());
         fs::remove_file(path).expect("remove test database");
+    }
+
+    #[tokio::test]
+    async fn sqlite_jdbc_without_installation_can_be_saved_for_repair() {
+        let (state, root) = test_state();
+        let path = root.join("incomplete.sqlite");
+        let mut request = input(path.to_str().unwrap());
+        request.product_id = Some("sqlite".into());
+        request.driver_type = DriverType::Sqlite;
+        request.driver_definition_id = Some("jdbc-sqlite".into());
+        request.connection_mode = Some("file".into());
+        let saved = create_connection_state(&state, request).await.unwrap();
+        assert!(saved.driver_installation_id.is_none());
+        assert!(!path.exists());
+        assert_eq!(
+            state
+                .config_store
+                .get_connection(saved.id)
+                .unwrap()
+                .unwrap()
+                .id,
+            saved.id
+        );
+        assert!(connect_state(&state, saved.id, None)
+            .await
+            .unwrap_err()
+            .contains("JDBC installation missing"));
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn sqlite_jdbc_and_file_uri_validation_uses_the_actual_target() {
+        for value in [
+            ":memory:",
+            "jdbc:sqlite::memory:",
+            "file:memdb?mode=memory&cache=shared",
+            "jdbc:sqlite:file:memdb?mode=memory&cache=shared",
+        ] {
+            let mut c = sqlite_config(Path::new(value));
+            c.connection_url = Some(value.into());
+            assert!(sqlite_file_target(&c).unwrap().is_none());
+            assert!(validate_saved_sqlite_reconnect(&c).is_ok());
+        }
+        let path = std::env::temp_dir().join(format!("vapor uri {}.sqlite", Uuid::new_v4()));
+        std::fs::write(&path, b"fixture").unwrap();
+        for value in [
+            format!("jdbc:sqlite:{}", path.to_string_lossy()),
+            url::Url::from_file_path(&path).unwrap().to_string(),
+        ] {
+            let mut c = sqlite_config(&path);
+            c.connection_url = Some(value);
+            assert_eq!(sqlite_file_target(&c).unwrap(), Some(path.clone()));
+            assert!(validate_saved_sqlite_reconnect(&c).is_ok());
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+    /// Runs the same state functions used by the IPC commands, not JdbcDriver directly.
+    #[tokio::test]
+    #[ignore = "requires TEST_SQLITE_JDBC_PATH and TEST_SQLITE_SLF4J_PATH plus Java 21"]
+    async fn sqlite_jdbc_application_command_chain_file_and_memory() {
+        use crate::models::driver_catalog::{DriverArtifact, DriverInstallation};
+        let paths = ["TEST_SQLITE_JDBC_PATH", "TEST_SQLITE_SLF4J_PATH"]
+            .map(|key| std::env::var(key).expect(key));
+        let (mut state, root) = test_state();
+        let installation = DriverInstallation {
+            id: "sqlite-qa-v1".into(),
+            driver_definition_id: "jdbc-sqlite".into(),
+            label: "SQLite QA".into(),
+            java_requirement: "21".into(),
+            validation: None,
+            artifacts: paths
+                .iter()
+                .enumerate()
+                .map(|(index, path)| DriverArtifact {
+                    path: path.clone(),
+                    sha256: Some(crate::services::driver_registry::artifact_hash(path).unwrap()),
+                    role: if index == 0 { "primary" } else { "dependency" }.into(),
+                })
+                .collect(),
+        };
+        state
+            .config_store
+            .publish_installation(&installation)
+            .unwrap();
+        let path = root.join("SQLite 文件 with spaces.db");
+        for target in [
+            path.to_string_lossy().into_owned(),
+            ":memory:".into(),
+            "file:qa-memory?mode=memory&cache=shared".into(),
+        ] {
+            let mut request = input(&target);
+            request.product_id = Some("sqlite".into());
+            request.driver_type = DriverType::Sqlite;
+            request.driver_definition_id = Some("jdbc-sqlite".into());
+            request.driver_installation_id = Some(installation.id.clone());
+            request.connection_mode = Some("file".into());
+            test_connection_state(&state, request).await.unwrap();
+            if target == path.to_string_lossy() {
+                assert!(!path.exists(), "Test Connection must leave target absent");
+            }
+            let mut request = input(&target);
+            request.product_id = Some("sqlite".into());
+            request.driver_type = DriverType::Sqlite;
+            request.driver_definition_id = Some("jdbc-sqlite".into());
+            request.driver_installation_id = Some(installation.id.clone());
+            request.connection_mode = Some("file".into());
+            let saved = create_connection_state(&state, request).await.unwrap();
+            let id = saved.id;
+            if target == path.to_string_lossy() {
+                assert!(
+                    path.is_file(),
+                    "explicit Save must create file for reconnect guard"
+                );
+            }
+            assert!(matches!(
+                connect_state(&state, id, None).await.unwrap().status,
+                ConnectionRuntimeStatus::Connected
+            ));
+            let driver = state.connection_manager.lock().await.driver(id).unwrap();
+            assert_eq!(driver.driver_name(), "jdbc");
+            driver
+                .execute_query("CREATE TABLE qa_marker(value INTEGER)", None)
+                .await
+                .unwrap();
+            driver
+                .execute_query("INSERT INTO qa_marker VALUES (7)", None)
+                .await
+                .unwrap();
+            assert_eq!(
+                driver
+                    .execute_query("SELECT value FROM qa_marker", None)
+                    .await
+                    .unwrap()
+                    .rows[0][0],
+                7
+            );
+            if target == path.to_string_lossy() {
+                let (runtime, definition) = state.config_store.resolve_connection(&saved).unwrap();
+                let console = create_active_connection(&runtime, None, Some(&definition))
+                    .await
+                    .unwrap();
+                state
+                    .connection_manager
+                    .lock()
+                    .await
+                    .install_console_session(id, "qa-console".into(), console)
+                    .unwrap();
+                let console_driver = state
+                    .connection_manager
+                    .lock()
+                    .await
+                    .console_driver(id, "qa-console")
+                    .unwrap();
+                console_driver.begin_transaction().await.unwrap();
+                console_driver
+                    .execute_query("INSERT INTO qa_marker VALUES (8)", None)
+                    .await
+                    .unwrap();
+                state.connection_manager.lock().await.set_console_phase(
+                    id,
+                    "qa-console",
+                    crate::services::connection_manager::ConsoleTransactionPhase::Active,
+                );
+                // Stop only primary bridge. Reconnect must preserve the live console
+                // transaction, without commit, rollback or replay.
+                driver.cancel_all_queries().await.unwrap();
+                assert!(connect_state(&state, id, None)
+                    .await
+                    .unwrap_err()
+                    .contains("transaction"));
+                assert_eq!(
+                    console_driver
+                        .execute_query("SELECT COUNT(*) FROM qa_marker", None)
+                        .await
+                        .unwrap()
+                        .rows[0][0],
+                    2
+                );
+                console_driver.rollback_transaction().await.unwrap();
+                state.connection_manager.lock().await.set_console_phase(
+                    id,
+                    "qa-console",
+                    crate::services::connection_manager::ConsoleTransactionPhase::Idle,
+                );
+                drop(console_driver);
+                connect_state(&state, id, None).await.unwrap();
+                let fresh = state.connection_manager.lock().await.driver(id).unwrap();
+                assert_eq!(
+                    fresh
+                        .execute_query("SELECT COUNT(*) FROM qa_marker", None)
+                        .await
+                        .unwrap()
+                        .rows[0][0],
+                    1
+                );
+            }
+            // Metadata runs against the same resolved active driver.
+            let driver = state.connection_manager.lock().await.driver(id).unwrap();
+            assert!(driver
+                .get_tables("main")
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.name == "qa_marker"));
+            drop(driver);
+            disconnect_state(&state, id).await.unwrap();
+            // Configuration reload uses a new store and then reconnects using the pinned installation.
+            state.config_store =
+                crate::services::config_store::ConfigStore::new(root.clone()).unwrap();
+            let reloaded = state.config_store.get_connection(id).unwrap().unwrap();
+            assert_eq!(
+                reloaded.driver_installation_id,
+                saved.driver_installation_id
+            );
+            assert_eq!(reloaded.connection_mode.as_deref(), Some("file"));
+            connect_state(&state, id, None).await.unwrap();
+            let driver = state.connection_manager.lock().await.driver(id).unwrap();
+            let result = driver
+                .execute_query("SELECT value FROM qa_marker", None)
+                .await;
+            if target == path.to_string_lossy() {
+                assert_eq!(result.unwrap().rows[0][0], 7);
+            } else {
+                assert!(
+                    result.is_err(),
+                    "memory is scoped to physical bridge session and expires on disconnect"
+                );
+            }
+            drop(driver);
+            disconnect_state(&state, id).await.unwrap();
+            state.config_store.delete_connection(id).unwrap();
+        }
+        fs::remove_file(&path).unwrap();
+        let saved = create_connection_state(&state, {
+            let mut request = input(&path.to_string_lossy());
+            request.driver_type = DriverType::Sqlite;
+            request.driver_definition_id = Some("jdbc-sqlite".into());
+            request.driver_installation_id = Some(installation.id);
+            request.product_id = Some("sqlite".into());
+            request.connection_mode = Some("file".into());
+            request
+        })
+        .await
+        .unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(connect_state(&state, saved.id, None)
+            .await
+            .unwrap_err()
+            .contains("file not found"));
+        assert!(
+            !path.exists(),
+            "missing saved file must never be silently recreated"
+        );
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
     }
 }

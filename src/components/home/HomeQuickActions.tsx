@@ -35,20 +35,20 @@ export function HomeQuickActions({ onNewQuery, onNewConnection, onOpenCommandPal
 
   return (
     <section aria-label={t('home.quickActions')}>
-      <div className="grid gap-4 min-[760px]:grid-cols-3">
+      <div className="home-quick-actions home-actions">
         {actions.map((action) => {
           const Icon = action.icon
           return (
             <button
               key={action.id}
               type="button"
-              className="group flex min-h-[108px] items-center gap-4 rounded-[10px] border border-border/85 bg-surface px-5 py-4 text-left shadow-[0_1px_2px_hsl(var(--foreground)/0.025)] transition-[background-color,border-color,box-shadow,transform] hover:-translate-y-px hover:border-primary/25 hover:bg-surface-secondary hover:shadow-[0_8px_18px_-14px_hsl(var(--foreground)/0.22)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+              className="home-action group flex min-w-0 items-center gap-4 rounded-[10px] border border-border/85 bg-surface px-5 py-4 text-left shadow-[0_1px_2px_hsl(var(--foreground)/0.025)] transition-[background-color,border-color,box-shadow,transform] hover:-translate-y-px hover:border-primary/25 hover:bg-surface-secondary hover:shadow-[0_8px_18px_-14px_hsl(var(--foreground)/0.22)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
               onClick={action.onClick}
             >
               <span className="grid size-11 shrink-0 place-items-center rounded-[10px] border border-primary/15 bg-primary/[0.09] text-primary transition-colors group-hover:bg-primary/[0.14]">
                 <Icon className="size-[22px] stroke-[1.65]" />
               </span>
-              <span className="min-w-0">
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                 <span className="block text-[14px] font-bold leading-5 tracking-[-0.015em] text-foreground">{action.title}</span>
                 <span className="mt-1 block text-[12px] leading-[1.35] text-muted-foreground">{action.description}</span>
               </span>

@@ -49,7 +49,7 @@ includesAll(
   [
     'struct ActiveConnection',
     '_ssh_tunnel: Option<SshTunnel>',
-    'open_tunnel(config).await',
+    'open_tunnel(config, definition).await',
     'create_driver(&runtime_config',
   ],
   'connection lifecycle',

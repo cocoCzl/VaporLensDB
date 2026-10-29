@@ -43,6 +43,7 @@ export function AppSelect({
   return (
     <Select value={value} onValueChange={(nextValue) => onValueChange(nextValue ?? '')} disabled={disabled}>
       <SelectTrigger
+        title={props.title ?? selectedLabel(value)}
         id={id}
         className={cn(
           'w-full min-w-0 text-xs shadow-none transition-[border-color,background-color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring/20',
@@ -70,7 +71,7 @@ export function AppSelect({
         alignItemWithTrigger={false}
       >
         {options.map((option) => (
-          <SelectItem key={option.value} value={option.value} disabled={option.disabled} title={option.label} className={cn('min-h-7 px-2 py-1 text-xs data-highlighted:bg-accent-hover data-highlighted:text-foreground [&_[data-slot=select-item-text]]:truncate', useIdeSkin ? 'ide-combobox-item rounded-sm px-2.5' : 'rounded-sm')}>
+          <SelectItem key={option.value} value={option.value} disabled={option.disabled} title={option.label} className={cn('min-h-7 px-2 py-1 text-xs data-highlighted:bg-accent-hover data-highlighted:text-foreground [&_[data-slot=select-item-text]]:whitespace-normal [&_[data-slot=select-item-text]]:overflow-visible [&_[data-slot=select-item-text]]:[overflow-wrap:anywhere]', useIdeSkin ? 'ide-combobox-item rounded-sm px-2.5' : 'rounded-sm')}>
             {option.label}
           </SelectItem>
         ))}

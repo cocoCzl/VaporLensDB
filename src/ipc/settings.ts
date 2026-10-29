@@ -12,3 +12,8 @@ export function setApplicationMenuLanguage(language: ApplicationMenuLanguage) {
 export function normalizedApplicationMenuLanguage(language: string): ApplicationMenuLanguage {
   return language.startsWith('en') ? 'en' : 'zh'
 }
+
+/** Nonblocking mirror of the existing UI preference for pre-WebView appearance. */
+export function syncWindowAppearance(theme: 'light' | 'dark' | 'system', dark: boolean) {
+  return invokeCommand<void>(COMMANDS.syncWindowAppearance, { theme, dark })
+}

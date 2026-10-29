@@ -15,9 +15,11 @@ import { normalizeConnectionUrl } from '@/lib/connectionUrlNormalization'
 import { defaultConnectionName, nextConnectionName } from '@/lib/defaultConnectionName'
 import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
 import { supportedSslModes } from '@/lib/connectionSslModes'
+import { useDriverStore } from '@/stores/driverStore'
+import { openDriverManager } from '@/lib/openDriverManager'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { ConnectionConfig, ConnectionInput, DriverType } from '@/types/connection'
-import type { DriverDefinition } from '@/types/driver'
+import type { DatabaseProduct, DriverDefinition } from '@/types/driver'
 import type { AppError } from '@/types/error'
 
 type ConnectionVariant = 'hostPort' | 'urlOnly' | 'oracleService' | 'oracleSid' | 'file'
@@ -55,10 +57,20 @@ export function ConnectionForm({
   onDriverTypeChange,
 }: ConnectionFormProps) {
   const { t } = useTranslation()
+  const products = useDriverStore((state) => state.products)
+  const installations = useDriverStore((state) => state.installations)
+  const catalogError = useDriverStore((state) => state.error)
+  const catalogLoading = useDriverStore((state) => state.loading)
+  const [productSearch, setProductSearch] = useState('')
+  const [explicitFields, setExplicitFields] = useState<Set<keyof ConnectionInput>>(() => new Set(connection ? ['host', 'port', 'database', 'username', 'connectionUrl'] : []))
   const dataSourceGroups = useConnectionStore((state) => state.dataSourceGroups)
   const initialUrlCredentials = extractUrlCredentials(connection?.connectionUrl ?? '')
   const [form, setForm] = useState<ConnectionInput>({
     id: connection?.id,
+    driverProperties: connection?.driverProperties ?? [],
+    productId: connection?.productId ?? connection?.driverType ?? 'postgres',
+    driverInstallationId: connection?.driverInstallationId ?? null,
+    connectionMode: connection?.connectionMode ?? null,
     name: connection?.name ?? defaultConnectionName('postgres'),
     driverDefinitionId: connection?.driverDefinitionId ?? connection?.driverType ?? 'postgres',
     driverType: connection?.driverType ?? 'postgres',
@@ -97,25 +109,21 @@ export function ConnectionForm({
   const [passwordVisible, setPasswordVisible] = useState(false)
   const [groupSelection, setGroupSelection] = useState(connection?.groupId ?? '')
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
-    defaultConnectionVariant(connection?.driverType ?? 'postgres'),
+    (connection?.connectionMode as ConnectionVariant) ?? (connection?.connectionUrl && connection.driverType !== 'sqlite' ? 'urlOnly' : defaultConnectionVariant(connection?.driverType ?? 'postgres')),
   )
-  const selectableDrivers = driverDefinitions.length
-    ? driverDefinitions.filter(
-        (driver) =>
-          PRIMARY_DRIVER_IDS.includes(driver.driverType) ||
-          (!driver.builtIn && driver.driverType === 'jdbc'),
-      ).sort(compareDriverChoices)
-    : FALLBACK_DRIVER_OPTIONS
-  const selectedDriver =
-    driverDefinitions.find((driver) => driver.id === form.driverDefinitionId) ??
-    driverDefinitions.find((driver) => driver.driverType === form.driverType)
+  const selectableDrivers = driverDefinitions.length ? driverDefinitions.filter((driver) => driver.status !== 'planned').sort(compareDriverChoices) : FALLBACK_DRIVER_OPTIONS
+  const selectedDriver = driverDefinitions.find((driver) => driver.id === form.driverDefinitionId)
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
-  const sslModes = supportedSslModes(form.driverType, form.sslMode)
-  const readinessIssue = connectionReadinessIssue(form, driverProfile, selectedDriver, t)
-  const runtimeCapabilityUnavailable = !selectedDriver?.capabilities.canConnect
-  const databaseTypes = databaseTypeOptions(selectableDrivers, t)
-  const activeDatabaseType = databaseTypes.find((option) => option.driverType === form.driverType)
+  const sslModes = selectedDriver?.backend === 'jdbc' ? (form.sslMode ? ['', form.sslMode] : ['']) : supportedSslModes(form.driverType, form.sslMode)
+  const installationId = form.driverInstallationId ?? (connection ? null : selectedDriver?.defaultInstallationId)
+  const missingInstallation = selectedDriver?.backend === 'jdbc' && (!installationId || !installations.some((i) => i.id === installationId && i.driverDefinitionId === selectedDriver.id))
+  const missingReference = (driverDefinitions.length > 0 && !selectedDriver) || missingInstallation
+  const readinessIssue = missingReference ? t('driverRefactor.missingReference') : connectionReadinessIssue(form, driverProfile, selectedDriver, t)
+  const runtimeCapabilityUnavailable = !selectedDriver?.capabilities.canConnect || Boolean(readinessIssue)
+  const databaseTypes = databaseTypeOptions(selectableDrivers, products)
+  const activeDatabaseType = databaseTypes.find((option) => option.productId === form.productId)
   const driverVariants = activeDatabaseType?.drivers ?? []
+  const availableInstallations = installations.filter((installation) => installation.driverDefinitionId === form.driverDefinitionId)
 
   const activeConnectionVariant = driverProfile.connectionVariants.some(
     (variant) => variant.id === connectionVariant,
@@ -126,6 +134,7 @@ export function ConnectionForm({
 
   const update = (key: keyof ConnectionInput, value: string | number | string[] | boolean | null) => {
     onDirtyChange?.(true)
+    setExplicitFields((current) => new Set([...current, key]))
     setForm((current) => ({ ...current, [key]: value }))
   }
 
@@ -168,22 +177,32 @@ export function ConnectionForm({
     const definition = driverDefinitions.find((driver) => driver.id === driverDefinitionId)
     const driverType = definition?.driverType ?? (driverDefinitionId as DriverType)
     const profile = profileForDriver(driverType, definition)
-    const nextVariant = profile.connectionVariants[0].id
+    const productId = definition?.productId || driverType
+    const sameProduct = productId === form.productId
+    const nextVariant = sameProduct && profile.connectionVariants.some((v) => v.id === connectionVariant) ? connectionVariant : profile.connectionVariants[0].id
     onDriverTypeChange?.(driverType)
     setConnectionVariant(nextVariant)
+    if (sameProduct && (form.driverProperties?.length || form.driverPaths?.length || form.driverClass || form.sslMode)) setMessage(t('driverRefactor.driverChanged'))
     setForm((current) => ({
       ...current,
+      productId,
       driverDefinitionId: definition?.id ?? driverType,
+      driverInstallationId: definition?.defaultInstallationId ?? null,
+      connectionMode: nextVariant,
       driverType,
       driverDialect: definition?.driverDialect ?? driverType,
-      name: nextConnectionName(current.name, nameIsGenerated, driverType),
-      port: profile.defaultPort,
-      database: current.database || profile.defaultDatabase,
-      username: current.username || profile.defaultUsername,
-      connectionUrl: profile.defaultUrl(current, nextVariant),
+      name: sameProduct ? current.name : driverType === 'jdbc' && nameIsGenerated ? products.find((p) => p.id === productId)?.name ?? definition?.name ?? profile.defaultName : nextConnectionName(current.name, nameIsGenerated, driverType),
+      port: sameProduct && explicitFields.has('port') ? current.port : profile.defaultPort,
+      host: sameProduct || explicitFields.has('host') ? current.host : 'localhost',
+      database: sameProduct ? current.database : profile.defaultDatabase,
+      username: sameProduct ? current.username : profile.defaultUsername,
+      connectionUrl: sameProduct && nextVariant === connectionVariant && (nextVariant === 'urlOnly' || nextVariant === 'file') ? current.connectionUrl : '',
       driverClass: profile.driverClass ?? '',
-      driverPaths: definition?.driverArtifacts ?? [],
-      sslMode: supportedSslModes(driverType).includes(current.sslMode ?? '') ? current.sslMode : null,
+      driverPaths: [],
+      driverProperties: [],
+      // Never silently discard a saved security requirement. Unsupported values
+      // remain visible and fail with a repair instruction.
+      sslMode: current.sslMode,
     }))
   }
 
@@ -202,6 +221,7 @@ export function ConnectionForm({
   }
 
   const validate = (requireExternalDriver: boolean) => {
+    if (requireExternalDriver && missingReference) return t('driverRefactor.missingReference')
     return validateRequiredFields(form, activeConnectionVariant, {
       requireExternalDriver,
       profile: driverProfile,
@@ -262,24 +282,49 @@ export function ConnectionForm({
 
   return (
     <form
-      className="connection-form flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      className="connection-form @container/form flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       autoComplete="off"
       onSubmit={submit}
     >
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
-        <div className="mx-auto grid w-full max-w-[46rem] gap-4 p-7">
+        <div className="mx-auto grid w-full max-w-[46rem] gap-4 p-4 @min-[600px]/form:p-7">
           <section className="grid gap-2.5">
-            <SectionLabel>{t('connectionForm.databaseType')}</SectionLabel>
+            <div className="flex items-center justify-between gap-2"><SectionLabel>{t('connectionForm.databaseType')}</SectionLabel><Button type="button" size="xs" variant="link" onClick={() => { onCancel(); openDriverManager() }}>{t('driverRefactor.addProduct')}</Button></div>
+            <Input disableTextAssistance aria-label={t('driverRefactor.searchProducts')} placeholder={t('driverRefactor.searchProducts')} value={productSearch} onChange={(e) => setProductSearch(e.target.value)} />
+            {catalogLoading && <p role="status">{t('common.loading')}</p>}
+            {catalogError && <p role="alert">{catalogError}</p>}
             <DatabaseTypeSelector
-              options={databaseTypes}
-              selectedDriverType={form.driverType}
-              onChange={(driverType) => {
-                const option = databaseTypes.find((item) => item.driverType === driverType)
+              options={databaseTypes.filter((p) => p.label.toLocaleLowerCase().includes(productSearch.toLocaleLowerCase()))}
+              selectedDriverType={form.productId ?? form.driverType}
+              onChange={(productId) => {
+                const option = databaseTypes.find((item) => item.productId === productId)
                 if (option) changeDriver(option.defaultDriver.id)
               }}
               t={t}
             />
           </section>
+
+          <div className="grid gap-2">
+              {driverVariants.length > 0 && (
+                <FormRow label={t('connectionForm.driver')}>
+                  <AppSelect
+                    id="driver-profile"
+                    value={selectedDriver?.id ?? form.driverType}
+                    onValueChange={changeDriver}
+                    options={driverVariants.map((driver) => ({
+                      value: driver.id,
+                      label: `${driverProfileOptionLabel(driver, t)}${activeDatabaseType?.defaultDriver.id === driver.id ? ` · ${t('connectionForm.recommended')}` : ''}`,
+                    }))}
+                  />
+                </FormRow>
+              )}
+
+            {missingReference && <p role="alert">{t('driverRefactor.missingReference')}</p>}
+            {selectedDriver?.backend === 'jdbc' && <FormRow label={t('driverRefactor.installation')}>
+              <AppSelect aria-label={t('driverRefactor.installation')} value={installationId ?? ''} onValueChange={(id) => update('driverInstallationId', id || null)} options={[{ value: '', label: t('driverRefactor.chooseInstallation') }, ...availableInstallations.map((i) => ({ value: i.id, label: i.label }))]} />
+            </FormRow>}
+            {selectedDriver?.backend === 'jdbc' && <Button type="button" size="xs" variant="link" onClick={() => { onCancel(); openDriverManager() }}>{t('driverRefactor.manage')}</Button>}
+          </div>
 
           <section className="grid gap-3.5 pt-0.5">
             <div className="grid gap-1.5">
@@ -295,9 +340,10 @@ export function ConnectionForm({
                 <SectionLabel htmlFor="connection-url">{t('connectionForm.connectionUrl')}</SectionLabel>
                 <Input id="connection-url" value={form.connectionUrl ?? ''} placeholder={driverProfile.urlPlaceholder} disableTextAssistance onChange={(event) => updateConnectionUrl(event.target.value)} required />
               </div>
-            ) : (
+            ) : null}
+            {(activeConnectionVariant !== 'file' || selectedDriver?.connectionVariants.find((v) => v.id === activeConnectionVariant)?.requiredFields.includes('username')) && (
               <>
-                {isUrlOnly ? (
+                {activeConnectionVariant === 'file' ? null : isUrlOnly ? (
                   <div className="grid gap-1.5">
                     <SectionLabel htmlFor="connection-url">{t('connectionForm.connectionUrl')}</SectionLabel>
                     <Input id="connection-url" value={form.connectionUrl ?? ''} placeholder={driverProfile.urlPlaceholder} disableTextAssistance onChange={(event) => updateConnectionUrl(event.target.value)} required />
@@ -316,10 +362,10 @@ export function ConnectionForm({
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 @min-[600px]/form:grid-cols-2">
                   <div className="grid gap-1.5">
                     <SectionLabel htmlFor="connection-username">{t('connectionForm.user')}</SectionLabel>
-                    <Input id="connection-username" value={form.username ?? ''} disableTextAssistance onChange={(event) => update('username', event.target.value)} required={requiresUsername(form.driverType)} />
+                    <Input id="connection-username" value={form.username ?? ''} disableTextAssistance onChange={(event) => update('username', event.target.value)} required={selectedDriver ? selectedDriver.connectionVariants.find((v) => v.id === activeConnectionVariant)?.requiredFields.includes('username') : requiresUsername(form.driverType)} />
                   </div>
                   <div className="grid gap-1.5">
                     <SectionLabel htmlFor="connection-password">{t('connectionForm.password')}</SectionLabel>
@@ -337,17 +383,17 @@ export function ConnectionForm({
                   </div>
                 </div>
 
-                {!isUrlOnly && (
+                {!isUrlOnly && activeConnectionVariant !== 'file' && (
                   <div className="grid gap-1.5">
                     <SectionLabel htmlFor="connection-database">{databaseFieldLabel(activeConnectionVariant, t)}</SectionLabel>
-                    <Input id="connection-database" value={form.database ?? ''} disableTextAssistance onChange={(event) => update('database', event.target.value)} required={requiresDatabase(form.driverType)} />
+                    <Input id="connection-database" value={form.database ?? ''} disableTextAssistance onChange={(event) => update('database', event.target.value)} required={selectedDriver ? selectedDriver.connectionVariants.find((v) => v.id === activeConnectionVariant)?.requiredFields.includes('database') : requiresDatabase(form.driverType)} />
                   </div>
                 )}
               </>
             )}
           </section>
 
-          {!isUrlOnly && activeConnectionVariant !== 'file' && (
+          {((!isUrlOnly && activeConnectionVariant !== 'file') || form.sshTunnel?.enabled) && (
             <DisclosureSection title={t('connectionForm.sshTunnelSection')} icon={<Network />} defaultOpen={Boolean(form.sshTunnel?.enabled)}>
               <div className="grid gap-3 pt-3">
                 <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
@@ -371,19 +417,6 @@ export function ConnectionForm({
 
           <DisclosureSection title={t('connectionForm.advanced')} icon={<SlidersHorizontal />}>
             <div className="grid gap-3 pt-3">
-              {driverVariants.length > 1 && (
-                <FormRow label={t('connectionForm.driver')}>
-                  <AppSelect
-                    id="driver-profile"
-                    value={selectedDriver?.id ?? form.driverType}
-                    onValueChange={changeDriver}
-                    options={driverVariants.map((driver) => ({
-                      value: driver.id,
-                      label: driverProfileOptionLabel(driver, t),
-                    }))}
-                  />
-                </FormRow>
-              )}
               {driverProfile.connectionVariants.length > 1 && (
                 <FormRow label={t('connectionForm.connectionType')}>
                   <SegmentedControl options={driverProfile.connectionVariants} value={activeConnectionVariant} onChange={(value) => { onDirtyChange?.(true); setConnectionVariant(value) }} />
@@ -400,20 +433,31 @@ export function ConnectionForm({
               {driverProfile.externalDriver && (
                 <>
                   <FormRow label={t('connectionForm.driverClass')}>
-                    <Input id="driver-class" value={form.driverClass ?? ''} placeholder={driverProfile.driverClass} disableTextAssistance onChange={(event) => update('driverClass', event.target.value)} />
+                    <Input readOnly id="driver-class" value={selectedDriver?.jdbcDriverClass ?? form.driverClass ?? ''} placeholder={driverProfile.driverClass} disableTextAssistance onChange={(event) => update('driverClass', event.target.value)} />
                   </FormRow>
                   <FormRow label={t('connectionForm.driverFiles')}>
-                    <Input id="driver-paths" value={form.driverPaths?.join('\n') ?? ''} placeholder={driverArtifactPathPlaceholder(selectedDriver?.driverArtifact)} disableTextAssistance onChange={(event) => update('driverPaths', event.target.value.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean))} />
+                    <Input readOnly id="driver-paths" value={availableInstallations.find((i) => i.id === installationId)?.artifacts.map((a) => a.path).join('\n') ?? ''} placeholder={driverArtifactPathPlaceholder(selectedDriver?.driverArtifact)} disableTextAssistance onChange={(event) => update('driverPaths', event.target.value.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean))} />
                   </FormRow>
                 </>
               )}
+
+              {selectedDriver?.backend === 'jdbc' && <div className="grid gap-2">
+                <SectionLabel>{t('driverRefactor.properties')}</SectionLabel>
+                {(form.driverProperties ?? []).map((property, index) => <div key={index} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] @min-[600px]/form:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2">
+                  <Input disableTextAssistance aria-label={t('driverRefactor.propertyName')} value={property.name} onChange={(e) => { onDirtyChange?.(true); setForm((f) => ({ ...f, driverProperties: f.driverProperties?.map((p,i) => i === index ? { ...p, name: e.target.value } : p) })) }} />
+                  <Input disableTextAssistance aria-label={t('driverRefactor.propertyValue')} type={property.sensitive ? 'password' : 'text'} value={property.value ?? ''} placeholder={property.hasSavedValue ? t('common.hidden') : ''} onChange={(e) => { onDirtyChange?.(true); setForm((f) => ({ ...f, driverProperties: f.driverProperties?.map((p,i) => i === index ? { ...p, value: e.target.value } : p) })) }} />
+                  <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={property.sensitive} onChange={(e) => setForm((f) => ({ ...f, driverProperties: f.driverProperties?.map((p,i) => i === index ? { ...p, sensitive: e.target.checked } : p) }))} />{t('driverRefactor.sensitive')}</label>
+                  <Button type="button" size="xs" variant="ghost" onClick={() => setForm((f) => ({ ...f, driverProperties: f.driverProperties?.filter((_,i) => i !== index) }))}>{t('common.delete')}</Button>
+                </div>)}
+                <Button type="button" size="xs" variant="outline" onClick={() => setForm((f) => ({ ...f, driverProperties: [...(f.driverProperties ?? []), { name: '', value: '', sensitive: true }] }))}>{t('driverRefactor.addProperty')}</Button>
+              </div>}
               <DriverSupportSummary driver={selectedDriver} profile={driverProfile} input={form} readinessIssue={readinessIssue} t={t} />
             </div>
           </DisclosureSection>
         </div>
       </div>
 
-      <div className="flex min-h-14 items-center justify-between gap-3 border-t border-border/75 bg-surface px-6 py-2">
+      <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/75 bg-surface px-6 py-2">
         <div className="min-w-0 text-xs text-muted-foreground" role={message ? 'status' : undefined}>
           <span className={message ? 'text-foreground' : undefined}>{message ?? readinessIssue ?? ' '}</span>
           {messageDetail && <details className="mt-1 text-[11px]"><summary className="cursor-pointer">{t('connectionForm.errorDetails')}</summary><pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap font-sans">{messageDetail}</pre></details>}
@@ -463,7 +507,7 @@ function FormRow({
   labelClassName?: string
 }) {
   return (
-    <div className={`grid grid-cols-[104px_minmax(0,1fr)] gap-3 ${align === 'start' ? 'items-start' : 'items-center'}`}>
+    <div className={`grid grid-cols-1 @min-[480px]/form:grid-cols-[104px_minmax(0,1fr)] gap-3 ${align === 'start' ? 'items-start' : 'items-center'}`}>
       <Label className={`text-right text-xs ${labelClassName ?? ''}`}>{label}</Label>
       <div className="min-w-0">{children}</div>
     </div>
@@ -487,104 +531,43 @@ function DatabaseTypeSelector({
   t,
 }: {
   options: DatabaseTypeOption[]
-  selectedDriverType: DriverType
-  onChange: (driverType: DriverType) => void
+  selectedDriverType: string
+  onChange: (driverType: string) => void
   t: TFunction
 }) {
-  const primaryOptions = options.filter((option) => option.driverType !== 'jdbc')
-  const secondaryOption = options.find((option) => option.driverType === 'jdbc')
-
   return (
-    <div role="radiogroup" aria-label={t('connectionForm.databaseType')}>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        {primaryOptions.map((option) => <DatabaseTypeOptionButton key={option.driverType} option={option} selected={option.driverType === selectedDriverType} onChange={onChange} />)}
-      </div>
-      {secondaryOption && (
-        <div className="mt-2 flex">
-          <DatabaseTypeOptionButton option={secondaryOption} selected={secondaryOption.driverType === selectedDriverType} onChange={onChange} secondary />
-        </div>
-      )}
+    <div role="radiogroup" aria-label={t('connectionForm.databaseType')} className="grid max-h-48 grid-cols-2 gap-2 overflow-auto @min-[600px]/form:grid-cols-3">
+      {options.map((option) => <button key={option.productId} type="button" role="radio" aria-checked={option.productId === selectedDriverType} tabIndex={option.productId === selectedDriverType || (!options.some((p) => p.productId === selectedDriverType) && options[0] === option) ? 0 : -1} onKeyDown={(event) => {
+        const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0
+        if (!direction && event.key !== 'Home' && event.key !== 'End') return
+        event.preventDefault()
+        const index = options.indexOf(option)
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (index + direction + options.length) % options.length
+        onChange(options[next].productId)
+        event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus()
+      }} title={option.label} className={`flex min-w-0 items-center gap-2 rounded-lg border p-3 text-left text-xs ${option.productId === selectedDriverType ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted'}`} onClick={() => onChange(option.productId)}>
+        <DatabaseVendorIcon driverType={option.driverType} className="size-5 shrink-0" /><span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span>
+      </button>)}
     </div>
   )
 }
 
-function DatabaseTypeOptionButton({
-  option,
-  selected,
-  onChange,
-  secondary = false,
-}: {
-  option: DatabaseTypeOption
-  selected: boolean
-  onChange: (driverType: DriverType) => void
-  secondary?: boolean
-}) {
-  const unavailable = option.defaultDriver.status === 'planned'
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      disabled={unavailable}
-      className={[
-        'flex min-w-0 items-center gap-2 rounded-lg border text-left text-xs transition-[background-color,border-color,color,box-shadow]',
-        secondary ? 'h-9 px-3 text-muted-foreground' : 'h-11 px-3.5',
-        selected ? 'border-primary/55 bg-primary/[0.08] text-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.08)]' : 'border-border/85 bg-surface text-muted-foreground hover:border-border-strong hover:bg-surface-secondary hover:text-foreground',
-        unavailable ? 'cursor-not-allowed opacity-45' : '',
-      ].join(' ')}
-      onClick={() => onChange(option.driverType)}
-    >
-      <DatabaseVendorIcon driverType={option.driverType} className={`${secondary ? 'size-4' : 'size-5'} shrink-0`} />
-      <span className="min-w-0 truncate font-medium">{option.label}</span>
-    </button>
-  )
-}
+type DriverChoice = Pick<DriverDefinition, 'id' | 'productId' | 'defaultInstallationId' | 'driverType' | 'driverDialect' | 'name' | 'backend' | 'status' | 'builtIn' | 'userDriverRequired'>
+type DatabaseTypeOption = { productId: string; driverType: DriverType; label: string; defaultDriver: DriverChoice; drivers: DriverChoice[] }
 
-type DriverChoice = Pick<DriverDefinition, 'id' | 'driverType' | 'driverDialect' | 'name' | 'backend' | 'status' | 'builtIn' | 'userDriverRequired'>
-
-type DatabaseTypeOption = {
-  driverType: DriverType
-  label: string
-  defaultDriver: DriverChoice
-  drivers: DriverChoice[]
-}
-
-function databaseTypeOptions(drivers: DriverChoice[], t: TFunction): DatabaseTypeOption[] {
-  const byType = new Map<DriverType, DriverChoice[]>()
-  for (const driver of drivers) {
-    const current = byType.get(driver.driverType) ?? []
-    current.push(driver)
-    byType.set(driver.driverType, current)
-  }
-
-  return [...byType.entries()]
-    .map(([driverType, profiles]) => {
-      const defaultDriver = profiles.find((driver) => driver.backend === 'nativeRust' && driver.status === 'ready')
-        ?? profiles.find((driver) => driver.status === 'ready')
-        ?? profiles.find((driver) => driver.builtIn && !driver.userDriverRequired)
-        ?? profiles[0]
-      return {
-        driverType,
-        label: driverType === 'jdbc' ? t('connectionForm.other') : databaseProductName(defaultDriver.name),
-        defaultDriver,
-        drivers: profiles,
-      }
-    })
-    .sort((left, right) => (PRIMARY_DRIVER_ORDER.get(left.driverType) ?? 99) - (PRIMARY_DRIVER_ORDER.get(right.driverType) ?? 99))
-}
-
-function databaseProductName(name: string) {
-  return name
-    .replace(/\s*[（(].*?[）)]/g, '')
-    .replace(/\s+JDBC\b.*/i, '')
-    .trim()
+function databaseTypeOptions(drivers: DriverChoice[], products: DatabaseProduct[]): DatabaseTypeOption[] {
+  const ids = [...new Set(drivers.map((d) => d.productId || d.driverType))]
+  return ids.map((productId) => {
+    const product = products.find((p) => p.id === productId)
+    const profiles = drivers.filter((d) => (d.productId || d.driverType) === productId)
+    const defaultDriver = profiles.find((d) => d.id === product?.defaultDriverDefinitionId) ?? profiles.find((d) => d.backend === 'nativeRust') ?? profiles[0]
+    return { productId, driverType: defaultDriver.driverType, label: product?.name ?? defaultDriver.name.replace(/\s*[（(].*?[）)]/g, '').replace(/\s+JDBC\b.*/i, '').trim(), defaultDriver, drivers: profiles }
+  })
 }
 
 function driverProfileOptionLabel(driver: DriverChoice, t: TFunction) {
   const implementation = driver.backend === 'nativeRust' ? t('connectionForm.nativeDriver') : t('connectionForm.jdbcDriver')
-  return driver.backend === 'nativeRust' && driver.status === 'ready'
-    ? `${implementation} · ${t('connectionForm.recommended')}`
-    : implementation
+  return `${driver.name} · ${implementation}`
 }
 
 function DisclosureSection({
@@ -778,8 +761,8 @@ function externalDriverMissingItems(
   }
 
   const missing: string[] = []
-  if (!input.driverClass?.trim()) missing.push(t ? t('connectionForm.missingDriverClass') : 'driver class')
-  if (!input.driverPaths?.length) missing.push(t ? t('connectionForm.missingLocalJar') : 'local JAR')
+  if (!(driver?.jdbcDriverClass ?? input.driverClass)?.trim()) missing.push(t ? t('connectionForm.missingDriverClass') : 'driver class')
+  if (!input.driverInstallationId && !driver?.defaultInstallationId && !input.driverPaths?.length) missing.push(t ? t('connectionForm.missingLocalJar') : 'local JAR')
   return missing
 }
 
@@ -806,7 +789,6 @@ function unknownCapabilities(): DriverDefinition['capabilities'] {
 }
 
 function profileBackend(profile: DriverProfile): DriverDefinition['backend'] {
-  if (profile.status === 'planned') return 'planned'
   return profile.externalDriver ? 'jdbc' : 'nativeRust'
 }
 
@@ -829,26 +811,28 @@ function normalizeInput(
   profile: DriverProfile,
   definition?: DriverDefinition,
 ): ConnectionInput {
-  const isUrlOnly = variant === 'urlOnly'
+  const fileWithoutCredentials = variant === 'file' && !definition?.connectionVariants.find((v) => v.id === variant)?.requiredFields.includes('username')
   const endpoint = normalizeConnectionEndpoint(input.host, input.port)
   return {
     ...input,
     driverDefinitionId: input.driverDefinitionId ?? input.driverType,
+    connectionMode: variant,
+    driverInstallationId: input.driverInstallationId ?? (input.id ? null : definition?.defaultInstallationId) ?? null,
     driverDialect: definition?.driverDialect ?? input.driverDialect ?? input.driverType,
     host: emptyToNull(endpoint.host),
     port: endpoint.port,
     database: emptyToNull(input.database),
     connectionUrl: normalizeConnectionUrl(input, variant, profile),
-    username: variant === 'file' ? null : emptyToNull(input.username),
-    password: variant === 'file' ? null : emptyToNull(input.password),
-    savePassword: variant === 'file' ? false : input.savePassword,
-    driverClass: emptyToNull(input.driverClass),
-    driverPaths: input.driverPaths?.length ? input.driverPaths : (definition?.driverArtifacts ?? []),
+    username: fileWithoutCredentials ? null : emptyToNull(input.username),
+    password: fileWithoutCredentials ? null : emptyToNull(input.password),
+    savePassword: fileWithoutCredentials ? false : input.savePassword,
+    driverClass: emptyToNull(definition?.jdbcDriverClass ?? input.driverClass),
+    driverPaths: [],
     group: emptyToNull(input.group),
     // Legacy color tags are retained for saved-connection compatibility but no
     // longer carry environment or safety semantics in the user interface.
     colorTag: input.colorTag ?? null,
-    sshTunnel: isUrlOnly || variant === 'file' ? null : normalizeSshTunnel(input),
+    sshTunnel: normalizeSshTunnel(input),
   }
 }
 
@@ -889,10 +873,10 @@ function validateRequiredFields(
     validationMode.requireExternalDriver &&
     requiresExternalDriverConfig(validationMode.profile, validationMode.definition)
   ) {
-    if (!input.driverClass?.trim()) {
+    if (!(validationMode.definition?.jdbcDriverClass ?? input.driverClass)?.trim()) {
       return t('connectionForm.validation.oracleDriverClassRequired')
     }
-    if (!input.driverPaths?.length) {
+    if (!input.driverInstallationId && !validationMode.definition?.defaultInstallationId && !input.driverPaths?.length) {
       return t('connectionForm.validation.oracleJarRequired')
     }
   }
@@ -905,11 +889,14 @@ function validateRequiredFields(
     }
   }
 
+  const schema = validationMode.definition?.connectionVariants.find((v) => v.id === variant)
+  const usernameRequired = schema ? schema.requiredFields.includes('username') : requiresUsername(input.driverType)
+  const databaseRequired = schema ? schema.requiredFields.includes('database') : requiresDatabase(input.driverType)
   if (variant === 'urlOnly' || variant === 'file') {
     if (!input.connectionUrl?.trim()) {
       return t('connectionForm.validation.urlRequired')
     }
-    if (variant === 'urlOnly' && requiresUsername(input.driverType) && !input.username?.trim()) {
+    if (usernameRequired && !input.username?.trim()) {
       return t('connectionForm.validation.usernameRequired')
     }
     return null
@@ -919,11 +906,11 @@ function validateRequiredFields(
     return t('connectionForm.validation.hostRequired')
   }
 
-  if (!input.database?.trim() && requiresDatabase(input.driverType)) {
+  if (!input.database?.trim() && databaseRequired) {
     return t('connectionForm.validation.databaseRequired')
   }
 
-  if (!input.username?.trim() && requiresUsername(input.driverType)) {
+  if (!input.username?.trim() && usernameRequired) {
     return t('connectionForm.validation.usernameRequired')
   }
 
@@ -939,10 +926,10 @@ function connectionReadinessIssue(
   if (!requiresExternalDriverConfig(profile, definition)) {
     return null
   }
-  if (!input.driverClass?.trim()) {
+  if (!(definition?.jdbcDriverClass ?? input.driverClass)?.trim()) {
     return t('connectionForm.validation.missingJdbcClassReadiness')
   }
-  if (!input.driverPaths?.length) {
+  if (!input.driverInstallationId && !definition?.defaultInstallationId && !input.driverPaths?.length) {
     return t('connectionForm.validation.missingJarReadiness')
   }
   return null
@@ -1009,7 +996,7 @@ function profileForDriver(
     urlPlaceholder: definition.urlTemplate ?? fallback.urlPlaceholder,
     connectionVariants: variants.length ? variants : fallback.connectionVariants,
     defaultUrl: definition.urlTemplate
-      ? (input) => applyUrlTemplate(urlTemplate, input)
+      ? (input, variant) => driverType === 'oracle' ? fallback.defaultUrl(input, variant) : applyUrlTemplate(urlTemplate, input)
       : fallback.defaultUrl,
   }
 }
@@ -1040,6 +1027,7 @@ function applyUrlTemplate(template: string, input: ConnectionInput) {
     host: input.host || 'localhost',
     port: input.port,
     database: input.database,
+    file: input.connectionUrl,
     username: input.username,
   }
 
@@ -1083,7 +1071,6 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     status: 'configurable',
     usesUrl: true,
     externalDriver: true,
-    description: 'Oracle requires a user-provided local ojdbc.jar.',
     driverClass: 'oracle.jdbc.OracleDriver',
     urlPlaceholder: 'jdbc:oracle:thin:@//localhost:1521/<service-name>',
     connectionVariants: [
@@ -1107,7 +1094,6 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     status: 'configurable',
     usesUrl: true,
     externalDriver: true,
-    description: 'Custom JDBC loads the driver class, JDBC URL, and JAR paths through the JDBC bridge.',
     urlPlaceholder: 'jdbc:vendor://host:port/database',
     connectionVariants: [{ id: 'urlOnly', label: 'URL only' }],
     defaultUrl: (input) => input.connectionUrl || '',
@@ -1119,7 +1105,6 @@ const DRIVER_PROFILES: Record<DriverType, DriverProfile> = {
     defaultUsername: '',
     status: 'ready',
     usesUrl: true,
-    description: 'Local SQLite file with query execution, object browsing, DDL, and read-only data preview.',
     urlPlaceholder: '/path/to/database.sqlite',
     connectionVariants: [{ id: 'file', label: 'File' }],
     defaultUrl: (input) => input.connectionUrl || '',
@@ -1165,7 +1150,6 @@ function databaseFieldLabel(variant: ConnectionVariant, t: TFunction) {
   return t('connectionForm.database')
 }
 
-const PRIMARY_DRIVER_IDS: DriverType[] = ['postgres', 'mysql', 'oracle', 'sqlite', 'mssql']
 const PRIMARY_DRIVER_ORDER = new Map<DriverType, number>(
   ['postgres', 'mysql', 'sqlite', 'mssql', 'oracle'].map((driver, index) => [driver as DriverType, index]),
 )

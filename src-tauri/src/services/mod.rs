@@ -9,3 +9,8 @@ pub mod query_engine;
 pub mod sql_risk;
 pub mod ssh_tunnel;
 pub mod task_manager;
+
+pub mod driver_registry;
+pub mod sql_dialect;
+
+pub mod driver_config;

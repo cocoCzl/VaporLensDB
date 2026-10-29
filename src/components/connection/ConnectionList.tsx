@@ -1,3 +1,7 @@
+import { connectionDriverReadiness } from '@/lib/connectionDriverReadiness'
+import { connectionEndpoint } from '@/components/sidebar/connectionPresentation'
+import { useDriverStore } from '@/stores/driverStore'
+import { DatabaseProductLabel } from '@/components/common/DatabaseProductLabel'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Database, FolderPlus, Link, Link2Off, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -44,6 +48,7 @@ export function ConnectionList({
     deleteGroup,
     moveConnectionsToGroup,
   } = useConnectionStore()
+  useDriverStore()
   const notify = useUiStore((state) => state.notify)
   const notifyError = useUiStore((state) => state.notifyError)
   const { requestDisconnect, disconnectDialog } = useDisconnectRequest()
@@ -440,6 +445,7 @@ function ConnectionCard({
   onEdit?: () => void
   t: ReturnType<typeof useTranslation>['t']
 }) {
+  useDriverStore()
   const connected = status === 'connected'
   const readinessIssue = connectionReadinessIssue(connection)
 
@@ -485,7 +491,7 @@ function ConnectionCard({
         </button>
       )}
       <DatabaseVendorIcon
-        driverType={connection.driverType}
+        driverType={connection.productId ?? connection.driverType}
         className={[
           'size-4 shrink-0',
           selected ? 'opacity-100' : connected ? 'opacity-100' : 'opacity-85',
@@ -507,7 +513,7 @@ function ConnectionCard({
           />
           {managerMode ? (
             <>
-              <span className="w-16 shrink-0 text-[11px] text-muted-foreground">{connection.driverType}</span>
+              <span className="w-16 shrink-0 truncate text-[11px] text-muted-foreground"><DatabaseProductLabel connection={connection} /></span>
               <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
                 {readinessIssue ? t('connection.notReady') : compactConnectionTarget(connection)}
               </span>
@@ -518,7 +524,7 @@ function ConnectionCard({
         </div>
         {!managerMode && (
           <div className="truncate text-[11px] leading-4 text-muted-foreground">
-            {connection.driverType} · {readinessIssue ? t('connection.notReady') : compactConnectionTarget(connection)}
+            <DatabaseProductLabel connection={connection} /> · {readinessIssue ? t('connection.notReady') : compactConnectionTarget(connection)}
           </div>
         )}
       </div>
@@ -588,23 +594,11 @@ function ConnectionCard({
 }
 
 function compactConnectionTarget(connection: ConnectionConfig) {
-  const host = connection.host ?? connection.connectionUrl ?? '-'
-  const port = connection.port ? `:${connection.port}` : ''
-  const database = connection.database ? `/${connection.database}` : ''
-  return `${connection.username ?? '-'}@${host}${port}${database}`
+  return connectionEndpoint(connection)
 }
 
 function connectionReadinessIssue(connection: ConnectionConfig) {
-  if (connection.driverType !== 'oracle' && connection.driverType !== 'jdbc') {
-    return null
-  }
-  if (!connection.driverClass?.trim()) {
-    return 'Missing JDBC driver class'
-  }
-  if (!connection.driverPaths?.length) {
-    return 'Missing local JDBC JAR'
-  }
-  return null
+  return connectionDriverReadiness(connection)
 }
 
 function groupConnections(

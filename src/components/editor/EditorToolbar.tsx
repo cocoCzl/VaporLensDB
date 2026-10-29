@@ -1,3 +1,4 @@
+import { DatabaseProductLabel } from '@/components/common/DatabaseProductLabel'
 import { sqlCommandShortcut } from '@/lib/sqlCommands'
 import { dispatchSqlFileAction } from '@/lib/sqlFileActions'
 import { Check, ChartNoAxesCombined, ChevronDown, GitBranch, History, ListFilter, Maximize2, Minimize2, MoreHorizontal, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
@@ -372,10 +373,10 @@ function ExecutionDataSourcePicker({
               <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{group.name}</div>
               {group.connections.map((connection) => (
                 <button key={connection.id} type="button" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent" onClick={() => choose(connection.id)}>
-                  <DatabaseVendorIcon driverType={connection.driverType} className="size-3.5 shrink-0" />
+                  <DatabaseVendorIcon driverType={connection.productId ?? connection.driverType} className="size-3.5 shrink-0" />
                   <span className={['size-1.5 rounded-full', connectionStatusClass(statuses[connection.id] ?? 'disconnected')].join(' ')} />
                   <span className="min-w-0 flex-1 truncate">{connection.name}</span>
-                  <span className="text-[10px] text-muted-foreground">{connection.driverType}</span>
+                  <span className="text-[10px] text-muted-foreground"><DatabaseProductLabel connection={connection} /></span>
                   {connection.id === connectionId && <Check className="size-3.5" />}
                 </button>
               ))}

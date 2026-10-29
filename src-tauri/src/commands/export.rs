@@ -2201,30 +2201,18 @@ fn resolve_connection_sql_dialect(
             Some(crate::models::driver_catalog::DriverBackend::Jdbc)
         );
     let dialect = if jdbc {
-        match connection
-            .driver_dialect
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                definition
-                    .as_ref()
-                    .map(|driver| driver.driver_dialect.as_str())
-            })
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("postgres" | "postgresql") => DriverType::Postgres,
-            Some("mysql" | "mariadb") => DriverType::Mysql,
-            Some("mssql" | "sqlserver") => DriverType::Mssql,
-            Some("sqlite") => DriverType::Sqlite,
-            Some("oracle") => DriverType::Oracle,
-            _ => {
-                return Err(AppError::UnsupportedOperation {
-                    driver: "jdbc".into(),
-                    operation: "CSV SQL dialect is not supported".into(),
-                })
-            }
-        }
+        crate::services::sql_dialect::resolve_sql_dialect(
+            connection
+                .driver_dialect
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .or_else(|| definition.as_ref().map(|d| d.driver_dialect.as_str()))
+                .unwrap_or("genericJdbc"),
+        )
+        .ok_or_else(|| AppError::UnsupportedOperation {
+            driver: "jdbc".into(),
+            operation: "CSV SQL dialect is not supported".into(),
+        })?
     } else {
         connection.driver_type
     };
@@ -3849,6 +3837,10 @@ mod stream_lifecycle_tests {
                 id: Uuid::new_v4(),
                 name: "CSV import live acceptance".into(),
                 driver_definition_id: None,
+                product_id: None,
+                driver_installation_id: None,
+                connection_mode: None,
+                driver_properties: Vec::new(),
                 driver_type,
                 driver_dialect: None,
                 host: Some(host.to_string()),

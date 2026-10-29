@@ -1,6 +1,11 @@
 import type { DriverType } from '@/types/connection'
 
 export interface DriverDefinition {
+  /** Draft-only, consumed when creating a product. */
+  newProductName?: string
+  productId?: string
+  defaultInstallationId?: string | null
+  nativeImplementationId?: string | null
   id: string
   driverType: DriverType
   driverDialect: string
@@ -23,7 +28,7 @@ export interface DriverDefinition {
   capabilities: DriverDefinitionCapabilities
 }
 
-export type DriverBackend = 'nativeRust' | 'jdbc' | 'planned'
+export type DriverBackend = 'nativeRust' | 'jdbc'
 
 export type DriverStatus = 'ready' | 'configurable' | 'planned'
 
@@ -43,6 +48,7 @@ export interface DriverConnectionVariant {
 }
 
 export interface ValidateExternalDriverInput {
+  installationId?: string | null
   driverType: DriverType
   connectionUrl?: string | null
   driverClass?: string | null
@@ -52,6 +58,7 @@ export interface ValidateExternalDriverInput {
 export interface ImportJdbcDriverArtifactsInput {
   driverDefinitionId: string
   paths: string[]
+  label?: string
 }
 
 export interface RemoveJdbcDriverArtifactInput {
@@ -62,4 +69,21 @@ export interface RemoveJdbcDriverArtifactInput {
 export interface ExternalDriverValidation {
   valid: boolean
   message: string
+}
+
+export interface DatabaseProduct {
+  id: string
+  name: string
+  iconKey: string
+  builtIn: boolean
+  adapterId: string
+  defaultDriverDefinitionId: string
+}
+export interface DriverInstallation {
+  id: string
+  driverDefinitionId: string
+  label: string
+  artifacts: { path: string; sha256: string | null; role: string }[]
+  javaRequirement: string
+  validation?: { fingerprint: string; checkedAt: string; classLoaded: boolean } | null
 }

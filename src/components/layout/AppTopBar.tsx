@@ -59,7 +59,7 @@ export function AppTopBar() {
   }
 
   return (
-    <header className="ide-top-bar flex h-[46px] shrink-0 items-center gap-2.5 border-b px-3.5" aria-label={t('topBar.label')}>
+    <header className="ide-top-bar shell-top flex shrink-0 items-center gap-2.5 border-b px-3.5" aria-label={t('topBar.label')}>
       <VaporLensMark className="size-6 shrink-0" />
 
       <div className="flex shrink-0 items-center gap-0.5">

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
 import type { TFunction } from 'i18next'
 import type { ConnectionConfig, ConnectionRuntimeStatus } from '@/types/connection'
 
@@ -12,6 +13,8 @@ export function highlightDataSourceMatch(value: string, query: string): ReactNod
 
 /** The sidebar's second line is intentionally endpoint-first, never a driver dump. */
 export function connectionEndpoint(connection: ConnectionConfig) {
+  const urlTarget = nullableText(connection.connectionUrl)
+  if (urlTarget && (connection.connectionMode === 'urlOnly' || connection.connectionMode === 'file')) return compactConnectionUrl(urlTarget)
   const host = nullableText(connection.host)
   if (host) return `${host}${connection.port ? `:${connection.port}` : ''}`
 
@@ -58,7 +61,9 @@ function nullableText(value: string | null | undefined) {
 }
 
 function compactConnectionUrl(url: string) {
-  return url
+  return extractUrlCredentials(url).connectionUrl
+    .replace(/([?&;][^=?&;]+)=([^&;]*)/g, '$1=•••')
+    .replace(/(oracle:thin:)[^@]+@/i, '$1•••@')
     .replace(/^jdbc:/, '')
     .replace(/^oracle:thin:@/, 'oracle:')
     .replace(/^postgresql:\/\//, 'postgres:')

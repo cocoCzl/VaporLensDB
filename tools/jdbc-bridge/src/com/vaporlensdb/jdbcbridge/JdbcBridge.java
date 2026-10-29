@@ -45,6 +45,14 @@ public final class JdbcBridge {
     private static final Pattern STREAM_MAX_CHUNK_BYTES_PATTERN = Pattern.compile("\\\"maxChunkBytes\\\"\\s*:\\s*(\\d+)");
     private static final Pattern STREAM_MAX_RESULT_BYTES_PATTERN = Pattern.compile("\\\"maxResultBytes\\\"\\s*:\\s*(\\d+)");
 
+    // Transport chunking is separate from bounded driver fetching. HINT_ONLY
+    // changes no transaction/autocommit state and makes no cursor guarantee.
+    enum FetchStrategy { HINT_ONLY }
+    static void configureFetch(Statement statement, int size, FetchStrategy strategy) throws Exception {
+        switch (strategy) { case HINT_ONLY -> statement.setFetchSize(size); }
+    }
+
+    private static final Set<String> runtimeSecrets = new LinkedHashSet<>();
     private JdbcBridge() {
     }
 
@@ -55,8 +63,17 @@ public final class JdbcBridge {
         }
 
         String command = args[0];
+        if ("validate".equals(command)) {
+            String line = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8)).readLine();
+            Class<?> driver = loadDriverClass(decode(line));
+            if (!java.sql.Driver.class.isAssignableFrom(driver)) throw new IllegalArgumentException("Class does not implement java.sql.Driver");
+            driver.getDeclaredConstructor().newInstance();
+            driver.getDeclaredMethods(); // resolve linked method signature dependencies
+            System.out.println("Driver class loaded; database connectivity has not been tested");
+            return;
+        }
         if ("server".equals(command)) {
-            server();
+            try { server(); } catch (Throwable error) { System.err.println(redactRuntimeSecrets(error.toString())); System.exit(1); }
             return;
         }
 
@@ -72,7 +89,7 @@ public final class JdbcBridge {
         int queryTimeoutSeconds = args.length >= 7 ? parsePositiveInt(args[6], DEFAULT_QUERY_TIMEOUT_SECONDS)
                 : DEFAULT_QUERY_TIMEOUT_SECONDS;
 
-        Class.forName(driverClass);
+        loadDriverClass(driverClass);
         DriverManager.setLoginTimeout(connectTimeoutSeconds);
 
         Properties properties = new Properties();
@@ -104,8 +121,8 @@ public final class JdbcBridge {
             return;
         }
 
-        String[] init = line.split("\\t", 8);
-        if (init.length != 8 || !"INIT".equals(init[0]) || !"0".equals(init[1])) {
+        String[] init = line.split("\\t", 9);
+        if ((init.length != 8 && init.length != 9) || !"INIT".equals(init[0]) || !"0".equals(init[1])) {
             throw new IllegalArgumentException("JDBC bridge requires an INIT request");
         }
 
@@ -116,7 +133,7 @@ public final class JdbcBridge {
         int connectTimeoutSeconds = parsePositiveInt(init[6], DEFAULT_CONNECT_TIMEOUT_SECONDS);
         int queryTimeoutSeconds = parsePositiveInt(init[7], DEFAULT_QUERY_TIMEOUT_SECONDS);
 
-        Class.forName(driverClass);
+        loadDriverClass(driverClass);
         DriverManager.setLoginTimeout(connectTimeoutSeconds);
         Properties properties = new Properties();
         if (!username.isEmpty()) {
@@ -126,6 +143,16 @@ public final class JdbcBridge {
             properties.setProperty("password", password);
         }
 
+        if (!password.isEmpty()) runtimeSecrets.add(password);
+        if (init.length == 9) {
+            for (String property : decode(init[8]).split("\\n")) {
+                String[] pair = property.split("\\t", 2);
+                if (pair.length != 2) throw new IllegalArgumentException("Invalid JDBC property frame");
+                String value = decode(pair[1]);
+                if (!value.isEmpty()) runtimeSecrets.add(value);
+                properties.setProperty(decode(pair[0]), value);
+            }
+        }
         try (Connection connection = DriverManager.getConnection(url, properties)) {
             respondOk("0", "{\"ok\":true}");
             serveRequests(reader, connection, queryTimeoutSeconds);
@@ -203,11 +230,25 @@ public final class JdbcBridge {
         }
     }
 
+    private static Class<?> loadDriverClass(String name) throws Exception {
+        var resources = ClassLoader.getSystemClassLoader().getResources(name.replace('.', '/') + ".class");
+        int candidates = 0;
+        while (resources.hasMoreElements()) { resources.nextElement(); candidates++; }
+        if (candidates > 1) throw new IllegalArgumentException("Conflicting main driver classes; select one main driver version per installation");
+        return Class.forName(name);
+    }
+
+    private static String redactRuntimeSecrets(String value) {
+        if (value == null) return "";
+        for (String secret : runtimeSecrets) value = value.replace(secret, "[REDACTED]");
+        return value;
+    }
+
     private static String ping(Connection connection) throws Exception {
         DatabaseMetaData metaData = connection.getMetaData();
         return "{\"ok\":true,\"databaseProductName\":\""
                 + json(metaData.getDatabaseProductName()) + "\",\"databaseProductVersion\":\""
-                + json(metaData.getDatabaseProductVersion()) + "\"}";
+                + json(metaData.getDatabaseProductVersion()) + "\",\"supportsTransactions\":" + metaData.supportsTransactions() + "}";
     }
 
     private static void transaction(Connection connection, String action) throws Exception {
@@ -226,9 +267,9 @@ public final class JdbcBridge {
                 .contains("oracle");
         try (Statement statement = connection.createStatement()) {
             statement.setQueryTimeout(queryTimeoutSeconds);
-            // Avoid a driver default that prefetches an unbounded result window.
-            // The Rust side still applies its own interactive result limit.
-            statement.setFetchSize(1_000);
+            // Advisory hint only; bounded driver-side fetching is vendor-dependent.
+            // Interactive/protocol budgets are enforced separately.
+            configureFetch(statement, 1_000, FetchStrategy.HINT_ONLY);
             statement.setMaxRows(MAX_INTERACTIVE_RESULT_ROWS);
             boolean hasResultSet = statement.execute(sql);
             long elapsedMs = System.currentTimeMillis() - start;
@@ -308,9 +349,9 @@ public final class JdbcBridge {
             boolean oracle = connection.getMetaData().getDatabaseProductName()
                     .toLowerCase(Locale.ROOT)
                     .contains("oracle");
-            statement.setFetchSize(oracle ? 1 : request.chunkSize());
+            configureFetch(statement, oracle ? 1 : request.chunkSize(), FetchStrategy.HINT_ONLY);
             // Ask for one extra row so the final frame reports truncation
-            // truthfully, while still bounding the driver-side result window.
+            // truthfully. A row cap does not prove bounded driver memory.
             if (request.maxRows() != null && request.maxRows() < Integer.MAX_VALUE) {
                 statement.setMaxRows((int) (request.maxRows() + 1));
             }
@@ -887,7 +928,7 @@ public final class JdbcBridge {
         if (error instanceof ResultLimitException) {
             respond("LIMIT", requestId, "JDBC result exceeded the interactive byte limit");
         } else {
-            respondErr(requestId, error.getMessage() == null ? error.toString() : error.getMessage());
+            respondErr(requestId, redactRuntimeSecrets(error.getMessage() == null ? error.toString() : error.getMessage()));
         }
     }
 

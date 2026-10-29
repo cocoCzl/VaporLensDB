@@ -95,13 +95,11 @@ async fn ensure_console_session(
         .config_store
         .decrypt_connection_credentials(&config)
         .map_err(String::from)?;
-    let definition = config
-        .driver_definition_id
-        .as_deref()
-        .map(|id| state.config_store.get_driver_definition(id))
-        .transpose()
-        .map_err(String::from)?
-        .flatten();
+    let (config, definition) = state
+        .config_store
+        .resolve_connection(&config)
+        .map_err(String::from)?;
+    let definition = Some(definition);
     let mut runtime_config = config;
     runtime_config.ssh_tunnel = ssh_tunnel;
     let active = crate::services::connection_manager::create_active_connection(
@@ -176,8 +174,13 @@ fn execution_driver_type(
         .config_store
         .get_connection(connection_id)
         .map_err(String::from)?
-        .map(|config| config.driver_type)
         .ok_or_else(|| "connection not found".to_string())
+        .and_then(|config| {
+            state
+                .config_store
+                .connection_product_type(&config)
+                .map_err(String::from)
+        })
 }
 
 #[tauri::command]
@@ -797,13 +800,11 @@ pub async fn set_console_transaction_mode(
         .config_store
         .decrypt_connection_credentials(&config)
         .map_err(String::from)?;
-    let definition = config
-        .driver_definition_id
-        .as_deref()
-        .map(|id| state.config_store.get_driver_definition(id))
-        .transpose()
-        .map_err(String::from)?
-        .flatten();
+    let (config, definition) = state
+        .config_store
+        .resolve_connection(&config)
+        .map_err(String::from)?;
+    let definition = Some(definition);
     let mut runtime_config = config.clone();
     runtime_config.ssh_tunnel = ssh_tunnel;
     let active = crate::services::connection_manager::create_active_connection(

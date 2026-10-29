@@ -9,6 +9,14 @@ pub struct ConnectionConfig {
     pub id: Uuid,
     pub name: String,
     pub driver_definition_id: Option<String>,
+    #[serde(default)]
+    pub product_id: Option<String>,
+    #[serde(default)]
+    pub driver_installation_id: Option<String>,
+    #[serde(default)]
+    pub connection_mode: Option<String>,
+    #[serde(default)]
+    pub driver_properties: Vec<DriverProperty>,
     pub driver_type: DriverType,
     pub driver_dialect: Option<String>,
     pub host: Option<String>,
@@ -121,4 +129,28 @@ pub struct ConnectionStatus {
     pub connection_id: Uuid,
     pub status: ConnectionRuntimeStatus,
     pub message: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriverProperty {
+    pub name: String,
+    pub value: Option<String>,
+    #[serde(default = "sensitive_property_default")]
+    pub sensitive: bool,
+    #[serde(skip_deserializing)]
+    pub has_saved_value: bool,
+    #[serde(skip)]
+    pub encrypted_value: Option<String>,
+}
+fn sensitive_property_default() -> bool {
+    true
+}
+impl fmt::Debug for DriverProperty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DriverProperty")
+            .field("name", &self.name)
+            .field("sensitive", &self.sensitive)
+            .finish_non_exhaustive()
+    }
 }

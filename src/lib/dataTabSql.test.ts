@@ -62,3 +62,9 @@ describe('other data preview dialects', () => {
       .toBe('SELECT *\nFROM "APP"."ITEMS"\nOFFSET 0 ROWS FETCH NEXT 21 ROWS ONLY')
   })
 })
+
+describe('unverified SQL dialects', () => {
+  it('refuses guessed pagination for generic JDBC', () => {
+    expect(() => buildDataTabSql({driverType:'jdbc',schema:'PUBLIC',table:'items',limit:10})).toThrow(/unknown dialect/)
+  })
+})

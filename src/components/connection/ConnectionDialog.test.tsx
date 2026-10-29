@@ -19,7 +19,10 @@ vi.mock('@/stores/connectionStore', () => ({
 }))
 
 vi.mock('@/stores/driverStore', () => ({
-  useDriverStore: () => ({ drivers: [driver], loadDrivers: state.loadDrivers }),
+  useDriverStore: (selector?: (value: unknown) => unknown) => {
+    const catalog = { drivers: [driver], loadDrivers: state.loadDrivers, products: [], installations: [], loading: false, error: null }
+    return selector ? selector(catalog) : catalog
+  },
 }))
 
 const driver: DriverDefinition = {
@@ -55,7 +58,8 @@ function openDialog() {
   return trigger
 }
 
-function fillForm() {
+async function fillForm() {
+  await waitFor(() => expect(document.querySelector('#connection-name')).toBeInTheDocument())
   fireEvent.change(document.querySelector('#connection-name')!, { target: { value: 'Dialog QA' } })
   fireEvent.change(document.querySelector('#connection-username')!, { target: { value: 'qa' } })
   fireEvent.change(document.querySelector('#connection-database')!, { target: { value: 'qa' } })
@@ -100,7 +104,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
   it('closes after a successful Save Only without connecting', async () => {
     render(<ConnectionDialog />)
     openDialog()
-    fillForm()
+    await fillForm()
     await saveOnly()
     await expectDialogClosed()
     expect(state.saveConnection).toHaveBeenCalledOnce()
@@ -110,7 +114,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
   it('closes after a successful Save + Connect', async () => {
     render(<ConnectionDialog />)
     openDialog()
-    fillForm()
+    await fillForm()
     saveAndConnect()
     await expectDialogClosed()
     expect(state.saveConnection).toHaveBeenCalledOnce()
@@ -122,7 +126,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     state.saveConnection.mockImplementation(async () => { await save.promise; return { id: 'saved' } })
     render(<ConnectionDialog />)
     openDialog()
-    fillForm()
+    await fillForm()
     await saveOnly()
     expect(screen.getByRole('dialog')).toBeVisible()
     await act(async () => { save.resolve() })
@@ -136,7 +140,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     state.connectConnection.mockReturnValue(connect.promise)
     render(<ConnectionDialog />)
     openDialog()
-    fillForm()
+    await fillForm()
     saveAndConnect()
     expect(state.connectConnection).not.toHaveBeenCalled()
     await act(async () => { save.resolve() })
@@ -149,7 +153,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
   it('reopens with a fresh form after closing', async () => {
     render(<ConnectionDialog />)
     openDialog()
-    fillForm()
+    await fillForm()
     closeWithX()
     await expectDialogClosed()
     openDialog()
@@ -199,7 +203,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     if (action === 'X') closeWithX()
     else if (action === 'Escape') fireEvent.keyDown(document, { key: 'Escape' })
     else {
-      fillForm()
+      await fillForm()
       if (action === 'Save Only') await saveOnly()
       else saveAndConnect()
     }

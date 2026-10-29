@@ -4,7 +4,8 @@ use std::{
     sync::OnceLock,
 };
 
-use tokio::process::Command;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use tokio::{io::AsyncWriteExt, process::Command};
 
 use crate::models::{connection::ConnectionConfig, error::AppError};
 
@@ -130,6 +131,17 @@ async fn validate_java_runtime() -> Result<(), AppError> {
             ))
         })?;
 
+    let version = String::from_utf8_lossy(&output.stderr);
+    let major = version
+        .split('"')
+        .nth(1)
+        .and_then(|v| v.split('.').next())
+        .and_then(|v| v.parse::<u32>().ok());
+    if major.is_none_or(|v| v < 21) {
+        return Err(AppError::ConfigError(
+            "JDBC bridge requires Java 21 or newer; selected PATH runtime is older".into(),
+        ));
+    }
     if !output.status.success() {
         return Err(AppError::ConfigError(
             "java -version failed; install a working JRE/JDK for JDBC drivers".to_string(),
@@ -143,4 +155,78 @@ fn required<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, AppError>
     value
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| AppError::ConfigError(format!("{name} is required")))
+}
+
+/// Class/dependency loading is a separate validation step from connecting.
+pub async fn validate_jdbc_driver_class(config: &ConnectionConfig) -> Result<(), AppError> {
+    validate_jdbc_prerequisites(config).await?;
+    let bridge = resolve_jdbc_bridge_jar()?;
+    let classpath = std::env::join_paths(
+        std::iter::once(bridge).chain(config.driver_paths.iter().map(PathBuf::from)),
+    )
+    .map_err(|_| AppError::ConfigError("Invalid JDBC classpath".into()))?;
+    let mut process = Command::new("java")
+        .arg("-cp")
+        .arg(classpath)
+        .arg("com.vaporlensdb.jdbcbridge.JdbcBridge")
+        .arg("validate")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|_| AppError::ConfigError("Java runtime unavailable".into()))?;
+    process
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::ConfigError("JDBC validation input unavailable".into()))?
+        .write_all(
+            format!(
+                "{}\n",
+                BASE64.encode(config.driver_class.as_deref().unwrap_or_default())
+            )
+            .as_bytes(),
+        )
+        .await?;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        process.wait_with_output(),
+    )
+    .await
+    .map_err(|_| AppError::ConfigError("JDBC class loading timed out".into()))??;
+    if !output.status.success() {
+        return Err(AppError::ConfigError("JDBC class/dependency loading failed. Check driver class, dependencies and Java compatibility. Connectivity has not been tested.".into()));
+    }
+    Ok(())
+}
+
+/// Bind a historical validation to ordered bytes, class, selected Java binary,
+/// runtime version and bridge. Changing any dependency invalidates the fingerprint.
+pub async fn installation_runtime_fingerprint(
+    config: &ConnectionConfig,
+) -> Result<String, AppError> {
+    use sha2::{Digest, Sha256};
+    validate_java_runtime().await?;
+    let java = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|p| p.join(if cfg!(windows) { "java.exe" } else { "java" }))
+        .find(|p| p.is_file())
+        .ok_or_else(|| AppError::ConfigError("Java runtime unavailable".into()))?
+        .canonicalize()?;
+    let mut hashes = Vec::new();
+    for path in &config.driver_paths {
+        hashes.push(super::driver_registry::artifact_hash(path)?);
+    }
+    let version = Command::new("java").arg("-version").output().await?;
+    let bridge = resolve_jdbc_bridge_jar()?;
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&(
+            config.driver_class.as_ref(),
+            hashes,
+            java.to_string_lossy(),
+            super::driver_registry::artifact_hash(&java.to_string_lossy())?,
+            String::from_utf8_lossy(&version.stderr),
+            super::driver_registry::artifact_hash(&bridge.to_string_lossy())?
+        ))?)
+    ))
 }

@@ -1,3 +1,4 @@
+import { exportDriverConfiguration, importDriverConfiguration } from '@/ipc/driver'
 import {
   Check,
   Database,
@@ -20,6 +21,7 @@ import type { TFunction } from 'i18next'
 import { downloadDir, join } from '@tauri-apps/api/path'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { Button } from '@/components/ui/button'
+import { AppSelect } from '@/components/ui/app-select'
 import { Input } from '@/components/ui/input'
 import {
   createDbeaverImportSession,
@@ -46,7 +48,6 @@ import type { ConnectionInput } from '@/types/connection'
 import type { DriverDefinition } from '@/types/driver'
 import type { LucideIcon } from 'lucide-react'
 
-type SettingsSection = 'general' | 'drivers' | 'import' | 'diagnostics'
 type SettingsDraft = {
   theme: 'light' | 'dark' | 'system'
   language: 'zh' | 'en'
@@ -84,7 +85,8 @@ export function SettingsWorkspacePanel() {
   const historyLoading = useQueryHistoryStore((state) => state.loading)
   const loadHistory = useQueryHistoryStore((state) => state.loadHistory)
   const clearHistory = useQueryHistoryStore((state) => state.clear)
-  const [activeSection, setActiveSection] = useState<SettingsSection>('general')
+  const activeSection = useUiStore((state) => state.settingsSection)
+  const setActiveSection = useUiStore((state) => state.setSettingsSection)
   const [confirmClearHistory, setConfirmClearHistory] = useState(false)
   const [includeDiagnosticsSqlText, setIncludeDiagnosticsSqlText] = useState(false)
   const [diagnosticsExporting, setDiagnosticsExporting] = useState(false)
@@ -218,10 +220,10 @@ export function SettingsWorkspacePanel() {
   }
 
   return (
-    <section className="ide-workspace flex min-w-0 flex-1 flex-col overflow-hidden">
+    <section className="ide-workspace @container/settings flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="grid min-h-full grid-cols-[13.5rem_minmax(0,1fr)]">
-          <nav className="ide-settings-nav border-r p-2" aria-label={t('settings.title')}>
+        <div className="grid min-h-full min-w-0 @min-[850px]/settings:grid-cols-[13.5rem_minmax(0,1fr)]">
+          <nav className="ide-settings-nav grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] content-start gap-1 border-b p-2 @min-[850px]/settings:block @min-[850px]/settings:border-r @min-[850px]/settings:border-b-0" aria-label={t('settings.title')}>
             <SettingsNavButton
               active={activeSection === 'general'}
               icon={Settings}
@@ -255,7 +257,7 @@ export function SettingsWorkspacePanel() {
           <div className="min-w-0 p-4 md:px-6 md:py-5">
             {activeSection === 'general' && (
               <div className="mx-auto grid max-w-[54rem] gap-5">
-                <div className="flex min-h-9 items-center justify-between gap-3 border-b border-border/70 px-1 pb-3 text-xs">
+                <div className="flex min-h-9 flex-wrap items-center justify-between gap-3 border-b border-border/70 px-1 pb-3 text-xs">
                   <span className={hasSettingsChanges ? 'text-warning' : 'text-muted-foreground'}>
                     {hasSettingsChanges ? t('settings.unsavedChanges') : t('settings.noUnsavedChanges')}
                   </span>
@@ -458,7 +460,7 @@ export function SettingsWorkspacePanel() {
                 </SettingsCard>
 
                 <SettingsCard title={t('settings.systemInfo')} icon={HardDrive}>
-                  <div className="grid gap-2 md:grid-cols-2">
+                  <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))]">
                     <SettingFact
                       label={t('settings.backendVersion')}
                       value={health ? `${health.app} ${health.version}` : healthUnavailable ? t('settings.unavailable') : t('common.loading')}
@@ -496,9 +498,10 @@ export function SettingsWorkspacePanel() {
   )
 }
 
-function DriverDefinitionsSettings() {
+export function DriverDefinitionsSettings() {
   const { t } = useTranslation()
   const drivers = useDriverStore((state) => state.drivers)
+  const products = useDriverStore((state) => state.products)
   const loading = useDriverStore((state) => state.loading)
   const loadDrivers = useDriverStore((state) => state.loadDrivers)
   const saveDriver = useDriverStore((state) => state.saveDriver)
@@ -509,7 +512,10 @@ function DriverDefinitionsSettings() {
   const [editing, setEditing] = useState<DriverDefinition | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [artifactPathInput, setArtifactPathInput] = useState('')
+  const [installationLabel, setInstallationLabel] = useState('')
   const [validationMessage, setValidationMessage] = useState<{ valid: boolean; message: string } | null>(null)
+  const [configurationJson, setConfigurationJson] = useState('')
+  const [configurationMessage, setConfigurationMessage] = useState('')
   const [query, setQuery] = useState('')
 
   useEffect(() => {
@@ -557,7 +563,7 @@ function DriverDefinitionsSettings() {
     if (paths.length === 0) {
       return
     }
-    const saved = await importJdbcArtifacts(editing.id, paths)
+    const saved = await importJdbcArtifacts(editing.id, paths, installationLabel)
     if (saved) {
       setEditing(saved)
       setValidationMessage(null)
@@ -586,7 +592,7 @@ function DriverDefinitionsSettings() {
     if (paths.length === 0) {
       return
     }
-    const saved = await importJdbcArtifacts(editing.id, paths)
+    const saved = await importJdbcArtifacts(editing.id, paths, installationLabel)
     if (saved) {
       setEditing(saved)
       setArtifactPathInput('')
@@ -594,11 +600,11 @@ function DriverDefinitionsSettings() {
     }
   }
 
-  async function handleValidateDriver() {
-    if (!editing || editing.driverType === 'postgres' || editing.driverType === 'mysql') {
+  async function handleValidateDriver(installationId?: string) {
+    if (!editing || editing.backend !== 'jdbc') {
       return
     }
-    const result = await validateDriver(normalizeDriverDefinition(editing))
+    const result = await validateDriver({ ...normalizeDriverDefinition(editing), defaultInstallationId: installationId ?? editing.defaultInstallationId })
     setValidationMessage(result)
   }
 
@@ -641,7 +647,20 @@ function DriverDefinitionsSettings() {
         </Button>
       </div>
 
-      <div className="grid min-h-[640px] min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,480px)]">
+      <details className="rounded border p-3 text-xs">
+        <summary className="cursor-pointer">{t('driverRefactor.configuration')}</summary>
+        <div className="mt-3 grid gap-2">
+          <p>{t('driverRefactor.configurationHint')}</p>
+          <textarea aria-label={t('driverRefactor.configuration')} className="ide-input min-h-28 w-full font-mono" value={configurationJson} onChange={(e) => setConfigurationJson(e.target.value)} />
+          <input type="file" accept=".json,application/json" aria-label={t('driverRefactor.importConfiguration')} onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then(setConfigurationJson) }} />
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => { void exportDriverConfiguration().then((bundle) => { setConfigurationJson(JSON.stringify(bundle, null, 2)); setConfigurationMessage('') }).catch((e) => setConfigurationMessage(normalizeAppError(e).message)) }}>{t('driverRefactor.exportConfiguration')}</Button>
+            <Button size="sm" disabled={!configurationJson.trim()} onClick={() => { void (async () => { try { const count = await importDriverConfiguration(JSON.parse(configurationJson)); await Promise.all([loadDrivers(true), useConnectionStore.getState().loadConnections()]); setConfigurationMessage(t('driverRefactor.importedConfiguration', { count })) } catch(e) { setConfigurationMessage(normalizeAppError(e).message) } })() }}>{t('driverRefactor.importConfiguration')}</Button>
+          </div>
+          {configurationMessage && <p role="status">{configurationMessage}</p>}
+        </div>
+      </details>
+      <div className="grid min-w-0 gap-4 @min-[1200px]/settings:grid-cols-[minmax(0,1fr)_minmax(360px,480px)]">
         <section className="grid min-w-0 content-start gap-3 rounded-md border bg-card p-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -652,7 +671,7 @@ function DriverDefinitionsSettings() {
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          <div className="grid min-w-0 gap-2 md:grid-cols-2">
+          <div className="grid min-w-0 gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))]">
               {filteredDrivers.map((driver) => (
                 <button
                   key={driver.id}
@@ -669,11 +688,11 @@ function DriverDefinitionsSettings() {
                     setValidationMessage(null)
                   }}
                 >
-                  <span className="flex min-w-0 items-start justify-between gap-2">
+                  <span className="flex min-w-0 flex-wrap items-start justify-between gap-2">
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-foreground">{driver.name}</span>
-                      <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                        {driver.driverDialect} · {driverRuntimeLabel(driver)}
+                      <span className="block [overflow-wrap:anywhere] text-sm font-semibold text-foreground">{driver.name}</span>
+                      <span className="mt-0.5 block [overflow-wrap:anywhere] text-[11px] text-muted-foreground">
+                        {products.find((p) => p.id === driver.productId)?.name ?? driver.name} · {driverRuntimeLabel(driver)}
                       </span>
                     </span>
                     <span className={driverStateBadgeClass(driver)}>
@@ -715,6 +734,8 @@ function DriverDefinitionsSettings() {
               loading={loading}
               confirmDelete={confirmDeleteId === editing.id}
               artifactPathInput={artifactPathInput}
+              installationLabel={installationLabel}
+              onInstallationLabelChange={setInstallationLabel}
               validationMessage={validationMessage}
               onChange={setEditing}
               onClose={() => setEditing(null)}
@@ -746,6 +767,8 @@ function DriverDefinitionEditor({
   loading,
   confirmDelete,
   artifactPathInput,
+  installationLabel,
+  onInstallationLabelChange,
   validationMessage,
   onChange,
   onClose,
@@ -761,6 +784,8 @@ function DriverDefinitionEditor({
   loading: boolean
   confirmDelete: boolean
   artifactPathInput: string
+  installationLabel: string
+  onInstallationLabelChange: (value: string) => void
   validationMessage: { valid: boolean; message: string } | null
   onChange: (driver: DriverDefinition) => void
   onClose: () => void
@@ -768,13 +793,18 @@ function DriverDefinitionEditor({
   onImportJdbcArtifacts: () => Promise<void>
   onRemoveJdbcArtifact: (path: string) => Promise<void>
   onImportJdbcArtifactPaths: () => Promise<void>
-  onValidate: () => Promise<void>
+  onValidate: (installationId?: string) => Promise<void>
   onDelete: (driver: DriverDefinition) => Promise<void>
   onSave: () => Promise<void>
 }) {
   const { t } = useTranslation()
   const readOnly = driver.builtIn
   const canManageArtifacts = canManageJdbcArtifacts(driver)
+  const products = useDriverStore((state) => state.products)
+  const installations = useDriverStore((state) => state.installations).filter((i) => i.driverDefinitionId === driver.id)
+  const currentProduct = products.find((p) => p.id === driver.productId)
+  const connections = useConnectionStore((state) => state.connections).filter((c) => c.driverDefinitionId === driver.id)
+  const deleteInstallation = useDriverStore((state) => state.deleteInstallation)
 
   return (
     <div className="grid min-w-0 gap-4">
@@ -793,12 +823,22 @@ function DriverDefinitionEditor({
             {readOnly ? t('drivers.builtInHint') : t('drivers.customHint')}
           </p>
         </div>
-        <Button type="button" size="icon-sm" variant="ghost" className="shrink-0" onClick={onClose}>
+        <Button type="button" size="icon-sm" variant="ghost" className="shrink-0" aria-label={t('common.close')} onClick={onClose}>
           <X className="size-3.5" />
         </Button>
       </div>
 
-      <div className="grid min-w-0 gap-4 2xl:grid-cols-2">
+
+      {readOnly && <Button type="button" size="sm" variant="outline" onClick={() => onChange({ ...driver, id: '', name: `${driver.name} (copy)`, builtIn: false, defaultInstallationId: null, driverArtifacts: [] })}>{t('driverRefactor.copyDefinition')}</Button>}
+      <DriverField label={t('driverRefactor.product')}>
+        <AppSelect disabled={readOnly || connections.length > 0} value={driver.productId || '__new__'} onValueChange={(id) => onChange({ ...driver, productId: id === '__new__' ? '' : id, driverDialect: products.find((p) => p.id === id)?.adapterId !== 'genericSql' ? products.find((p) => p.id === id)?.adapterId ?? 'genericJdbc' : driver.driverDialect })} options={[{ value: '__new__', label: t('driverRefactor.newProduct') }, ...products.map((p) => ({ value: p.id, label: p.name }))]} />
+      </DriverField>
+      {(!driver.productId || (!readOnly && currentProduct && !currentProduct.builtIn)) && <DriverField label={t('driverRefactor.productName')}><Input disableTextAssistance value={driver.newProductName ?? currentProduct?.name ?? ''} onChange={(e) => onChange({ ...driver, newProductName: e.target.value })} /></DriverField>}
+      <p className="text-xs text-muted-foreground">{t('driverRefactor.references')}: {connections.map((c) => c.name).join(', ') || '0'}</p>
+      <div className="grid gap-2">
+        {installations.map((i) => <div key={i.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded border p-2 text-xs"><span className="min-w-0 truncate" title={i.label}>{i.label} · {connections.filter((c) => c.driverInstallationId === i.id).map((c) => c.name).join(', ') || '0'}{i.validation && <span className="block text-muted-foreground">{t('driverRefactor.validationReceipt')} · {i.validation.checkedAt} · {i.validation.classLoaded ? t('driverRefactor.classLoaded') : t('driverRefactor.classFailed')}</span>}</span><Button type="button" size="xs" variant="outline" disabled={loading} onClick={() => { void onValidate(i.id) }}>{t('drivers.validate')}</Button><Button type="button" size="xs" variant="outline" disabled={connections.some((c) => c.driverInstallationId === i.id)} onClick={() => { void deleteInstallation(i.id) }}>{t('common.delete')}</Button></div>)}
+      </div>
+      <div className="grid min-w-0 gap-4 @min-[1400px]/settings:grid-cols-2">
         <DriverField label={t('drivers.name')}>
           <input
             className="ide-input w-full min-w-0"
@@ -830,7 +870,15 @@ function DriverDefinitionEditor({
         </DriverField>
       </div>
 
+
+      {!readOnly && <div className="grid gap-3">
+        <DriverField label={t('driverRefactor.defaultPort')}><Input disableTextAssistance type="number" value={driver.defaultPort ?? ''} onChange={(e) => onChange({ ...driver, defaultPort: e.target.value ? Number(e.target.value) : null })} /></DriverField>
+        <DriverField label={t('connectionForm.connectionType')}><AppSelect value={driver.connectionVariants[0]?.id ?? 'urlOnly'} onValueChange={(mode) => onChange({ ...driver, connectionVariants: [{ id: mode, label: mode, requiredFields: mode === 'file' || mode === 'urlOnly' ? ['connectionUrl'] : ['host', 'port'] }] })} options={['urlOnly', 'hostPort', 'file'].map((mode) => ({ value: mode, label: t(`driverRefactor.modes.${mode}`) }))} /></DriverField>
+        {['username', 'database'].map((field) => <label key={field} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={driver.connectionVariants[0]?.requiredFields.includes(field) ?? false} onChange={(e) => onChange({ ...driver, connectionVariants: driver.connectionVariants.map((v) => ({ ...v, requiredFields: e.target.checked ? [...new Set([...v.requiredFields, field])] : v.requiredFields.filter((f) => f !== field) })) })} />{t(field === 'username' ? 'driverRefactor.requireUsername' : 'driverRefactor.requireDatabase')}</label>)}
+        <DriverField label={t('driverRefactor.dialect')}><AppSelect value={driver.driverDialect} onValueChange={(dialect) => onChange({ ...driver, driverDialect: dialect })} options={['genericJdbc', 'postgresql', 'mysql', 'sqlite', 'mssql', 'oracle'].map((dialect) => ({ value: dialect, label: dialect === 'genericJdbc' ? t('driverRefactor.unknownDialect') : ({postgresql:'PostgreSQL',mysql:'MySQL',sqlite:'SQLite',mssql:'SQL Server',oracle:'Oracle'} as Record<string,string>)[dialect] }))} /></DriverField>
+      </div>}
       <SettingsCard title={t('drivers.driverFiles')} icon={Upload}>
+        <Input disableTextAssistance aria-label={t('driverRefactor.versionLabel')} placeholder={t('driverRefactor.versionLabel')} value={installationLabel} onChange={(e) => onInstallationLabelChange(e.target.value)} />
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
@@ -926,7 +974,7 @@ function DriverDefinitionEditor({
         />
       </DriverField>
 
-      {!readOnly && (
+      {driver.backend === 'jdbc' && (
         <div className="flex min-w-0 flex-col gap-2 border-t pt-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Button
@@ -955,7 +1003,7 @@ function DriverDefinitionEditor({
             )}
           </div>
 
-          <div className="flex shrink-0 justify-end gap-2">
+          {!readOnly && <div className="flex shrink-0 justify-end gap-2">
             <Button
               type="button"
               size="sm"
@@ -979,7 +1027,7 @@ function DriverDefinitionEditor({
               <Save className="size-3.5" />
               {t('common.save')}
             </Button>
-          </div>
+          </div>}
         </div>
       )}
     </div>
@@ -1145,7 +1193,7 @@ export function DbeaverImportSettings({
             </Button>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))]">
             <PreviewList title={t('dbeaver.previewConnections')}>
               {preview.connections.length === 0 ? (
                 <PreviewEmpty label={t('dbeaver.noImportableConnections')} />
@@ -1276,7 +1324,7 @@ function SettingsNavButton({
       onClick={onClick}
     >
       <Icon className="size-3.5" />
-      <span className="min-w-0 truncate font-medium">{title}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere] font-medium">{title}</span>
     </button>
   )
 }
@@ -1390,7 +1438,7 @@ function NumberSetting({
   }
 
   return (
-    <div className="grid gap-3 border-b border-border-subtle/75 py-3 text-xs last:border-b-0 lg:grid-cols-[minmax(150px,0.7fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-center">
+    <div className="grid gap-3 border-b border-border-subtle/75 py-3 text-xs last:border-b-0 @min-[1100px]/settings:grid-cols-[minmax(150px,0.7fr)_minmax(220px,1fr)_minmax(180px,auto)] @min-[1100px]/settings:items-center">
       <div className="min-w-0">
         <label className="block truncate font-semibold text-foreground" htmlFor={`setting-${label}`}>
           {label}
@@ -1522,9 +1570,9 @@ function newCustomDriverDefinition(): DriverDefinition {
     capabilities: {
       canConnect: true,
       canQuery: true,
-      canStream: false,
-      canReadMetadata: false,
-      canCancel: false,
+      canStream: true,
+      canReadMetadata: true,
+      canCancel: true,
       canGenerateDdl: false,
     },
   }
@@ -1551,19 +1599,19 @@ function driverStateLabel(driver: DriverDefinition, t: ReturnType<typeof useTran
     return t('drivers.state.notReady', { defaultValue: 'Not ready' })
   }
   if (driver.capabilities.canReadMetadata && driver.driverArtifacts.length > 0) {
-    return t('drivers.state.available', { defaultValue: 'Available' })
+    return t('driverRefactor.filesPresent')
   }
   return t('drivers.state.partialMetadata', { defaultValue: 'Metadata partial' })
 }
 
 function driverStateBadgeClass(driver: DriverDefinition) {
   if (driver.userDriverRequired && driver.driverArtifacts.length === 0) {
-    return 'shrink-0 rounded border border-warning/35 bg-warning-bg px-1.5 py-0.5 text-[10px] text-warning-foreground'
+    return 'max-w-full shrink-0 [overflow-wrap:anywhere] rounded border border-warning/35 bg-warning-bg px-1.5 py-0.5 text-[10px] text-warning-foreground'
   }
   if (driver.capabilities.canReadMetadata && driver.driverArtifacts.length > 0) {
-    return 'shrink-0 rounded border border-success/35 bg-success-bg px-1.5 py-0.5 text-[10px] text-success-foreground'
+    return 'max-w-full shrink-0 [overflow-wrap:anywhere] rounded border border-success/35 bg-success-bg px-1.5 py-0.5 text-[10px] text-success-foreground'
   }
-  return 'shrink-0 rounded border border-info/35 bg-info-bg px-1.5 py-0.5 text-[10px] text-info-foreground'
+  return 'max-w-full shrink-0 [overflow-wrap:anywhere] rounded border border-info/35 bg-info-bg px-1.5 py-0.5 text-[10px] text-info-foreground'
 }
 
 function normalizeDriverDefinition(driver: DriverDefinition): DriverDefinition {

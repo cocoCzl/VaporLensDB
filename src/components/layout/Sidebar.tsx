@@ -19,7 +19,7 @@ export function Sidebar() {
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth)
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed)
   const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed)
-  const [compactViewport, setCompactViewport] = useState(false)
+  const [compactViewport, setCompactViewport] = useState(() => window.matchMedia('(max-width: 960px)').matches)
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const tabs = useEditorStore((state) => state.tabs)
   const activeTabId = useEditorStore((state) => state.activeTabId)

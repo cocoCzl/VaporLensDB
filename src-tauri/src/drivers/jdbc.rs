@@ -46,6 +46,7 @@ use crate::{
 
 pub struct JdbcDriver {
     driver_type: DriverType,
+    supports_transactions: bool,
     metadata_sql: Option<JdbcMetadataSql>,
     sidecar: Arc<JdbcBridgeSidecar>,
 }
@@ -148,8 +149,11 @@ impl JdbcDriver {
             .transpose()?;
         let sidecar =
             JdbcBridgeSidecar::spawn(&config, password.unwrap_or(""), &bridge_jar).await?;
+        let probe: serde_json::Value =
+            serde_json::from_str(&sidecar.request(JdbcBridgeCommand::Ping).await?)?;
         let driver = Self {
             driver_type: config.driver_type,
+            supports_transactions: probe["supportsTransactions"].as_bool().unwrap_or(false),
             metadata_sql,
             sidecar: Arc::new(sidecar),
         };
@@ -179,7 +183,7 @@ impl JdbcDriver {
     async fn metadata_query(
         &self,
         operation: &str,
-        selector: impl FnOnce(&JdbcMetadataSql) -> Option<&str>,
+        selector: impl Fn(&JdbcMetadataSql) -> Option<&str>,
         params: &[(&str, &str)],
     ) -> Result<QueryResult, AppError> {
         let dialect = self
@@ -236,12 +240,12 @@ impl JdbcDriver {
     async fn metadata_result(
         &self,
         operation: &str,
-        selector: impl FnOnce(&JdbcMetadataSql) -> Option<&str>,
+        selector: impl Fn(&JdbcMetadataSql) -> Option<&str>,
         params: &[(&str, &str)],
         bridge_schema: Option<&str>,
         bridge_table: Option<&str>,
     ) -> Result<QueryResult, AppError> {
-        if self.metadata_sql.is_some() {
+        if self.metadata_sql.as_ref().and_then(&selector).is_some() {
             self.metadata_query(operation, selector, params).await
         } else {
             self.metadata_bridge_query(operation, bridge_schema, bridge_table)
@@ -253,7 +257,7 @@ impl JdbcDriver {
         &self,
         operation: &str,
         schema: &str,
-        selector: impl FnOnce(&JdbcMetadataSql) -> Option<&str>,
+        selector: impl Fn(&JdbcMetadataSql) -> Option<&str>,
         fallback_type: TableType,
     ) -> Result<Vec<TableInfo>, AppError> {
         let result = self
@@ -301,6 +305,11 @@ impl JdbcBridgeSidecar {
             connection_url: connection_url.to_string(),
             username: username.to_string(),
             password: password.to_string(),
+            properties: config
+                .driver_properties
+                .iter()
+                .filter_map(|p| p.value.as_ref().map(|v| (p.name.clone(), v.clone())))
+                .collect(),
         };
         let init_request = Zeroizing::new(init.encode(0));
         if let JdbcBridgeCommand::Init {
@@ -313,6 +322,11 @@ impl JdbcBridgeSidecar {
             connection_url.zeroize();
             username.zeroize();
             password.zeroize();
+            if let JdbcBridgeCommand::Init { properties, .. } = &mut init {
+                for (_, value) in properties {
+                    value.zeroize();
+                }
+            }
         }
         let sidecar = Self {
             start_spec: JdbcBridgeStartSpec {
@@ -879,6 +893,7 @@ enum JdbcBridgeCommand {
         connection_url: String,
         username: String,
         password: String,
+        properties: Vec<(String, String)>,
     },
     Ping,
     Query(String),
@@ -899,14 +914,29 @@ impl JdbcBridgeCommand {
                 connection_url,
                 username,
                 password,
+                properties,
             } => format!(
-                "INIT\t{request_id}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                "INIT\t{request_id}\t{}\t{}\t{}\t{}\t{}\t{}{}\n",
                 BASE64.encode(driver_class),
                 BASE64.encode(connection_url),
                 BASE64.encode(username),
                 BASE64.encode(password),
                 JDBC_CONNECT_TIMEOUT_SECS,
                 JDBC_QUERY_TIMEOUT_SECS,
+                if properties.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "\t{}",
+                        BASE64.encode(
+                            properties
+                                .iter()
+                                .map(|(k, v)| format!("{}\t{}", BASE64.encode(k), BASE64.encode(v)))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        )
+                    )
+                },
             ),
             Self::Ping => format!("PING\t{request_id}\t-\n"),
             Self::Query(sql) => format!("QUERY\t{request_id}\t{}\n", BASE64.encode(sql)),
@@ -978,11 +1008,13 @@ impl DatabaseDriver for JdbcDriver {
         DriverCapabilities {
             has_database: true,
             has_schema: true,
-            supports_transactions: true,
+            supports_transactions: self.supports_transactions,
             supports_explain: self.driver_type == DriverType::Oracle,
             supports_cancel: true,
             supports_ddl,
             supports_streaming: true,
+            driver_fetch_status: "unknown".into(),
+            fetch_strategy: "hintOnly".into(),
         }
     }
 
@@ -1396,7 +1428,7 @@ fn effective_jdbc_config(
         config.driver_class =
             definition.and_then(|definition| definition.jdbc_driver_class.clone());
     }
-    if config.driver_paths.is_empty() {
+    if config.driver_installation_id.is_none() && config.driver_paths.is_empty() {
         if let Some(definition) = definition {
             config.driver_paths = definition.driver_artifacts.clone();
         }
@@ -2305,6 +2337,7 @@ mod tests {
                 connection_url: "jdbc:fixture://host/db".into(),
                 username: "fixture-user".into(),
                 password: "runtimeDummyPassword".into(),
+                properties: vec![],
             }
             .encode(0),
         );
@@ -2568,6 +2601,7 @@ mod tests {
             connection_url: "jdbc:oracle:thin:@//db.example:1521/ORCL".to_string(),
             username: "scott".to_string(),
             password: "tiger".to_string(),
+            properties: vec![],
         }
         .encode(0);
 

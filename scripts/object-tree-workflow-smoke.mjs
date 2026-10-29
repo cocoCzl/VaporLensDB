@@ -218,10 +218,15 @@ includesAll(
 includesAll(
   tasks,
   [
-    'cd src-tauri && cargo test --test postgres_driver -- --ignored',
-    'cd src-tauri && cargo test --test mysql_driver -- --ignored',
-    'cd src-tauri && cargo test --test oracle_jdbc_driver -- --ignored',
-    'Use `TEST_ORACLE_*`',
+    'cargo test --manifest-path src-tauri/Cargo.toml --test postgres_driver -- --ignored',
+    'cargo test --manifest-path src-tauri/Cargo.toml --test mysql_driver -- --ignored',
+    'VAPORLENSDB_LIVE_TEST_ENV_FILE=.env.oracle-qa ./build.sh live-tests --oracle',
+    'connects_and_queries_oracle_with_jdbc_bridge',
+    'reads_oracle_metadata_with_jdbc_bridge',
+    'TEST_ORACLE_JDBC_URL',
+    'TEST_ORACLE_USER',
+    'TEST_ORACLE_PASSWORD',
+    'TEST_ORACLE_JDBC_DRIVER_PATH',
   ],
   'real database command documentation',
 )

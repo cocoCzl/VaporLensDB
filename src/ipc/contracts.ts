@@ -27,9 +27,11 @@ export interface CommandContract {
 export const COMMAND_CONTRACTS = commandContracts as CommandContract[]
 
 export const COMMANDS = {
+  syncWindowAppearance: 'sync_window_appearance',
   sqlFile: 'sql_file',
   listCommandContracts: 'list_command_contracts',
   healthCheck: 'health_check',
+  startupTrace: 'startup_trace',
   shutdownApplication: 'shutdown_application',
   applicationCloseListenerReady: 'application_close_listener_ready',
   applicationCloseRequestFinished: 'application_close_request_finished',
@@ -54,6 +56,12 @@ export const COMMANDS = {
   reorderDataSourceGroups: 'reorder_data_source_groups',
   setConnectionDataSourceGroup: 'set_connection_data_source_group',
   listDriverDefinitions: 'list_driver_definitions',
+  listDatabaseProducts: 'list_database_products',
+  exportDriverConfiguration: 'export_driver_configuration',
+  importDriverConfiguration: 'import_driver_configuration',
+  saveDatabaseProduct: 'save_database_product',
+  listDriverInstallations: 'list_driver_installations',
+  deleteDriverInstallation: 'delete_driver_installation',
   saveCustomDriverDefinition: 'save_custom_driver_definition',
   deleteCustomDriverDefinition: 'delete_custom_driver_definition',
   importJdbcDriverArtifacts: 'import_jdbc_driver_artifacts',

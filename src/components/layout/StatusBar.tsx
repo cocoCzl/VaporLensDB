@@ -1,3 +1,5 @@
+import { productDisplayName } from '@/lib/productPresentation'
+import { DatabaseProductLabel } from '@/components/common/DatabaseProductLabel'
 import { useTranslation } from 'react-i18next'
 import { lazy, Suspense } from 'react'
 import { Activity, AlertCircle, Database, Loader2, Square, Trash2 } from 'lucide-react'
@@ -32,7 +34,7 @@ export function StatusBar({ backendStatus }: StatusBarProps) {
   const healthy = backendStatus.startsWith('ok')
 
   return (
-    <footer className="ide-status-bar flex h-[22px] items-center justify-between gap-2 border-t px-2 text-[10px] text-muted-foreground">
+    <footer className="ide-status-bar shell-status flex items-center justify-between gap-2 border-t px-2 text-[10px] text-muted-foreground">
       <CurrentDataSourceStatus />
       <div className="flex min-w-0 items-center gap-1">
         {!healthy && (
@@ -90,9 +92,9 @@ function CurrentDataSourceStatus() {
   return (
     <span
       className="inline-flex min-w-0 items-center gap-1.5 truncate"
-      title={`${executionTab ? t('status.executionDataSource') : t('status.browsingDataSource')} · ${connection.name} · ${connection.driverType}${context ? ` · ${context}` : ''}`}
+      title={`${executionTab ? t('status.executionDataSource') : t('status.browsingDataSource')} · ${connection.name} · ${productDisplayName(connection)}${context ? ` · ${context}` : ''}`}
     >
-      <DatabaseVendorIcon driverType={connection.driverType} className="size-3 shrink-0" />
+      <DatabaseVendorIcon driverType={connection.productId ?? connection.driverType} className="size-3 shrink-0" />
       <span
         className={[
           'size-1.5 shrink-0 rounded-full',
@@ -226,7 +228,7 @@ function TaskSessionStatus() {
                       <div className="border-b px-2 py-1.5 text-xs">
                         <div className="truncate font-semibold">{connection.name}</div>
                         <div className="truncate text-[11px] text-muted-foreground">
-                          {connection.driverType} · {status}
+                          <DatabaseProductLabel connection={connection} /> · {status}
                           {message ? ` · ${message}` : ''}
                         </div>
                       </div>

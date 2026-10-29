@@ -1,5 +1,19 @@
 [
   {
+    "name": "sync_window_appearance",
+    "namespace": "settings",
+    "args": "{ theme: light | dark | system, dark: boolean }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "startup_trace",
+    "namespace": "settings",
+    "args": "{ stage: string, epochMs: number, metrics: Record<string, number> }",
+    "response": "void",
+    "status": "active"
+  },
+  {
     "name": "get_csv_import_result",
     "namespace": "export",
     "args": "{ taskId: string }",
@@ -515,6 +529,48 @@
     "namespace": "sqlDraft",
     "args": "{ input: SqlFileInput }",
     "response": "SqlFileDocument | null",
+    "status": "active"
+  },
+  {
+    "name": "list_database_products",
+    "namespace": "driver",
+    "args": "None",
+    "response": "DatabaseProduct[]",
+    "status": "active"
+  },
+  {
+    "name": "save_database_product",
+    "namespace": "driver",
+    "args": "{ input: DatabaseProduct }",
+    "response": "DatabaseProduct",
+    "status": "active"
+  },
+  {
+    "name": "list_driver_installations",
+    "namespace": "driver",
+    "args": "None",
+    "response": "DriverInstallation[]",
+    "status": "active"
+  },
+  {
+    "name": "delete_driver_installation",
+    "namespace": "driver",
+    "args": "{ id: string }",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "export_driver_configuration",
+    "namespace": "driver",
+    "args": "None",
+    "response": "DriverConfigurationBundle",
+    "status": "active"
+  },
+  {
+    "name": "import_driver_configuration",
+    "namespace": "driver",
+    "args": "{ input: DriverConfigurationBundle }",
+    "response": "number",
     "status": "active"
   }
 ]

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -9,10 +8,11 @@ use tauri::State;
 use crate::{
     models::{
         connection::{ConnectionConfig, DriverType},
-        driver_catalog::{DriverBackend, DriverDefinition},
-        error::AppError,
+        driver_catalog::{
+            DatabaseProduct, DriverArtifact, DriverBackend, DriverDefinition, DriverInstallation,
+        },
     },
-    services::external_driver::validate_jdbc_prerequisites,
+    services::external_driver::validate_jdbc_driver_class,
     AppState,
 };
 
@@ -53,6 +53,7 @@ pub fn delete_custom_driver_definition(
 pub struct ImportJdbcDriverArtifactsInput {
     pub driver_definition_id: String,
     pub paths: Vec<String>,
+    pub label: Option<String>,
 }
 
 #[tauri::command]
@@ -60,8 +61,22 @@ pub fn import_jdbc_driver_artifacts(
     state: State<'_, AppState>,
     input: ImportJdbcDriverArtifactsInput,
 ) -> Result<DriverDefinition, String> {
-    let mut definition = state
-        .config_store
+    import_artifacts(&state.config_store, input)
+}
+
+fn import_artifacts(
+    store: &crate::services::config_store::ConfigStore,
+    input: ImportJdbcDriverArtifactsInput,
+) -> Result<DriverDefinition, String> {
+    import_artifacts_with(store, input, |source, target| fs::copy(source, target))
+}
+
+fn import_artifacts_with(
+    store: &crate::services::config_store::ConfigStore,
+    input: ImportJdbcDriverArtifactsInput,
+    mut copy: impl FnMut(&Path, &Path) -> std::io::Result<u64>,
+) -> Result<DriverDefinition, String> {
+    let definition = store
         .get_driver_definition(&input.driver_definition_id)
         .map_err(String::from)?
         .ok_or_else(|| {
@@ -76,53 +91,58 @@ pub fn import_jdbc_driver_artifacts(
         return Err("at least one JDBC driver jar path is required".to_string());
     }
 
-    let target_dir = state
-        .config_store
+    let installation_id = format!("installation-{}", uuid::Uuid::new_v4());
+    let target_dir = store
         .config_dir()
         .join("driver-artifacts")
-        .join(safe_path_segment(&definition.id));
-    fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
-
-    let mut artifacts = definition
-        .driver_artifacts
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    for source in input.paths {
-        let source = PathBuf::from(source);
-        validate_jar_path(&source)?;
-        let file_name = source
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| format!("invalid JDBC driver file name: {}", source.display()))?;
-        let target = unique_target_path(&target_dir, file_name);
-        fs::copy(&source, &target).map_err(|error| {
-            format!(
-                "failed to copy JDBC driver jar from {} to {}: {error}",
-                source.display(),
-                target.display()
-            )
-        })?;
-        artifacts.insert(target.display().to_string());
+        .join(&installation_id);
+    // Validate the complete selection before copying. Never merge old main versions.
+    for source in &input.paths {
+        validate_jar_path(Path::new(source))?;
     }
-
-    definition.driver_artifacts = artifacts.into_iter().collect();
-    definition.driver_artifact = Some(
-        definition
-            .driver_artifacts
-            .iter()
-            .map(|path| display_file_name(path))
-            .collect::<Vec<_>>()
-            .join(", "),
-    );
-    state
-        .config_store
-        .update_driver_definition_artifacts(
-            &definition.id,
-            definition.driver_artifacts,
-            definition.driver_artifact,
-        )
-        .map_err(Into::into)
+    fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+    let prepared = (|| {
+        let mut artifacts = Vec::new();
+        for (index, source) in input.paths.iter().enumerate() {
+            let source = Path::new(source);
+            let file_name = source
+                .file_name()
+                .and_then(|v| v.to_str())
+                .ok_or("Invalid JAR file name")?;
+            let target = target_dir.join(format!("{index}-{file_name}"));
+            copy(source, &target).map_err(|e| e.to_string())?;
+            let path = target.to_string_lossy().into_owned();
+            artifacts.push(DriverArtifact {
+                sha256: Some(
+                    crate::services::driver_registry::artifact_hash(&path).map_err(String::from)?,
+                ),
+                path,
+                role: if index == 0 { "primary" } else { "dependency" }.into(),
+            });
+        }
+        let installation = DriverInstallation {
+            id: installation_id,
+            driver_definition_id: definition.id.clone(),
+            label: input
+                .label
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "Imported dependency set (version unverified)".into()),
+            artifacts,
+            java_requirement: "Java 21+ (bridge); driver requirements unverified".into(),
+            validation: None,
+        };
+        store
+            .publish_installation(&installation)
+            .map_err(String::from)
+    })();
+    if let Err(error) = prepared {
+        let _ = fs::remove_dir_all(&target_dir);
+        return Err(error);
+    }
+    store
+        .get_driver_definition(&definition.id)
+        .map_err(String::from)?
+        .ok_or_else(|| "Driver definition missing".into())
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,6 +169,10 @@ pub fn remove_jdbc_driver_artifact(
         })?;
     ensure_managed_jdbc_artifacts_supported(&definition)?;
 
+    state
+        .config_store
+        .ensure_artifact_unreferenced(&input.path)
+        .map_err(String::from)?;
     definition
         .driver_artifacts
         .retain(|path| path != &input.path);
@@ -187,6 +211,7 @@ pub fn remove_jdbc_driver_artifact(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValidateExternalDriverInput {
+    pub installation_id: Option<String>,
     pub driver_type: DriverType,
     pub connection_url: Option<String>,
     pub driver_class: Option<String>,
@@ -216,43 +241,6 @@ fn validate_jar_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn unique_target_path(dir: &Path, file_name: &str) -> PathBuf {
-    let initial = dir.join(file_name);
-    if !initial.exists() {
-        return initial;
-    }
-
-    let source = Path::new(file_name);
-    let stem = source
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("driver");
-    let extension = source
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("jar");
-    for index in 1.. {
-        let candidate = dir.join(format!("{stem}-{index}.{extension}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!("unique target path loop must return")
-}
-
-fn safe_path_segment(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 fn display_file_name(path: &str) -> String {
     Path::new(path)
         .file_name()
@@ -275,12 +263,40 @@ pub struct ExternalDriverValidation {
 
 #[tauri::command]
 pub async fn validate_external_driver(
+    state: State<'_, AppState>,
     input: ValidateExternalDriverInput,
 ) -> Result<ExternalDriverValidation, String> {
+    let installation = input
+        .installation_id
+        .as_ref()
+        .map(|id| {
+            state
+                .config_store
+                .list_driver_installations()
+                .map_err(String::from)?
+                .into_iter()
+                .find(|i| &i.id == id)
+                .ok_or_else(|| "Selected installation is missing".to_string())
+        })
+        .transpose()?;
+    let definition = installation
+        .as_ref()
+        .map(|i| {
+            state
+                .config_store
+                .get_driver_definition(&i.driver_definition_id)
+                .map_err(String::from)?
+                .ok_or_else(|| "Selected driver definition is missing".to_string())
+        })
+        .transpose()?;
     let config = ConnectionConfig {
         id: uuid::Uuid::new_v4(),
         name: "external driver validation".to_string(),
         driver_definition_id: None,
+        product_id: None,
+        driver_installation_id: None,
+        connection_mode: None,
+        driver_properties: Vec::new(),
         driver_type: input.driver_type,
         driver_dialect: None,
         host: None,
@@ -290,8 +306,14 @@ pub async fn validate_external_driver(
         username: None,
         password_encrypted: None,
         has_saved_password: false,
-        driver_class: input.driver_class,
-        driver_paths: input.driver_paths.unwrap_or_default(),
+        driver_class: definition
+            .as_ref()
+            .and_then(|d| d.jdbc_driver_class.clone())
+            .or(input.driver_class),
+        driver_paths: installation
+            .as_ref()
+            .map(|i| i.artifacts.iter().map(|a| a.path.clone()).collect())
+            .unwrap_or_else(|| input.driver_paths.unwrap_or_default()),
         ssl_mode: None,
         group_id: None,
         group: None,
@@ -301,19 +323,143 @@ pub async fn validate_external_driver(
         updated_at: chrono::Utc::now(),
     };
 
-    let result = match config.driver_type {
-        DriverType::Oracle | DriverType::Jdbc => validate_jdbc_prerequisites(&config).await,
-        _ => Err(AppError::UnsupportedOperation {
-            driver: config.driver_type.to_string(),
-            operation: "external driver validation".to_string(),
-        }),
-    };
+    let fingerprint = crate::services::external_driver::installation_runtime_fingerprint(&config)
+        .await
+        .map_err(String::from)?;
+    let result = validate_jdbc_driver_class(&config).await;
+    if let Some(mut installation) = installation {
+        installation.validation = Some(crate::models::driver_catalog::InstallationValidation {
+            fingerprint,
+            checked_at: chrono::Utc::now().to_rfc3339(),
+            class_loaded: result.is_ok(),
+        });
+        state
+            .config_store
+            .record_installation_validation(&installation)
+            .map_err(String::from)?;
+    }
 
     match result {
         Ok(()) => Ok(ExternalDriverValidation {
             valid: true,
-            message: "external driver configuration is valid".to_string(),
+            message: "Driver class loaded; database connectivity has not been tested".to_string(),
         }),
         Err(error) => Err(String::from(error)),
     }
+}
+
+#[tauri::command]
+pub fn list_database_products(state: State<'_, AppState>) -> Result<Vec<DatabaseProduct>, String> {
+    state
+        .config_store
+        .list_database_products()
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub fn save_database_product(
+    state: State<'_, AppState>,
+    input: DatabaseProduct,
+) -> Result<DatabaseProduct, String> {
+    state
+        .config_store
+        .save_database_product(input)
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub fn list_driver_installations(
+    state: State<'_, AppState>,
+) -> Result<Vec<DriverInstallation>, String> {
+    state
+        .config_store
+        .list_driver_installations()
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub fn delete_driver_installation(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    state
+        .config_store
+        .delete_driver_installation(&id)
+        .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod installation_tests {
+    use super::*;
+    #[test]
+    fn multi_file_failure_does_not_publish_half_installation_or_replace_previous() {
+        let store = crate::services::config_store::ConfigStore::new(
+            std::env::temp_dir().join(format!("vapor-import-install-{}", uuid::Uuid::new_v4())),
+        )
+        .unwrap();
+        let source = store.config_dir().join("primary.jar");
+        std::fs::write(&source, b"jar fixture").unwrap();
+        let first = import_artifacts(
+            &store,
+            ImportJdbcDriverArtifactsInput {
+                driver_definition_id: "jdbc-postgresql".into(),
+                paths: vec![source.to_string_lossy().into_owned()],
+                label: Some("Original".into()),
+            },
+        )
+        .unwrap();
+        let installs = store.list_driver_installations().unwrap().len();
+        let dependency = store.config_dir().join("dependency.jar");
+        std::fs::write(&dependency, b"dependency fixture").unwrap();
+        let mut copied = 0;
+        let failed = import_artifacts_with(
+            &store,
+            ImportJdbcDriverArtifactsInput {
+                driver_definition_id: first.id.clone(),
+                paths: vec![
+                    source.to_string_lossy().into_owned(),
+                    dependency.to_string_lossy().into_owned(),
+                ],
+                label: Some("Broken".into()),
+            },
+            |source, target| {
+                copied += 1;
+                if copied == 2 {
+                    return Err(std::io::Error::other("injected second-copy I/O failure"));
+                }
+                fs::copy(source, target)
+            },
+        );
+        assert_eq!(copied, 2);
+        assert!(failed.is_err());
+        assert_eq!(store.list_driver_installations().unwrap().len(), installs);
+        assert_eq!(
+            store
+                .get_driver_definition(&first.id)
+                .unwrap()
+                .unwrap()
+                .default_installation_id,
+            first.default_installation_id
+        );
+        assert_eq!(
+            std::fs::read_dir(store.config_dir().join("driver-artifacts"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+}
+
+#[tauri::command]
+pub fn export_driver_configuration(
+    state: State<'_, AppState>,
+) -> Result<crate::services::driver_config::DriverConfigurationBundle, String> {
+    state
+        .config_store
+        .export_driver_configuration()
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub fn import_driver_configuration(
+    state: State<'_, AppState>,
+    input: crate::services::driver_config::DriverConfigurationBundle,
+) -> Result<usize, String> {
+    state
+        .config_store
+        .import_driver_configuration(input)
+        .map_err(Into::into)
 }

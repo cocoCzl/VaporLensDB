@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import i18n from '@/i18n'
 import {
   connect,
+  connectionCapabilities,
   createDataSourceGroup,
   createConnection,
   deleteDataSourceGroup,
@@ -23,7 +24,7 @@ import { readStorageJson, writeStorageJson } from '@/lib/safeStorage'
 import { useMetadataStore } from '@/stores/metadataStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { ConnectionConfig, ConnectionInput, ConnectionStatus, DataSourceGroup } from '@/types/connection'
+import type { DriverCapabilities, ConnectionConfig, ConnectionInput, ConnectionStatus, DataSourceGroup } from '@/types/connection'
 import type { AppError } from '@/types/error'
 
 const RECENT_DATA_SOURCES_STORAGE_KEY = 'vaporlensdb.recentDataSources'
@@ -33,6 +34,7 @@ const MAX_RECENT_DATA_SOURCES = 6
 interface ConnectionState {
   connections: ConnectionConfig[]
   dataSourceGroups: DataSourceGroup[]
+  capabilities: Record<string, DriverCapabilities>
   statuses: Record<string, ConnectionStatus>
   statusRevisions: Record<string, number>
   lifecycleEpochs: Record<string, number>
@@ -110,6 +112,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connections: [],
   dataSourceGroups: [],
   statuses: {},
+  capabilities: {},
   statusRevisions: {},
   lifecycleEpochs: {},
   reclaimRequestTokens: {},
@@ -250,6 +253,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       const saved = input.id ? await updateConnection(input) : await createConnection(input)
       set((state) => ({
         connections: upsertConnection(state.connections, saved),
+        capabilities: Object.fromEntries(Object.entries(state.capabilities).filter(([id]) => id !== saved.id)),
         loading: false,
       }))
       await get().loadConnections()
@@ -313,10 +317,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       set({ loading: false })
       useUiStore.getState().notify({
         kind: 'success',
-        title:
-          input.driverType === 'oracle' || input.driverType === 'jdbc'
-            ? i18n.t('notifications.driverConfigValid')
-            : i18n.t('notifications.connectionTestSucceeded'),
+        title: i18n.t('notifications.connectionTestSucceeded'),
         message: input.name,
       })
     } catch (error) {
@@ -332,6 +333,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }))
     try {
       const status = await connect(id, options.password)
+      const epoch = get().lifecycleEpochs[id]
+      // Capabilities are probed once for this connection generation, never per query.
+      try {
+        const capabilities = await connectionCapabilities(id)
+        if (capabilities && get().lifecycleEpochs[id] === epoch) set((state) => ({ capabilities: { ...state.capabilities, [id]: capabilities } }))
+      } catch { /* A failed capability request does not replay or fail a successful connect. */ }
       useMetadataStore.getState().clearConnection(id)
       set((state) => ({
         statuses: { ...state.statuses, [id]: status },
@@ -374,6 +381,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     try {
       const status = await disconnect(id)
       set((state) => ({
+        capabilities: Object.fromEntries(Object.entries(state.capabilities).filter(([key]) => key !== id)),
         statuses: { ...state.statuses, [id]: status },
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
         browsingConnectionId: state.browsingConnectionId === id ? null : state.browsingConnectionId,

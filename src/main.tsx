@@ -1,12 +1,7 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
 import '@fontsource-variable/geist/index.css'
-import App from './App'
-import './i18n'
-import './styles/globals.css'
+import i18n from './i18n'
+import { startWorkspace } from './lib/startWorkspace'
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
+;(window as Window & { __vaporStartupMark?: (stage: string) => void }).__vaporStartupMark?.('frontend_entry')
+
+void startWorkspace(document.getElementById('root')!, () => import('./App'), i18n.t('app.moduleLoadFailed'))

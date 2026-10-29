@@ -237,6 +237,8 @@ impl DatabaseDriver for PostgresDriver {
             supports_cancel: true,
             supports_ddl: true,
             supports_streaming: true,
+            driver_fetch_status: "unknown".into(),
+            fetch_strategy: "native".into(),
         }
     }
 

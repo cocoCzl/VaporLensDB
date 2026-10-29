@@ -2,6 +2,7 @@
   "app": {
     "name": "VaporLensDB",
     "tagline": "轻量数据库 IDE",
+    "moduleLoadFailed": "此界面加载失败。请在没有运行中查询或事务时关闭并重新打开应用。",
     "preparingWorkspace": "正在准备工作区…"
   },
   "topBar": {
@@ -284,14 +285,14 @@
     },
     "validation": {
       "nameRequired": "连接名称必填",
-      "oracleDriverClassRequired": "Oracle JDBC 驱动类必填，默认应为 oracle.jdbc.OracleDriver",
-      "oracleJarRequired": "Oracle 需要至少填写一个本地 ojdbc JAR 路径",
+      "oracleDriverClassRequired": "JDBC 驱动类必填，请在驱动定义中配置厂商类名",
+      "oracleJarRequired": "请选择完整的 JDBC 驱动安装",
       "urlRequired": "URL 必填",
       "hostRequired": "主机必填",
       "databaseRequired": "此连接需要填写数据库。",
       "usernameRequired": "用户名必填",
       "missingJdbcClassReadiness": "未就绪：缺少 JDBC 驱动类。可仅保存，补齐后再连接。",
-      "missingJarReadiness": "未就绪：缺少本地 ojdbc/JDBC JAR。可仅保存，补齐后再连接。"
+      "missingJarReadiness": "未就绪：缺少 JDBC 驱动安装。可仅保存，补齐后再连接。"
     },
     "description": {
       "oracle": "Oracle 需要用户提供本地 ojdbc.jar；连接、查询、对象浏览、DDL/source 和补全可用。",
@@ -327,8 +328,7 @@
     "disconnectFailed": "断开连接失败",
     "driverConfigValid": "驱动配置校验成功",
     "connectionTestSucceeded": "连接测试成功",
-    "networkUnreachable": "目标数据库网络不可达，请检查主机、端口、防火墙或 VPN。"
-    ,
+    "networkUnreachable": "目标数据库网络不可达，请检查主机、端口、防火墙或 VPN。",
     "loadDriverCatalogFailed": "加载驱动目录失败",
     "driverDefinitionSaved": "驱动定义已保存",
     "saveDriverDefinitionFailed": "保存驱动定义失败",
@@ -347,8 +347,7 @@
     "explainFailed": "执行计划失败",
     "cancelQueryFailed": "取消查询失败",
     "cancelQueryRequested": "已请求取消查询",
-    "loadObjectStructureFailed": "加载对象结构失败"
-    ,
+    "loadObjectStructureFailed": "加载对象结构失败",
     "loadTasksFailed": "加载后台任务失败",
     "startTaskFailed": "启动后台任务失败",
     "cancelTaskFailed": "取消后台任务失败",
@@ -741,7 +740,15 @@
     "general": "常规",
     "generalHint": "主题、语言、默认值",
     "editorAndResult": "编辑器与结果",
-    "connectionSessions": { "title": "连接会话", "max": "最大实时连接数", "idle": "空闲会话回收", "hint": "默认 30 分钟后回收空闲会话；执行中的操作不会被回收。", "minutes": "空闲超时（分钟）", "enable": "启用", "disable": "关闭" },
+    "connectionSessions": {
+      "title": "连接会话",
+      "max": "最大实时连接数",
+      "idle": "空闲会话回收",
+      "hint": "默认 30 分钟后回收空闲会话；执行中的操作不会被回收。",
+      "minutes": "空闲超时（分钟）",
+      "enable": "启用",
+      "disable": "关闭"
+    },
     "exportDirectory": {
       "title": "导出位置",
       "label": "默认导出文件夹",
@@ -897,7 +904,7 @@
     "backendOperationBlocked": "连接上有操作正在进行。请等待其结束后再断开连接。"
   },
   "drivers": {
-    "title": "JDBC 驱动",
+    "title": "数据库与驱动",
     "summary": "{{count}} 个 JDBC 模板；内置模板只读，自定义可编辑。",
     "navHint": "Oracle 和自定义 JDBC",
     "add": "新增",
@@ -929,8 +936,7 @@
     },
     "customOrigin": "Custom",
     "presetOrigin": "Preset",
-    "builtInOrigin": "Built-in"
-    ,
+    "builtInOrigin": "Built-in",
     "builtInTemplate": "内置模板",
     "customTemplate": "自定义"
   },
@@ -1099,5 +1105,45 @@
     "failedRows": "失败行",
     "detailsLimit": "显示 {{total}} 条失败中的 {{count}} 条",
     "reportUnavailable": "导入已完成，但会话结果报告已不可用。"
+  },
+  "driverRefactor": {
+    "missingReference": "所选驱动或安装已失效，请修复引用。",
+    "driverChanged": "驱动专用类、安装与属性已更换。连接参数已保留；SSL 要求不会自动清除。",
+    "searchProducts": "搜索数据库产品",
+    "installation": "驱动安装版本",
+    "chooseInstallation": "请选择安装（可先仅保存）",
+    "manage": "配置数据库与驱动",
+    "addProduct": "添加自定义数据库",
+    "copyDefinition": "复制为用户驱动",
+    "product": "数据库产品",
+    "newProduct": "新建数据库产品",
+    "productName": "产品名称（身份保持稳定）",
+    "references": "引用连接",
+    "defaultPort": "默认端口",
+    "requireUsername": "需要用户名",
+    "requireDatabase": "需要数据库名",
+    "dialect": "已验证 SQL 方言",
+    "filesPresent": "文件已导入；类加载和连接尚未验证",
+    "properties": "JDBC 属性（默认敏感）",
+    "propertyName": "属性名",
+    "propertyValue": "属性值",
+    "sensitive": "敏感",
+    "addProperty": "添加属性",
+    "versionLabel": "安装版本标签（用户提供，非自动识别）",
+    "unknownDialect": "未知／通用 SQL",
+    "configuration": "配置描述导入／导出",
+    "configurationHint": "JSON 包含 schemaVersion、产品、驱动、安装依赖描述及连接；不含密码或厂商二进制。仅新增连接，不覆盖已有 UUID。迁移到其他电脑后需重新校验安装路径。",
+    "importConfiguration": "导入配置",
+    "exportConfiguration": "导出配置 JSON",
+    "importedConfiguration": "已导入 {{count}} 条连接",
+    "validationReceipt": "本机历史类加载校验（不代表连接成功）",
+    "classLoaded": "类已加载",
+    "classFailed": "类加载失败",
+    "classValidationSuccess": "驱动类已加载；数据库连接尚未测试",
+    "modes": {
+      "urlOnly": "完整 JDBC URL",
+      "hostPort": "主机与端口",
+      "file": "文件路径"
+    }
   }
 }

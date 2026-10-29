@@ -71,6 +71,10 @@ mod tests {
             id: Uuid::new_v4(),
             name: "TLS policy test".into(),
             driver_definition_id: None,
+            product_id: None,
+            driver_installation_id: None,
+            connection_mode: None,
+            driver_properties: Vec::new(),
             driver_type,
             driver_dialect: None,
             host: Some("invalid.invalid".into()),
@@ -196,6 +200,25 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn connect_and_test_reject_unmapped_ssh_properties_before_opening_a_tunnel() {
+        let mut config = config(DriverType::Jdbc, None, Some("jdbc:example://host/db"));
+        config.driver_properties = serde_json::from_value(
+            serde_json::json!([{"name":"socketFactory","value":"fixture-sensitive-value"}]),
+        )
+        .unwrap();
+        config.ssh_tunnel = Some(serde_json::from_value(serde_json::json!({"enabled":true,"host":"invalid.invalid","port":22,"username":"qa","authMethod":"privateKey"})).unwrap());
+        for result in [
+            super::super::connection_manager::create_active_connection(&config, None, None)
+                .await
+                .map(|_| ()),
+            super::super::connection_manager::test_connection(&config, None, None).await,
+        ] {
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("Properties is unsupported"));
+            assert!(!error.contains("fixture-sensitive-value"));
+        }
+    }
     #[tokio::test]
     async fn connect_and_test_refuse_unsupported_tls_before_resolving_a_host() {
         let config = config(DriverType::Mysql, Some("prefer"), None);

@@ -2,6 +2,7 @@
   "app": {
     "name": "VaporLensDB",
     "tagline": "LIGHTWEIGHT DATABASE IDE",
+    "moduleLoadFailed": "This view could not be loaded. Close and reopen the application when no query or transaction is active.",
     "preparingWorkspace": "Preparing workspace…"
   },
   "topBar": {
@@ -284,14 +285,14 @@
     },
     "validation": {
       "nameRequired": "Connection name is required",
-      "oracleDriverClassRequired": "Oracle JDBC driver class is required. Default should be oracle.jdbc.OracleDriver",
-      "oracleJarRequired": "Oracle requires at least one local ojdbc JAR path",
+      "oracleDriverClassRequired": "JDBC driver class is required; configure the vendor class in the driver definition",
+      "oracleJarRequired": "Select a complete JDBC driver installation",
       "urlRequired": "URL is required",
       "hostRequired": "Host is required",
       "databaseRequired": "Database is required for this connection.",
       "usernameRequired": "Username is required",
       "missingJdbcClassReadiness": "Not ready: missing JDBC driver class. Save only, then connect after completing it.",
-      "missingJarReadiness": "Not ready: missing local ojdbc/JDBC JAR. Save only, then connect after completing it."
+      "missingJarReadiness": "Not ready: missing JDBC driver installation. Save only, then connect after completing it."
     },
     "description": {
       "oracle": "Oracle requires a user-provided local ojdbc.jar. Connection, query execution, object browsing, DDL/source, and completion are available.",
@@ -327,8 +328,7 @@
     "disconnectFailed": "Failed to disconnect",
     "driverConfigValid": "Driver configuration validated",
     "connectionTestSucceeded": "Connection test succeeded",
-    "networkUnreachable": "Target database network is unreachable. Check host, port, firewall, or VPN."
-    ,
+    "networkUnreachable": "Target database network is unreachable. Check host, port, firewall, or VPN.",
     "loadDriverCatalogFailed": "Failed to load driver catalog",
     "driverDefinitionSaved": "Driver definition saved",
     "saveDriverDefinitionFailed": "Failed to save driver definition",
@@ -347,8 +347,7 @@
     "explainFailed": "Explain failed",
     "cancelQueryFailed": "Failed to cancel query",
     "cancelQueryRequested": "Cancellation requested",
-    "loadObjectStructureFailed": "Failed to load object structure"
-    ,
+    "loadObjectStructureFailed": "Failed to load object structure",
     "loadTasksFailed": "Failed to load background tasks",
     "startTaskFailed": "Failed to start background task",
     "cancelTaskFailed": "Failed to cancel background task",
@@ -741,7 +740,15 @@
     "general": "General",
     "generalHint": "Theme, language, defaults",
     "editorAndResult": "Editor and results",
-    "connectionSessions": { "title": "Connection sessions", "max": "Maximum live sessions", "idle": "Idle session reclaim", "hint": "Default: reclaim idle sessions after 30 minutes; active operations are never reclaimed.", "minutes": "Idle timeout (minutes)", "enable": "Enable", "disable": "Disable" },
+    "connectionSessions": {
+      "title": "Connection sessions",
+      "max": "Maximum live sessions",
+      "idle": "Idle session reclaim",
+      "hint": "Default: reclaim idle sessions after 30 minutes; active operations are never reclaimed.",
+      "minutes": "Idle timeout (minutes)",
+      "enable": "Enable",
+      "disable": "Disable"
+    },
     "exportDirectory": {
       "title": "Export location",
       "label": "Default export folder",
@@ -897,7 +904,7 @@
     "backendOperationBlocked": "Connection has an operation in progress. Wait for it to finish before disconnecting."
   },
   "drivers": {
-    "title": "JDBC Drivers",
+    "title": "Databases and drivers",
     "summary": "{{count}} JDBC templates. Built-in templates are read-only; custom templates are editable.",
     "navHint": "Oracle and custom JDBC",
     "add": "Add",
@@ -929,8 +936,7 @@
     },
     "customOrigin": "Custom",
     "presetOrigin": "Preset",
-    "builtInOrigin": "Built-in"
-    ,
+    "builtInOrigin": "Built-in",
     "builtInTemplate": "Built-in template",
     "customTemplate": "Custom"
   },
@@ -1099,5 +1105,45 @@
     "failedRows": "Failed rows",
     "detailsLimit": "Showing {{count}} of {{total}} failures",
     "reportUnavailable": "Import completed, but its session report is no longer available."
+  },
+  "driverRefactor": {
+    "missingReference": "The selected driver or installation is missing. Repair its reference.",
+    "driverChanged": "Driver class, installation and properties changed. Connection parameters and SSL requirements are retained.",
+    "searchProducts": "Search database products",
+    "installation": "Driver installation",
+    "chooseInstallation": "Select an installation (or save for later)",
+    "manage": "Configure databases and drivers",
+    "addProduct": "Add custom database",
+    "copyDefinition": "Copy to user driver",
+    "product": "Database product",
+    "newProduct": "Create database product",
+    "productName": "Product name (stable identity)",
+    "references": "Connection references",
+    "defaultPort": "Default port",
+    "requireUsername": "Username required",
+    "requireDatabase": "Database required",
+    "dialect": "Verified SQL dialect",
+    "filesPresent": "Files imported; class loading and connectivity unverified",
+    "properties": "JDBC properties (sensitive by default)",
+    "propertyName": "Property name",
+    "propertyValue": "Property value",
+    "sensitive": "Sensitive",
+    "addProperty": "Add property",
+    "versionLabel": "Installation label (user supplied, not detected)",
+    "unknownDialect": "Unknown / generic SQL",
+    "configuration": "Configuration import / export",
+    "configurationHint": "JSON includes schemaVersion, product, driver, dependency descriptions and connections. Passwords and vendor binaries are excluded. Import adds connections and never overwrites UUIDs. Revalidate installation paths on another machine.",
+    "importConfiguration": "Import configuration",
+    "exportConfiguration": "Export configuration JSON",
+    "importedConfiguration": "Imported {{count}} connections",
+    "validationReceipt": "Local historical class validation (not a connection test)",
+    "classLoaded": "Class loaded",
+    "classFailed": "Class load failed",
+    "classValidationSuccess": "Driver class loaded; database connectivity has not been tested",
+    "modes": {
+      "urlOnly": "Raw JDBC URL",
+      "hostPort": "Host and port",
+      "file": "File path"
+    }
   }
 }

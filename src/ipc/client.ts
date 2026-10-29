@@ -11,10 +11,13 @@ export async function invokeCommand<T>(command: CommandName, args?: InvokeArgs):
     } satisfies AppError
   }
 
+  const started = performance.now()
   try {
     return await invoke<T>(command, args)
   } catch (error) {
     throw normalizeAppError(error)
+  } finally {
+    ;(window as Window & { __vaporStartupMark?: (stage: string, metrics: Record<string, number>) => void }).__vaporStartupMark?.(`ipc_${command}`, { duration: performance.now() - started })
   }
 }
 

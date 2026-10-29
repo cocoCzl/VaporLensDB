@@ -18,7 +18,7 @@ afterEach(() => {
 vi.mock('@/ipc/client', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/ipc/client')>(),
   invokeCommand: vi.fn(async (command: string) => {
-    if (command === 'health_check') return { status: 'ok', version: 'test' }
+    if (command === 'health_check') return new Promise(() => {}) // A pending health probe must not block Home.
     if (command === 'list_driver_definitions') return [driver]
     return []
   }),
@@ -65,6 +65,7 @@ describe('workbench local persistence degradation', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       fireEvent.click(screen.getByText(i18n.t('home.newQuery'), { selector: 'span' }).closest('button')!)
+      await act(async () => { await vi.dynamicImportSettled() })
       const editor = view.container.querySelector<HTMLTextAreaElement>('.ide-editor-surface textarea')!
       expect(editor).toBeVisible()
       fireEvent.change(editor, { target: { value: 'SELECT 1' } })

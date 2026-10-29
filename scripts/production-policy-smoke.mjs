@@ -15,7 +15,7 @@ const assert = (condition, message) => {
 const cargo = read('src-tauri/Cargo.toml')
 const crypto = read('src-tauri/src/utils/crypto.rs')
 const capability = read('src-tauri/capabilities/default.json')
-const policy = read('docs/release/production-policy.md')
+const policy = read('CONTRIBUTING.md')
 const packageJson = read('package.json')
 const activeCrypto = crypto.split('\n#[cfg(test)]\nmod tests')[0]
 const securityFrameworkOwners = rustFiles(resolve(root, 'src-tauri/src'))

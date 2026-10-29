@@ -1,13 +1,42 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="/boot-status.js"></script>
+    <!-- startup-styles -->
     <title>VaporLensDB</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="startup-status" class="startup-shell" role="status" aria-live="polite" aria-busy="true">
+        <div class="startup-top shell-top" aria-hidden="true">
+          <img src="/favicon.png" width="24" height="24" alt="" />
+          <span class="startup-bar startup-search"></span>
+          <span class="startup-bar startup-tools"></span>
+        </div>
+        <div class="startup-body">
+          <div class="startup-sidebar shell-sidebar" aria-hidden="true">
+            <div class="startup-rail"><span class="startup-bar"></span></div>
+            <div class="startup-tree"><span class="startup-bar"></span><span class="startup-bar"></span><span class="startup-bar"></span></div>
+          </div>
+          <div class="startup-workspace">
+            <div class="home-content">
+              <div class="home-welcome startup-welcome" aria-hidden="true"><span class="startup-bar"></span><span class="startup-bar"></span><span class="startup-bar"></span></div>
+              <div class="home-actions" aria-hidden="true">
+                <div class="home-action startup-card"><span class="startup-bar"></span></div>
+                <div class="home-action startup-card"><span class="startup-bar"></span></div>
+                <div class="home-action startup-card"><span class="startup-bar"></span></div>
+              </div>
+              <div class="home-recents" aria-hidden="true"><div class="startup-recent"><span class="startup-bar"></span></div><div class="startup-recent"><span class="startup-bar"></span></div></div>
+              <p id="startup-message"></p>
+            </div>
+          </div>
+        </div>
+        <div class="startup-footer shell-status" aria-hidden="true"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

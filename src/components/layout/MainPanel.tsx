@@ -1,3 +1,6 @@
+import { connectionProductType } from '@/lib/productPresentation'
+import { connectionSqlDialect } from '@/lib/databaseDialect'
+import { useDriverStore } from '@/stores/driverStore'
 import { dispatchSqlCommand, sqlCommandShortcut, registerSqlCommands, executionSql, EMPTY_CURSOR, focusElement, type SqlCursor } from '@/lib/sqlCommands'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -229,11 +232,20 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   const activeExplain = useQueryResultStore((state) => activeQueryId ? state.explains[activeQueryId] : undefined)
   const activeResultSource = useQueryResultStore((state) => activeQueryId ? state.sources[activeQueryId] : undefined)
   const connectionId = activeTab?.connectionId ?? null
-  const activeConnection = connections.find((connection) => connection.id === connectionId)
-  const activeDriverType = activeConnection?.driverType ?? 'postgres'
-  const queryCapabilities = activeConnection
-    ? driverQueryCapabilities(activeConnection.driverType)
-    : emptyQueryCapabilities()
+  const products = useDriverStore((s) => s.products)
+  const savedConnection = connections.find((connection) => connection.id === connectionId)
+  const activeConnection = useMemo(() => savedConnection ? { ...savedConnection, driverType: connectionProductType(savedConnection, products) } : undefined, [savedConnection, products])
+  const activeDriverType = activeConnection ? connectionSqlDialect(activeConnection) : 'postgres'
+  const actualCapabilities = useConnectionStore((state) => connectionId ? state.capabilities?.[connectionId] : undefined)
+  const selectedDefinition = useDriverStore((state) => state.drivers.find((d) => d.id === activeConnection?.driverDefinitionId))
+  const fallbackCapabilities = activeConnection ? driverQueryCapabilities(activeDriverType) : emptyQueryCapabilities()
+  const queryCapabilities: QueryCapabilities = {
+    canQuery: selectedDefinition?.capabilities.canQuery ?? fallbackCapabilities.canQuery,
+    canExplain: actualCapabilities?.supportsExplain ?? (selectedDefinition?.backend === 'jdbc' ? false : fallbackCapabilities.canExplain),
+    canCancel: actualCapabilities?.supportsCancel ?? selectedDefinition?.capabilities.canCancel ?? fallbackCapabilities.canCancel,
+    canReadMetadata: selectedDefinition?.capabilities.canReadMetadata ?? fallbackCapabilities.canReadMetadata,
+    canComplete: selectedDefinition?.capabilities.canReadMetadata ?? fallbackCapabilities.canComplete,
+  }
   const selectedDatabase =
     connectionId != null
       ? activeTab?.database ?? activeConnection?.database ?? null
@@ -865,7 +877,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         onHistoryToggle={() => setHistoryOpen((open) => !open)}
         transactionMode={activeTab.transactionMode ?? 'auto'}
         transactionPhase={activeTab.transactionPhase ?? 'idle'}
-        transactionDisabled={!connectionIsConnected || activeTab.closing || activeTab.transactionBusy}
+        transactionDisabled={!connectionIsConnected || actualCapabilities?.supportsTransactions === false || activeTab.closing || activeTab.transactionBusy}
         onTransactionModeChange={(mode) => {
           if (!connectionId || !connectionIsConnected) return
           void (async () => {

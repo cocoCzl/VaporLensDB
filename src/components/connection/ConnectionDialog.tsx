@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -10,11 +10,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { ConnectionForm } from '@/components/connection/ConnectionForm'
+import { ModuleBoundary } from '@/components/common/ModuleBoundary'
+
 import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useDriverStore } from '@/stores/driverStore'
 import type { ConnectionConfig } from '@/types/connection'
+
+const ConnectionForm = lazy(() => import('@/components/connection/ConnectionForm').then(module => ({ default: module.ConnectionForm })))
 
 interface ConnectionDialogProps {
   connection?: ConnectionConfig | null
@@ -40,13 +43,8 @@ export function ConnectionDialog({
   const { saveConnection, testConnectionInput, connectConnection, loading } = useConnectionStore()
   const { drivers, loadDrivers } = useDriverStore()
 
-  useEffect(() => {
-    // Prime the shared catalogue before the dialog is opened. This keeps the
-    // form from switching driver definitions while its opening transition runs.
-    void loadDrivers()
-  }, [loadDrivers])
-
   const isOpen = open ?? uncontrolledOpen
+  useEffect(() => { if (isOpen) void loadDrivers() }, [isOpen, loadDrivers])
   const setDialogOpen = (nextOpen: boolean) => {
     if (open === undefined) setUncontrolledOpen(nextOpen)
     onOpenChange?.(nextOpen)
@@ -77,11 +75,11 @@ export function ConnectionDialog({
         }
       />}
       <DialogContent
-        className="flex h-[min(50rem,calc(100vh-3rem))] max-w-[50rem] flex-col gap-0 overflow-hidden rounded-xl border-border-strong bg-surface p-0 shadow-[0_26px_60px_-28px_hsl(var(--shadow-floating)/0.46)] sm:max-w-[50rem] data-open:animate-none data-closed:animate-none"
+        className="flex h-[min(50rem,calc(100vh-3rem))] max-w-[min(50rem,calc(100vw-2rem))] flex-col gap-0 overflow-hidden rounded-xl border-border-strong bg-surface p-0 shadow-[0_26px_60px_-28px_hsl(var(--shadow-floating)/0.46)] sm:max-w-[min(50rem,calc(100vw-2rem))] data-open:animate-none data-closed:animate-none"
         overlayClassName="bg-[hsl(var(--overlay)/0.36)] backdrop-blur-none"
         showCloseButton={false}
       >
-        <DialogHeader className="flex h-16 shrink-0 flex-row items-center justify-between gap-3 border-b border-border/75 bg-surface px-7">
+        <DialogHeader className="flex min-h-16 shrink-0 flex-row items-center justify-between gap-3 border-b border-border/75 bg-surface px-5 py-3">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid size-10 shrink-0 place-items-center rounded-[10px] border border-primary/12 bg-primary/[0.09] text-primary">
                   <DatabaseVendorIcon driverType={headerDriverType} className="size-[22px]" />
@@ -108,6 +106,8 @@ export function ConnectionDialog({
               </Button>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-hidden">
+          {isOpen && <ModuleBoundary>
+            <Suspense fallback={<p role="status" className="p-5 text-sm">{t('common.loading')}</p>}>
               <ConnectionForm
                 connection={connection}
                 driverDefinitions={drivers}
@@ -125,6 +125,8 @@ export function ConnectionDialog({
                   setDialogOpen(false)
                 }}
               />
+            </Suspense>
+          </ModuleBoundary>}
         </div>
       </DialogContent>
     </Dialog>

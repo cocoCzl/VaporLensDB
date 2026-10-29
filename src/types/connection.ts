@@ -1,6 +1,10 @@
 export interface ConnectionConfig {
   id: string
   name: string
+  productId?: string | null
+  driverInstallationId?: string | null
+  connectionMode?: string | null
+  driverProperties?: DriverProperty[]
   driverDefinitionId?: string | null
   driverType: DriverType
   driverDialect?: string | null
@@ -48,11 +52,17 @@ export interface DriverCapabilities {
   supportsCancel: boolean
   supportsDdl: boolean
   supportsStreaming: boolean
+  driverFetchStatus?: 'supported' | 'unsupported' | 'unknown'
+  fetchStrategy?: string
 }
 
 export interface ConnectionInput {
   id?: string
   name: string
+  productId?: string | null
+  driverInstallationId?: string | null
+  connectionMode?: string | null
+  driverProperties?: DriverProperty[]
   driverDefinitionId?: string | null
   driverType: DriverType
   driverDialect?: string | null
@@ -99,3 +109,5 @@ export interface SshTunnelInput extends SshTunnelConfig {
   password?: string | null
   privateKeyPassphrase?: string | null
 }
+
+export interface DriverProperty { name: string; value?: string | null; sensitive: boolean; hasSavedValue?: boolean }

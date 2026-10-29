@@ -18,6 +18,7 @@ use vapor_lens_db_lib::{
 };
 
 #[tokio::test]
+#[ignore = "requires TEST_CUSTOM_JDBC_DRIVER_PATH and Java 21+"]
 async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
     let Some(h2_jar) = h2_driver_path() else {
         eprintln!(
@@ -35,6 +36,10 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
         id: Uuid::new_v4(),
         name: "H2 custom JDBC integration".to_string(),
         driver_definition_id: Some("custom-h2".to_string()),
+        product_id: None,
+        driver_installation_id: None,
+        connection_mode: None,
+        driver_properties: Vec::new(),
         driver_type: DriverType::Jdbc,
         driver_dialect: Some("genericJdbc".to_string()),
         host: None,
@@ -171,6 +176,52 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
     assert!(oversized.is_err());
     assert!(oversized_rx.recv().await.is_none());
 
+    // Measure protocol delivery, without claiming server-side cursor behavior.
+    let start = std::time::Instant::now();
+    let (measure_tx, mut measure_rx) = mpsc::channel(2);
+    let measuring_driver = driver.clone();
+    let measured = tokio::spawn(async move {
+        measuring_driver
+            .execute_query_stream(
+                "SELECT X FROM SYSTEM_RANGE(1, 100000)",
+                "h2-measure",
+                1000,
+                Some(100000),
+                measure_tx,
+            )
+            .await
+    });
+    let mut first_ms = None;
+    let mut measured_rows = 0;
+    while let Some(chunk) = measure_rx.recv().await {
+        let chunk = chunk.expect("measured chunk");
+        first_ms.get_or_insert_with(|| start.elapsed().as_millis());
+        measured_rows += chunk.rows.len();
+    }
+    measured.await.unwrap().unwrap();
+    assert_eq!(measured_rows, 100000);
+    eprintln!(
+        "H2_STREAM rows={measured_rows} first_chunk_ms={} total_ms={}",
+        first_ms.unwrap(),
+        start.elapsed().as_millis()
+    );
+    if cfg!(unix) {
+        // Capture only this test process and its direct children, never command args.
+        let rss = std::process::Command::new("ps")
+            .args(["-eo", "pid=,ppid=,rss=,comm="])
+            .output()
+            .unwrap();
+        let pid = std::process::id().to_string();
+        for line in String::from_utf8_lossy(&rss.stdout).lines() {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() >= 4
+                && (fields[0] == pid || fields[1] == pid && fields[3].ends_with("java"))
+            {
+                eprintln!("H2_RSS_KIB {}", line.trim());
+            }
+        }
+    }
+
     let (cancel_tx, _cancel_rx) = mpsc::channel(1);
     let running_driver = driver.clone();
     let running_query = tokio::spawn(async move {
@@ -185,6 +236,7 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
             .await
     });
     sleep(Duration::from_millis(100)).await;
+    let cancel_started = std::time::Instant::now();
     driver
         .cancel_query("h2-cancel-test")
         .await
@@ -193,6 +245,10 @@ async fn custom_jdbc_definition_connects_queries_and_reads_metadata() {
         .await
         .expect("cancelled H2 query should return promptly")
         .expect("join cancelled H2 query");
+    eprintln!(
+        "H2_CANCEL latency_ms={}",
+        cancel_started.elapsed().as_millis()
+    );
     assert!(
         cancelled.is_err(),
         "cancelled H2 query must report an error"
@@ -238,6 +294,9 @@ fn h2_driver_path() -> Option<PathBuf> {
 
 fn h2_definition() -> DriverDefinition {
     DriverDefinition {
+        product_id: String::new(),
+        default_installation_id: None,
+        native_implementation_id: None,
         id: "custom-h2".to_string(),
         driver_type: DriverType::Jdbc,
         driver_dialect: "genericJdbc".to_string(),

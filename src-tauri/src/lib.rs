@@ -281,15 +281,36 @@ pub const APPLICATION_CLOSE_REQUEST_EVENT: &str = "vaporlensdb:request-applicati
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    utils::startup::start();
     env_logger::init();
 
     let config_store = ConfigStore::new_default().expect("initialize config store");
 
+    utils::startup::mark("config_ready");
+    let appearance = utils::appearance::read_hint(config_store.config_dir());
+    let mut context = tauri::generate_context!();
+    if let Some(window) = context.config_mut().app.windows.first_mut() {
+        appearance.configure_startup_window(window);
+    }
+    utils::startup::mark("native_appearance_ready");
     tauri::Builder::default()
+        .append_invoke_initialization_script(utils::startup::initialization_script())
+        .on_page_load(|_, payload| {
+            utils::startup::mark(match payload.event() {
+                tauri::webview::PageLoadEvent::Started => "webview_started",
+                tauri::webview::PageLoadEvent::Finished => "webview_finished",
+            });
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .setup(|app| {
+        .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            utils::appearance::set_canvas_background(
+                &app.get_webview_window("main")
+                    .ok_or("main window missing")?,
+                appearance.background(utils::appearance::system_dark()),
+            )?;
             app_menu::set_application_menu(app.handle(), app_menu::AppMenuLanguage::Zh)?;
             configure_bundled_jdbc_bridge_jar(
                 app.path()
@@ -300,6 +321,7 @@ pub fn run() {
             app.state::<AppState>()
                 .idle_reclaim_worker
                 .start(app.handle().clone());
+            utils::startup::mark("backend_setup");
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -328,6 +350,8 @@ pub fn run() {
             commands::contract::list_command_contracts,
             commands::sql_file::sql_file,
             commands::health::health_check,
+            commands::settings::startup_trace,
+            commands::settings::sync_window_appearance,
             commands::lifecycle::shutdown_application,
             commands::lifecycle::application_close_listener_ready,
             commands::lifecycle::application_close_request_finished,
@@ -351,6 +375,12 @@ pub fn run() {
             commands::data_source_group::reorder_data_source_groups,
             commands::data_source_group::set_connection_data_source_group,
             commands::driver::list_driver_definitions,
+            commands::driver::list_database_products,
+            commands::driver::export_driver_configuration,
+            commands::driver::import_driver_configuration,
+            commands::driver::save_database_product,
+            commands::driver::list_driver_installations,
+            commands::driver::delete_driver_installation,
             commands::driver::save_custom_driver_definition,
             commands::driver::delete_custom_driver_definition,
             commands::driver::import_jdbc_driver_artifacts,
@@ -400,7 +430,11 @@ pub fn run() {
             commands::task::clear_completed_tasks,
             commands::task::reveal_task_output
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
-        .run(|_, _| {});
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Ready) {
+                utils::startup::mark("backend_ready");
+            }
+        });
 }

@@ -682,6 +682,8 @@ mod tests {
                 supports_cancel: false,
                 supports_ddl: false,
                 supports_streaming: true,
+                driver_fetch_status: "unknown".into(),
+                fetch_strategy: "native".into(),
             }
         }
         async fn ping(&self) -> Result<(), AppError> {

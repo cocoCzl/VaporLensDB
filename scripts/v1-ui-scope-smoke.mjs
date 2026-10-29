@@ -55,8 +55,8 @@ includesAll(
   'primary database choices',
 )
 assert(
-  connectionForm.includes("const unavailable = option.defaultDriver.status === 'planned'") && connectionForm.includes('disabled={unavailable}'),
-  'planned database choices should be disabled',
+  connectionForm.includes("driverDefinitions.filter((driver) => driver.status !== 'planned')"),
+  'planned driver definitions should not be selectable',
 )
 includesAll(connectionForm, ["t('connectionForm.validation.oracleJarRequired')"], 'Oracle local validation')
 

@@ -1,136 +1,121 @@
-# Current support status
+# Support and Limitations
 
-This is VaporLensDB's canonical current-status matrix. “Implemented”,
-automated tests, and runtime verification are independent facts. A package
-build or static review is never evidence that an operating system has passed
-desktop runtime QA.
+VaporLensDB 0.9.1 is under development. This page separates available
+implementations from verification coverage. A build, capability flag or passing
+unit test does not establish desktop or vendor compatibility.
 
-Product positioning and exclusions are defined in [V1-SCOPE.md](V1-SCOPE.md);
-open acceptance gates are tracked in [V1-ACCEPTANCE.md](V1-ACCEPTANCE.md). Tier-A
-means the primary native support scope, not a declaration that pre-1.0 is stable.
-Historical macOS evidence does not certify all later workflow changes.
+## Product scope
 
-## Database matrix
+The client focuses on SQL execution, Auto/Manual transactions, read-only result
+inspection, schema exploration, SQL files/history, CSV exchange, connection
+management and diagnostics. SQL-authored writes are supported; inline table
+editing, insert/delete row UI and Apply/Revert are planned after 1.0.
+A full DBA suite, replication/backup GUI, schema comparison/migration designer,
+ODBC, advanced Oracle administration and full cross-vendor visual Explain are
+outside the 1.0 scope. Plans in the [README](../README.md#plans) are not support promises.
 
-| Database | Implemented | Automated tests | macOS runtime | Windows runtime | Linux runtime | 1.0 support tier |
-| --- | --- | --- | --- | --- | --- | --- |
-| MySQL | Yes — native Rust driver; optional JDBC | Yes | L2 PASS / L3 PASS within claimed scope | **NOT EXECUTED** | **NOT EXECUTED** | Tier-A |
-| PostgreSQL | Yes — native Rust driver; optional JDBC | Yes | L2 PASS / L3 PASS within claimed scope | **NOT EXECUTED** | **NOT EXECUTED** | Tier-A |
-| SQLite | Yes — native Rust driver; optional JDBC | Yes | L2 PASS / L3 PASS within claimed scope | **NOT EXECUTED** | **NOT EXECUTED** | Tier-A |
-| Oracle JDBC | Yes — user-provided `ojdbc` JAR | Limited, opt-in | Runtime evidence exists; not Tier-A accepted | **NOT EXECUTED** | **NOT EXECUTED** | Experimental / best-effort |
-| Custom JDBC | Yes — user JAR, class, and URL | Basic coverage | Not Tier-A accepted | **NOT EXECUTED** | **NOT EXECUTED** | Experimental / best-effort |
-| SQL Server | Yes — native driver | Source / driver-level coverage | **NOT EXECUTED** | **NOT EXECUTED** | **NOT EXECUTED** | Not advertised as Tier-A |
+## Database implementations
 
-## Platform status
+| Product | Native Rust | JDBC | Support scope |
+| --- | --- | --- | --- |
+| PostgreSQL | Implemented; recommended | Optional | Primary native support; JDBC remains driver-dependent |
+| MySQL | Implemented; recommended | Optional | Primary native support; JDBC remains driver-dependent |
+| SQLite | Implemented; recommended | Optional | Primary native support; file and memory semantics differ |
+| SQL Server | Implemented | User-configured definition possible | Native runtime verification incomplete; no primary-support commitment |
+| Oracle | No built-in native implementation | Built-in definition, user-supplied `ojdbc` | Experimental; Service connection/query probes do not verify SID or all Oracle capabilities |
+| User-defined product | No arbitrary native plugin loader | User JAR/class/URL and optional metadata SQL | Experimental; validate the selected driver/server combination |
 
-| Platform | Current evidence | Desktop runtime |
-| --- | --- | --- |
-| macOS arm64 | Current Tier-A runtime QA scope | Verified for MySQL, PostgreSQL, and SQLite only |
-| macOS Intel / x86_64 | Native source build target; current acceptance does not cover Intel | **NOT EXECUTED** |
-| Windows x86_64 | Platform code paths and package-build workflow | **NOT EXECUTED** |
-| Linux x86_64 | Platform code paths, prerequisites, and package-build workflow | **NOT EXECUTED** |
+A stable product ID, definition and immutable JDBC installation identify each
+connection. Custom products appear in the connection directory without adding a
+vendor enum. Optional JDBC does not inherit native verification. See
+[driver configuration and migration (Chinese)](DRIVER-MANAGEMENT.md).
 
-## Credential storage status
+## Platforms
 
-- macOS Keychain: each saved database password is stored directly under an
-  opaque datasource credential reference and read non-interactively; final
-  zero-authorization-UI runtime acceptance is **PASS / Accepted / Frozen**.
-  Older credential
-  generations require database-password re-entry rather than Keychain migration.
-- Windows DPAPI: implementation present; runtime **NOT EXECUTED**.
-- Linux Secret Service / `secret-tool`: implementation present; runtime
-  **NOT EXECUTED**.
+| Platform | Build and desktop coverage |
+| --- | --- |
+| macOS Apple Silicon / arm64 | Local source packages and desktop workflows exercised; native PostgreSQL/MySQL/SQLite have runtime coverage, with feature-specific gaps below. |
+| macOS Intel / x86_64 | Native build target exists; desktop runtime unverified. |
+| Windows x86_64 | Platform implementation and package workflow exist; desktop runtime unverified. |
+| Linux x86_64 | Platform implementation and package workflow exist; desktop runtime unverified. |
 
-## Scope limits
+macOS coverage does not certify every subsequent build or workflow. Native
+title-bar theme switching was observed working on the tested macOS build.
+A brief blank before the HTML skeleton remains unresolved; capture did not
+cover the original native first frame. Continuous window-edge resizing remains
+unverified. Checks are in
+[desktop checks](TESTING.md#desktop-manual-checks).
 
-Oracle JDBC and Custom JDBC depend on the user-selected driver, server version,
-JDK, privileges, and metadata behavior; neither receives a Tier-A promise.
+## Feature limits
 
-SQL Server is implemented but is not an official 1.0 Tier-A target. Its TLS
-trust policy requires a future review, and Windows Integrated Authentication is
-not verified or promised for 1.0.
+| Feature | PostgreSQL native | MySQL native | SQLite native | JDBC | SQL Server native |
+| --- | --- | --- | --- | --- | --- |
+| Query cancellation | Native cancellation path | Not promised | Not promised | Bridge support; best-effort, vendor-dependent | Not promised |
+| Auto/Manual transactions | Implemented | Implemented; server/engine rules apply | Implemented | Implemented; vendor transaction/recovery validation incomplete | Implemented; runtime unverified |
+| Parameterized CSV import | Supported | Supported | Supported | Unsupported | Unsupported |
+| Metadata and DDL | Vendor/type/privilege limits | Vendor/version/privilege limits | SQLite limits | Per-operation metadata SQL or JDBC metadata; advanced DDL requires templates | Implemented; runtime unverified |
+| Explain | Result inspection | Result inspection | Result inspection | Oracle adapter implemented; no general custom-driver support | Implemented; runtime unverified |
+| Table Structure triggers | Table-scoped catalog query | Table-scoped catalog query | SQLite catalog by table name | Table ownership unsupported | Unsupported |
 
-The Tier-A drivers currently use capability-aware query cancellation: MySQL and
-SQLite do not promise cancellation, while PostgreSQL supports its native
-cancellation path. This does not imply a generalized cancellation guarantee
-for every driver.
+Transactions require explicit Commit/Rollback in Manual mode. Execution-target,
+session-generation and transaction guards prevent implicit target changes,
+commits or SQL replay during recovery; a broken physical session is not a
+successful transaction restoration. Driver-level implementation does not prove
+vendor recovery semantics. CSV task cancellation is cooperative and separate
+from interrupting an active database query.
 
-Parameterized CSV import is a Tier-A native-driver capability for PostgreSQL,
-MySQL, and SQLite only. SQL Server and all JDBC paths do not support
-parameterized CSV import in 1.0. Full-query export accepts one SQL statement;
-multi-statement, multi-result export is unsupported. MySQL CLI `DELIMITER`
-directives and PostgreSQL exotic or multidimensional types are also outside the
-1.0 support scope.
+Full-query export accepts one statement, not a multi-statement/multi-result
+script. MySQL CLI `DELIMITER` directives and PostgreSQL exotic/multidimensional
+types are outside current support. Metadata visibility depends on privileges;
+unsupported, failed and successfully empty results must remain distinct.
+Schema-level triggers do not imply table ownership or same-named trigger DDL
+resolution. Explain inspection is not a full visual query-plan designer.
+
+## JDBC and network limits
+
+- Java, vendor JARs and privileges determine JDBC behavior. H2 bridge checks,
+  SQLite JDBC application-command file/memory checks, and read-only
+  MySQL/PostgreSQL/Oracle Service probes provide limited verification;
+  mock IPC and these probes do not certify all vendors or desktop paths.
+- Protocol chunks and `fetchSize` hints do not prove server cursors or bounded
+  driver reads. JDBC reports `driverFetchStatus=unknown` and `fetchStrategy=hintOnly`;
+  vendor-side bounded fetching and attributable peak JVM/WebView memory remain
+  unverified. Do not estimate WebView RSS from unrelated WebKit processes.
+- Unknown SQL dialects can execute user SQL, but automatic paging/import SQL
+  is withheld. A dialect label does not grant another product's catalog adapter.
+- Native PostgreSQL/MySQL TLS modes differ: encryption-only is not server identity
+  verification. Trust stores and SSH hostname routing need mode-specific checks.
+  SQL Server TLS trust-policy review and Integrated Authentication verification
+  remain outstanding.
+- JDBC standalone TLS settings without a supported mapping are rejected; use
+  documented vendor URL/Properties settings. Unsupported raw-URL SSH formats
+  and SSH combined with arbitrary JDBC Properties are explicitly rejected,
+  rather than silently discarding security requirements.
+- SSH integration is implemented for supported network configurations, but real
+  SSH+JDBC authentication/routing combinations remain unverified.
+- Oracle SID needs a real SID listener; external vendor write/transaction/recovery
+  suites need an explicitly authorized disposable database. Ordinary endpoint
+  access does not authorize fixture writes. See [live tests](TESTING.md#live-database-tests).
+- SQLite private memory lives with its physical session. Named shared-cache
+  memory cannot share state across independent bridge JVMs. Saved-file
+  disappearance is an error, not permission to recreate the file on reconnect.
+
+## Credentials
+
+macOS stores database passwords directly in Keychain under opaque references;
+reads skip authentication UI. Older credential generations require password
+re-entry rather than automatic probing/migration. Windows DPAPI and Linux
+Secret Service/`secret-tool` are implemented, with desktop runtime unverified.
+Linux needs an active Secret Service session. QA config-directory isolation does
+not by itself isolate system credentials or WebView storage; see
+[application profiles](TESTING.md#application-profiles).
 
 ## CSV failure privacy
 
-Normal CSV import does not automatically create a failure sidecar. Counts and
-bounded row-number/sanitized-error details stay in the session report; failed
-source values are not retained in report DTOs or sent as failure details to the
-frontend. The bounded data preview remains available for intentional inspection.
-
-Older builds could create `<CSV path>.import-report.json` beside an input file,
-including business row values. Existing files are neither deleted nor overwritten
-by imports; users decide how to retain or remove them. Diagnostics does not read
-or collect those files. Exporting failed row values is not implemented: any future
-feature must require an explicit user action and destination selection.
-
-## Capability boundaries
-
-Implementation flags are not evidence of equal vendor behavior or desktop QA.
-Native Tier-A below means PostgreSQL/MySQL/SQLite, not their optional JDBC paths.
-
-| Capability | PostgreSQL native | MySQL native | SQLite native | Oracle / custom JDBC | SQL Server native |
-| --- | --- | --- | --- | --- | --- |
-| Query cancellation | Native supported path | Not promised | Not promised | Advertised by bridge; best-effort, driver-dependent, not Tier-A | Not promised |
-| Auto / Manual transactions | Supported | Supported; server/engine semantics apply | Supported | Implemented; driver-dependent | Implemented; runtime unverified |
-| Table Structure triggers | Table-scoped catalog query | Table-scoped information_schema query | Database-scoped sqlite_master / tbl_name query | Unsupported for table ownership; schema-object support does not imply table-trigger support | Unsupported for table-trigger metadata |
-| Metadata / DDL | Implemented within vendor/type/privilege limits | Implemented within vendor/version/privilege limits | Implemented within SQLite limits | Metadata SQL/driver-dependent; DDL capability follows configured templates | Implemented; runtime unverified |
-| Explain | Supported result inspection | Supported result inspection | Supported result inspection | Oracle path implemented; custom not generally advertised | Implemented; runtime unverified |
-| Generated / identity flags | Structured metadata where available | Structured metadata where available | Structured metadata where available | Driver/template-dependent; no parity promise | No Tier-A acceptance promise |
-| Parameterized CSV import | Supported | Supported | Supported | Unsupported | Unsupported |
-| TLS | Native policy; verification depends on selected mode | Native policy; verification depends on selected mode | Not applicable to local file | Vendor JAR/URL configuration; no universal guarantee | Trust policy review pending |
-| SSH | Shared tunnel for supported network configuration | Shared tunnel for supported network configuration | Not applicable to local file | Configuration/URL-dependent; best-effort | Implementation does not establish runtime acceptance |
-
-Explain result inspection is not full visual Explain. Metadata flags do not
-imply editable grid support. CSV task/preview cancellation is a separate
-cooperative lifecycle, not proof that a driver can interrupt an active query.
-JDBC cancellation being advertised does not give it PostgreSQL's native
-cancellation guarantee. Cancellation behavior is not uniform across vendors.
-
-Table Structure loads triggers for an exact schema/table request, separately from
-schema-wide object browsing. Loading, successful empty, unsupported, and failed
-requests have distinct UI states; refresh hides previous data until it completes.
-Catalog visibility remains subject to database privileges. Timing/event fields
-and trigger create/edit/drop are not introduced. Definition opening keeps the
-existing vendor-limited, name-based DDL path; it is not a new ownership guarantee
-for same-named trigger definitions or attached-database DDL.
-
-SSH uses the local SSH integration; a build or unit test does not establish
-all OS/authentication/URL combinations. PostgreSQL/MySQL encryption-only TLS
-modes must not be described as server identity verification. Verification modes,
-trust stores, server configuration and SSH hostname routing require their own
-evidence; no blanket SSH/TLS certification is made by this matrix.
-
-## Pre-1.0 feature freeze
-
-The SQL-first product scope is locked. Work before acceptance focuses on
-confirmed correctness (including misleading metadata presentation), privacy,
-support-contract defects, and the bounded gates in V1-ACCEPTANCE. P0/P1 defects
-block acceptance; P2 issues require explicit disposition rather than silently
-becoming enhancements. Existing historical acceptance remains evidence for its
-recorded scope, not automatic approval of later changes.
-
-Table Data Editing (inline edits, insert/delete row UI, Apply/Revert) is a
-post-1.0 major feature. Broader import/export features, schema compare,
-monitoring, plugins, ODBC, SQL Server promotion and Oracle Tier-A promotion
-are deferred. Source-product acceptance does not require signing/notarization
-or runtime support promotion for currently unverified platforms.
-
-## Frozen macOS acceptance record
-
-- Phase 14C.3: **PASS / Accepted / Frozen** — driver switching updates a
-  system-generated datasource name, a user-entered name is preserved, and the
-  datasource context menu provides a persisted display-name-only Rename action.
-- Phase 14C: **PASS / Accepted / Frozen** — release-like Tier-A smoke,
-  production DevTools policy, and the minimized macOS entitlement set passed.
+CSV import reports counts and bounded row numbers/sanitized errors without
+retaining failed source values in failure DTOs. The intentional preview remains
+available. Imports do not automatically create failure sidecars. Older
+`<CSV path>.import-report.json` files may contain row values; current imports
+neither delete nor overwrite them, and diagnostics does not collect them.
+Users decide whether to retain those files. Exporting failed row values is not
+implemented.

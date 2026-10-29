@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import i18n from '@/i18n'
 import {
   deleteCustomDriverDefinition,
+  listDatabaseProducts, listDriverInstallations, saveDatabaseProduct, deleteDriverInstallation,
   importJdbcDriverArtifacts,
   listDriverDefinitions,
   removeJdbcDriverArtifact,
@@ -10,22 +11,31 @@ import {
 } from '@/ipc/driver'
 import { normalizeAppError } from '@/ipc/client'
 import { useUiStore } from '@/stores/uiStore'
-import type { DriverDefinition, ExternalDriverValidation } from '@/types/driver'
+import type { DatabaseProduct, DriverInstallation, DriverDefinition, ExternalDriverValidation } from '@/types/driver'
 
 interface DriverState {
   drivers: DriverDefinition[]
+  products: DatabaseProduct[]
+  installations: DriverInstallation[]
+  deleteInstallation: (id: string) => Promise<boolean>
   loading: boolean
   error: string | null
   loadDrivers: (force?: boolean) => Promise<void>
   saveDriver: (driver: DriverDefinition) => Promise<DriverDefinition | null>
   deleteDriver: (id: string) => Promise<boolean>
-  importJdbcArtifacts: (driverDefinitionId: string, paths: string[]) => Promise<DriverDefinition | null>
+  importJdbcArtifacts: (driverDefinitionId: string, paths: string[], label?: string) => Promise<DriverDefinition | null>
   removeJdbcArtifact: (driverDefinitionId: string, path: string) => Promise<DriverDefinition | null>
   validateDriver: (driver: DriverDefinition) => Promise<ExternalDriverValidation>
 }
 
 export const useDriverStore = create<DriverState>((set, get) => ({
   drivers: [],
+  products: [],
+  installations: [],
+  deleteInstallation: async (id) => {
+    try { await deleteDriverInstallation(id); await get().loadDrivers(true); return true }
+    catch (error) { const appError = normalizeAppError(error); set({ error: appError.message }); useUiStore.getState().notifyError(appError); return false }
+  },
   loading: false,
   error: null,
   loadDrivers: async (force = false) => {
@@ -35,8 +45,8 @@ export const useDriverStore = create<DriverState>((set, get) => ({
 
     set({ loading: true, error: null })
     try {
-      const drivers = await listDriverDefinitions()
-      set({ drivers, loading: false })
+      const [drivers, products, installations] = await Promise.all([listDriverDefinitions(), listDatabaseProducts(), listDriverInstallations()])
+      set({ drivers, products, installations, loading: false })
     } catch (error) {
       const appError = normalizeAppError(error)
       set({ error: appError.message, loading: false })
@@ -46,7 +56,16 @@ export const useDriverStore = create<DriverState>((set, get) => ({
   saveDriver: async (driver) => {
     set({ loading: true, error: null })
     try {
-      const saved = await saveCustomDriverDefinition(driver)
+      const { newProductName, ...definition } = driver
+      if (!definition.id) definition.id = `custom-${crypto.randomUUID()}`
+      if (!definition.productId) {
+        const product = await saveDatabaseProduct({ id: `product-${crypto.randomUUID()}`, name: newProductName?.trim() || definition.name, iconKey: 'jdbc', builtIn: false, adapterId: 'genericSql', defaultDriverDefinitionId: definition.id })
+        definition.productId = product.id
+      } else if (newProductName?.trim()) {
+        const product = get().products.find((p) => p.id === definition.productId)
+        if (product && !product.builtIn && product.name !== newProductName.trim()) await saveDatabaseProduct({ ...product, name: newProductName.trim() })
+      }
+      const saved = await saveCustomDriverDefinition(definition)
       await get().loadDrivers(true)
       useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.driverDefinitionSaved') })
       return saved
@@ -71,10 +90,10 @@ export const useDriverStore = create<DriverState>((set, get) => ({
       return false
     }
   },
-  importJdbcArtifacts: async (driverDefinitionId, paths) => {
+  importJdbcArtifacts: async (driverDefinitionId, paths, label) => {
     set({ loading: true, error: null })
     try {
-      const saved = await importJdbcDriverArtifacts({ driverDefinitionId, paths })
+      const saved = await importJdbcDriverArtifacts({ driverDefinitionId, paths, label })
       await get().loadDrivers(true)
       useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.jdbcJarImported') })
       return saved
@@ -102,13 +121,15 @@ export const useDriverStore = create<DriverState>((set, get) => ({
   validateDriver: async (driver) => {
     try {
       const result = await validateExternalDriver({
+        installationId: driver.defaultInstallationId,
         driverType: driver.driverType,
         connectionUrl: driver.urlTemplate,
         driverClass: driver.jdbcDriverClass,
         driverPaths: driver.driverArtifacts,
       })
-      useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.externalDriverValidated') })
-      return result
+      if (driver.defaultInstallationId) await get().loadDrivers(true)
+      if (result.valid) useUiStore.getState().notify({ kind: 'success', title: i18n.t('notifications.externalDriverValidated') })
+      return result.valid ? { ...result, message: i18n.t('driverRefactor.classValidationSuccess') } : result
     } catch (error) {
       const appError = normalizeAppError(error)
       return { valid: false, message: appError.message }

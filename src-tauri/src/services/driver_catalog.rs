@@ -7,8 +7,11 @@ use crate::models::{
 };
 
 pub fn driver_definitions() -> Vec<DriverDefinition> {
-    vec![
+    let mut definitions = vec![
         DriverDefinition {
+            product_id: String::new(),
+            default_installation_id: None,
+            native_implementation_id: None,
             id: DriverType::Postgres.to_string(),
             driver_type: DriverType::Postgres,
             driver_dialect: "postgresql".to_string(),
@@ -31,6 +34,9 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             capabilities: ready_capabilities(true),
         },
         DriverDefinition {
+            product_id: String::new(),
+            default_installation_id: None,
+            native_implementation_id: None,
             id: DriverType::Mysql.to_string(),
             driver_type: DriverType::Mysql,
             driver_dialect: "mysql".to_string(),
@@ -60,6 +66,9 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             },
         },
         DriverDefinition {
+            product_id: String::new(),
+            default_installation_id: None,
+            native_implementation_id: None,
             id: DriverType::Oracle.to_string(),
             driver_type: DriverType::Oracle,
             driver_dialect: "oracle".to_string(),
@@ -160,6 +169,9 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             },
         ),
         DriverDefinition {
+            product_id: String::new(),
+            default_installation_id: None,
+            native_implementation_id: None,
             id: DriverType::Jdbc.to_string(),
             driver_type: DriverType::Jdbc,
             driver_dialect: "genericJdbc".to_string(),
@@ -182,6 +194,9 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             capabilities: jdbc_basic_capabilities(),
         },
         DriverDefinition {
+            product_id: String::new(),
+            default_installation_id: None,
+            native_implementation_id: None,
             id: DriverType::Sqlite.to_string(),
             driver_type: DriverType::Sqlite,
             driver_dialect: "sqlite".to_string(),
@@ -211,6 +226,9 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             },
         },
         DriverDefinition {
+            product_id: String::new(),
+            default_installation_id: None,
+            native_implementation_id: None,
             id: DriverType::Mssql.to_string(),
             driver_type: DriverType::Mssql,
             driver_dialect: "mssql".to_string(),
@@ -236,7 +254,14 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             metadata_dialect_sql: Some("mssql".to_string()),
             capabilities: ready_capabilities(false),
         },
-    ]
+    ];
+    for definition in &mut definitions {
+        definition.product_id = definition.driver_type.to_string();
+        if matches!(definition.backend, DriverBackend::NativeRust) {
+            definition.native_implementation_id = Some(definition.id.clone());
+        }
+    }
+    definitions
 }
 
 struct JdbcTemplateSeed {
@@ -258,6 +283,9 @@ struct JdbcTemplateSeed {
 
 fn jdbc_template(seed: JdbcTemplateSeed) -> DriverDefinition {
     DriverDefinition {
+        product_id: String::new(),
+        default_installation_id: None,
+        native_implementation_id: None,
         id: seed.id.to_string(),
         driver_type: seed.driver_type,
         driver_dialect: seed.dialect.to_string(),
@@ -304,7 +332,7 @@ fn jdbc_basic_capabilities() -> DriverDefinitionCapabilities {
         can_connect: true,
         can_query: true,
         can_stream: true,
-        can_read_metadata: false,
+        can_read_metadata: true,
         can_cancel: true,
         can_generate_ddl: false,
     }

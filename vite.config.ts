@@ -7,7 +7,7 @@ const monacoVsDir = path.resolve(import.meta.dirname, 'node_modules/monaco-edito
 const monacoLanguageIds = ['sql', 'pgsql']
 
 export default defineConfig({
-  plugins: [react(), monacoStaticAssetsPlugin()],
+  plugins: [react(), startupStylesPlugin(), monacoStaticAssetsPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
@@ -199,4 +199,17 @@ function contentType(filePath: string) {
   if (filePath.endsWith('.ttf')) return 'font/ttf'
   if (filePath.endsWith('.json')) return 'application/json'
   return 'application/octet-stream'
+}
+
+// Inline only the small shared shell stylesheet. Vite must not merge it into
+// the main app CSS: the first paint must not wait for that module graph.
+function startupStylesPlugin(): Plugin {
+  const file = path.resolve(import.meta.dirname, 'src/styles/startup.css')
+  return {
+    name: 'startup-styles',
+    transformIndexHtml: {
+      order: 'pre',
+      handler: html => html.replace('<!-- startup-styles -->', `<style>${fs.readFileSync(file, 'utf8')}</style>`),
+    },
+  }
 }

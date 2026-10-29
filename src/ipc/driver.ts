@@ -1,6 +1,8 @@
 import { invokeCommand } from '@/ipc/client'
 import { COMMANDS } from '@/ipc/contracts'
 import type {
+  DatabaseProduct,
+  DriverInstallation,
   DriverDefinition,
   ExternalDriverValidation,
   ImportJdbcDriverArtifactsInput,
@@ -31,3 +33,11 @@ export function removeJdbcDriverArtifact(input: RemoveJdbcDriverArtifactInput) {
 export function validateExternalDriver(input: ValidateExternalDriverInput) {
   return invokeCommand<ExternalDriverValidation>(COMMANDS.validateExternalDriver, { input })
 }
+
+export function listDatabaseProducts() { return invokeCommand<DatabaseProduct[]>(COMMANDS.listDatabaseProducts) }
+export function saveDatabaseProduct(input: DatabaseProduct) { return invokeCommand<DatabaseProduct>(COMMANDS.saveDatabaseProduct, { input }) }
+export function listDriverInstallations() { return invokeCommand<DriverInstallation[]>(COMMANDS.listDriverInstallations) }
+export function deleteDriverInstallation(id: string) { return invokeCommand<void>(COMMANDS.deleteDriverInstallation, { id }) }
+
+export function exportDriverConfiguration() { return invokeCommand<unknown>(COMMANDS.exportDriverConfiguration) }
+export function importDriverConfiguration(input: unknown) { return invokeCommand<number>(COMMANDS.importDriverConfiguration, { input }) }

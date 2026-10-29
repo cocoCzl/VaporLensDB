@@ -46,6 +46,8 @@ interface UserSettings {
 }
 
 interface UiState {
+  settingsSection: 'general' | 'drivers' | 'import' | 'diagnostics'
+  setSettingsSection: (section: 'general' | 'drivers' | 'import' | 'diagnostics') => void
   theme: Theme
   /** The sole resolved light/dark value consumed by rendered integrations. */
   resolvedTheme: ResolvedTheme
@@ -87,6 +89,8 @@ export const useUiStore = create<UiState>((set) => ({
   theme: readStoredTheme(),
   resolvedTheme: resolveTheme(readStoredTheme()),
   ...readStoredSettings(),
+  settingsSection: 'general',
+  setSettingsSection: (settingsSection) => set({ settingsSection }),
   sidebarView: 'explorer',
   notifications: [],
   queryHistoryRequest: 0,

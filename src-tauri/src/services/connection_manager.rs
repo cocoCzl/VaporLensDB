@@ -976,7 +976,7 @@ pub(crate) async fn create_active_connection(
     definition: Option<&DriverDefinition>,
 ) -> Result<ActiveConnection, AppError> {
     super::connection_tls::validate_connection_tls(config, definition)?;
-    let (ssh_tunnel, runtime_config) = open_tunnel(config).await?;
+    let (ssh_tunnel, runtime_config) = open_tunnel(config, definition).await?;
     let driver = create_driver(&runtime_config, password, definition).await?;
     driver.ping().await?;
     Ok(ActiveConnection {
@@ -995,16 +995,44 @@ pub(crate) async fn test_connection(
     definition: Option<&DriverDefinition>,
 ) -> Result<(), AppError> {
     super::connection_tls::validate_connection_tls(config, definition)?;
-    let (_tunnel, runtime_config) = open_tunnel(config).await?;
+    let (_tunnel, runtime_config) = open_tunnel(config, definition).await?;
     let driver = create_driver(&runtime_config, password, definition).await?;
     driver.ping().await
 }
 
 async fn open_tunnel(
     config: &ConnectionConfig,
+    definition: Option<&DriverDefinition>,
 ) -> Result<(Option<SshTunnel>, ConnectionConfig), AppError> {
-    match SshTunnel::open(config).await? {
-        Some((tunnel, runtime_config)) => Ok((Some(tunnel), runtime_config)),
+    if config.ssh_tunnel.as_ref().is_some_and(|t| t.enabled) && !config.driver_properties.is_empty()
+    {
+        // Arbitrary JDBC properties may select another host/socket/factory.
+        // Without a driver-specific mapping they cannot safely coexist with forwarding.
+        return Err(AppError::ConfigError("SSH forwarding with arbitrary JDBC Properties is unsupported; endpoint overrides cannot be safely validated".into()));
+    }
+    let structured_jdbc = definition.is_some_and(|d| {
+        matches!(
+            d.backend,
+            crate::models::driver_catalog::DriverBackend::Jdbc
+        )
+    }) && config
+        .connection_mode
+        .as_deref()
+        .is_some_and(|m| m != "urlOnly" && m != "file");
+    let mut tunnel_config = config.clone();
+    if structured_jdbc {
+        tunnel_config.connection_url = None;
+    }
+    match SshTunnel::open(&tunnel_config).await? {
+        Some((tunnel, mut runtime_config)) => {
+            if structured_jdbc {
+                runtime_config.connection_url = Some(super::driver_registry::build_jdbc_url(
+                    &runtime_config,
+                    definition.expect("JDBC definition"),
+                )?);
+            }
+            Ok((Some(tunnel), runtime_config))
+        }
         None => Ok((None, config.clone())),
     }
 }
@@ -1014,6 +1042,18 @@ async fn create_driver(
     password: Option<&str>,
     definition: Option<&DriverDefinition>,
 ) -> Result<Arc<dyn DatabaseDriver>, AppError> {
+    if config.driver_definition_id.as_deref().is_some_and(|id| {
+        id != config.driver_type.to_string()
+            || !matches!(
+                config.driver_type,
+                DriverType::Postgres | DriverType::Mysql | DriverType::Sqlite | DriverType::Mssql
+            )
+    }) && definition.is_none()
+    {
+        return Err(AppError::ConfigError(
+            "Selected driver definition is missing; repair the connection".into(),
+        ));
+    }
     if matches!(
         definition.map(|definition| &definition.backend),
         Some(crate::models::driver_catalog::DriverBackend::Jdbc)
@@ -1022,7 +1062,13 @@ async fn create_driver(
         return Ok(Arc::new(driver));
     }
 
-    match config.driver_type {
+    let native_type = definition
+        .and_then(|d| d.native_implementation_id.as_deref())
+        .map(str::parse::<DriverType>)
+        .transpose()
+        .map_err(AppError::ConfigError)?
+        .unwrap_or(config.driver_type);
+    match native_type {
         DriverType::Postgres => {
             let driver = if let Some(connection_url) = config.connection_url.as_deref() {
                 PostgresDriver::connect_with_url_credentials(
@@ -1171,6 +1217,10 @@ mod tests {
                 id: Uuid::new_v4(),
                 name: "PostgreSQL context integration".into(),
                 driver_definition_id: None,
+                product_id: None,
+                driver_installation_id: None,
+                connection_mode: None,
+                driver_properties: Vec::new(),
                 driver_type: DriverType::Postgres,
                 driver_dialect: Some("postgresql".into()),
                 host: Some(host.to_string()),

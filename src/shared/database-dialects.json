@@ -1,0 +1,7 @@
+{
+  "postgres": { "aliases": ["postgres", "postgresql"], "quote": "\"", "pagination": "limitOffset" },
+  "mysql": { "aliases": ["mysql", "mariadb"], "quote": "`", "pagination": "limitOffset" },
+  "sqlite": { "aliases": ["sqlite"], "quote": "\"", "pagination": "limitOffset" },
+  "mssql": { "aliases": ["mssql", "sqlserver"], "quote": "[", "pagination": "offsetFetch" },
+  "oracle": { "aliases": ["oracle"], "quote": "\"", "pagination": "offsetFetch" }
+}

@@ -68,11 +68,11 @@ export function WorkbenchHome() {
   }
 
   return (
-    <section className="ide-workspace min-h-0 flex-1 overflow-auto">
-      <div className="mr-auto w-full max-w-[1360px] px-7 py-5 min-[1280px]:px-10 min-[1600px]:px-11">
-        <header className="relative mb-5 min-h-32 max-w-[1360px] overflow-hidden min-[1000px]:pr-[23rem]">
+    <section className="ide-workspace @container/home min-h-0 min-w-0 flex-1 overflow-auto">
+      <div className="home-content">
+        <header className="home-welcome relative @min-[950px]/home:pr-[23rem]">
           <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-primary/85">VaporLensDB</div>
-          <h1 className="text-[36px] font-bold leading-[1.12] tracking-[-0.045em] text-foreground">{t('home.welcomeTitle')}</h1>
+          <h1 className="text-[30px] @min-[700px]/home:text-[36px] font-bold leading-[1.12] tracking-[-0.045em] text-foreground">{t('home.welcomeTitle')}</h1>
           <p className="mt-3 text-[15px] leading-6 text-muted-foreground">{t('home.welcomeDescription')}</p>
           <HomeHeroArtwork />
         </header>
@@ -83,7 +83,7 @@ export function WorkbenchHome() {
           onOpenCommandPalette={() => window.dispatchEvent(new Event('vaporlensdb:open-command-palette'))}
         />
 
-        <div className="mt-8 grid gap-4 min-[900px]:grid-cols-2">
+        <div className="home-recents">
           <RecentConnections
             connections={recentConnections}
             loading={connectionsLoading}

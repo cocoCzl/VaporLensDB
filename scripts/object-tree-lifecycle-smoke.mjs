@@ -36,7 +36,7 @@ includesAll(
     "t('explorer.editConnection')",
     "t('explorer.missingExternalDriver')",
     "t('explorer.importDriver')",
-    'requiresExternalDriver',
+    'connectionDriverReadiness(activeConnection, registry)',
     'canSearchCurrentConnection',
     'searchAllMetadata',
   ],

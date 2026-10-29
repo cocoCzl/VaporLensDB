@@ -59,7 +59,7 @@ includesAll(
   [
     'void loadDrivers()',
     "h-[min(50rem,calc(100vh-3rem))]",
-    'max-w-[50rem]',
+    'max-w-[min(50rem,calc(100vw-2rem))]',
     'data-open:animate-none',
     'data-closed:animate-none',
     'min-h-0 flex-1 overflow-hidden',
@@ -73,8 +73,8 @@ includesAll(
   form,
   [
     'databaseTypeOptions',
-    "driver.backend === 'nativeRust' && driver.status === 'ready'",
-    'driverVariants.length > 1',
+    'product?.defaultDriverDefinitionId',
+    'driverVariants.length > 0',
     'id="driver-profile"',
     "t('connectionForm.viewCapabilities')",
   ],
@@ -87,15 +87,15 @@ includesAll(
     "label={t('connectionForm.connectionUrl')}",
     "updateConnectionUrl(event.target.value)",
     "t('connectionForm.urlCredentialsWarning')",
-    "username: variant === 'file' ? null : emptyToNull(input.username)",
-    "password: variant === 'file' ? null : emptyToNull(input.password)",
-    "savePassword: variant === 'file' ? false : input.savePassword",
-    "sshTunnel: isUrlOnly || variant === 'file' ? null : normalizeSshTunnel(input)",
+    "username: fileWithoutCredentials ? null : emptyToNull(input.username)",
+    "password: fileWithoutCredentials ? null : emptyToNull(input.password)",
+    "savePassword: fileWithoutCredentials ? false : input.savePassword",
+    "sshTunnel: normalizeSshTunnel(input)",
     "activeConnectionVariant === 'file'",
   ],
   'URL-only connection form behavior',
 )
-assert(!dialog.includes('if (open) {\n      loadDrivers()'), 'driver catalogue must not first load only after the dialog opens')
+assert(dialog.includes('if (isOpen) void loadDrivers()'), 'opening a standalone dialog must load its catalogue')
 
 const packageJson = read('package.json')
 includesAll(

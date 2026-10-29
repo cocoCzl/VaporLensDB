@@ -8,6 +8,12 @@ use crate::models::connection::DriverType;
 #[serde(rename_all = "camelCase")]
 pub struct DriverDefinition {
     pub id: String,
+    #[serde(default)]
+    pub product_id: String,
+    #[serde(default)]
+    pub default_installation_id: Option<String>,
+    #[serde(default)]
+    pub native_implementation_id: Option<String>,
     pub driver_type: DriverType,
     pub driver_dialect: String,
     pub name: String,
@@ -34,7 +40,6 @@ pub struct DriverDefinition {
 pub enum DriverBackend {
     NativeRust,
     Jdbc,
-    Planned,
 }
 
 impl fmt::Display for DriverBackend {
@@ -42,7 +47,6 @@ impl fmt::Display for DriverBackend {
         let value = match self {
             Self::NativeRust => "nativeRust",
             Self::Jdbc => "jdbc",
-            Self::Planned => "planned",
         };
         f.write_str(value)
     }
@@ -55,7 +59,6 @@ impl FromStr for DriverBackend {
         match value {
             "nativeRust" => Ok(Self::NativeRust),
             "jdbc" => Ok(Self::Jdbc),
-            "planned" => Ok(Self::Planned),
             _ => Err(format!("unsupported driver backend: {value}")),
         }
     }
@@ -110,4 +113,47 @@ pub struct DriverConnectionVariant {
     pub id: String,
     pub label: String,
     pub required_fields: Vec<String>,
+}
+
+/// Product identity is independent of dialect and execution backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseProduct {
+    pub id: String,
+    pub name: String,
+    pub icon_key: String,
+    pub built_in: bool,
+    pub adapter_id: String,
+    pub default_driver_definition_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriverInstallation {
+    pub id: String,
+    pub driver_definition_id: String,
+    /// User-provided label, not a version discovered in the JAR.
+    pub label: String,
+    pub artifacts: Vec<DriverArtifact>,
+    pub java_requirement: String,
+    #[serde(default)]
+    pub validation: Option<InstallationValidation>,
+}
+
+/// Historical local class-load receipt, never a database connectivity claim.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallationValidation {
+    pub fingerprint: String,
+    pub checked_at: String,
+    pub class_loaded: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriverArtifact {
+    pub path: String,
+    /// Missing files in migrated configurations retain an explicit unknown hash.
+    pub sha256: Option<String>,
+    pub role: String,
 }

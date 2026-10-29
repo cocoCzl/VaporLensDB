@@ -97,6 +97,11 @@ const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
         name: "index query history by start time",
         apply: index_query_history_started_at,
     },
+    ConfigMigration {
+        version: 13,
+        name: "product identities and immutable JDBC installations",
+        apply: super::driver_registry::migrate_products_and_installations,
+    },
 ];
 
 impl ConfigStore {
@@ -133,8 +138,11 @@ impl ConfigStore {
             db_path: config_dir.join("config.db"),
             config_dir,
         };
+        crate::utils::startup::mark("config_open");
         store.init()?;
+        crate::utils::startup::mark("migrations_ready");
         store.seed_builtin_driver_definitions()?;
+        crate::utils::startup::mark("seed_ready");
         Ok(store)
     }
 
@@ -161,6 +169,7 @@ impl ConfigStore {
         password: Option<String>,
         save_password: bool,
     ) -> Result<ConnectionConfig, AppError> {
+        self.normalize_connection_references(&mut config)?;
         self.resolve_group_reference(&mut config)?;
         let now = Utc::now();
         config.created_at = now;
@@ -173,6 +182,7 @@ impl ConfigStore {
             save_password,
         )?;
         config.has_saved_password = config.password_encrypted.is_some();
+        encrypt_driver_properties(&mut secrets, &mut config, None)?;
         encrypt_ssh_tunnel_secrets(&mut secrets, &mut config, None)?;
 
         self.conn()?.execute(
@@ -181,9 +191,9 @@ impl ConfigStore {
                 id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
                 password_encrypted, driver_class, driver_paths, ssl_mode, group_id, group_name, color_tag,
                 ssh_tunnel_json, ssh_password_encrypted, ssh_private_key_passphrase_encrypted,
-                created_at, updated_at
+                created_at, updated_at, product_id, driver_installation_id, connection_mode, driver_properties_json, driver_property_secrets_json
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
             ",
             params_from_config(&config),
         )?;
@@ -204,6 +214,7 @@ impl ConfigStore {
                 id: config.id.to_string(),
             })?;
 
+        self.normalize_connection_references(&mut config)?;
         self.resolve_group_reference(&mut config)?;
         config.created_at = existing.created_at;
         config.updated_at = Utc::now();
@@ -216,6 +227,7 @@ impl ConfigStore {
             existing.password_encrypted.as_deref(),
         )?;
         config.has_saved_password = config.password_encrypted.is_some();
+        encrypt_driver_properties(&mut secrets, &mut config, Some(&existing))?;
         encrypt_ssh_tunnel_secrets(&mut secrets, &mut config, existing.ssh_tunnel.as_ref())?;
 
         self.conn()?.execute(
@@ -241,7 +253,8 @@ impl ConfigStore {
                 ssh_password_encrypted = ?19,
                 ssh_private_key_passphrase_encrypted = ?20,
                 created_at = ?21,
-                updated_at = ?22
+                updated_at = ?22,
+                product_id = ?23, driver_installation_id = ?24, connection_mode = ?25, driver_properties_json = ?26, driver_property_secrets_json = ?27
             WHERE id = ?1
             ",
             params_from_config(&config),
@@ -308,7 +321,7 @@ impl ConfigStore {
             SELECT id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
                    password_encrypted, driver_class, driver_paths, ssl_mode, group_id, group_name,
                    color_tag, ssh_tunnel_json, ssh_password_encrypted,
-                   ssh_private_key_passphrase_encrypted, created_at, updated_at
+                   ssh_private_key_passphrase_encrypted, created_at, updated_at, product_id, driver_installation_id, connection_mode, driver_properties_json, driver_property_secrets_json
             FROM connections
             WHERE driver_type <> 'odbc'
             ORDER BY group_name IS NOT NULL, group_name, name
@@ -327,7 +340,7 @@ impl ConfigStore {
             SELECT id, name, driver_definition_id, driver_type, driver_dialect, host, port, database_name, connection_url, username,
                    password_encrypted, driver_class, driver_paths, ssl_mode, group_id, group_name,
                    color_tag, ssh_tunnel_json, ssh_password_encrypted,
-                   ssh_private_key_passphrase_encrypted, created_at, updated_at
+                   ssh_private_key_passphrase_encrypted, created_at, updated_at, product_id, driver_installation_id, connection_mode, driver_properties_json, driver_property_secrets_json
                 FROM connections
                 WHERE id = ?1
                   AND driver_type <> 'odbc'
@@ -784,7 +797,7 @@ impl ConfigStore {
             SELECT id, driver_type, driver_dialect, name, backend, status, default_port, default_username,
                    default_database, jdbc_driver_class, url_template, driver_artifact,
                    driver_artifacts_json, user_driver_required, built_in,
-                   download_url, notes, connection_variants_json, metadata_dialect_sql, capabilities_json
+                   download_url, notes, connection_variants_json, metadata_dialect_sql, capabilities_json, product_id, default_installation_id, native_implementation_id
             FROM driver_definitions
             WHERE driver_type <> 'odbc'
               AND driver_type NOT IN ('mongo', 'redis')
@@ -811,7 +824,7 @@ impl ConfigStore {
                 SELECT id, driver_type, driver_dialect, name, backend, status, default_port, default_username,
                        default_database, jdbc_driver_class, url_template, driver_artifact,
                        driver_artifacts_json, user_driver_required, built_in,
-                       download_url, notes, connection_variants_json, metadata_dialect_sql, capabilities_json
+                       download_url, notes, connection_variants_json, metadata_dialect_sql, capabilities_json, product_id, default_installation_id, native_implementation_id
                 FROM driver_definitions
                 WHERE id = ?1
                   AND driver_type <> 'odbc'
@@ -836,6 +849,62 @@ impl ConfigStore {
             definition.id = format!("custom-{}", Uuid::new_v4());
         }
         definition.built_in = false;
+        // Legacy definitions without product identity get their own stable product.
+        if definition.product_id.is_empty() {
+            definition.product_id = format!("custom-product:{}", definition.id);
+            self.save_database_product(crate::models::driver_catalog::DatabaseProduct {
+                id: definition.product_id.clone(),
+                name: definition.name.clone(),
+                icon_key: "jdbc".into(),
+                built_in: false,
+                adapter_id: "genericSql".into(),
+                default_driver_definition_id: definition.id.clone(),
+            })?;
+        }
+        self.validate_definition_product(&definition)?;
+        if let Some(id) = &definition.default_installation_id {
+            let installation = self
+                .list_driver_installations()?
+                .into_iter()
+                .find(|i| &i.id == id && i.driver_definition_id == definition.id)
+                .ok_or_else(|| {
+                    AppError::ConfigError(
+                        "Default installation is missing or belongs to another driver".into(),
+                    )
+                })?;
+            definition.driver_artifacts = installation
+                .artifacts
+                .iter()
+                .map(|a| a.path.clone())
+                .collect();
+        }
+        if let Some(product) = self
+            .list_database_products()?
+            .iter()
+            .find(|p| p.id == definition.product_id)
+        {
+            definition.driver_type = if product.built_in {
+                super::sql_dialect::resolve_sql_dialect(&product.adapter_id)
+                    .unwrap_or(DriverType::Jdbc)
+            } else {
+                DriverType::Jdbc
+            };
+        }
+        if let Some(existing) = self.get_driver_definition(&definition.id)? {
+            let runtime_changed = existing.product_id != definition.product_id
+                || existing.default_port != definition.default_port
+                || existing.jdbc_driver_class != definition.jdbc_driver_class
+                || existing.url_template != definition.url_template
+                || existing.driver_dialect != definition.driver_dialect
+                || existing.metadata_dialect_sql != definition.metadata_dialect_sql
+                || serde_json::to_string(&existing.capabilities)?
+                    != serde_json::to_string(&definition.capabilities)?
+                || serde_json::to_string(&existing.connection_variants)?
+                    != serde_json::to_string(&definition.connection_variants)?;
+            if runtime_changed {
+                self.ensure_driver_unreferenced(&definition.id)?;
+            }
+        }
 
         let conn = self.conn()?;
         if is_builtin_driver_definition(&conn, &definition.id)? {
@@ -849,6 +918,26 @@ impl ConfigStore {
     }
 
     pub fn delete_custom_driver_definition(&self, id: &str) -> Result<(), AppError> {
+        self.ensure_driver_unreferenced(id)?;
+        if self
+            .list_driver_installations()?
+            .iter()
+            .any(|i| i.driver_definition_id == id)
+        {
+            return Err(AppError::ConfigError(
+                "Driver still owns installations; remove unreferenced installations first".into(),
+            ));
+        }
+        if self
+            .list_database_products()?
+            .iter()
+            .any(|p| p.default_driver_definition_id == id)
+        {
+            return Err(AppError::ConfigError(
+                "Driver is the product default; select another default driver before deleting it"
+                    .into(),
+            ));
+        }
         let affected = self.conn()?.execute(
             "
             DELETE FROM driver_definitions
@@ -908,17 +997,23 @@ impl ConfigStore {
         let conn = self.conn()?;
         for mut definition in driver_catalog::driver_definitions() {
             if let Some(existing) = self.get_driver_definition(&definition.id)? {
-                if existing.built_in && !existing.driver_artifacts.is_empty() {
-                    definition.driver_artifacts = existing.driver_artifacts;
-                    definition.driver_artifact = existing.driver_artifact;
+                if !existing.built_in {
+                    continue;
                 }
+                // Seed presentation/capabilities only. Existing executable choices and
+                // parameters belong to the persisted definition, including v12 overrides.
+                let capabilities = definition.capabilities;
+                let notes = definition.notes;
+                definition = existing;
+                definition.capabilities = capabilities;
+                definition.notes = notes;
             }
             upsert_builtin_driver_definition(&conn, &definition)?;
         }
         Ok(())
     }
 
-    fn conn(&self) -> Result<Connection, AppError> {
+    pub(crate) fn conn(&self) -> Result<Connection, AppError> {
         let conn = Connection::open(&self.db_path)?;
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -1228,7 +1323,7 @@ fn upsert_builtin_driver_definition(
     upsert_driver_definition(conn, definition)
 }
 
-fn upsert_driver_definition(
+pub(crate) fn upsert_driver_definition(
     conn: &Connection,
     definition: &DriverDefinition,
 ) -> Result<(), AppError> {
@@ -1242,10 +1337,13 @@ fn upsert_driver_definition(
             id, driver_type, driver_dialect, name, backend, status, default_port, default_username, default_database,
             jdbc_driver_class, url_template, driver_artifact, driver_artifacts_json,
             user_driver_required, built_in, download_url,
-            notes, connection_variants_json, metadata_dialect_sql, capabilities_json, updated_at
+            notes, connection_variants_json, metadata_dialect_sql, capabilities_json, updated_at, product_id, default_installation_id, native_implementation_id
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, datetime('now'))
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, datetime('now'), ?21, ?22, ?23)
         ON CONFLICT(id) DO UPDATE SET
+            product_id = excluded.product_id,
+            default_installation_id = excluded.default_installation_id,
+            native_implementation_id = excluded.native_implementation_id,
             driver_type = excluded.driver_type,
             driver_dialect = excluded.driver_dialect,
             name = excluded.name,
@@ -1289,6 +1387,9 @@ fn upsert_driver_definition(
             connection_variants,
             &definition.metadata_dialect_sql,
             capabilities,
+            &definition.product_id,
+            &definition.default_installation_id,
+            &definition.native_implementation_id,
         ],
     )?;
 
@@ -1446,7 +1547,7 @@ fn validate_custom_driver_definition(definition: &DriverDefinition) -> Result<()
             "driver definition name is required".to_string(),
         ));
     }
-    if !matches!(definition.driver_type, DriverType::Jdbc) {
+    if !matches!(definition.backend, DriverBackend::Jdbc) {
         return Err(AppError::ConfigError(
             "custom driver definitions currently support only JDBC".to_string(),
         ));
@@ -1593,7 +1694,30 @@ fn encrypt_ssh_tunnel_secrets(
     Ok(())
 }
 
-fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 22] {
+pub(crate) fn encrypt_driver_properties(
+    secrets: &mut crypto::SecretOperation<'_>,
+    config: &mut ConnectionConfig,
+    existing: Option<&ConnectionConfig>,
+) -> Result<(), AppError> {
+    for property in &mut config.driver_properties {
+        if property.sensitive {
+            property.encrypted_value = match property.value.take().filter(|s| !s.is_empty()) {
+                Some(value) => Some(secrets.encrypt(&value)?),
+                None => existing
+                    .filter(|e| e.driver_definition_id == config.driver_definition_id)
+                    .and_then(|e| e.driver_properties.iter().find(|p| p.name == property.name))
+                    .and_then(|p| p.encrypted_value.clone()),
+            };
+            property.has_saved_value = property.encrypted_value.is_some();
+        } else {
+            property.encrypted_value = None;
+            property.has_saved_value = false;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 27] {
     let driver_paths = serde_json::to_string(&config.driver_paths).unwrap_or_default();
     let ssh_tunnel_json = config
         .ssh_tunnel
@@ -1633,6 +1757,20 @@ fn params_from_config(config: &ConnectionConfig) -> [Box<dyn rusqlite::ToSql>; 2
         Box::new(ssh_private_key_passphrase_encrypted),
         Box::new(config.created_at.to_rfc3339()),
         Box::new(config.updated_at.to_rfc3339()),
+        Box::new(config.product_id.clone()),
+        Box::new(config.driver_installation_id.clone()),
+        Box::new(config.connection_mode.clone()),
+        Box::new(serde_json::to_string(&config.driver_properties).unwrap_or_default()),
+        Box::new(
+            serde_json::to_string(
+                &config
+                    .driver_properties
+                    .iter()
+                    .filter_map(|p| p.encrypted_value.as_ref().map(|v| (&p.name, v)))
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+            )
+            .unwrap_or_default(),
+        ),
     ]
 }
 
@@ -1656,6 +1794,20 @@ fn row_to_connection(row: &Row<'_>) -> Result<ConnectionConfig, rusqlite::Error>
         id: Uuid::parse_str(&id).map_err(parse_error)?,
         name: row.get(1)?,
         driver_definition_id: row.get(2)?,
+        product_id: row.get(22)?,
+        driver_installation_id: row.get(23)?,
+        connection_mode: row.get(24)?,
+        driver_properties: {
+            let mut properties: Vec<crate::models::connection::DriverProperty> =
+                serde_json::from_str(&row.get::<_, String>(25)?).map_err(parse_error)?;
+            let encrypted: std::collections::BTreeMap<String, String> =
+                serde_json::from_str(&row.get::<_, String>(26)?).map_err(parse_error)?;
+            for p in &mut properties {
+                p.encrypted_value = encrypted.get(&p.name).cloned();
+                p.has_saved_value = p.encrypted_value.is_some();
+            }
+            properties
+        },
         driver_type: DriverType::from_str(&driver_type).map_err(parse_error)?,
         driver_dialect: row.get(4)?,
         host: row.get(5)?,
@@ -1835,6 +1987,9 @@ fn row_to_driver_definition(row: &Row<'_>) -> Result<DriverDefinition, rusqlite:
 
     Ok(DriverDefinition {
         id,
+        product_id: row.get(20)?,
+        default_installation_id: row.get(21)?,
+        native_implementation_id: row.get(22)?,
         driver_type: DriverType::from_str(&driver_type).map_err(parse_error)?,
         driver_dialect: row.get(2)?,
         name: row.get(3)?,
@@ -1906,6 +2061,10 @@ mod tests {
             id,
             name: "SSH test connection".to_string(),
             driver_definition_id: Some("postgres".to_string()),
+            product_id: None,
+            driver_installation_id: None,
+            connection_mode: None,
+            driver_properties: Vec::new(),
             driver_type: DriverType::Postgres,
             driver_dialect: Some("postgresql".to_string()),
             host: Some("db.internal".to_string()),
@@ -2075,7 +2234,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         );
         let drivers = store
             .list_driver_definitions()
@@ -2152,7 +2311,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         );
         assert!(columns.iter().any(|column| column == "connection_url"));
         assert!(columns.iter().any(|column| column == "driver_class"));
@@ -2343,7 +2502,7 @@ mod tests {
         drop(conn);
 
         let store = ConfigStore::new(dir.clone()).expect("upgrade v8 config store");
-        assert_eq!(store.applied_schema_version().expect("schema version"), 12);
+        assert_eq!(store.applied_schema_version().expect("schema version"), 13);
 
         let oracle = store
             .get_connection(oracle_connection_id)
@@ -2603,6 +2762,10 @@ mod tests {
             id: Uuid::new_v4(),
             name: "Local PG".to_string(),
             driver_definition_id: Some("postgres".to_string()),
+            product_id: None,
+            driver_installation_id: None,
+            connection_mode: None,
+            driver_properties: Vec::new(),
             driver_type: DriverType::Postgres,
             driver_dialect: Some("postgresql".to_string()),
             host: Some("localhost".to_string()),
@@ -2651,6 +2814,10 @@ mod tests {
             id: Uuid::new_v4(),
             name: "Legacy PG".to_string(),
             driver_definition_id: Some("postgres".to_string()),
+            product_id: None,
+            driver_installation_id: None,
+            connection_mode: None,
+            driver_properties: Vec::new(),
             driver_type: DriverType::Postgres,
             driver_dialect: Some("postgresql".to_string()),
             host: Some("localhost".to_string()),
@@ -2807,6 +2974,10 @@ mod tests {
                     id: connection_id,
                     name: "Tunnel PG".to_string(),
                     driver_definition_id: Some("postgres".to_string()),
+                    product_id: None,
+                    driver_installation_id: None,
+                    connection_mode: None,
+                    driver_properties: Vec::new(),
                     driver_type: DriverType::Postgres,
                     driver_dialect: Some("postgresql".to_string()),
                     host: Some("db.internal".to_string()),
@@ -3051,6 +3222,10 @@ mod tests {
                     id: connection_id,
                     name: "Local MySQL".to_string(),
                     driver_definition_id: Some("mysql".to_string()),
+                    product_id: None,
+                    driver_installation_id: None,
+                    connection_mode: None,
+                    driver_properties: Vec::new(),
                     driver_type: DriverType::Mysql,
                     driver_dialect: Some("mysql".to_string()),
                     host: Some("localhost".to_string()),
@@ -3126,6 +3301,10 @@ mod tests {
                     id: Uuid::new_v4(),
                     name: "Local MySQL".to_string(),
                     driver_definition_id: Some("mysql".to_string()),
+                    product_id: None,
+                    driver_installation_id: None,
+                    connection_mode: None,
+                    driver_properties: Vec::new(),
                     driver_type: DriverType::Mysql,
                     driver_dialect: Some("mysql".to_string()),
                     host: Some("localhost".to_string()),
@@ -3181,6 +3360,10 @@ mod tests {
                     id: Uuid::new_v4(),
                     name: "Grouped Postgres".to_string(),
                     driver_definition_id: Some("postgres".to_string()),
+                    product_id: None,
+                    driver_installation_id: None,
+                    connection_mode: None,
+                    driver_properties: Vec::new(),
                     driver_type: DriverType::Postgres,
                     driver_dialect: Some("postgresql".to_string()),
                     host: Some("localhost".to_string()),
@@ -3217,6 +3400,10 @@ mod tests {
                     id: Uuid::new_v4(),
                     name: "Grouped MySQL".to_string(),
                     driver_definition_id: Some("mysql".to_string()),
+                    product_id: None,
+                    driver_installation_id: None,
+                    connection_mode: None,
+                    driver_properties: Vec::new(),
                     driver_type: DriverType::Mysql,
                     driver_dialect: Some("mysql".to_string()),
                     host: Some("localhost".to_string()),
@@ -3265,6 +3452,10 @@ mod tests {
                     id: connection_id,
                     name: "Custom JDBC Source".to_string(),
                     driver_definition_id: Some("custom-reporting-jdbc".to_string()),
+                    product_id: None,
+                    driver_installation_id: None,
+                    connection_mode: None,
+                    driver_properties: Vec::new(),
                     driver_type: DriverType::Jdbc,
                     driver_dialect: Some("genericJdbc".to_string()),
                     host: None,
@@ -3604,6 +3795,9 @@ mod tests {
 
         let saved = store
             .save_custom_driver_definition(DriverDefinition {
+                product_id: String::new(),
+                default_installation_id: None,
+                native_implementation_id: None,
                 id: "custom-reporting-jdbc".to_string(),
                 driver_type: DriverType::Jdbc,
                 driver_dialect: "genericJdbc".to_string(),
@@ -3656,11 +3850,35 @@ mod tests {
         assert_eq!(updated.name, "Reporting JDBC Updated");
 
         let overwrite_builtin = store.save_custom_driver_definition(DriverDefinition {
+            product_id: String::new(),
+            default_installation_id: None,
+            native_implementation_id: None,
             id: "postgres".to_string(),
             ..updated.clone()
         });
         assert!(overwrite_builtin.is_err());
 
+        assert!(store
+            .delete_custom_driver_definition("custom-reporting-jdbc")
+            .expect_err("product default must remain valid")
+            .to_string()
+            .contains("product default"));
+        let replacement = store
+            .save_custom_driver_definition(DriverDefinition {
+                id: "custom-reporting-replacement".into(),
+                ..updated.clone()
+            })
+            .expect("save replacement driver for same product");
+        let mut product = store
+            .list_database_products()
+            .expect("list products")
+            .into_iter()
+            .find(|product| product.id == updated.product_id)
+            .expect("custom product");
+        product.default_driver_definition_id = replacement.id;
+        store
+            .save_database_product(product)
+            .expect("select replacement default");
         store
             .delete_custom_driver_definition("custom-reporting-jdbc")
             .expect("delete custom driver");
@@ -3776,5 +3994,182 @@ mod tests {
                 driver.id
             );
         }
+    }
+    fn v12_fixture() -> (std::path::PathBuf, rusqlite::Connection) {
+        let root =
+            std::env::temp_dir().join(format!("vapor-v12-registry-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let conn = rusqlite::Connection::open(root.join("config.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+        )
+        .unwrap();
+        for migration in super::CONFIG_MIGRATIONS.iter().filter(|m| m.version <= 12) {
+            (migration.apply)(&conn).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations VALUES (?1,'fixture')",
+                [migration.version],
+            )
+            .unwrap();
+        }
+        (root, conn)
+    }
+    #[test]
+    fn migration13_preserves_identity_overrides_secrets_and_is_idempotent() {
+        let (root, conn) = v12_fixture();
+        // v12 seed schema, no new columns yet.
+        conn.execute_batch("INSERT INTO driver_definitions(id,driver_type,driver_dialect,name,backend,status,default_port,jdbc_driver_class,driver_artifact,driver_artifacts_json,user_driver_required,built_in,connection_variants_json,capabilities_json,updated_at) VALUES ('vendor-a','jdbc','oracle','Vendor A','jdbc','configurable',1234,'original.Driver','*.jar','[\"/missing/original.jar\"]',1,0,'[{\"id\":\"urlOnly\",\"label\":\"URL\",\"requiredFields\":[\"connectionUrl\"]}]','{\"canConnect\":true,\"canQuery\":true,\"canStream\":true,\"canReadMetadata\":true,\"canCancel\":true,\"canGenerateDdl\":false}','fixture')").unwrap();
+        let id = uuid::Uuid::new_v4();
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute("INSERT INTO connections(id,name,driver_definition_id,driver_type,driver_dialect,driver_class,driver_paths,connection_url,password_encrypted,group_name,created_at,updated_at) VALUES (?1,'Legacy A','vendor-a','jdbc','unrecognized-original','override.Driver','[\"/missing/main.jar\",\"/missing/dependency.jar\"]','jdbc:example:fixture','opaque-password-reference','group',?2,?2)",rusqlite::params![id.to_string(),now]).unwrap();
+        drop(conn);
+        let store = super::ConfigStore::new(root.clone()).unwrap();
+        let c = store.get_connection(id).unwrap().unwrap();
+        assert_eq!(c.id, id);
+        assert_eq!(
+            c.password_encrypted.as_deref(),
+            Some("opaque-password-reference")
+        );
+        assert_eq!(c.group.as_deref(), Some("group"));
+        assert_eq!(c.driver_dialect.as_deref(), Some("unrecognized-original"));
+        assert_eq!(c.driver_class.as_deref(), Some("override.Driver"));
+        assert_eq!(
+            c.driver_paths,
+            vec!["/missing/main.jar", "/missing/dependency.jar"]
+        );
+        let d = store
+            .get_driver_definition(c.driver_definition_id.as_deref().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(d.jdbc_driver_class, c.driver_class);
+        assert_eq!(d.backend.to_string(), "jdbc");
+        let install = store
+            .list_driver_installations()
+            .unwrap()
+            .into_iter()
+            .find(|i| Some(&i.id) == c.driver_installation_id.as_ref())
+            .unwrap();
+        assert_eq!(
+            install
+                .artifacts
+                .iter()
+                .map(|a| a.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/missing/main.jar", "/missing/dependency.jar"]
+        );
+        let counts = (
+            store.list_database_products().unwrap().len(),
+            store.list_driver_installations().unwrap().len(),
+        );
+        let reopened = super::ConfigStore::new(root).unwrap();
+        assert_eq!(
+            counts,
+            (
+                reopened.list_database_products().unwrap().len(),
+                reopened.list_driver_installations().unwrap().len()
+            )
+        );
+    }
+    #[test]
+    fn migration13_failure_rolls_back_schema_and_references() {
+        let (root, conn) = v12_fixture();
+        let id = uuid::Uuid::new_v4().to_string();
+        conn.execute("INSERT INTO connections(id,name,driver_type,driver_paths,created_at,updated_at) VALUES (?1,'broken fixture','jdbc','invalid-json','fixture','fixture')",[&id]).unwrap();
+        assert!(super::ConfigStore::new(root).is_err());
+        assert!(!super::table_columns(&conn, "connections")
+            .unwrap()
+            .contains(&"product_id".into()));
+        assert_eq!(
+            conn.query_row(
+                "SELECT driver_paths FROM connections WHERE id=?1",
+                [id],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "invalid-json"
+        );
+        assert_eq!(
+            conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            12
+        );
+    }
+    #[test]
+    fn migration13_and_reseed_preserve_builtin_backend_class_paths_and_retry() {
+        let (root, conn) = v12_fixture();
+        // The v12 fixture's templates predate product/installation columns.
+        conn.execute_batch("INSERT INTO driver_definitions(id,driver_type,driver_dialect,name,backend,status,jdbc_driver_class,driver_artifacts_json,user_driver_required,built_in,connection_variants_json,capabilities_json,updated_at) VALUES ('postgres','postgres','postgresql','Legacy builtin override','jdbc','configurable','legacy.Override','[\"/missing/main.jar\",\"/missing/dependency.jar\"]',1,1,'[{\"id\":\"urlOnly\",\"label\":\"URL\",\"requiredFields\":[\"connectionUrl\"]}]','{\"canConnect\":true,\"canQuery\":true,\"canStream\":true,\"canReadMetadata\":true,\"canCancel\":true,\"canGenerateDdl\":false}','fixture') ON CONFLICT(id) DO UPDATE SET backend='jdbc',jdbc_driver_class='legacy.Override',driver_artifacts_json='[\"/missing/main.jar\",\"/missing/dependency.jar\"]'").unwrap();
+        let id = Uuid::new_v4();
+        let native_id = Uuid::new_v4();
+        let broken_id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        for (cid, driver, definition, paths) in [
+            (id, "postgres", "postgres", "[]"),
+            (native_id, "mysql", "mysql", "[]"),
+            (broken_id, "jdbc", "missing-definition", "[]"),
+        ] {
+            conn.execute("INSERT INTO connections(id,name,driver_definition_id,driver_type,driver_paths,connection_url,password_encrypted,created_at,updated_at) VALUES (?1,'fixture',?2,?3,?4,'jdbc:fixture:target','opaque',?5,?5)",params![cid.to_string(),definition,driver,paths,now]).unwrap();
+        }
+        // A real bad row aborts all schema+reference updates, then correction permits retry.
+        conn.execute(
+            "UPDATE connections SET driver_paths='bad json' WHERE id=?1",
+            [id.to_string()],
+        )
+        .unwrap();
+        assert!(ConfigStore::new(root.clone()).is_err());
+        conn.execute(
+            "UPDATE connections SET driver_paths='[]' WHERE id=?1",
+            [id.to_string()],
+        )
+        .unwrap();
+        let store = ConfigStore::new(root.clone()).unwrap();
+        let d = store.get_driver_definition("postgres").unwrap().unwrap();
+        assert_eq!(d.backend.to_string(), "jdbc");
+        assert_eq!(d.jdbc_driver_class.as_deref(), Some("legacy.Override"));
+        let c = store.get_connection(id).unwrap().unwrap();
+        assert_eq!(c.password_encrypted.as_deref(), Some("opaque"));
+        let install_id = c.driver_installation_id.clone().unwrap();
+        let install = store
+            .list_driver_installations()
+            .unwrap()
+            .into_iter()
+            .find(|i| i.id == install_id)
+            .unwrap();
+        assert_eq!(
+            install
+                .artifacts
+                .iter()
+                .map(|a| a.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/missing/main.jar", "/missing/dependency.jar"]
+        );
+        let native = store.get_connection(native_id).unwrap().unwrap();
+        assert_eq!(native.driver_definition_id.as_deref(), Some("mysql"));
+        assert!(native.driver_installation_id.is_none());
+        let broken = store.get_connection(broken_id).unwrap().unwrap();
+        assert_eq!(
+            broken.driver_definition_id.as_deref(),
+            Some("missing-definition")
+        );
+        assert!(store.resolve_connection(&broken).is_err());
+        drop(store);
+        let reopened = ConfigStore::new(root).unwrap();
+        assert_eq!(
+            reopened
+                .get_connection(id)
+                .unwrap()
+                .unwrap()
+                .driver_installation_id,
+            Some(install_id)
+        );
+        assert_eq!(
+            reopened
+                .get_driver_definition("postgres")
+                .unwrap()
+                .unwrap()
+                .jdbc_driver_class,
+            d.jdbc_driver_class
+        );
     }
 }

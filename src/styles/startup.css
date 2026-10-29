@@ -1,0 +1,61 @@
+/* Shared first-paint canvas and layout; inlined locally before the app modules. */
+:root {
+  --background: 218 30% 97.1%;
+  --foreground: 222 28% 13%;
+  --surface: 0 0% 100%;
+  --surface-secondary: 218 28% 96.15%;
+  --sidebar: 218 28% 96.4%;
+  --shell-top-height: 46px;
+  --shell-status-height: 22px;
+  --startup-sidebar-width: 288px;
+  color-scheme: light;
+}
+:root.dark {
+  --background: 222 16% 9%;
+  --foreground: 218 20% 92%;
+  --surface: 222 15% 11.5%;
+  --surface-secondary: 222 14% 13.5%;
+  --sidebar: 222 16% 10.5%;
+  color-scheme: dark;
+}
+html, body { margin: 0; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+.shell-top { height: var(--shell-top-height); }
+.shell-status { height: var(--shell-status-height); }
+.home-content { box-sizing: border-box; margin-right: auto; width: 100%; max-width: 1360px; padding: 20px 16px; }
+.home-welcome { margin-bottom: 20px; min-height: 128px; max-width: 1360px; }
+.home-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 16px; }
+.home-action { box-sizing: border-box; min-height: 108px; }
+.home-recents { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 16px; margin-top: 32px; }
+@container home (min-width: 700px) { .home-content { padding-inline: 28px; } }
+@container home (min-width: 1100px) { .home-content { padding-inline: 40px; } }
+.startup-shell { display: flex; height: 100vh; flex-direction: column; overflow: hidden; font: 13px/1.6 system-ui, sans-serif; }
+.startup-shell *, .startup-shell *::before { box-sizing: border-box; }
+.startup-top { display: flex; align-items: center; gap: 14px; padding: 0 14px; flex-shrink: 0; background: hsl(var(--surface)); border-bottom: 1px solid hsl(var(--foreground) / .12); }
+.startup-top img { flex-shrink: 0; }
+.startup-bar { display: block; height: 12px; border-radius: 4px; background: hsl(var(--foreground) / .065); }
+.startup-search { height: 30px; width: clamp(120px, 32vw, 520px); margin: 0 auto; }
+.startup-tools { width: 64px; }
+.startup-body { display: flex; flex: 1; min-height: 0; }
+.startup-sidebar { display: flex; flex-shrink: 0; width: var(--startup-sidebar-width); background: hsl(var(--sidebar)); border-right: 1px solid hsl(var(--foreground) / .12); }
+.startup-rail { width: 32px; flex-shrink: 0; padding: 10px 6px; border-right: 1px solid hsl(var(--foreground) / .08); }
+.startup-rail .startup-bar { height: 20px; }
+.startup-tree { flex: 1; min-width: 0; padding: 16px 14px; }
+.startup-tree .startup-bar { margin-bottom: 24px; }
+.startup-tree .startup-bar:first-child { width: 65%; }
+.startup-tree .startup-bar:nth-child(2) { height: 32px; }
+.startup-tree .startup-bar:last-child { width: 80%; }
+.startup-workspace { min-width: 0; flex: 1; overflow: auto; container: home / inline-size; }
+.startup-welcome { padding-top: 4px; }
+.startup-welcome .startup-bar:first-child { height: 12px; width: 90px; margin-bottom: 16px; }
+.startup-welcome .startup-bar:nth-child(2) { height: 34px; width: min(65%, 300px); margin-bottom: 14px; }
+.startup-welcome .startup-bar:last-child { width: min(80%, 360px); }
+.startup-card { display: flex; align-items: center; padding: 20px; border-radius: 10px; border: 1px solid hsl(var(--foreground) / .1); background: hsl(var(--surface)); }
+.startup-card .startup-bar { width: 65%; }
+.startup-recent { height: 204px; padding: 16px; border-radius: 10px; border: 1px solid hsl(var(--foreground) / .1); background: hsl(var(--surface)); }
+.startup-recent .startup-bar { width: 40%; }
+.startup-footer { flex-shrink: 0; background: hsl(var(--surface-secondary) / .72); border-top: 1px solid hsl(var(--foreground) / .1); }
+#startup-message { margin: 16px 0 0; max-width: 32rem; color: hsl(var(--foreground) / .65); }
+.startup-shell[data-state="error"] #startup-message { color: hsl(var(--foreground)); }
+@media (max-width: 960px) { .startup-sidebar { width: min(var(--startup-sidebar-width), 232px); } }
+:root[data-sidebar-collapsed="true"] .startup-sidebar { width: 32px; }
+:root[data-sidebar-collapsed="true"] .startup-tree { display: none; }
