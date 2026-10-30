@@ -13,7 +13,8 @@ use std::process::{Command, Stdio};
 
 #[cfg(target_os = "macos")]
 use core_foundation::{
-    base::{TCFType, ToVoid},
+    base::{CFType, TCFType, ToVoid},
+    boolean::CFBoolean,
     data::CFData,
     dictionary::CFMutableDictionary,
     string::CFString,
@@ -24,9 +25,12 @@ use security_framework::item::{ItemClass, ItemSearchOptions, SearchResult};
 use security_framework_sys::{
     item::{
         kSecAttrAccount, kSecAttrLabel, kSecAttrService, kSecClass, kSecClassGenericPassword,
-        kSecUseAuthenticationUI, kSecUseAuthenticationUISkip, kSecValueData,
+        kSecUseAuthenticationUI, kSecValueData,
     },
-    keychain_item::SecItemAdd,
+    keychain::{SecKeychainGetUserInteractionAllowed, SecKeychainSetUserInteractionAllowed},
+    keychain_item::{
+        SecItemAdd, SecItemCopyMatching, SecKeychainItemDelete, SecKeychainItemGetTypeID,
+    },
 };
 
 use aes_gcm::{
@@ -45,7 +49,7 @@ const WINDOWS_KEY_FILE: &str = "os-secret.key";
 const KEYCHAIN_SERVICE: &str = "com.vaporlensdb.encryption-key.v4";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "VaporLensDB";
-/// The only macOS Keychain service used for normal datasource passwords.
+/// The production macOS Keychain service; isolated profiles use a separate service.
 ///
 /// The account is an opaque, per-save UUID rather than a connection name. This
 /// makes a saved password independent of user-editable datasource metadata and
@@ -206,18 +210,24 @@ pub fn store_macos_datasource_password(
     }
 
     let account = uuid::Uuid::new_v4().to_string();
+    let namespace = macos_profile_namespace(config_dir);
+    let service = macos_datasource_service(namespace);
+    let reference_account = namespace.map_or_else(
+        || account.clone(),
+        |namespace| format!("qa:{namespace}:{account}"),
+    );
 
     // This creates a brand-new opaque account only. It never updates or
     // probes V1/V2/V3/master-key records, so an old ACL cannot cause an
     // authorization dialog here.
     match add_macos_generic_password_silently(
-        MACOS_DATASOURCE_PASSWORD_SERVICE,
+        &service,
         &account,
         "VaporLensDB saved datasource password",
         password.as_bytes(),
     ) {
         Ok(()) => Ok(format!(
-            "{MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX}{account}"
+            "{MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX}{reference_account}"
         )),
         Err(error) if is_silent_keychain_unavailable(error.code()) => {
             Err(saved_credential_unavailable())
@@ -227,6 +237,51 @@ pub fn store_macos_datasource_password(
             error.code(),
         )),
     }
+}
+
+// New credentials in an explicit isolated profile never enter the regular
+// app's service. The namespace travels in the opaque reference, so moving a
+// profile does not redirect reads/deletes and historical references stay valid.
+#[cfg(target_os = "macos")]
+fn macos_profile_namespace(config_dir: &Path) -> Option<uuid::Uuid> {
+    use sha2::{Digest, Sha256};
+    let normalize = |path: PathBuf| path.canonicalize().unwrap_or(path);
+    let path = normalize(config_dir.to_path_buf());
+    if std::env::var_os("HOME")
+        .map(|home| normalize(PathBuf::from(home).join(".vaporlensdb")))
+        .as_ref()
+        == Some(&path)
+    {
+        return None;
+    }
+    let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
+    Some(uuid::Uuid::from_bytes(digest[..16].try_into().unwrap()))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_datasource_service(namespace: Option<uuid::Uuid>) -> String {
+    match namespace {
+        Some(namespace) => format!("com.vaporlensdb.qa.datasource-password.v1.{namespace}"),
+        None => MACOS_DATASOURCE_PASSWORD_SERVICE.to_string(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_datasource_target(account: &str) -> Result<(String, &str), AppError> {
+    let (namespace, account) = match account.strip_prefix("qa:") {
+        Some(scoped) => {
+            let (namespace, account) = scoped
+                .split_once(':')
+                .ok_or_else(saved_credential_unavailable)?;
+            (
+                Some(uuid::Uuid::parse_str(namespace).map_err(|_| saved_credential_unavailable())?),
+                account,
+            )
+        }
+        None => (None, account),
+    };
+    uuid::Uuid::parse_str(account).map_err(|_| saved_credential_unavailable())?;
+    Ok((macos_datasource_service(namespace), account))
 }
 
 /// Resolve a direct macOS datasource-password reference without ever allowing
@@ -245,16 +300,12 @@ pub fn read_macos_datasource_password(
             .map(|plaintext| DecryptedSecret { plaintext });
     }
 
-    // Do not query arbitrary config text as a Keychain account. A valid
-    // opaque UUID is the sole supported V1 direct-password reference.
-    if uuid::Uuid::parse_str(account).is_err() {
-        return Err(saved_credential_unavailable());
-    }
+    let (service, account) = macos_datasource_target(account)?;
 
     let mut search = ItemSearchOptions::new();
     search
         .class(ItemClass::generic_password())
-        .service(MACOS_DATASOURCE_PASSWORD_SERVICE)
+        .service(&service)
         .account(account)
         .load_data(true)
         // Maps to kSecUseAuthenticationUISkip. A read may succeed silently or
@@ -285,27 +336,174 @@ pub fn read_macos_datasource_password(
 /// surface a system authorization dialog for cleanup.
 #[cfg(target_os = "macos")]
 pub fn remove_macos_datasource_password(reference: &str) -> Result<(), AppError> {
+    remove_macos_datasource_password_impl(reference, true)
+}
+
+/// Explicit user deletion may authorize system UI; startup retries never do.
+/// Inaccessible credentials remain queued; only actual absence counts as success.
+#[cfg(target_os = "macos")]
+pub fn remove_macos_datasource_password_for_deletion(
+    reference: &str,
+    allow_interaction: bool,
+) -> Result<(), AppError> {
+    remove_macos_datasource_password_impl_with_policy(reference, false, allow_interaction)
+}
+
+#[cfg(target_os = "macos")]
+fn remove_macos_datasource_password_impl(
+    reference: &str,
+    silent_unavailable: bool,
+) -> Result<(), AppError> {
+    remove_macos_datasource_password_impl_with_policy(reference, silent_unavailable, false)
+}
+
+#[cfg(target_os = "macos")]
+fn remove_macos_datasource_password_impl_with_policy(
+    reference: &str,
+    silent_unavailable: bool,
+    allow_interaction: bool,
+) -> Result<(), AppError> {
     let Some(account) = reference.strip_prefix(MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX) else {
         return Ok(());
     };
-    if account.starts_with("dev:") || uuid::Uuid::parse_str(account).is_err() {
+    if account.starts_with("dev:") {
         return Ok(());
     }
 
-    let mut search = ItemSearchOptions::new();
-    search
-        .class(ItemClass::generic_password())
-        .service(MACOS_DATASOURCE_PASSWORD_SERVICE)
-        .account(account)
-        .skip_authenticated_items(true);
-    match search.delete() {
+    let (service, account) = macos_datasource_target(account)?;
+    let result = delete_macos_datasource_password(&service, account, allow_interaction);
+    match result {
         Ok(()) => Ok(()),
-        Err(error) if is_silent_keychain_unavailable(error.code()) => Ok(()),
+        Err(error)
+            if error.code() == ERR_SEC_ITEM_NOT_FOUND
+                || (silent_unavailable && is_silent_keychain_unavailable(error.code())) =>
+        {
+            Ok(())
+        }
         Err(error) => Err(macos_keychain_error(
             "silent delete datasource password",
             error.code(),
         )),
     }
+}
+
+// Security.framework's file-keychain interaction setting is process-wide. All
+// operations that change it share this guard and restore its exact prior value.
+#[cfg(target_os = "macos")]
+static MACOS_KEYCHAIN_INTERACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(target_os = "macos")]
+struct MacosKeychainInteraction {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous: u8,
+}
+
+#[cfg(target_os = "macos")]
+impl MacosKeychainInteraction {
+    fn new(allow: bool) -> Result<Self, security_framework::base::Error> {
+        let lock = MACOS_KEYCHAIN_INTERACTION
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut previous = 0;
+        // SAFETY: the output byte is valid, and the lock serializes policy changes.
+        let status = unsafe { SecKeychainGetUserInteractionAllowed(&mut previous) };
+        if status != 0 {
+            return Err(security_framework::base::Error::from_code(status));
+        }
+        // This controls optional system UI, never the item's ACL or permissions.
+        let status = unsafe { SecKeychainSetUserInteractionAllowed(u8::from(allow)) };
+        if status != 0 {
+            return Err(security_framework::base::Error::from_code(status));
+        }
+        Ok(Self {
+            _lock: lock,
+            previous,
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MacosKeychainInteraction {
+    fn drop(&mut self) {
+        // SAFETY: restore the value captured while holding the same process lock.
+        let status = unsafe { SecKeychainSetUserInteractionAllowed(self.previous) };
+        if status != 0 {
+            log::error!("Keychain interaction policy restore failed (OSStatus {status})");
+        }
+    }
+}
+
+/// File-keychain passwords need the exact-item API. SecItemDelete adds a legacy
+/// "safe delete" check against the creator application's basename and returns
+/// errSecInvalidOwnerEdit when an earlier app bundle had a different name.
+/// SecKeychainItemDelete still enforces the system's actual delete authorization;
+/// it does not change ownership, decrypt ACLs, or grant other applications access.
+#[cfg(target_os = "macos")]
+fn delete_macos_datasource_password(
+    service: &str,
+    account: &str,
+    allow_interaction: bool,
+) -> Result<(), security_framework::base::Error> {
+    let _interaction = MacosKeychainInteraction::new(allow_interaction)?;
+    let query = macos_datasource_password_metadata_query(service, account);
+    let mut result = std::ptr::null();
+    // SAFETY: query is retained for the call; only an item reference is requested.
+    let status = unsafe { SecItemCopyMatching(query.as_concrete_TypeRef(), &mut result) };
+    if status != 0 {
+        return Err(security_framework::base::Error::from_code(status));
+    }
+    if result.is_null() {
+        return Err(security_framework::base::Error::from_code(-50));
+    }
+    // SAFETY: successful CopyMatching transfers one owned CFType reference.
+    let item = unsafe { CFType::wrap_under_create_rule(result) };
+    if item.type_of() != unsafe { SecKeychainItemGetTypeID() } {
+        return Err(security_framework::base::Error::from_code(-50));
+    }
+    // SAFETY: the type check proves this is the one exact file-keychain item.
+    let status = unsafe { SecKeychainItemDelete(item.as_CFTypeRef().cast_mut().cast()) };
+    if status != 0 && status != ERR_SEC_ITEM_NOT_FOUND {
+        return Err(security_framework::base::Error::from_code(status));
+    }
+    // Success means a fresh exact metadata query says absent, never skipped or
+    // inaccessible. This lookup forbids UI even for an explicit user deletion.
+    let mut remaining = std::ptr::null();
+    let status = unsafe { SecItemCopyMatching(query.as_concrete_TypeRef(), &mut remaining) };
+    if !remaining.is_null() {
+        drop(unsafe { CFType::wrap_under_create_rule(remaining) });
+    }
+    match status {
+        ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+        0 => Err(security_framework::base::Error::from_code(-2070)),
+        status => Err(security_framework::base::Error::from_code(status)),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_datasource_password_metadata_query(
+    service: &str,
+    account: &str,
+) -> core_foundation::dictionary::CFDictionary {
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        static kSecUseAuthenticationUIFail: core_foundation::string::CFStringRef;
+        static kSecReturnRef: core_foundation::string::CFStringRef;
+    }
+    let service = CFString::new(service);
+    let account = CFString::new(account);
+    let mut query = CFMutableDictionary::from_CFType_pairs(&[]);
+    // SAFETY: all CFString constants and retained values outlive dictionary insertion.
+    unsafe {
+        query.add(&kSecClass.to_void(), &kSecClassGenericPassword.to_void());
+        query.add(&kSecAttrService.to_void(), &service.to_void());
+        query.add(&kSecAttrAccount.to_void(), &account.to_void());
+        query.add(&kSecReturnRef.to_void(), &CFBoolean::true_value().to_void());
+        query.add(
+            &kSecUseAuthenticationUI.to_void(),
+            &kSecUseAuthenticationUIFail.to_void(),
+        );
+    }
+    query.to_immutable()
 }
 
 #[cfg(target_os = "macos")]
@@ -324,6 +522,11 @@ fn add_macos_generic_password_silently(
     label: &str,
     secret: &[u8],
 ) -> Result<(), security_framework::base::Error> {
+    let _interaction = MacosKeychainInteraction::new(false)?;
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        static kSecUseAuthenticationUIFail: core_foundation::string::CFStringRef;
+    }
     let service = CFString::new(service);
     let account = CFString::new(account);
     let label = CFString::new(label);
@@ -342,7 +545,7 @@ fn add_macos_generic_password_silently(
         attributes.add(&kSecValueData.to_void(), &secret.to_void());
         attributes.add(
             &kSecUseAuthenticationUI.to_void(),
-            &kSecUseAuthenticationUISkip.to_void(),
+            &kSecUseAuthenticationUIFail.to_void(),
         );
         SecItemAdd(
             attributes.to_immutable().as_concrete_TypeRef(),
@@ -398,7 +601,7 @@ fn load_or_create_current_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
     }
     #[cfg(target_os = "macos")]
     {
-        load_or_create_macos_keychain_key()
+        load_or_create_macos_keychain_key(config_dir)
     }
     #[cfg(target_os = "windows")]
     {
@@ -421,20 +624,24 @@ fn use_dev_key() -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn load_or_create_macos_keychain_key() -> Result<[u8; 32], AppError> {
-    match read_macos_keychain_secret()? {
+fn load_or_create_macos_keychain_key(config_dir: &Path) -> Result<[u8; 32], AppError> {
+    let service = macos_profile_namespace(config_dir).map_or_else(
+        || KEYCHAIN_SERVICE.to_string(),
+        |namespace| format!("com.vaporlensdb.qa.encryption-key.v4.{namespace}"),
+    );
+    match read_macos_keychain_secret(&service)? {
         Some(secret) => decode_key(&secret, "macOS Keychain"),
         None => {
             let key = new_key();
             let encoded = STANDARD.encode(key);
-            write_macos_keychain_secret(&encoded)?;
+            write_macos_keychain_secret(&service, &encoded)?;
             Ok(key)
         }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn read_macos_keychain_secret() -> Result<Option<String>, AppError> {
+fn read_macos_keychain_secret(service: &str) -> Result<Option<String>, AppError> {
     // `kSecUseAuthenticationUISkip` is essential product policy: this query
     // must either return data silently or fail in VaporLensDB. Security.framework
     // is never allowed to put up a login-password/Touch ID dialog during normal
@@ -442,7 +649,7 @@ fn read_macos_keychain_secret() -> Result<Option<String>, AppError> {
     let mut search = ItemSearchOptions::new();
     search
         .class(ItemClass::generic_password())
-        .service(KEYCHAIN_SERVICE)
+        .service(service)
         .account(KEYCHAIN_ACCOUNT)
         .load_data(true)
         .skip_authenticated_items(true);
@@ -478,12 +685,12 @@ fn decode_macos_keychain_secret(secret: Vec<u8>) -> Result<Option<String>, AppEr
 }
 
 #[cfg(target_os = "macos")]
-fn write_macos_keychain_secret(secret: &str) -> Result<(), AppError> {
+fn write_macos_keychain_secret(service: &str, secret: &str) -> Result<(), AppError> {
     // Create-only deliberately avoids an update of an inaccessible item. A
     // duplicate means the item was not silently readable and is surfaced as a
     // controlled credential re-entry error rather than an authorization UI.
     match add_macos_generic_password_silently(
-        KEYCHAIN_SERVICE,
+        service,
         KEYCHAIN_ACCOUNT,
         "VaporLensDB encryption key",
         secret.as_bytes(),
@@ -922,6 +1129,189 @@ mod tests {
         );
 
         fs::remove_dir_all(dir).expect("remove crypto test directory");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn isolated_profiles_route_credentials_without_changing_historical_references() {
+        let first = std::env::temp_dir().join(format!("vapor-namespace-{}", uuid::Uuid::new_v4()));
+        let other = std::env::temp_dir().join(format!("vapor-namespace-{}", uuid::Uuid::new_v4()));
+        let regular =
+            std::path::PathBuf::from(std::env::var_os("HOME").unwrap()).join(".vaporlensdb");
+        assert_eq!(super::macos_profile_namespace(&regular), None);
+        let namespace = super::macos_profile_namespace(&first).unwrap();
+        assert_eq!(super::macos_profile_namespace(&first), Some(namespace));
+        assert_ne!(super::macos_profile_namespace(&other), Some(namespace));
+        let service = super::macos_datasource_service(Some(namespace));
+        assert_ne!(service, MACOS_DATASOURCE_PASSWORD_SERVICE);
+        let account = uuid::Uuid::new_v4().to_string();
+        let scoped = format!("qa:{namespace}:{account}");
+        assert_eq!(
+            super::macos_datasource_target(&scoped).unwrap(),
+            (service, account.as_str())
+        );
+        assert_eq!(
+            super::macos_datasource_target(&account).unwrap(),
+            (
+                MACOS_DATASOURCE_PASSWORD_SERVICE.to_string(),
+                account.as_str()
+            )
+        );
+        assert!(super::macos_datasource_target("qa:invalid:invalid").is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires disposable native macOS Keychain fixtures"]
+    fn macos_native_isolated_profile_uses_scoped_reference_for_store_read_delete() {
+        assert!(
+            !super::use_dev_key(),
+            "native fixture must use Security.framework"
+        );
+        let dir =
+            std::env::temp_dir().join(format!("vapor-keychain-profile-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let reference = store_macos_datasource_password(&dir, "disposable-fixture").unwrap();
+        assert!(reference.starts_with("macos-keychain-v1:qa:"));
+        assert_eq!(
+            read_macos_datasource_password(&dir, &reference)
+                .unwrap()
+                .plaintext,
+            "disposable-fixture"
+        );
+        // A fresh reader resolves the namespace from the stored reference, even
+        // after the profile's location changes; it never probes production.
+        assert_eq!(
+            read_macos_datasource_password(&dir.join("moved"), &reference)
+                .unwrap()
+                .plaintext,
+            "disposable-fixture"
+        );
+        super::remove_macos_datasource_password_for_deletion(&reference, false).unwrap();
+        let (service, account) = super::macos_datasource_target(
+            reference
+                .strip_prefix(MACOS_DATASOURCE_PASSWORD_REFERENCE_PREFIX)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            super::delete_macos_datasource_password(&service, account, false)
+                .unwrap_err()
+                .code(),
+            ERR_SEC_ITEM_NOT_FOUND
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Opt-in native regressions: only fresh opaque accounts created by this
+    // test are touched. Ordinary check/test runs never access the login Keychain.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires disposable native macOS Keychain fixtures"]
+    fn macos_native_password_delete_confirms_absence_and_preserves_other_items() {
+        let service = super::macos_datasource_service(Some(uuid::Uuid::new_v4()));
+        let first = uuid::Uuid::new_v4().to_string();
+        let other = uuid::Uuid::new_v4().to_string();
+        for account in [&first, &other] {
+            super::add_macos_generic_password_silently(
+                &service,
+                account,
+                "VaporLensDB disposable deletion regression",
+                b"disposable-fixture",
+            )
+            .unwrap();
+        }
+        let exists = |account: &str| {
+            let _policy = super::MacosKeychainInteraction::new(false).unwrap();
+            let query = super::macos_datasource_password_metadata_query(&service, account);
+            let mut result = std::ptr::null();
+            use core_foundation::base::TCFType;
+            let status = unsafe {
+                security_framework_sys::keychain_item::SecItemCopyMatching(
+                    query.as_concrete_TypeRef(),
+                    &mut result,
+                )
+            };
+            if !result.is_null() {
+                drop(unsafe { core_foundation::base::CFType::wrap_under_create_rule(result) });
+            }
+            status
+        };
+        assert_eq!(exists(&first), 0);
+        assert_eq!(exists(&other), 0);
+        super::delete_macos_datasource_password(&service, &first, false).unwrap();
+        assert_eq!(exists(&first), ERR_SEC_ITEM_NOT_FOUND);
+        assert_eq!(exists(&other), 0);
+        assert_eq!(
+            super::delete_macos_datasource_password(&service, &first, false)
+                .unwrap_err()
+                .code(),
+            ERR_SEC_ITEM_NOT_FOUND
+        );
+        super::delete_macos_datasource_password(&service, &other, true).unwrap();
+        assert_eq!(exists(&other), ERR_SEC_ITEM_NOT_FOUND);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires disposable native macOS Keychain fixtures and executable copy"]
+    fn macos_native_password_delete_survives_creator_application_rename() {
+        const CHILD_SERVICE: &str = "VAPORLENSDB_NATIVE_DELETE_FIXTURE_SERVICE";
+        const CHILD_ACCOUNT: &str = "VAPORLENSDB_NATIVE_DELETE_FIXTURE_ACCOUNT";
+        if let Ok(account) = std::env::var(CHILD_ACCOUNT) {
+            let service = std::env::var(CHILD_SERVICE).unwrap();
+            let namespace = service
+                .strip_prefix("com.vaporlensdb.qa.datasource-password.v1.")
+                .unwrap();
+            uuid::Uuid::parse_str(namespace).unwrap();
+            // Child mode runs only this exact test in a renamed executable.
+            uuid::Uuid::parse_str(&account).unwrap();
+            super::add_macos_generic_password_silently(
+                &service,
+                &account,
+                "VaporLensDB disposable renamed-creator regression",
+                b"disposable-fixture",
+            )
+            .unwrap();
+            return;
+        }
+        let service = super::macos_datasource_service(Some(uuid::Uuid::new_v4()));
+        let account = uuid::Uuid::new_v4().to_string();
+        let dir =
+            std::env::temp_dir().join(format!("vapor-keychain-rename-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let renamed = dir.join("vapor-old-credential-creator");
+        fs::copy(std::env::current_exe().unwrap(), &renamed).unwrap();
+        let output = std::process::Command::new(&renamed)
+            .args(["--exact", "utils::crypto::tests::macos_native_password_delete_survives_creator_application_rename", "--ignored", "--nocapture"])
+            .env(CHILD_SERVICE, &service).env(CHILD_ACCOUNT, &account).output().unwrap();
+        assert!(
+            output.status.success(),
+            "fixture creator failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        use core_foundation::base::TCFType;
+        let query = super::macos_datasource_password_metadata_query(&service, &account);
+        {
+            let _policy = super::MacosKeychainInteraction::new(false).unwrap();
+            assert_eq!(
+                unsafe {
+                    security_framework_sys::keychain_item::SecItemDelete(
+                        query.as_concrete_TypeRef(),
+                    )
+                },
+                -25244
+            );
+        }
+        // The actual production path succeeds with UI prohibited, without ACL edits.
+        super::delete_macos_datasource_password(&service, &account, false).unwrap();
+        assert_eq!(
+            super::delete_macos_datasource_password(&service, &account, false)
+                .unwrap_err()
+                .code(),
+            ERR_SEC_ITEM_NOT_FOUND
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(target_os = "macos")]

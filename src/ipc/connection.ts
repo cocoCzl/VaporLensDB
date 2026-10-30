@@ -15,7 +15,7 @@ export function renameConnection(id: string, name: string) {
 }
 
 export function deleteConnection(id: string) {
-  return invokeCommand<void>(COMMANDS.deleteConnection, { id })
+  return invokeCommand<{ cleanupWarning: string | null }>(COMMANDS.deleteConnection, { id })
 }
 
 export function listConnections() {

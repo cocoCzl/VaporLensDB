@@ -11,6 +11,7 @@ use crate::{
         connection::{ConnectionRuntimeStatus, DriverType},
         query_history::{QueryHistoryEntry, QueryHistoryStatus},
     },
+    services::config_store::CredentialCleanupDiagnostic,
     services::task_manager::{TaskInfo, TaskStatus},
     utils::error_redaction::sanitize_diagnostic_error,
     AppState,
@@ -43,6 +44,7 @@ struct DiagnosticsPackage {
     connections: Vec<DiagnosticsConnection>,
     failed_queries: Vec<DiagnosticsFailedQuery>,
     tasks: Vec<DiagnosticsTask>,
+    credential_cleanup: Vec<CredentialCleanupDiagnostic>,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,6 +132,29 @@ struct DiagnosticsTask {
 struct DiagnosticsTaskLog {
     at: DateTime<Utc>,
     message: String,
+}
+
+#[tauri::command]
+pub async fn list_credential_cleanup(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<CredentialCleanupDiagnostic>, String> {
+    let store = state.config_store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.credential_cleanup_diagnostics())
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn retry_credential_cleanup(
+    state: tauri::State<'_, AppState>,
+    id: Uuid,
+) -> Result<(), String> {
+    let store = state.config_store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.retry_connection_credential_cleanup(id))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -224,6 +249,10 @@ pub async fn export_diagnostics_package(
         connections: diagnostics_connections,
         failed_queries,
         tasks: diagnostics_tasks,
+        credential_cleanup: state
+            .config_store
+            .credential_cleanup_diagnostics()
+            .map_err(String::from)?,
     };
 
     if let Some(parent) = output_path.parent() {

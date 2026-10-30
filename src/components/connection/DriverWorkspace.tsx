@@ -1,10 +1,12 @@
 import { useLeaveGuard } from './useLeaveGuard'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Copy, Download, FileJson, Plus, Search, Upload } from 'lucide-react'
+import { Copy, Download, FileJson, MoreHorizontal, Plus, Search, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AppSelect } from '@/components/ui/app-select'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
 import { useDriverStore } from '@/stores/driverStore'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { exportDriverConfiguration, importDriverConfiguration } from '@/ipc/driver'
@@ -42,7 +44,9 @@ export function DriverWorkspace({ entry, onBack, onCancel, onUse, onInstalled, r
   const [installFrom, setInstallFrom] = useState<Page>('manage')
   const [editorFrom, setEditorFrom] = useState<Page | 'parent'>(entry?.page === 'product' ? 'parent' : 'manage')
   const lastFocus = useRef<HTMLElement | null>(null)
+  const moreActions = useRef<HTMLButtonElement | null>(null)
   const selected = drivers.find(d => d.id === selectedId)
+  const selectedProduct = products.find(p => p.id === selected?.productId)
   const dirty = (page === 'product' || page === 'definition') && JSON.stringify(draft) !== original
   const guard = useLeaveGuard(dirty)
   useEffect(() => { void loadDrivers() }, [loadDrivers])
@@ -108,18 +112,23 @@ export function DriverWorkspace({ entry, onBack, onCancel, onUse, onInstalled, r
         <div className={`${selectedId ? 'hidden @min-[700px]/driver:flex' : 'flex'} min-h-0 flex-col border-r`}>
           <div className="relative m-3 shrink-0"><Search className="absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input aria-label={t('drivers.search')} className="pl-8" value={query} placeholder={t('drivers.search')} onChange={e => setQuery(e.target.value)} /></div>
           <div className="min-h-0 flex-1 overflow-auto px-2 pb-2" role="list" aria-label={t('drivers.title')}>
-            {visibleDrivers.map(driver => <button type="button" role="listitem" key={driver.id} aria-current={selectedId === driver.id ? true : undefined} onClick={() => { setSelectedId(driver.id); setMessage(null); setConfirmDelete(null) }} className={`mb-1 grid w-full min-w-0 gap-1 rounded-md p-3 text-left text-xs ${selectedId === driver.id ? 'bg-accent-selected' : 'hover:bg-muted'}`}><strong className="font-medium [overflow-wrap:anywhere]">{driverDisplayName(driver, t)}</strong><span className="text-muted-foreground">{products.find(p => p.id === driver.productId)?.name} · JDBC</span></button>)}
+            {visibleDrivers.map(driver => <button type="button" role="listitem" aria-label={driverDisplayName(driver, t)} key={driver.id} aria-current={selectedId === driver.id ? true : undefined} onClick={() => { setSelectedId(driver.id); setMessage(null); setConfirmDelete(null) }} className={`mb-1 flex w-full min-w-0 items-start gap-2 rounded-md p-3 text-left text-xs ${selectedId === driver.id ? 'bg-accent-selected' : 'hover:bg-muted'}`}><DatabaseVendorIcon aria-hidden="true" driverType={products.find(p => p.id === driver.productId)?.iconKey} className="size-5 shrink-0" /><strong className="min-w-0 font-medium [overflow-wrap:anywhere]">{driverDisplayName(driver, t)}</strong></button>)}
             {visibleDrivers.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t('drivers.noMatches')}</p>}
           </div>
         </div>
         <div className={`${selectedId ? 'block' : 'hidden @min-[700px]/driver:block'} min-h-0 min-w-0 overflow-auto p-5`}>
           {selected ? <div className="grid gap-5">
-            <div className="grid gap-1"><h3 className="break-words text-sm font-semibold">{driverDisplayName(selected, t)}</h3><span className="text-xs text-muted-foreground">{products.find(p => p.id === selected.productId)?.name} · JDBC</span></div>
+            <div className="flex min-w-0 items-start gap-3"><DatabaseVendorIcon aria-hidden="true" driverType={selectedProduct?.iconKey} className="size-8 shrink-0" /><div className="grid min-w-0 gap-1"><h3 className="text-sm font-semibold [overflow-wrap:anywhere]">{driverDisplayName(selected, t)}</h3><p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{selectedProduct?.name ?? selected.productId} · {t(selected.builtIn ? 'driverWorkflow.builtInDefinition' : 'driverWorkflow.customDefinition')}</p></div></div>
             <dl className="grid min-w-0 gap-3 text-xs"><div><dt className="text-muted-foreground">{t('drivers.driverClass')}</dt><dd className="mt-1 break-all">{selected.jdbcDriverClass}</dd></div><div><dt className="text-muted-foreground">{t('drivers.urlTemplate')}</dt><dd className="mt-1 break-all">{selected.urlTemplate}</dd></div></dl>
             <div className="flex flex-wrap gap-2">
               {!selected.builtIn && <Button type="button" variant="outline" onClick={() => edit(selected)}>{t('connection.edit')}</Button>}
-              <Button type="button" variant="outline" onClick={() => edit({ ...selected, id: '', name: `${driverDisplayName(selected, t)} ${t('driverWorkflow.copySuffix')}`, builtIn: false, defaultInstallationId: null, driverArtifacts: [], newProductName: undefined })}><Copy />{t('driverRefactor.copyDefinition')}</Button>
-              <Button type="button" variant="ghost" onClick={() => edit({ ...newDefinition(), productId: selected.productId })}><Plus />{t('driverWorkflow.addDefinition')}</Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button ref={moreActions} type="button" variant="ghost"><MoreHorizontal />{t('common.moreActions')}</Button>} />
+                <DropdownMenuContent align="start" className="w-80 max-w-[calc(100vw-3rem)]">
+                  <DropdownMenuItem className="items-start" onClick={() => { edit({ ...selected, id: '', name: `${driverDisplayName(selected, t)} ${t('driverWorkflow.copySuffix')}`, builtIn: false, defaultInstallationId: null, driverArtifacts: [], newProductName: undefined }); lastFocus.current = moreActions.current }}><Copy className="mt-0.5" /><span className="grid min-w-0 gap-1"><span>{t('driverRefactor.copyDefinition')}</span><span className="text-xs leading-relaxed text-muted-foreground whitespace-normal">{t('driverWorkflow.copyDefinitionHint')}</span></span></DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => { edit({ ...newDefinition(), productId: selected.productId }); lastFocus.current = moreActions.current }}><Plus />{t('driverWorkflow.addDefinition')}</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <section className="grid gap-3 border-t pt-4"><h3 className="text-xs font-semibold">{t('driverWorkflow.installations')}</h3>
               <JdbcInstallationActions key={selected.id} driver={selected} onNavigate={mode => install(mode, selected)} />
@@ -138,12 +147,12 @@ export function DriverWorkspace({ entry, onBack, onCancel, onUse, onInstalled, r
         </div>
       </div>
     </>}
-    <WorkflowFooter>{guard.prompt}{message && <p role="status" className="w-full break-words text-xs">{t(message)}</p>}{error && <WorkflowError error={error} />}
+    {(editing || onCancel || message || error || guard.prompt) && <WorkflowFooter>{guard.prompt}{message && <p role="status" className="w-full break-words text-xs">{t(message)}</p>}{error && <WorkflowError error={error} />}
       {onCancel ? <Button type="button" variant="ghost" title={t('driverWorkflow.cancelTask')} onClick={() => guard.request(onCancel)}>{t('common.cancel')}</Button> : <span />}
       <div className="ml-auto flex gap-2">
         {editing ? <><Button type="button" variant={onUse ? 'outline' : 'default'} disabled={loading || !validDraft(draft)} onClick={() => { void save(false) }}>{t('common.save')}</Button>{onUse && <Button type="button" disabled={loading || !validDraft(draft)} onClick={() => { void save(true) }}>{t('driverWorkflow.saveUse')}</Button>}</> : null}
       </div>
-    </WorkflowFooter>
+    </WorkflowFooter>}
   </section>
 }
 

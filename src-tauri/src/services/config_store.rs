@@ -6,11 +6,12 @@ use std::{
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{
     models::{
-        connection::{ConnectionConfig, DriverType, SshTunnelConfig},
+        connection::{ConnectionConfig, DeleteConnectionOutcome, DriverType, SshTunnelConfig},
         data_source_group::DataSourceGroup,
         driver_catalog::{
             DriverBackend, DriverConnectionVariant, DriverDefinition, DriverDefinitionCapabilities,
@@ -28,6 +29,16 @@ use crate::{
 pub struct ConfigStore {
     config_dir: PathBuf,
     db_path: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialCleanupDiagnostic {
+    pub connection_id: String,
+    pub status: String,
+    pub diagnostic: Option<String>,
+    pub credential_account: Option<String>,
+    pub updated_at: String,
 }
 
 struct ConfigMigration {
@@ -101,6 +112,38 @@ const CONFIG_MIGRATIONS: &[ConfigMigration] = &[
         version: 13,
         name: "product identities and immutable JDBC installations",
         apply: super::driver_registry::migrate_products_and_installations,
+    },
+    ConfigMigration {
+        version: 14,
+        name: "retry credential cleanup after connection deletion",
+        apply: |conn| {
+            conn.execute_batch(
+                "CREATE TABLE connection_credential_cleanup (
+                connection_id TEXT PRIMARY KEY,
+                reference TEXT NOT NULL,
+                last_error TEXT
+            );",
+            )?;
+            Ok(())
+        },
+    },
+    ConfigMigration {
+        version: 15,
+        name: "retain bounded credential cleanup diagnostics",
+        apply: |conn| {
+            conn.execute_batch(
+                "CREATE TABLE connection_credential_cleanup_results (
+                    connection_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO connection_credential_cleanup_results
+                SELECT connection_id, 'pending', last_error, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                FROM connection_credential_cleanup;",
+            )?;
+            Ok(())
+        },
     },
 ];
 
@@ -273,22 +316,175 @@ impl ConfigStore {
         Ok(config)
     }
 
-    pub fn delete_connection(&self, id: Uuid) -> Result<(), AppError> {
+    pub fn delete_connection(&self, id: Uuid) -> Result<DeleteConnectionOutcome, AppError> {
+        self.delete_connection_with_cleanup(id, remove_deleted_connection_credential)
+    }
+
+    fn delete_connection_with_cleanup(
+        &self,
+        id: Uuid,
+        cleanup: impl Fn(&str) -> Result<(), AppError>,
+    ) -> Result<DeleteConnectionOutcome, AppError> {
+        let mut conn = self.conn()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        // Capture only the owned direct password reference, in the same transaction
+        // as deletion. A failed commit must never remove the saved credential.
+        let reference: Option<String> = tx
+            .query_row(
+                "SELECT password_encrypted FROM connections WHERE id = ?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
         #[cfg(target_os = "macos")]
-        let existing = self.get_connection(id)?;
-        let affected = self.conn()?.execute(
-            "DELETE FROM connections WHERE id = ?1",
-            params![id.to_string()],
-        )?;
-        if affected == 0 {
-            return Err(AppError::NotFound {
-                resource: "connection".to_string(),
-                id: id.to_string(),
-            });
+        if let Some(reference) =
+            reference.filter(|r| crypto::is_macos_datasource_password_reference(r))
+        {
+            tx.execute("INSERT OR IGNORE INTO connection_credential_cleanup(connection_id, reference) VALUES (?1, ?2)", params![id.to_string(), reference])?;
         }
-        #[cfg(target_os = "macos")]
-        if let Some(reference) = existing.and_then(|config| config.password_encrypted) {
-            crypto::remove_macos_datasource_password(&reference)?;
+        #[cfg(not(target_os = "macos"))]
+        let _ = reference;
+        tx.execute("DELETE FROM connections WHERE id = ?1", [id.to_string()])?;
+        tx.commit()?;
+        // Zero affected rows is success only after the storage transaction succeeded.
+        // Cleanup errors are partial success, never a reason to resurrect a record.
+        let cleanup_warning = self
+            .cleanup_deleted_connection_credential(id, &cleanup)
+            .err()
+            .map(|error| {
+                let diagnostic = crate::utils::error_redaction::sanitize_diagnostic_error(
+                    &error.to_string(),
+                    None,
+                );
+                eprintln!("connection {id} deleted; credential cleanup pending: {diagnostic}");
+                diagnostic
+            });
+        Ok(DeleteConnectionOutcome { cleanup_warning })
+    }
+
+    fn cleanup_deleted_connection_credential(
+        &self,
+        id: Uuid,
+        cleanup: &impl Fn(&str) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        let mut conn = self.conn()?;
+        // Serialize the ownership check, native deletion and queue update with
+        // writers from other instances. Never delete a still-referenced secret.
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let reference: Option<String> = tx
+            .query_row(
+                "SELECT reference FROM connection_credential_cleanup WHERE connection_id = ?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(reference) = reference {
+            let referenced: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM connections WHERE password_encrypted = ?1
+                 OR ssh_password_encrypted = ?1 OR ssh_private_key_passphrase_encrypted = ?1
+                 OR EXISTS(SELECT 1 FROM json_each(driver_property_secrets_json) WHERE value = ?1))",
+                [&reference],
+                |row| row.get(0),
+            )?;
+            if !referenced {
+                if let Err(error) = cleanup(&reference) {
+                    let diagnostic = crate::utils::error_redaction::sanitize_diagnostic_error(
+                        &error.to_string(),
+                        None,
+                    );
+                    tx.execute("UPDATE connection_credential_cleanup SET last_error = ?2 WHERE connection_id = ?1", params![id.to_string(), diagnostic])?;
+                    record_credential_cleanup_result(&tx, id, "pending", Some(&diagnostic))?;
+                    tx.commit()?;
+                    return Err(error);
+                }
+            }
+            // A surviving owner retains the credential and assumes its eventual
+            // cleanup responsibility when that connection is deleted.
+            tx.execute(
+                "DELETE FROM connection_credential_cleanup WHERE connection_id = ?1",
+                [id.to_string()],
+            )?;
+            record_credential_cleanup_result(
+                &tx,
+                id,
+                if referenced {
+                    "retainedShared"
+                } else {
+                    "cleaned"
+                },
+                None,
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn credential_cleanup_diagnostics(
+        &self,
+    ) -> Result<Vec<CredentialCleanupDiagnostic>, AppError> {
+        let conn = self.conn()?;
+        let mut statement = conn.prepare(
+            "SELECT q.connection_id, 'pending', q.last_error, q.reference, COALESCE(r.updated_at, '')
+             FROM connection_credential_cleanup q
+             LEFT JOIN connection_credential_cleanup_results r USING(connection_id)
+             UNION ALL
+             SELECT r.connection_id, r.status, r.last_error, NULL, r.updated_at
+             FROM connection_credential_cleanup_results r
+             WHERE NOT EXISTS(SELECT 1 FROM connection_credential_cleanup q WHERE q.connection_id = r.connection_id)
+             ORDER BY 5 DESC, 1",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let reference: Option<String> = row.get(3)?;
+            let diagnostic: Option<String> = row.get(2)?;
+            Ok(CredentialCleanupDiagnostic {
+                connection_id: row.get(0)?,
+                status: row.get(1)?,
+                diagnostic: diagnostic.map(|error| {
+                    crate::utils::error_redaction::sanitize_diagnostic_error(&error, None)
+                        .chars()
+                        .take(4000)
+                        .collect()
+                }),
+                // Only an opaque UUID is exposed for an explicit Keychain Access
+                // lookup. Never return a raw reference or development ciphertext.
+                credential_account: reference.and_then(|value| {
+                    value
+                        .strip_prefix("macos-keychain-v1:")
+                        .and_then(|account| Uuid::parse_str(account).ok())
+                        .map(|account| account.to_string())
+                }),
+                updated_at: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn retry_connection_credential_cleanup(&self, id: Uuid) -> Result<(), AppError> {
+        self.cleanup_deleted_connection_credential(id, &remove_deleted_connection_credential)
+    }
+
+    pub(crate) fn retry_deleted_connection_credentials(&self) -> Result<(), AppError> {
+        self.retry_deleted_connection_credentials_with_cleanup(
+            remove_deleted_connection_credential_silently,
+        )
+    }
+
+    fn retry_deleted_connection_credentials_with_cleanup(
+        &self,
+        cleanup: impl Fn(&str) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        let conn = self.conn()?;
+        let mut statement =
+            conn.prepare("SELECT connection_id FROM connection_credential_cleanup")?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for id in ids {
+            let id = Uuid::parse_str(&id).map_err(|e| AppError::ConfigError(e.to_string()))?;
+            if let Err(error) = self.cleanup_deleted_connection_credential(id, &cleanup) {
+                eprintln!("connection {id} credential cleanup remains pending: {error}");
+            }
         }
         Ok(())
     }
@@ -2036,6 +2232,57 @@ fn parse_error(error: impl ToString) -> rusqlite::Error {
     rusqlite::Error::InvalidParameterName(error.to_string())
 }
 
+fn record_credential_cleanup_result(
+    conn: &Connection,
+    id: Uuid,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), AppError> {
+    let diagnostic = error.map(|error| {
+        crate::utils::error_redaction::sanitize_diagnostic_error(error, None)
+            .chars()
+            .take(4000)
+            .collect::<String>()
+    });
+    conn.execute(
+        "INSERT INTO connection_credential_cleanup_results VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(connection_id) DO UPDATE SET status=excluded.status,
+         last_error=excluded.last_error, updated_at=excluded.updated_at",
+        params![id.to_string(), status, diagnostic, Utc::now().to_rfc3339()],
+    )?;
+    conn.execute_batch(
+        "DELETE FROM connection_credential_cleanup_results
+         WHERE connection_id NOT IN (SELECT connection_id FROM connection_credential_cleanup)
+         AND connection_id NOT IN (SELECT connection_id FROM connection_credential_cleanup_results
+             ORDER BY updated_at DESC LIMIT 50);",
+    )?;
+    Ok(())
+}
+
+fn remove_deleted_connection_credential(reference: &str) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        crypto::remove_macos_datasource_password_for_deletion(reference, true)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = reference;
+        Ok(())
+    }
+}
+
+fn remove_deleted_connection_credential_silently(reference: &str) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        crypto::remove_macos_datasource_password_for_deletion(reference, false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = reference;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "macos")]
@@ -2084,6 +2331,291 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn deletion_is_idempotent_by_uuid_and_survives_restart() {
+        let root = std::env::temp_dir().join(format!("vapor-delete-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(root.clone()).unwrap();
+        let first = test_connection_config(Uuid::new_v4());
+        let second = test_connection_config(Uuid::new_v4());
+        store.create_connection(first.clone(), None, false).unwrap();
+        store
+            .create_connection(second.clone(), None, false)
+            .unwrap();
+        let now = Utc::now();
+        let draft_id = Uuid::new_v4();
+        store
+            .upsert_sql_draft(SqlDraft {
+                id: draft_id,
+                connection_id: Some(first.id),
+                connection_name_snapshot: Some(first.name.clone()),
+                database: None,
+                schema: None,
+                title: "Keep draft".into(),
+                sql: "SELECT draft_only".into(),
+                created_at: now,
+                updated_at: now,
+                last_opened_at: Some(now),
+                closed_at: None,
+            })
+            .unwrap();
+        store
+            .add_query_history(QueryHistoryEntry {
+                id: Uuid::new_v4(),
+                connection_id: first.id,
+                connection_name_snapshot: first.name.clone(),
+                driver_type: first.driver_type,
+                database: None,
+                schema: None,
+                sql: "SELECT history_only".into(),
+                status: QueryHistoryStatus::Success,
+                started_at: now,
+                elapsed_ms: Some(1),
+                row_count: Some(1),
+                affected_rows: None,
+                error_code: None,
+                error_message: None,
+            })
+            .unwrap();
+        store.delete_connection(first.id).unwrap();
+        store.delete_connection(first.id).unwrap();
+        drop(store);
+        let reopened = ConfigStore::new(root.clone()).unwrap();
+        assert!(reopened.get_connection(first.id).unwrap().is_none());
+        assert_eq!(
+            reopened.get_sql_draft(draft_id).unwrap().unwrap().sql,
+            "SELECT draft_only"
+        );
+        assert_eq!(
+            reopened.list_query_history(10).unwrap()[0].sql,
+            "SELECT history_only"
+        );
+        assert_eq!(
+            reopened.get_connection(second.id).unwrap().unwrap().name,
+            second.name
+        );
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deletion_storage_failure_never_runs_credential_cleanup() {
+        let root = std::env::temp_dir().join(format!("vapor-delete-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(root.clone()).unwrap();
+        let config = test_connection_config(Uuid::new_v4());
+        store
+            .create_connection(config.clone(), None, false)
+            .unwrap();
+        store.conn().unwrap().execute_batch("CREATE TRIGGER reject_delete BEFORE DELETE ON connections BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;").unwrap();
+        let outcome = store.delete_connection_with_cleanup(config.id, |_| {
+            panic!("must not clean credentials before successful commit")
+        });
+        assert!(outcome.is_err());
+        assert!(store.get_connection(config.id).unwrap().is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deletion_cleanup_failure_is_partial_success_and_can_be_retried() {
+        let root = std::env::temp_dir().join(format!("vapor-delete-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(root.clone()).unwrap();
+        let config = test_connection_config(Uuid::new_v4());
+        store
+            .create_connection(config.clone(), None, false)
+            .unwrap();
+        // Fake owned handle: the injected gateway must never touch real Keychain.
+        store.conn().unwrap().execute("INSERT INTO connection_credential_cleanup(connection_id, reference) VALUES (?1, 'test-owned-handle')", [config.id.to_string()]).unwrap();
+        let outcome = store
+            .delete_connection_with_cleanup(config.id, |_| {
+                Err(crate::models::error::AppError::AuthError(
+                    "simulated OSStatus -25293".into(),
+                ))
+            })
+            .unwrap();
+        assert!(outcome.cleanup_warning.unwrap().contains("-25293"));
+        assert!(store.get_connection(config.id).unwrap().is_none());
+        let retained: String = store
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT last_error FROM connection_credential_cleanup",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(retained.contains("-25293"));
+        drop(store);
+        // Opening the store must not perform native cleanup or fail startup.
+        // A failed retry after restart retains the durable record for next launch.
+        let store = ConfigStore::new(root.clone()).unwrap();
+        let attempts = std::cell::Cell::new(0);
+        store
+            .retry_deleted_connection_credentials_with_cleanup(|_| {
+                attempts.set(attempts.get() + 1);
+                Err(crate::models::error::AppError::AuthError(
+                    "simulated OSStatus -25293".into(),
+                ))
+            })
+            .unwrap();
+        assert_eq!(attempts.get(), 1);
+        drop(store);
+        let store = ConfigStore::new(root.clone()).unwrap();
+        store
+            .retry_deleted_connection_credentials_with_cleanup(|reference| {
+                assert_eq!(reference, "test-owned-handle");
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .conn()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM connection_credential_cleanup",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deletion_cleanup_retains_credentials_referenced_by_surviving_connections() {
+        let root = std::env::temp_dir().join(format!("vapor-delete-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(root.clone()).unwrap();
+        let survivor = test_connection_config(Uuid::new_v4());
+        store
+            .create_connection(survivor.clone(), None, false)
+            .unwrap();
+        // Exercise every saved secret location without resolving any real secret.
+        for column in [
+            "password_encrypted",
+            "ssh_password_encrypted",
+            "ssh_private_key_passphrase_encrypted",
+            "driver_property_secrets_json",
+        ] {
+            let deleted_id = Uuid::new_v4();
+            let value = if column == "driver_property_secrets_json" {
+                r#"{"token":"test-shared-handle"}"#
+            } else {
+                "test-shared-handle"
+            };
+            store
+                .conn()
+                .unwrap()
+                .execute(
+                    &format!("UPDATE connections SET {column} = ?1 WHERE id = ?2"),
+                    params![value, survivor.id.to_string()],
+                )
+                .unwrap();
+            store.conn().unwrap().execute(
+                "INSERT INTO connection_credential_cleanup(connection_id, reference) VALUES (?1, 'test-shared-handle')",
+                [deleted_id.to_string()],
+            ).unwrap();
+            store
+                .retry_deleted_connection_credentials_with_cleanup(|_| {
+                    panic!("must not delete a credential referenced by another connection")
+                })
+                .unwrap();
+            let conn = store.conn().unwrap();
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM connection_credential_cleanup",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+                0
+            );
+            assert_eq!(
+                conn.query_row(
+                    &format!("SELECT {column} FROM connections WHERE id = ?1"),
+                    [survivor.id.to_string()],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+                value
+            );
+            let cleared = if column == "driver_property_secrets_json" {
+                Some("{}")
+            } else {
+                None
+            };
+            conn.execute(
+                &format!("UPDATE connections SET {column} = ?1 WHERE id = ?2"),
+                params![cleared, survivor.id.to_string()],
+            )
+            .unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn credential_cleanup_diagnostics_survive_restart_redact_and_bound_results() {
+        let root = std::env::temp_dir().join(format!("vapor-delete-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(root.clone()).unwrap();
+        let id = Uuid::new_v4();
+        store.conn().unwrap().execute(
+            "INSERT INTO connection_credential_cleanup(connection_id, reference) VALUES (?1, 'macos-keychain-v1:dev:private-fixture-ciphertext')",
+            [id.to_string()],
+        ).unwrap();
+        store
+            .cleanup_deleted_connection_credential(id, &|_| {
+                Err(crate::models::error::AppError::AuthError(
+                    "password=private-fixture-secret (OSStatus -25244)".into(),
+                ))
+            })
+            .unwrap_err();
+        let serialized =
+            serde_json::to_string(&store.credential_cleanup_diagnostics().unwrap()).unwrap();
+        assert!(!serialized.contains("private-fixture"));
+        assert!(serialized.contains("-25244"));
+        let conn = store.conn().unwrap();
+        let stored: String = conn
+            .query_row(
+                "SELECT last_error FROM connection_credential_cleanup",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!stored.contains("private-fixture-secret"));
+        drop(conn);
+        drop(store);
+        let store = ConfigStore::new(root.clone()).unwrap();
+        assert_eq!(
+            store.credential_cleanup_diagnostics().unwrap()[0].status,
+            "pending"
+        );
+        store
+            .cleanup_deleted_connection_credential(id, &|_| Ok(()))
+            .unwrap();
+        assert_eq!(
+            store.credential_cleanup_diagnostics().unwrap()[0].status,
+            "cleaned"
+        );
+        drop(store);
+        let store = ConfigStore::new(root.clone()).unwrap();
+        assert_eq!(
+            store.credential_cleanup_diagnostics().unwrap()[0].status,
+            "cleaned"
+        );
+        assert!(store.credential_cleanup_diagnostics().unwrap()[0]
+            .credential_account
+            .is_none());
+        for _ in 0..55 {
+            super::record_credential_cleanup_result(
+                &store.conn().unwrap(),
+                Uuid::new_v4(),
+                "cleaned",
+                None,
+            )
+            .unwrap();
+        }
+        assert_eq!(store.credential_cleanup_diagnostics().unwrap().len(), 50);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn test_ssh_tunnel(enabled: bool) -> SshTunnelConfig {
@@ -2234,7 +2766,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
         );
         let drivers = store
             .list_driver_definitions()
@@ -2311,7 +2843,7 @@ mod tests {
 
         assert_eq!(
             store.migration_versions().expect("list migration versions"),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
         );
         assert!(columns.iter().any(|column| column == "connection_url"));
         assert!(columns.iter().any(|column| column == "driver_class"));
@@ -2502,7 +3034,7 @@ mod tests {
         drop(conn);
 
         let store = ConfigStore::new(dir.clone()).expect("upgrade v8 config store");
-        assert_eq!(store.applied_schema_version().expect("schema version"), 13);
+        assert_eq!(store.applied_schema_version().expect("schema version"), 15);
 
         let oracle = store
             .get_connection(oracle_connection_id)

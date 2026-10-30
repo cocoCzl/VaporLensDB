@@ -154,3 +154,10 @@ impl fmt::Debug for DriverProperty {
             .finish_non_exhaustive()
     }
 }
+
+/// The configuration is absent even when credential cleanup needs retrying.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteConnectionOutcome {
+    pub cleanup_warning: Option<String>,
+}

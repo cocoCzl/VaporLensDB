@@ -326,6 +326,7 @@
     "connectionMoveFailedItems": "失败项：{{names}}",
     "connectionMoveMoreFailedItems": "另有 {{count}} 个",
     "saveConnectionFailed": "保存连接失败",
+    "connectionDeletedCleanupPending": "连接已删除，但保存的密码尚未清理。",
     "deleteConnectionFailed": "删除连接失败",
     "testConnectionFailed": "连接测试失败",
     "connectFailed": "连接失败",
@@ -1118,7 +1119,7 @@
     "chooseInstallation": "请选择安装（可先仅保存）",
     "manage": "配置数据库与驱动",
     "addProduct": "添加自定义数据库",
-    "copyDefinition": "复制为用户驱动",
+    "copyDefinition": "创建自定义副本…",
     "product": "数据库产品",
     "newProduct": "新建数据库产品",
     "productName": "产品名称（身份保持稳定）",
@@ -1205,6 +1206,9 @@
     "catalogHint": "选择数据库，再配置连接参数。",
     "databaseName": "数据库名称",
     "managerHint": "管理 JDBC 驱动定义及已安装版本。",
+    "builtInDefinition": "内置定义",
+    "customDefinition": "自定义定义",
+    "copyDefinitionHint": "复制当前驱动定义，用于修改类名、URL 模板等设置。不复制数据库、连接或安装文件。导入本地 JAR 可直接进行，无需创建副本。",
     "saveFirst": "先保存数据库和驱动定义，再导入 JAR 或安装推荐版本。",
     "sections": "驱动配置分组",
     "basic": "基本信息",
@@ -1240,5 +1244,23 @@
       "java": "Java 运行环境检查失败，请查看详情。"
     },
     "backHint": "返回上一页，保留连接草稿。"
+  },
+  "credentialCleanup": {
+    "title": "凭据清理",
+    "viewDetails": "查看详情",
+    "refresh": "刷新",
+    "hint": "关闭通知不会清除待重试记录。这里可查看待处理项和最近 50 条处理结果；启动重试不会弹出系统授权。",
+    "empty": "暂无凭据清理记录。",
+    "pending": "连接已删除，但保存的密码尚未清理。",
+    "cleaned": "保存的密码已清理或已确认不存在。",
+    "retainedShared": "凭据仍被其他连接使用，已保留。",
+    "retry": "重试清理",
+    "retryFailed": "本次操作未完成。待处理记录仍保留，请刷新并查看详情。",
+    "copy": "复制脱敏详情",
+    "ownerError": "macOS 返回 errSecInvalidOwnerEdit（-25244）：无效地尝试更改钥匙串项目所有者。这与凭据不存在或禁止交互的错误不同；重试可能仍需要手动处理。",
+    "interactionError": "macOS 返回 errSecInteractionNotAllowed（-25308）：此操作需要当前静默模式不允许的交互。",
+    "accessError": "macOS 返回 errSecAuthFailed（-25293）：钥匙串验证或访问失败。",
+    "otherError": "系统尚未确认凭据清理成功。请保留下面的诊断信息以便排查。",
+    "manual": "如重试仍失败，请主动打开 macOS「钥匙串访问」，搜索下面的 service，并核对 account。只处理这一项；不要按连接名称批量删除，也不要清空钥匙串。完成后返回此处重试，应用会核实项目是否已不存在。"
   }
 }

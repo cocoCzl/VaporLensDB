@@ -42,9 +42,10 @@ for (const [source, label] of [[sidebar, 'Data Sources sidebar'], [management, '
 
 includesAll(manager, ['DisconnectBlocked', 'RunningOperations', 'UncommittedTransaction'], 'backend final disconnect protection')
 const deletion = commands.slice(commands.indexOf('async fn delete_connection_state'), commands.indexOf('pub fn list_connections'))
-includesAll(deletion, ['manager.disconnect(id).map_err(String::from)?', 'metadata_service.clear_connection(id)', 'config_store.delete_connection(id)'], 'saved connection deletion safety')
+includesAll(deletion, ['manager.disconnect(id).map_err(String::from)?', 'metadata_service.clear_connection(id)', '.delete_connection(id)'], 'saved connection deletion safety')
 assert(deletion.indexOf('manager.disconnect') < deletion.indexOf('metadata_service.clear_connection'), 'delete must disconnect successfully before clearing metadata')
-assert(deletion.indexOf('metadata_index.clear_connection') < deletion.indexOf('config_store.delete_connection'), 'delete must clear metadata before deleting persisted configuration')
+assert(deletion.indexOf('preflight_configuration_change') < deletion.indexOf('.delete_connection'), 'delete must preflight before deleting persisted configuration')
+assert(deletion.indexOf('.delete_connection') < deletion.indexOf('manager.disconnect'), 'failed persistence must preserve the live session')
 assert(!deletion.includes('.ok()'), 'delete must not discard disconnect failures')
 const update = commands.slice(commands.indexOf('async fn update_connection_state'), commands.indexOf('fn requires_runtime_invalidation'))
 includesAll(update, ['requires_runtime_invalidation', 'preflight_configuration_change', 'if refresh', 'manager.disconnect(id).map_err(String::from)?'], 'connection update safety')

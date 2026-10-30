@@ -35,6 +35,15 @@ type ConnectionVariantOption = {
   label: string
 }
 
+type ProductDraft = {
+  form: ConnectionInput
+  explicit: Set<keyof ConnectionInput>
+  variant: ConnectionVariant
+  generated: boolean
+  group: string
+  baseline: string
+}
+
 const DriverWorkspace = lazy(() => import('./DriverWorkspace').then(module => ({ default: module.DriverWorkspace })))
 
 const ORACLE_JDBC_DOWNLOAD_URL = 'https://www.oracle.com/database/technologies/appdev/jdbc-downloads.html'
@@ -75,19 +84,12 @@ export function ConnectionForm({
   const [catalogFilter, setCatalogFilter] = useState<'all' | 'common' | 'custom'>('all')
   const [pendingProduct, setPendingProduct] = useState(connection?.productId ?? connection?.driverType ?? 'postgres')
   const [auxiliary, setAuxiliary] = useState<DriverWorkspaceEntry | null>(null)
-  const [dirty, setDirty] = useState(false)
-  const guard = useLeaveGuard(dirty)
   const auxiliaryBack = useRef<(() => void) | null>(null)
   const returnFocus = useRef<HTMLElement | null>(null)
-  const markDirty = () => { setDirty(true); onDirtyChange?.(true) }
-  const cancel = () => guard.request(onCancel)
   const openPage = (entry: DriverWorkspaceEntry) => { returnFocus.current = document.activeElement as HTMLElement; setAuxiliary(entry) }
   const returnToForm = () => { setAuxiliary(null); queueMicrotask(() => { if (returnFocus.current?.isConnected) returnFocus.current.focus() }) }
-  useEffect(() => {
-    if (closeRequestRef) closeRequestRef.current = () => { if (auxiliary) auxiliaryBack.current?.(); else cancel() }
-    return () => { if (closeRequestRef) closeRequestRef.current = null }
-  })
-  const productDrafts = useRef(new Map<string, { form: ConnectionInput; explicit: Set<keyof ConnectionInput>; variant: ConnectionVariant; generated: boolean; group: string }>())
+  const [productDrafts, setProductDrafts] = useState(() => new Map<string, ProductDraft>())
+  const initialized = useRef(Boolean(connection))
   const driverProperties = useRef(new Map<string, ConnectionInput['driverProperties']>())
   const [explicitFields, setExplicitFields] = useState<Set<keyof ConnectionInput>>(() => new Set(connection ? ['host', 'port', 'database', 'username', 'connectionUrl'] : []))
   const dataSourceGroups = useConnectionStore((state) => state.dataSourceGroups)
@@ -140,6 +142,20 @@ export function ConnectionForm({
   const [connectionVariant, setConnectionVariant] = useState<ConnectionVariant>(
     (connection?.connectionMode as ConnectionVariant) ?? (connection?.connectionUrl && connection.driverType !== 'sqlite' ? 'urlOnly' : defaultConnectionVariant(connection?.driverType ?? 'postgres')),
   )
+  // Baselines are captured only on first entry, never by catalogue/installation
+  // refresh effects. All comparison values (including secrets) stay in memory.
+  const [baseline, setBaseline] = useState(() => connectionDraftKey(form, connectionVariant, groupSelection))
+  const productId = form.productId ?? form.driverType
+  const dirty = connectionDraftKey(form, connectionVariant, groupSelection) !== baseline
+    || Boolean(connection && productId !== (connection.productId ?? connection.driverType))
+    || [...productDrafts].some(([id, draft]) => id !== productId && connectionDraftKey(draft.form, draft.variant, draft.group) !== draft.baseline)
+  const guard = useLeaveGuard(dirty)
+  const cancel = () => guard.request(onCancel)
+  useEffect(() => {
+    if (closeRequestRef) closeRequestRef.current = () => { if (auxiliary) auxiliaryBack.current?.(); else cancel() }
+    return () => { if (closeRequestRef) closeRequestRef.current = null }
+  })
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
   const selectableDrivers = driverDefinitions.length ? driverDefinitions.filter((driver) => driver.status !== 'planned').sort(compareDriverChoices) : []
   const selectedDriver = driverDefinitions.find((driver) => driver.id === form.driverDefinitionId)
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
@@ -180,14 +196,12 @@ export function ConnectionForm({
   const testDetail = currentTest?.error ? formatConnectionErrorDetail(currentTest.error, currentTest.input, t) : null
 
   const update = (key: keyof ConnectionInput, value: string | number | string[] | boolean | null) => {
-    markDirty()
     setExplicitFields((current) => new Set([...current, key]))
     setForm((current) => ({ ...current, [key]: value }))
   }
 
   const updateConnectionUrl = (value: string) => {
     const extracted = extractUrlCredentials(value)
-    markDirty()
     setForm((current) => ({
       ...current,
       connectionUrl: extracted.connectionUrl,
@@ -198,7 +212,6 @@ export function ConnectionForm({
   }
 
   const updateSshTunnel = (key: string, value: string | number | boolean | null) => {
-    markDirty()
     setForm((current) => ({
       ...current,
       sshTunnel: {
@@ -224,26 +237,27 @@ export function ConnectionForm({
     // A selector can outlive its catalogue during an asynchronous refresh. Never
     // interpret an empty/stale definition ID as a registered native driver type.
     if (!definition && !FALLBACK_DRIVER_OPTIONS.some(driver => driver.id === driverDefinitionId)) return
-    markDirty()
     const driverType = definition?.driverType ?? (driverDefinitionId as DriverType)
     const profile = profileForDriver(driverType, definition)
     const productId = definition?.productId || driverType
-    const sameProduct = productId === form.productId
+    const sameProduct = initialized.current && productId === form.productId
+    if (sameProduct && driverDefinitionId === form.driverDefinitionId) return
     const nextVariant = sameProduct && profile.connectionVariants.some((v) => v.id === connectionVariant) ? connectionVariant : profile.connectionVariants[0].id
     onDriverTypeChange?.(driverType)
     setConnectionVariant(nextVariant)
     if (sameProduct && (form.driverProperties?.length || form.driverPaths?.length || form.driverClass || form.sslMode)) setMessage(t('driverRefactor.driverChanged'))
     if (sameProduct) driverProperties.current.set(form.driverDefinitionId ?? '', form.driverProperties)
-    else productDrafts.current.set(form.productId ?? form.driverType, { form, explicit: explicitFields, variant: connectionVariant, generated: nameIsGenerated, group: groupSelection })
-    const previous = !sameProduct ? productDrafts.current.get(productId) : undefined
+    else if (initialized.current) setProductDrafts(current => new Map(current).set(form.productId ?? form.driverType, { form, explicit: explicitFields, variant: connectionVariant, generated: nameIsGenerated, group: groupSelection, baseline }))
+    const previous = !sameProduct ? productDrafts.get(productId) : undefined
+    initialized.current = true
     if (previous) {
-      setForm(previous.form); setExplicitFields(previous.explicit); setConnectionVariant(previous.variant); setNameIsGenerated(previous.generated); setGroupSelection(previous.group); setPasswordVisible(false); setMessage(null); setMessageDetail(null)
+      setForm(previous.form); setBaseline(previous.baseline); setExplicitFields(previous.explicit); setConnectionVariant(previous.variant); setNameIsGenerated(previous.generated); setGroupSelection(previous.group); setPasswordVisible(false); setMessage(null); setMessageDetail(null)
       return
     }
     if (!sameProduct) { setExplicitFields(new Set()); setNameIsGenerated(true); setGroupSelection(''); setPasswordVisible(false); setMessage(null); setMessageDetail(null) }
-    setForm((current) => ({
-      ...current,
-      id: sameProduct ? current.id : undefined,
+    const next: ConnectionInput = {
+      ...form,
+      id: sameProduct ? form.id : undefined,
       productId,
       driverDefinitionId: definition?.id ?? driverType,
       driverInstallationId: definition?.defaultInstallationId ?? null,
@@ -251,26 +265,28 @@ export function ConnectionForm({
       driverType,
       driverDialect: definition?.driverDialect ?? driverType,
       // A just-saved product may precede this render's catalogue snapshot.
-      name: sameProduct ? current.name : useDriverStore.getState().products.find((p) => p.id === productId)?.name ?? profile.defaultName,
-      port: sameProduct && explicitFields.has('port') ? current.port : profile.defaultPort,
-      host: sameProduct ? current.host : 'localhost',
-      database: sameProduct ? current.database : profile.defaultDatabase,
-      username: sameProduct ? current.username : profile.defaultUsername,
-      password: sameProduct ? current.password : '',
-      savePassword: sameProduct ? current.savePassword : true,
-      sshTunnel: sameProduct ? current.sshTunnel : null,
-      connectionUrl: sameProduct && nextVariant === connectionVariant && (nextVariant === 'urlOnly' || nextVariant === 'file') ? current.connectionUrl : '',
+      name: sameProduct ? form.name : (products.find(p => p.id === productId) ?? (provided ? useDriverStore.getState().products.find(p => p.id === productId) : undefined))?.name ?? profile.defaultName,
+      port: sameProduct && explicitFields.has('port') ? form.port : profile.defaultPort,
+      host: sameProduct ? form.host : 'localhost',
+      database: sameProduct ? form.database : profile.defaultDatabase,
+      username: sameProduct ? form.username : profile.defaultUsername,
+      password: sameProduct ? form.password : '',
+      savePassword: sameProduct ? form.savePassword : true,
+      sshTunnel: sameProduct ? form.sshTunnel : null,
+      connectionUrl: sameProduct && nextVariant === connectionVariant && (nextVariant === 'urlOnly' || nextVariant === 'file') ? form.connectionUrl : '',
       driverClass: profile.driverClass ?? '',
       driverPaths: [],
       driverProperties: sameProduct ? driverProperties.current.get(definition?.id ?? '') ?? [] : [],
-      sslMode: sameProduct ? current.sslMode : null,
-    }))
+      sslMode: sameProduct ? form.sslMode : null,
+    }
+    setForm(next)
+    if (!sameProduct) setBaseline(connectionDraftKey(next, nextVariant, ''))
   }
 
   const enterParameters = () => {
     const choice = filteredDatabaseTypes.find(option => option.productId === pendingProduct)
     if (!choice) return
-    if (pendingProduct !== form.productId || !selectedDriver) changeDriver(choice.defaultDriver.id)
+    if (!initialized.current || pendingProduct !== form.productId || !selectedDriver) changeDriver(choice.defaultDriver.id)
     setStage('parameters')
   }
 
@@ -284,7 +300,6 @@ export function ConnectionForm({
   const normalizeHostAndPort = () => {
     const endpoint = normalizeConnectionEndpoint(form.host, form.port)
     if (endpoint.host === form.host && endpoint.port === form.port) return
-    markDirty()
     if (endpoint.port !== form.port) setExplicitFields(current => new Set([...current, 'port']))
     setForm((current) => ({ ...current, host: endpoint.host, port: endpoint.port }))
   }
@@ -299,7 +314,6 @@ export function ConnectionForm({
   }
 
   const selectGroup = (value: string) => {
-    markDirty()
     setGroupSelection(value)
     update('group', dataSourceGroups.find((group) => group.id === value)?.name ?? '')
   }
@@ -500,7 +514,7 @@ export function ConnectionForm({
             <div className="grid gap-3 pt-3">
               {driverProfile.connectionVariants.length > 1 && (
                 <FormRow label={t('connectionForm.connectionType')}>
-                  <SegmentedControl options={driverProfile.connectionVariants} value={activeConnectionVariant} onChange={(value) => { markDirty(); setConnectionVariant(value) }} />
+                  <SegmentedControl options={driverProfile.connectionVariants} value={activeConnectionVariant} onChange={setConnectionVariant} />
                 </FormRow>
               )}
               <FormRow label={t('connectionForm.group')}>
@@ -525,8 +539,8 @@ export function ConnectionForm({
               {selectedDriver?.backend === 'jdbc' && <div className="grid gap-2">
                 <SectionLabel>{t('driverRefactor.properties')}</SectionLabel>
                 {(form.driverProperties ?? []).map((property, index) => <div key={index} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] @min-[600px]/form:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2">
-                  <Input disableTextAssistance aria-label={t('driverRefactor.propertyName')} value={property.name} onChange={(e) => { markDirty(); setForm((f) => ({ ...f, driverProperties: f.driverProperties?.map((p,i) => i === index ? { ...p, name: e.target.value } : p) })) }} />
-                  <Input disableTextAssistance aria-label={t('driverRefactor.propertyValue')} type={property.sensitive ? 'password' : 'text'} value={property.value ?? ''} placeholder={property.hasSavedValue ? t('common.hidden') : ''} onChange={(e) => { markDirty(); setForm((f) => ({ ...f, driverProperties: f.driverProperties?.map((p,i) => i === index ? { ...p, value: e.target.value } : p) })) }} />
+                  <Input disableTextAssistance aria-label={t('driverRefactor.propertyName')} value={property.name} onChange={(e) => { setForm((f) => ({ ...f, driverProperties: f.driverProperties?.map((p,i) => i === index ? { ...p, name: e.target.value } : p) })) }} />
+                  <Input disableTextAssistance aria-label={t('driverRefactor.propertyValue')} type={property.sensitive ? 'password' : 'text'} value={property.value ?? ''} placeholder={property.hasSavedValue ? t('common.hidden') : ''} onChange={(e) => { setForm((f) => ({ ...f, driverProperties: f.driverProperties?.map((p,i) => i === index ? { ...p, value: e.target.value } : p) })) }} />
                   <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={property.sensitive} onChange={(e) => setForm((f) => ({ ...f, driverProperties: f.driverProperties?.map((p,i) => i === index ? { ...p, sensitive: e.target.checked } : p) }))} />{t('driverRefactor.sensitive')}</label>
                   <Button type="button" size="xs" variant="ghost" onClick={() => setForm((f) => ({ ...f, driverProperties: f.driverProperties?.filter((_,i) => i !== index) }))}>{t('common.delete')}</Button>
                 </div>)}
@@ -565,6 +579,30 @@ export function ConnectionForm({
     {auxiliary && <ModuleBoundary><Suspense fallback={<p role="status" className="p-5">{t('common.loading')}</p>}><DriverWorkspace entry={auxiliary} registerBack={handler => { auxiliaryBack.current = handler }} onBack={returnToForm} onCancel={() => { setAuxiliary(null); cancel() }} onUse={driver => { changeDriver(driver.id, driver); setStage('parameters'); setAuxiliary(null); queueMicrotask(() => document.querySelector<HTMLInputElement>('#connection-name')?.focus()) }} onInstalled={(driverId, id) => { if (!connection && form.driverDefinitionId === driverId && !form.driverInstallationId) update('driverInstallationId', id) }} /></Suspense></ModuleBoundary>}
     </div>
   )
+}
+
+/** Local editable values only; catalogue metadata cannot change the baseline. */
+function connectionDraftKey(input: ConnectionInput, variant: ConnectionVariant, group: string) {
+  const endpoint = normalizeConnectionEndpoint(input.host, input.port)
+  return JSON.stringify({
+    product: input.productId ?? input.driverType,
+    driver: input.driverDefinitionId ?? input.driverType,
+    installation: input.driverInstallationId ?? null,
+    variant,
+    name: input.name.trim(),
+    host: emptyToNull(endpoint.host),
+    port: endpoint.port ?? null,
+    database: emptyToNull(input.database),
+    url: variant === 'urlOnly' || variant === 'file' ? emptyToNull(input.connectionUrl) : null,
+    username: emptyToNull(input.username),
+    password: input.password ?? '',
+    savePassword: input.savePassword ?? true,
+    sslMode: emptyToNull(input.sslMode),
+    group: group || null,
+    colorTag: input.colorTag ?? '',
+    ssh: normalizeSshTunnel(input),
+    properties: (input.driverProperties ?? []).map(p => ({ name: p.name.trim(), value: p.value ?? '', sensitive: p.sensitive, saved: p.hasSavedValue ?? false })),
+  })
 }
 
 function formatConnectionErrorDetail(error: AppError, input: ConnectionInput, t: TFunction) {

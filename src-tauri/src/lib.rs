@@ -321,6 +321,14 @@ pub fn run() {
             app.state::<AppState>()
                 .idle_reclaim_worker
                 .start(app.handle().clone());
+            let cleanup_store = app.state::<AppState>().config_store.clone();
+            // Noninteractive, once per launch, off the startup/UI thread. The
+            // durable queue remains intact on failure; no repeated UI dialogs.
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = cleanup_store.retry_deleted_connection_credentials() {
+                    eprintln!("connection credential cleanup retry: {error}");
+                }
+            });
             utils::startup::mark("backend_setup");
             Ok(())
         })
@@ -356,6 +364,8 @@ pub fn run() {
             commands::lifecycle::application_close_listener_ready,
             commands::lifecycle::application_close_request_finished,
             commands::config::export_diagnostics_package,
+            commands::config::list_credential_cleanup,
+            commands::config::retry_credential_cleanup,
             commands::connection::create_connection,
             commands::connection::update_connection,
             commands::connection::rename_connection,

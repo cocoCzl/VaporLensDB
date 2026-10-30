@@ -326,6 +326,7 @@
     "connectionMoveFailedItems": "Failed: {{names}}",
     "connectionMoveMoreFailedItems": "and {{count}} more",
     "saveConnectionFailed": "Failed to save connection",
+    "connectionDeletedCleanupPending": "Connection deleted, but its saved password has not been removed.",
     "deleteConnectionFailed": "Failed to delete connection",
     "testConnectionFailed": "Connection test failed",
     "connectFailed": "Connection failed",
@@ -1118,7 +1119,7 @@
     "chooseInstallation": "Select an installation (or save for later)",
     "manage": "Configure databases and drivers",
     "addProduct": "Add custom database",
-    "copyDefinition": "Copy to user driver",
+    "copyDefinition": "Create custom copy…",
     "product": "Database product",
     "newProduct": "Create database product",
     "productName": "Product name (stable identity)",
@@ -1205,6 +1206,9 @@
     "catalogHint": "Choose a database, then configure its connection.",
     "databaseName": "Database name",
     "managerHint": "Manage JDBC definitions and their installed versions.",
+    "builtInDefinition": "Built-in definition",
+    "customDefinition": "Custom definition",
+    "copyDefinitionHint": "Copy this driver definition to edit its class name, URL template and other settings. Databases, connections and installed files are not copied. You can import local JARs directly without creating a copy.",
     "saveFirst": "Save the database and driver definition first. Install JAR files afterwards.",
     "sections": "Driver sections",
     "basic": "Basic information",
@@ -1240,5 +1244,23 @@
       "java": "Java runtime check failed. See details."
     },
     "backHint": "Return to the previous page; keep the connection draft."
+  },
+  "credentialCleanup": {
+    "title": "Credential cleanup",
+    "viewDetails": "View details",
+    "refresh": "Refresh",
+    "hint": "Dismissing a notification keeps pending retries. Review pending items and the latest 50 results here. Startup retries never request system authorization.",
+    "empty": "No credential cleanup records.",
+    "pending": "Connection deleted, but its saved password has not been removed.",
+    "cleaned": "Saved password removed or confirmed absent.",
+    "retainedShared": "Credential retained because another connection still uses it.",
+    "retry": "Retry cleanup",
+    "retryFailed": "The operation did not complete. Pending records remain; refresh and view details.",
+    "copy": "Copy redacted details",
+    "ownerError": "macOS returned errSecInvalidOwnerEdit (-25244): an invalid attempt to change the owner of a Keychain item. This differs from an absent item or forbidden interaction; manual action may still be needed.",
+    "interactionError": "macOS returned errSecInteractionNotAllowed (-25308): the operation requires interaction unavailable in silent mode.",
+    "accessError": "macOS returned errSecAuthFailed (-25293): Keychain authentication or access failed.",
+    "otherError": "The system has not confirmed credential cleanup. Keep the diagnostic below for investigation.",
+    "manual": "If retry still fails, open macOS Keychain Access yourself, search for the service below and verify the account. Handle only that exact item. Do not bulk delete by connection name or clear the Keychain. Then retry here so the app can verify the item is absent."
   }
 }

@@ -556,3 +556,88 @@ describe('idle reclaim status ordering', () => {
     expect(useConnectionStore.getState().statuses['connection-1'].status).toBe('disconnected')
   })
 })
+
+
+describe('connection deletion consistency', () => {
+  beforeEach(() => {
+    for (const mock of Object.values(connectionMocks)) mock.mockReset()
+    connectionMocks.deleteConnection.mockResolvedValue({ cleanupWarning: null })
+    connectionMocks.listConnectionStatuses.mockResolvedValue([])
+    connectionMocks.listDataSourceGroups.mockResolvedValue([])
+    useConnectionStore.setState({ connections: [], statuses: {}, capabilities: {}, statusRevisions: {}, reclaimRequestTokens: {}, lifecycleEpochs: {}, deletionRevision: 0, deletedAtRevision: {}, browsingConnectionId: null, activeConnectionId: null, recentDataSourceIds: [], favoriteDataSourceIds: [], busyConnectionIds: {}, loading: false, error: null })
+    useUiStore.setState({ notifications: [] })
+    useEditorStore.setState({ tabs: [], activeTabId: null })
+  })
+
+  it('removes one UUID and all associated state while preserving same-name connections and SQL drafts', async () => {
+    const first = connection('first', 'Same name'), second = connection('second', 'Same name')
+    useConnectionStore.setState({ connections: [first, second], statuses: { first: { connectionId: 'first', status: 'disconnected' } }, capabilities: { first: {} as never }, statusRevisions: { first: 3 }, reclaimRequestTokens: { first: 1 }, browsingConnectionId: 'first', activeConnectionId: 'first', recentDataSourceIds: ['first', 'second'], favoriteDataSourceIds: ['first', 'second'] })
+    useMetadataStore.setState({ databases: { first: [{ name: 'db' }] } })
+    useEditorStore.setState({ tabs: [{ id: 'sql', title: 'Draft', sql: 'SELECT keep_this_draft', connectionId: 'first' }], activeTabId: 'sql' })
+    await useConnectionStore.getState().removeConnection('first')
+    expect(connectionMocks.deleteConnection).toHaveBeenCalledWith('first')
+    expect(useConnectionStore.getState()).toMatchObject({ connections: [second], statuses: {}, capabilities: {}, statusRevisions: {}, reclaimRequestTokens: {}, activeConnectionId: null, browsingConnectionId: null, recentDataSourceIds: ['second'], favoriteDataSourceIds: ['second'], busyConnectionIds: {} })
+    expect(useMetadataStore.getState().databases).toEqual({})
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({ sql: 'SELECT keep_this_draft', connectionId: 'first', unavailableConnectionName: 'Same name' })
+  })
+
+  it('accepts an already absent backend record and repeated deletion without a failure notice', async () => {
+    useConnectionStore.setState({ connections: [connection('gone', 'Gone')] })
+    await useConnectionStore.getState().removeConnection('gone')
+    await useConnectionStore.getState().removeConnection('gone')
+    expect(useConnectionStore.getState().connections).toEqual([])
+    expect(useUiStore.getState().notifications).toEqual([])
+  })
+
+  it('does not let a list started before deletion resurrect the connection or runtime state', async () => {
+    let resolveList!: (value: ConnectionConfig[]) => void
+    const stale = connection('gone', 'Gone')
+    useConnectionStore.setState({ connections: [stale] })
+    connectionMocks.listConnections.mockReturnValue(new Promise(resolve => { resolveList = resolve }))
+    connectionMocks.listConnectionStatuses.mockResolvedValue([{ connectionId: 'gone', status: 'connected' }])
+    const load = useConnectionStore.getState().loadConnections()
+    await useConnectionStore.getState().removeConnection('gone')
+    resolveList([stale]); await load
+    expect(useConnectionStore.getState().connections).toEqual([])
+    expect(useConnectionStore.getState().statuses).toEqual({})
+  })
+
+  it('reports cleanup partial success without retaining a nonexistent connection', async () => {
+    useConnectionStore.setState({ connections: [connection('gone', 'Gone')] })
+    connectionMocks.deleteConnection.mockResolvedValue({ cleanupWarning: 'macOS Keychain silent delete failed (OSStatus -25293)' })
+    await useConnectionStore.getState().removeConnection('gone')
+    expect(useConnectionStore.getState().connections).toEqual([])
+    expect(useUiStore.getState().notifications).toEqual([expect.objectContaining({ kind: 'warning', action: 'credentialCleanup' })])
+    expect(useUiStore.getState().notifications[0].message).toBeUndefined()
+  })
+
+  it.each(['CONFIG_ERROR', 'IO_ERROR', 'DISCONNECT_BLOCKED', 'NOT_FOUND'])('does not swallow %s errors or match arbitrary Not found text', async code => {
+    const retained = connection('kept', 'Keep')
+    const error = { code, message: 'Not found: unrelated resource', detail: 'reason=uncommitted_transaction' }
+    useConnectionStore.setState({ connections: [retained] })
+    connectionMocks.deleteConnection.mockRejectedValue(error)
+    await expect(useConnectionStore.getState().removeConnection('kept')).rejects.toEqual(error)
+    expect(useConnectionStore.getState().connections).toEqual([retained])
+    expect(useUiStore.getState().notifications[0].kind).toBe('error')
+  })
+
+  it('coalesces duplicate clicks while deletion is pending', async () => {
+    let finish!: (value: { cleanupWarning: null }) => void
+    connectionMocks.deleteConnection.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const first = useConnectionStore.getState().removeConnection('gone')
+    await useConnectionStore.getState().removeConnection('gone')
+    expect(connectionMocks.deleteConnection).toHaveBeenCalledOnce()
+    finish({ cleanupWarning: null }); await first
+  })
+
+  it('reconciles external deletion on refresh without destroying editor content', async () => {
+    useConnectionStore.setState({ connections: [connection('gone', 'Gone')], activeConnectionId: 'gone', browsingConnectionId: 'gone', capabilities: { gone: {} as never } })
+    useMetadataStore.setState({ databases: { gone: [{ name: 'db' }] } })
+    connectionMocks.listConnections.mockResolvedValue([])
+    useEditorStore.setState({ tabs: [{ id: 'sql', title: 'Draft', sql: 'SELECT keep', connectionId: 'gone' }] })
+    await useConnectionStore.getState().loadConnections()
+    expect(useConnectionStore.getState()).toMatchObject({ activeConnectionId: null, browsingConnectionId: null, capabilities: {} })
+    expect(useMetadataStore.getState().databases).toEqual({})
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({ sql: 'SELECT keep', unavailableConnectionName: expect.any(String) })
+  })
+})

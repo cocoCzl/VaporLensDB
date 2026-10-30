@@ -87,7 +87,7 @@
     "name": "delete_connection",
     "namespace": "connection",
     "args": "{ id: string }",
-    "response": "void",
+    "response": "DeleteConnectionOutcome { cleanupWarning: string | null }",
     "status": "active"
   },
   {
@@ -591,6 +591,20 @@
     "name": "check_jdbc_runtime",
     "namespace": "driver",
     "args": "void",
+    "response": "void",
+    "status": "active"
+  },
+  {
+    "name": "list_credential_cleanup",
+    "namespace": "settings",
+    "args": "{}",
+    "response": "CredentialCleanupDiagnostic[]",
+    "status": "active"
+  },
+  {
+    "name": "retry_credential_cleanup",
+    "namespace": "settings",
+    "args": "{ id: UUID }",
     "response": "void",
     "status": "active"
   }

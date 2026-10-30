@@ -431,6 +431,12 @@ impl ConnectionManager {
             })
     }
 
+    /// Called only after preflight and durable configuration deletion.
+    pub fn forget_deleted_connection(&mut self, id: Uuid) {
+        self.statuses.remove(&id);
+        self.status_revisions.remove(&id);
+    }
+
     pub fn statuses(&self) -> Vec<ConnectionStatus> {
         self.statuses.values().cloned().collect()
     }

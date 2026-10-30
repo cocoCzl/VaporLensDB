@@ -1,3 +1,4 @@
+import { CredentialCleanupDiagnostics } from './CredentialCleanupDiagnostics'
 import { DriverWorkspace } from '@/components/connection/DriverWorkspace'
 import {
   Check,
@@ -213,9 +214,9 @@ export function SettingsWorkspacePanel() {
   }
 
   return (
-    <section className="ide-workspace @container/settings flex min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-auto">
-        <div className="grid min-h-full min-w-0 @min-[850px]/settings:grid-cols-[13.5rem_minmax(0,1fr)]">
+    <section className="ide-workspace @container/settings flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className={`min-h-0 flex-1 ${activeSection === 'drivers' ? 'overflow-hidden' : 'overflow-auto'}`}>
+        <div className={`grid min-w-0 @min-[850px]/settings:grid-cols-[13.5rem_minmax(0,1fr)] ${activeSection === 'drivers' ? 'h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] @min-[850px]/settings:grid-rows-[minmax(0,1fr)]' : 'min-h-full'}`}>
           <nav className="ide-settings-nav grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] content-start gap-1 border-b p-2 @min-[850px]/settings:block @min-[850px]/settings:border-r @min-[850px]/settings:border-b-0" aria-label={t('settings.title')}>
             <SettingsNavButton
               active={activeSection === 'general'}
@@ -247,7 +248,7 @@ export function SettingsWorkspacePanel() {
             />
           </nav>
 
-          <div className="min-w-0 p-4 md:px-6 md:py-5">
+          <div className={`min-w-0 p-4 md:px-6 md:py-5 ${activeSection === 'drivers' ? 'flex min-h-0 flex-col overflow-hidden' : ''}`}>
             {activeSection === 'general' && (
               <div className="mx-auto grid max-w-[54rem] gap-5">
                 <div className="flex min-h-9 flex-wrap items-center justify-between gap-3 border-b border-border/70 px-1 pb-3 text-xs">
@@ -412,6 +413,7 @@ export function SettingsWorkspacePanel() {
 
             {activeSection === 'diagnostics' && (
               <div className="mx-auto grid max-w-5xl gap-4">
+                <CredentialCleanupDiagnostics />
                 <SettingsCard title={t('settings.diagnostics.title')} icon={Download}>
                   <div className="flex items-start justify-between gap-4">
                     <p className="max-w-2xl text-xs text-muted-foreground">
@@ -492,7 +494,7 @@ export function SettingsWorkspacePanel() {
 }
 
 export function DriverDefinitionsSettings() {
-  return <div className="h-[min(600px,calc(100dvh-10rem))] min-h-80 overflow-hidden rounded-lg border bg-surface"><DriverWorkspace /></div>
+  return <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-surface"><DriverWorkspace /></div>
 }
 
 export function DbeaverImportSettings({

@@ -9,6 +9,8 @@ import type { DatabaseProduct, DriverDefinition, DriverInstallation } from '@/ty
 import recipes from '@/shared/jdbc-downloads.json'
 import { open } from '@tauri-apps/plugin-dialog'
 import { importJdbcDriverArtifacts } from '@/ipc/driver'
+import mysqlIconUrl from '@/assets/database/mysql.svg'
+import postgresqlIconUrl from '@/assets/database/postgresql.svg'
 
 const db = vi.hoisted(() => ({ products: [] as DatabaseProduct[], drivers: [] as DriverDefinition[], installations: [] as DriverInstallation[] }))
 vi.mock('@/ipc/driver', () => ({
@@ -66,6 +68,22 @@ it('protects an unsaved new product on Escape, preserves it when kept, and resto
   expect(entry).toHaveFocus();expect(screen.getAllByRole('dialog')).toHaveLength(1)
 })
 
+it('protects changing the product of an existing connection through save and use', async () => {
+  render(<ConnectionDialog connection={{ id: 'saved', name: 'Saved connection', productId: 'postgres', driverDefinitionId: jdbc.id, driverType: 'postgres', host: 'localhost', port: 5432 }} />)
+  fireEvent.click(document.querySelector('[data-slot="dialog-trigger"]')!)
+  await screen.findByRole('button', { name: i18n.t('driverRefactor.manage') })
+  click('driverRefactor.manage'); click('driverRefactor.addProduct')
+  fireEvent.change(await screen.findByLabelText(i18n.t('driverWorkflow.databaseName')), { target: { value: 'Another product' } })
+  fireEvent.change(screen.getByLabelText(i18n.t('driverWorkflow.driverName')), { target: { value: 'Another driver' } })
+  fireEvent.change(screen.getByLabelText(i18n.t('drivers.driverClass')), { target: { value: 'example.jdbc.Driver' } })
+  click('driverWorkflow.saveUse')
+  await waitFor(() => expect(document.querySelector('#connection-name')).toHaveValue('Another product'))
+  click('common.cancel')
+  expect(screen.getByText(i18n.t('driverWorkflow.unsaved'))).toBeVisible()
+  click('driverWorkflow.keepEditing')
+  expect(document.querySelector('#connection-name')).toHaveValue('Another product')
+})
+
 it('preserves endpoint, password, security and installation draft through manager, download and local import navigation',async()=>{
   await newDialog();click('connectionCatalog.next')
   fireEvent.change(document.querySelector('#connection-name')!,{target:{value:'Keep draft'}})
@@ -112,12 +130,56 @@ it('preserves endpoint, password, security and installation draft through manage
 it('copies a definition onto its existing product and never creates a second product',async()=>{
   render(<DriverWorkspace />)
   fireEvent.click(screen.getByText('PostgreSQL JDBC',{selector:'strong'}))
-  click('driverRefactor.copyDefinition')
+  const more = screen.getByRole('button', { name: i18n.t('common.moreActions') })
+  expect(screen.queryByText(i18n.t('driverRefactor.copyDefinition'))).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: i18n.t('drivers.importJar') })).toBeVisible()
+  click('common.moreActions')
+  expect(await screen.findByText(i18n.t('driverWorkflow.copyDefinitionHint'))).toBeVisible()
+  fireEvent.click(await screen.findByRole('menuitem', { name: new RegExp(i18n.t('driverRefactor.copyDefinition')) }))
   expect(screen.getByRole('combobox',{name:i18n.t('driverRefactor.product')})).toHaveTextContent('PostgreSQL')
   click('common.save')
   await waitFor(()=>expect(db.drivers).toHaveLength(3))
   expect(db.products).toHaveLength(1);expect(db.drivers.at(-1)?.productId).toBe('postgres')
   expect(db.drivers.at(-1)?.defaultInstallationId).toBeNull()
+  expect(db.drivers.at(-1)?.driverArtifacts).toEqual([])
+  expect(more).not.toBeInTheDocument()
+})
+
+it.each(['en', 'zh'])('resolves manager icons through productId/iconKey and labels definitions in %s', async language => {
+  await i18n.changeLanguage(language)
+  const mapped = { ...jdbc, id: 'misleading-name', productId: 'mapped-product', name: 'PostgreSQL user label', driverType: 'jdbc' as const, builtIn: false }
+  const unknown = { ...mapped, id: 'unknown', productId: 'unknown-product', name: 'MySQL custom label' }
+  useDriverStore.setState({ drivers: [jdbc, mapped, unknown], products: [...db.products, { id: 'mapped-product', name: 'Mapped', builtIn: false, iconKey: 'mysql', adapterId: 'genericSql', defaultDriverDefinitionId: mapped.id }] })
+  const view = render(<DriverWorkspace />)
+  const item = screen.getByRole('listitem', { name: mapped.name })
+  expect(item.querySelector('image')).toHaveAttribute('href', mysqlIconUrl)
+  expect(screen.getByRole('listitem', { name: jdbc.name }).querySelector('image')).toHaveAttribute('href', postgresqlIconUrl)
+  const fallback = screen.getByRole('listitem', { name: unknown.name })
+  expect(fallback.querySelector('svg')).toHaveClass('lucide-database')
+  expect(fallback.querySelector('image')).toBeNull()
+  fireEvent.click(item)
+  const title = screen.getByRole('heading', { name: mapped.name })
+  expect(title.parentElement?.parentElement?.querySelector('image')).toHaveAttribute('href', mysqlIconUrl)
+  expect(screen.getByText(`Mapped · ${i18n.t('driverWorkflow.customDefinition')}`)).toBeVisible()
+  expect(item).toHaveTextContent(mapped.name)
+  expect(within(item).queryByText(/JDBC · JDBC/)).not.toBeInTheDocument()
+  expect(view.container.querySelector('footer')).toBeNull()
+  fireEvent.click(screen.getByRole('listitem', { name: jdbc.name }))
+  expect(screen.getByText(`PostgreSQL · ${i18n.t('driverWorkflow.builtInDefinition')}`)).toBeVisible()
+})
+
+it('omits only an empty settings footer, retaining edit controls, errors and connection task cancellation', async () => {
+  const view = render(<DriverWorkspace />)
+  expect(view.container.querySelector('footer')).toBeNull()
+  act(() => useDriverStore.setState({ error: 'Fixture driver error' }))
+  expect(view.container.querySelector('footer')).toHaveTextContent('Fixture driver error')
+  act(() => useDriverStore.setState({ error: null }))
+  click('driverRefactor.addProduct')
+  expect(view.container.querySelector('footer')).not.toBeNull()
+  expect(screen.getByRole('button', { name: i18n.t('common.save') })).toBeVisible()
+  view.unmount()
+  render(<DriverWorkspace onCancel={vi.fn()} />)
+  expect(screen.getByRole('button', { name: i18n.t('common.cancel') })).toBeVisible()
 })
 
 it('orders local JARs before publishing, keeps the original connection pin and shows separate validation states',async()=>{

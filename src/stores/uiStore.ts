@@ -13,6 +13,7 @@ export interface AppNotification {
   kind: NotificationKind
   title: string
   message?: string
+  action?: 'credentialCleanup'
 }
 
 const THEME_STORAGE_KEY = 'vaporlensdb.theme'

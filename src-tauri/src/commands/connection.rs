@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::{
     models::connection::{
-        ConnectionConfig, ConnectionStatus, DriverType, SshAuthMethod, SshTunnelConfig,
+        ConnectionConfig, ConnectionStatus, DeleteConnectionOutcome, DriverType, SshAuthMethod,
+        SshTunnelConfig,
     },
     models::metadata::DriverCapabilities,
     services::connection_manager::{
@@ -222,16 +223,31 @@ pub fn rename_connection(
 }
 
 #[tauri::command]
-pub async fn delete_connection(state: State<'_, AppState>, id: Uuid) -> Result<(), String> {
+pub async fn delete_connection(
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> Result<DeleteConnectionOutcome, String> {
     delete_connection_state(&state, id).await
 }
 
-async fn delete_connection_state(state: &AppState, id: Uuid) -> Result<(), String> {
+async fn delete_connection_state(
+    state: &AppState,
+    id: Uuid,
+) -> Result<DeleteConnectionOutcome, String> {
     let mut manager = state.connection_manager.lock().await;
+    manager
+        .preflight_configuration_change(id)
+        .map_err(String::from)?;
+    let store = state.config_store.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || store.delete_connection(id))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(String::from)?;
     manager.disconnect(id).map_err(String::from)?;
+    manager.forget_deleted_connection(id);
     state.metadata_service.clear_connection(id).await;
     state.metadata_index.clear_connection(id).await;
-    state.config_store.delete_connection(id).map_err(Into::into)
+    Ok(outcome)
 }
 
 #[tauri::command]
@@ -1266,6 +1282,56 @@ mod tests {
             drop(state);
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn p0_delete_already_missing_record_still_checks_runtime_protection() {
+        let (state, root) = test_state();
+        let config = saved_sqlite(&state, true).await;
+        let operation = state
+            .connection_manager
+            .lock()
+            .await
+            .begin_query_operation(config.id, "active")
+            .unwrap();
+        state.config_store.delete_connection(config.id).unwrap();
+        let error = delete_connection_state(&state, config.id)
+            .await
+            .unwrap_err();
+        assert!(error.contains("DISCONNECT_BLOCKED"));
+        drop(operation);
+        delete_connection_state(&state, config.id).await.unwrap();
+        delete_connection_state(&state, config.id).await.unwrap();
+        assert!(state
+            .connection_manager
+            .lock()
+            .await
+            .statuses()
+            .iter()
+            .all(|s| s.connection_id != config.id));
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn p0_delete_storage_failure_preserves_live_session_and_config() {
+        let (state, root) = test_state();
+        let config = saved_sqlite(&state, true).await;
+        state.config_store.conn().unwrap().execute_batch("CREATE TRIGGER reject_delete BEFORE DELETE ON connections BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;").unwrap();
+        assert!(delete_connection_state(&state, config.id).await.is_err());
+        assert!(state
+            .config_store
+            .get_connection(config.id)
+            .unwrap()
+            .is_some());
+        assert!(state
+            .connection_manager
+            .lock()
+            .await
+            .driver(config.id)
+            .is_ok());
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

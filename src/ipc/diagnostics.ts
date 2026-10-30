@@ -20,3 +20,19 @@ export function exportDiagnosticsPackage(input: ExportDiagnosticsPackageInput) {
     input,
   })
 }
+
+export interface CredentialCleanupDiagnostic {
+  connectionId: string
+  status: 'pending' | 'cleaned' | 'retainedShared'
+  diagnostic: string | null
+  credentialAccount: string | null
+  updatedAt: string
+}
+
+export function listCredentialCleanup() {
+  return invokeCommand<CredentialCleanupDiagnostic[]>(COMMANDS.listCredentialCleanup)
+}
+
+export function retryCredentialCleanup(id: string) {
+  return invokeCommand<void>(COMMANDS.retryCredentialCleanup, { id })
+}

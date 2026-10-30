@@ -33,6 +33,8 @@ const MAX_RECENT_DATA_SOURCES = 6
 
 interface ConnectionState {
   connections: ConnectionConfig[]
+  deletionRevision: number
+  deletedAtRevision: Record<string, number>
   dataSourceGroups: DataSourceGroup[]
   capabilities: Record<string, DriverCapabilities>
   statuses: Record<string, ConnectionStatus>
@@ -110,6 +112,8 @@ function disconnectBlockedMessage(error: AppError): string | null {
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connections: [],
+  deletionRevision: 0,
+  deletedAtRevision: {},
   dataSourceGroups: [],
   statuses: {},
   capabilities: {},
@@ -125,6 +129,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   error: null,
   loadConnections: async (options) => {
     if (get().loading) return
+    const startedAtDeletionRevision = get().deletionRevision
     set({ loading: true, error: null })
     const [connectionsResult, statusesResult, groupsResult] = await Promise.allSettled([
       listConnections(),
@@ -136,15 +141,24 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       statusesResult.status === 'rejected' ? `statuses: ${errorMessage(statusesResult.reason)}` : null,
       groupsResult.status === 'rejected' ? `groups: ${errorMessage(groupsResult.reason)}` : null,
     ].filter((value): value is string => value !== null)
-    const connections = connectionsResult.status === 'fulfilled' ? connectionsResult.value : get().connections
+    const connections = connectionsResult.status === 'fulfilled'
+      ? connectionsResult.value.filter(c => (get().deletedAtRevision[c.id] ?? 0) <= startedAtDeletionRevision)
+      : get().connections
     const statuses = statusesResult.status === 'fulfilled' ? statusesResult.value : Object.values(get().statuses)
     const dataSourceGroups = groupsResult.status === 'fulfilled' ? groupsResult.value : get().dataSourceGroups
+    const knownIds = new Set(connections.map(c => c.id))
+    const removed = connectionsResult.status === 'fulfilled' ? get().connections.filter(c => !knownIds.has(c.id)) : []
     const loadError = failures.join(' · ')
 
     set((state) => ({
       connections,
       dataSourceGroups,
-      statuses: indexStatuses(statuses),
+      statuses: indexStatuses(statuses.filter(status => knownIds.has(status.connectionId))),
+      capabilities: retainConnectionEntries(state.capabilities, knownIds),
+      statusRevisions: retainConnectionEntries(state.statusRevisions, knownIds),
+      reclaimRequestTokens: retainConnectionEntries(state.reclaimRequestTokens, knownIds),
+      browsingConnectionId: state.browsingConnectionId && knownIds.has(state.browsingConnectionId) ? state.browsingConnectionId : null,
+      activeConnectionId: state.activeConnectionId && knownIds.has(state.activeConnectionId) ? state.activeConnectionId : null,
       recentDataSourceIds: connectionsResult.status === 'fulfilled'
         ? retainKnownDataSourceIds(state.recentDataSourceIds, connections, RECENT_DATA_SOURCES_STORAGE_KEY)
         : state.recentDataSourceIds,
@@ -161,7 +175,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         message: loadError,
       })
     }
-    const knownIds = new Set(connections.map((connection) => connection.id))
+    for (const connection of removed) {
+      advanceLifecycle(connection.id)
+      useMetadataStore.getState().clearConnection(connection.id)
+    }
     for (const tab of connectionsResult.status === 'fulfilled' ? useEditorStore.getState().tabs : []) {
       if ((tab.kind === 'sql' || !tab.kind) && tab.connectionId && !knownIds.has(tab.connectionId)) {
         useEditorStore.getState().markConnectionUnavailable(
@@ -279,6 +296,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   removeConnection: async (id) => {
+    if (get().busyConnectionIds[id]) return
     advanceLifecycle(id)
     set((state) => ({
       busyConnectionIds: markConnectionBusy(state.busyConnectionIds, id),
@@ -286,8 +304,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }))
     try {
       const removed = get().connections.find((connection) => connection.id === id)
-      await deleteConnection(id)
+      const outcome = await deleteConnection(id)
       set((state) => ({
+        deletionRevision: state.deletionRevision + 1,
+        deletedAtRevision: { ...state.deletedAtRevision, [id]: state.deletionRevision + 1 },
+        capabilities: omitConnectionEntry(state.capabilities, id),
+        statusRevisions: omitConnectionEntry(state.statusRevisions, id),
+        reclaimRequestTokens: omitConnectionEntry(state.reclaimRequestTokens, id),
         connections: state.connections.filter((connection) => connection.id !== id),
         statuses: Object.fromEntries(
           Object.entries(state.statuses).filter(([connectionId]) => connectionId !== id),
@@ -298,8 +321,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         favoriteDataSourceIds: forgetFavoriteDataSource(state.favoriteDataSourceIds, id),
       }))
       useMetadataStore.getState().clearConnection(id)
-      if (removed) {
-        useEditorStore.getState().markConnectionUnavailable(id, removed.name)
+      useEditorStore.getState().markConnectionUnavailable(id, removed?.name ?? i18n.t('connection.dataSource'))
+      if (outcome?.cleanupWarning) {
+        useUiStore.getState().notify({
+          kind: 'warning',
+          title: i18n.t('notifications.connectionDeletedCleanupPending'),
+          action: 'credentialCleanup',
+        })
       }
     } catch (error) {
       set({ error: errorMessage(error) })
@@ -437,6 +465,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     useMetadataStore.getState().clearConnection(id)
   },
 }))
+
+function retainConnectionEntries<T>(entries: Record<string, T>, ids: Set<string>): Record<string, T> {
+  return Object.fromEntries(Object.entries(entries).filter(([id]) => ids.has(id)))
+}
+
+function omitConnectionEntry<T>(entries: Record<string, T>, id: string): Record<string, T> {
+  return Object.fromEntries(Object.entries(entries).filter(([key]) => key !== id))
+}
 
 function advanceLifecycle(id: string) {
   useConnectionStore.setState((state) => ({
