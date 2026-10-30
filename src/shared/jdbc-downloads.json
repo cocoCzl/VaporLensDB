@@ -1,0 +1,87 @@
+[
+  {
+    "driverDefinitionId": "jdbc-postgresql",
+    "version": "42.7.14",
+    "license": "BSD-2-Clause (PostgreSQL); MIT (Checker Qual)",
+    "licenseUrl": "https://jdbc.postgresql.org/about/license.html",
+    "scope": "Standard JDBC authentication. Windows integrated authentication is not included.",
+    "files": [
+      {
+        "url": "https://repo.maven.apache.org/maven2/org/postgresql/postgresql/42.7.14/postgresql-42.7.14.jar",
+        "file": "postgresql-42.7.14.jar",
+        "sha256": "73914527305a40cce504b0d3d90b23caf565136912d607ae8ae7c5895512332c",
+        "checksumSource": "Official pgjdbc GitHub release API SHA-256 (REL42.7.14)",
+        "size": 1221004
+      },
+      {
+        "url": "https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/3.55.1/checker-qual-3.55.1.jar",
+        "file": "checker-qual-3.55.1.jar",
+        "sha256": "857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288",
+        "checksumSource": "Maven Central publisher SHA-256",
+        "size": 241885
+      }
+    ]
+  },
+  {
+    "driverDefinitionId": "jdbc-mysql",
+    "version": "26.10.0",
+    "license": "GPL-2.0-only WITH Universal-FOSS-exception-1.0 (Connector/J); BSD-3-Clause (Protobuf)",
+    "licenseUrl": "https://github.com/mysql/mysql-connector-j/blob/26.10.0/LICENSE",
+    "scope": "Standard JDBC authentication. Oracle Cloud authentication dependencies are not included.",
+    "files": [
+      {
+        "url": "https://repo.maven.apache.org/maven2/com/mysql/mysql-connector-j/26.10.0/mysql-connector-j-26.10.0.jar",
+        "file": "mysql-connector-j-26.10.0.jar",
+        "sha256": "cef70caf532833c9ab8f41f74773ce22c08bf503fad215c9c2ee1e9db87e759e",
+        "checksumSource": "Maven Central publisher SHA-256",
+        "size": 2618793
+      },
+      {
+        "url": "https://repo.maven.apache.org/maven2/com/google/protobuf/protobuf-java/4.36.1/protobuf-java-4.36.1.jar",
+        "file": "protobuf-java-4.36.1.jar",
+        "sha256": "26434a93561a1a44bf7157b2630fa73a5b4d8df20e94df167bc03fcd14abd7e4",
+        "checksumSource": "Pinned SHA-256 of reviewed HTTPS artifact; Central SHA-1 cross-check, no independent publisher signature",
+        "size": 1795060
+      }
+    ]
+  },
+  {
+    "driverDefinitionId": "jdbc-sqlite",
+    "version": "3.54.1.0",
+    "license": "Apache-2.0 (SQLite JDBC); MIT (SLF4J)",
+    "licenseUrl": "https://github.com/xerial/sqlite-jdbc/blob/3.54.1.0/LICENSE",
+    "scope": "SQLite file and session-scoped memory connections. SLF4J API included; no logging provider.",
+    "files": [
+      {
+        "url": "https://repo.maven.apache.org/maven2/org/xerial/sqlite-jdbc/3.54.1.0/sqlite-jdbc-3.54.1.0.jar",
+        "file": "sqlite-jdbc-3.54.1.0.jar",
+        "sha256": "f8dce420a6016278497f4f0560f65602b9db858de141b541cf91a4644ebe4639",
+        "checksumSource": "Maven Central publisher SHA-256",
+        "size": 12132578
+      },
+      {
+        "url": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar",
+        "file": "slf4j-api-1.7.36.jar",
+        "sha256": "d3ef575e3e4979678dc01bf1dcce51021493b4d11fb7f1be8ad982877c16a1c0",
+        "checksumSource": "Pinned SHA-256 of reviewed HTTPS artifact; Central SHA-1 cross-check, no independent publisher signature",
+        "size": 41125
+      }
+    ]
+  },
+  {
+    "driverDefinitionId": "jdbc-mssql",
+    "version": "13.6.1.jre11",
+    "license": "MIT",
+    "licenseUrl": "https://github.com/microsoft/mssql-jdbc/blob/v13.6.1/LICENSE",
+    "scope": "SQL authentication. Azure, integrated authentication and Always Encrypted extra dependencies are not included.",
+    "files": [
+      {
+        "url": "https://repo.maven.apache.org/maven2/com/microsoft/sqlserver/mssql-jdbc/13.6.1.jre11/mssql-jdbc-13.6.1.jre11.jar",
+        "file": "mssql-jdbc-13.6.1.jre11.jar",
+        "sha256": "4f470d23dfdf187ece2d1f9feb33d9dbd2230051b9c9676456727692a1b97d5e",
+        "checksumSource": "Maven Central publisher SHA-256",
+        "size": 1576700
+      }
+    ]
+  }
+]

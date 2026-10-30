@@ -130,6 +130,10 @@ pub struct DatabaseProduct {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriverInstallation {
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub source: Option<InstallationSource>,
     pub id: String,
     pub driver_definition_id: String,
     /// User-provided label, not a version discovered in the JAR.
@@ -156,4 +160,14 @@ pub struct DriverArtifact {
     /// Missing files in migrated configurations retain an explicit unknown hash.
     pub sha256: Option<String>,
     pub role: String,
+}
+
+/// Provenance is not a class-load or database-connectivity receipt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallationSource {
+    pub kind: String,
+    pub urls: Vec<String>,
+    pub checksum_sources: Vec<String>,
+    pub license: Option<String>,
 }

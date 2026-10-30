@@ -572,5 +572,26 @@
     "args": "{ input: DriverConfigurationBundle }",
     "response": "number",
     "status": "active"
+  },
+  {
+    "name": "list_jdbc_downloads",
+    "namespace": "driver",
+    "args": "void",
+    "response": "JdbcDownloadRecipe[]",
+    "status": "active"
+  },
+  {
+    "name": "download_jdbc_driver",
+    "namespace": "driver",
+    "args": "{ driverDefinitionId: string }",
+    "response": "TaskInfo",
+    "status": "active"
+  },
+  {
+    "name": "check_jdbc_runtime",
+    "namespace": "driver",
+    "args": "void",
+    "response": "void",
+    "status": "active"
   }
 ]

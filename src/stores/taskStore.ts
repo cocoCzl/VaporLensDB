@@ -1,3 +1,4 @@
+import { useDriverStore } from '@/stores/driverStore'
 import { create } from 'zustand'
 import i18n from '@/i18n'
 import { cancelTask, clearCompletedTasks, listTasks } from '@/ipc/task'
@@ -30,10 +31,11 @@ export const useTaskStore = create<TaskState>((set) => ({
       set({ loading: false })
     }
   },
-  upsertTask: (task) =>
+  upsertTask: (task) => {
+    if (task.kind.startsWith('driver.download:') && task.status === 'succeeded' && useTaskStore.getState().tasks.find(t => t.id === task.id)?.status !== 'succeeded') void useDriverStore.getState().loadDrivers(true)
     set((state) => {
       const previous = state.tasks.find((candidate) => candidate.id === task.id)
-      if (task.kind === 'metadata-index' && previous) {
+      if ((task.kind === 'metadata-index' || task.kind.startsWith('driver.download:')) && previous) {
         const active = ['pending', 'running', 'cancelling'].includes(task.status)
         const terminal = !['pending', 'running', 'cancelling'].includes(previous.status)
         // IPC responses can arrive after a newer progress/terminal event.
@@ -41,7 +43,8 @@ export const useTaskStore = create<TaskState>((set) => ({
         if ((terminal && active) || staleRunningState || task.updatedAt < previous.updatedAt) return state
       }
       return { tasks: sortTasks([task, ...state.tasks.filter((candidate) => candidate.id !== task.id)]) }
-    }),
+    })
+  },
   cancel: async (taskId) => {
     if (useTaskStore.getState().cancellingIds.includes(taskId)) return
     if (useTaskStore.getState().tasks.some((task) => task.id === taskId && task.kind === 'metadata-index')) {

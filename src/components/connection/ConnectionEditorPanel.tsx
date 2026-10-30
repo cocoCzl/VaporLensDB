@@ -41,11 +41,6 @@ export function ConnectionEditorPanel({ connection, isNew = false, onNew, onCanc
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="flex h-12 shrink-0 items-center border-b px-4">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold">{isNew ? t('connection.newTitle') : t('connection.editTitle')}</h2>
-        </div>
-      </header>
       <div className="min-h-0 flex-1 overflow-hidden">
         <ConnectionForm
           key={connection?.id || '__new__'}

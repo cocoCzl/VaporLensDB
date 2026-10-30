@@ -86,14 +86,13 @@ const dialog = read('src/components/connection/ConnectionDialog.tsx')
 includesAll(
   dialog,
   [
-    'headerDriverType',
-    'onDriverTypeChange={setHeaderDriverType}',
+    'closeRequestRef={closeRequest}',
+    'showCloseButton={false}',
     'onSaveOnly={async (input) =>',
     'onSaveAndConnect={async (input) =>',
     'await connectConnection(saved.id, { password: input.savePassword ? null : input.password })',
     'onTest={testConnectionInput}',
-    'aria-label={t(\'common.cancel\')}',
-    '<X />',
+    'closeRequest.current()',
   ],
   'connection dialog save and connect flow',
 )

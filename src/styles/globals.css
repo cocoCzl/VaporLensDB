@@ -701,3 +701,15 @@
     transition-duration: 1ms !important;
   }
 }
+
+/* Connection tasks share a compact control rhythm, without changing the app chrome. */
+.connection-form [data-slot="input"],
+.workflow-page [data-slot="input"],
+.workflow-page .ide-input {
+  min-height: 34px;
+  font-size: 13px;
+}
+.connection-form button[data-slot="button"]:not([aria-label]),
+.workflow-page button[data-slot="button"]:not([aria-label]) {
+  min-height: 34px;
+}

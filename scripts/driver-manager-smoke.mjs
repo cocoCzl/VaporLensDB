@@ -99,45 +99,17 @@ excludesAll(
   'connection dialog should not show driver-template management detail',
 )
 
-includesAll(
-  settingsWorkspace,
-  [
-    'DriverDefinitionsSettings',
-    "t('drivers.summary'",
-    "activeSection === 'drivers'",
-    'createCustomDriver',
-    "setEditing(newCustomDriverDefinition())",
-    'DriverDefinitionEditor',
-    "@min-[1200px]/settings:grid-cols-[minmax(0,1fr)_minmax(360px,480px)]",
-    "grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))]",
-    'driverStateLabel',
-    'driverStateBadgeClass',
-    "@min-[1400px]/settings:grid-cols-2",
-    "ide-input min-h-36 w-full min-w-0 resize-y overflow-auto font-mono text-xs",
-    "t('drivers.downloadDriver')",
-    'isVisibleJdbcDriver',
-    'canManageJdbcArtifacts',
-    'driverOriginLabel',
-    "return driver.builtIn ? t('drivers.builtInTemplate') : t('drivers.customTemplate')",
-    'driverRuntimeLabel',
-    "t('drivers.viewBuiltIn')",
-    "t('drivers.editCustom')",
-    "t('drivers.importJar')",
-    "t('drivers.importPath')",
-    "t('drivers.removeJar')",
-    "t('drivers.metadataSql')",
-    "t('drivers.validate')",
-    'newCustomDriverDefinition',
-    'normalizeDriverDefinition',
-  ],
-  'settings driver manager UI',
-)
-
-excludesAll(
-  settingsWorkspace,
-  ['nativeRust', "status !== 'planned' ? false", "'built-in'", "'custom'"],
-  'JDBC driver manager should not show native runtime copy or English origin tags',
-)
+const driverWorkspace = read('src/components/connection/DriverWorkspace.tsx')
+const installationPage = read('src/components/connection/JdbcInstallationActions.tsx')
+includesAll(settingsWorkspace, ['DriverDefinitionsSettings', '<DriverWorkspace />', "activeSection === 'drivers'"], 'shared settings driver content')
+includesAll(driverWorkspace, [
+  'WorkflowHeader', 'WorkflowFooter', "'manage' | 'product' | 'definition'", "@min-[700px]/driver:grid-cols-[15rem_minmax(0,1fr)]",
+  'visibleDrivers', 'selectedId', 'newDefinition()', 'saveDriver', 'deleteDriver', 'deleteInstallation', 'validateDriver',
+  'defaultInstallationId: null', 'productId: selected.productId', "t('driverRefactor.copyDefinition')", "t('drivers.metadataSql')",
+  'draft.metadataDialectSql',
+], 'shared driver manager and editor')
+includesAll(installationPage, ['importJdbcArtifacts', 'validateExternalDriver', 'driver.builtIn', 'recipe.files.map', "t('drivers.removeJar')", "t('driverWorkflow.chooseJars')", 'checksumSource'], 'installation and validation controls')
+excludesAll(driverWorkspace + installationPage, ['<Dialog', 'artifactPathInput', 'Choose File'], 'single task navigation and localised import')
 
 const sidebar = read('src/components/layout/Sidebar.tsx')
 assert(!sidebar.includes('DriverDefinitionsSettings'), 'driver manager should not live in the left sidebar')

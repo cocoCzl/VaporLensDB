@@ -3,7 +3,9 @@
     "name": "VaporLensDB",
     "tagline": "轻量数据库 IDE",
     "moduleLoadFailed": "此界面加载失败。请在没有运行中查询或事务时关闭并重新打开应用。",
-    "preparingWorkspace": "正在准备工作区…"
+    "preparingWorkspace": "正在准备工作区…",
+    "renderFailed": "此界面发生错误。可重试当前界面或关闭后重新打开，其他工作区会话不受影响。",
+    "retryView": "重试当前界面"
   },
   "topBar": {
     "label": "应用工具栏",
@@ -298,7 +300,9 @@
       "oracle": "Oracle 需要用户提供本地 ojdbc.jar；连接、查询、对象浏览、DDL/source 和补全可用。",
       "jdbc": "自定义 JDBC 会通过 JDBC bridge 动态加载驱动类、JDBC URL 和 jar 路径。",
       "sqlite": "本地 SQLite 文件，支持查询、对象浏览、DDL 和只读数据预览。"
-    }
+    },
+    "testing": "正在测试当前连接…",
+    "testNotRun": "当前连接尚未测试。"
   },
   "notifications": {
     "operationFailed": "操作失败",
@@ -1143,7 +1147,98 @@
     "modes": {
       "urlOnly": "完整 JDBC URL",
       "hostPort": "主机与端口",
-      "file": "文件路径"
+      "file": "文件路径",
+      "oracleService": "服务名",
+      "oracleSid": "SID"
     }
+  },
+  "connectionCatalog": {
+    "title": "选择数据库",
+    "filter": "数据库筛选",
+    "common": "常用",
+    "all": "全部",
+    "custom": "自定义",
+    "change": "更换数据库",
+    "next": "下一步",
+    "empty": "暂无匹配的数据库，可在数据库与驱动中新增产品。"
+  },
+  "jdbcDownload": {
+    "recommended": "下载推荐版本 {{version}}",
+    "title": "安装 JDBC 驱动",
+    "confirm": "下载并安装",
+    "retry": "确认后重试",
+    "progress": "下载进度",
+    "integrity": "文件必须符合预先固定的 SHA-256 清单。HTTPS 和发布摘要不等于独立的发布者签名认证；每个文件均列明摘要来源。",
+    "pinned": "创建新的不可变安装，已有连接继续使用其选定版本。",
+    "separateChecks": "文件已安装。Java 可用、驱动类加载和数据库连接需要分别检查。",
+    "source": {
+      "localImport": "本地导入",
+      "download": "下载"
+    },
+    "status": {
+      "pending": "等待下载",
+      "running": "正在下载",
+      "cancelling": "正在取消",
+      "cancelled": "已取消",
+      "succeeded": "文件已安装",
+      "failed": "下载失败"
+    },
+    "scope": {
+      "jdbc-postgresql": "支持标准 JDBC 认证，不包含 Windows 集成认证依赖。",
+      "jdbc-mysql": "支持标准 JDBC 认证，不包含 Oracle Cloud 认证依赖。",
+      "jdbc-sqlite": "支持文件和会话范围的内存连接。包含 SLF4J API，不包含日志实现。",
+      "jdbc-mssql": "仅包含 SQL 认证依赖，不包含 Azure、集成认证及 Always Encrypted 额外依赖。"
+    },
+    "checkJava": "检查 Java",
+    "checkClass": "加载驱动类",
+    "javaReady": "Java 21+ 可用，尚未验证驱动类及数据库连接。",
+    "details": "下载详情",
+    "sourceLabel": "来源：Maven Central",
+    "javaAvailable": "Java 21+ 可用。",
+    "checksumPublisher": "Maven Central 发布者提供的 SHA-256",
+    "checksumPgjdbc": "pgjdbc 官方 GitHub 发布 API 的 SHA-256（{{tag}}）",
+    "checksumReviewed": "已复核 HTTPS 文件的固定 SHA-256；以 Central SHA-1 交叉核对，无独立发布者签名"
+  },
+  "driverWorkflow": {
+    "back": "返回",
+    "parameters": "连接参数",
+    "catalogHint": "选择数据库，再配置连接参数。",
+    "databaseName": "数据库名称",
+    "managerHint": "管理 JDBC 驱动定义及已安装版本。",
+    "saveFirst": "先保存数据库和驱动定义，再导入 JAR 或安装推荐版本。",
+    "sections": "驱动配置分组",
+    "basic": "基本信息",
+    "files": "驱动文件",
+    "advanced": "高级配置",
+    "notInstalled": "尚未选择驱动安装。可导入 JAR 或下载版本，也可先保存连接。",
+    "addDefinition": "新增驱动定义",
+    "installations": "安装版本",
+    "copySuffix": "（副本）",
+    "unknownSource": "来源未记录",
+    "saveUse": "保存并使用",
+    "localInstall": "导入本地驱动",
+    "jarHint": "先选择主驱动，再添加所需依赖；可调整顺序。每次导入创建独立安装。",
+    "chooseJars": "选择 JAR 文件",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "cancelDownload": "取消下载",
+    "installFiles": "安装文件",
+    "chooseConfiguration": "选择配置文件",
+    "unsaved": "有未保存的修改。是否放弃修改并离开当前页面？",
+    "keepEditing": "继续编辑",
+    "discard": "放弃修改",
+    "driverName": "驱动名称",
+    "oracleName": "Oracle（需要 JDBC 驱动）",
+    "genericName": "自定义 JDBC",
+    "complete": "完成并返回",
+    "cancelTask": "取消连接设置",
+    "errors": {
+      "connection": "连接测试失败，请检查参数并查看详情。",
+      "driver": "驱动操作失败，请查看详情。",
+      "network": "下载或网络请求失败，请检查网络后重试。",
+      "checksum": "文件校验失败，请重试下载。",
+      "java": "Java 运行环境检查失败，请查看详情。"
+    },
+    "backHint": "返回上一页，保留连接草稿。"
   }
 }

@@ -150,6 +150,17 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
                 metadata_dialect_sql: Some(mysql_jdbc_metadata_sql),
             },
         ),
+        jdbc_template(JdbcTemplateSeed {
+            id: "jdbc-mssql", driver_type: DriverType::Mssql, dialect: "mssql",
+            name: "SQL Server JDBC", default_port: Some(1433), default_username: None, default_database: None,
+            driver_class: "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+            url_template: "jdbc:sqlserver://{host}:{port};databaseName={database}",
+            driver_artifact: "mssql-jdbc-*.jar",
+            download_url: "https://learn.microsoft.com/sql/connect/jdbc/download-microsoft-jdbc-driver-for-sql-server",
+            notes: "SQL authentication via JDBC; optional Azure/integrated authentication dependencies are not bundled.",
+            connection_variants: vec![variant("hostPort", "Host/Port", &["host", "port", "database", "username"])],
+            metadata_dialect_sql: None,
+        }),
         jdbc_template(
             JdbcTemplateSeed {
                 id: "jdbc-sqlite",

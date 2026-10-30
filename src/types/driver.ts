@@ -80,10 +80,21 @@ export interface DatabaseProduct {
   defaultDriverDefinitionId: string
 }
 export interface DriverInstallation {
+  version?: string | null
+  source?: { kind: string; urls: string[]; checksumSources: string[]; license: string | null } | null
   id: string
   driverDefinitionId: string
   label: string
   artifacts: { path: string; sha256: string | null; role: string }[]
   javaRequirement: string
   validation?: { fingerprint: string; checkedAt: string; classLoaded: boolean } | null
+}
+
+export interface JdbcDownloadRecipe {
+  driverDefinitionId: string
+  version: string
+  license: string
+  licenseUrl: string
+  scope: string
+  files: { file: string; url: string; sha256: string; checksumSource: string; size: number }[]
 }

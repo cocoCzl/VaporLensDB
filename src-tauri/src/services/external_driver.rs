@@ -117,8 +117,13 @@ fn validate_bridge_jar(path: PathBuf) -> Result<PathBuf, AppError> {
     }
 }
 
-async fn validate_java_runtime() -> Result<(), AppError> {
-    let output = Command::new("java")
+pub async fn validate_java_runtime() -> Result<(), AppError> {
+    validate_java_program(std::ffi::OsStr::new("java")).await
+}
+
+async fn validate_java_program(program: &std::ffi::OsStr) -> Result<(), AppError> {
+    let output = Command::new(program)
+        .kill_on_drop(true)
         .arg("-version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -229,4 +234,16 @@ pub async fn installation_runtime_fingerprint(
             super::driver_registry::artifact_hash(&bridge.to_string_lossy())?
         ))?)
     ))
+}
+
+#[cfg(test)]
+mod runtime_availability_tests {
+    #[tokio::test]
+    async fn missing_java_is_not_driver_or_database_success() {
+        let missing = std::env::temp_dir().join(format!("vapor-no-java-{}", uuid::Uuid::new_v4()));
+        let error = super::validate_java_program(missing.as_os_str())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Java runtime is required"));
+    }
 }

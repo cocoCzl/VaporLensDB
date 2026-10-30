@@ -58,15 +58,15 @@ includesAll(
   dialog,
   [
     'void loadDrivers()',
-    "h-[min(50rem,calc(100vh-3rem))]",
-    'max-w-[min(50rem,calc(100vw-2rem))]',
+    "h-[min(600px,calc(100dvh-2rem))]",
+    'w-[min(900px,calc(100vw-2rem))]',
     'data-open:animate-none',
     'data-closed:animate-none',
     'min-h-0 flex-1 overflow-hidden',
   ],
   'connection dialog stable opening layout',
 )
-includesAll(form, ['overflow-y-auto overflow-x-hidden', '[scrollbar-gutter:stable]'], 'connection dialog single stable scroll region')
+includesAll(form, ['overflow-y-auto', 'overflow-x-hidden', '[scrollbar-gutter:stable]'], 'connection dialog single stable scroll region')
 includesAll(form, ['DatabaseTypeSelector', 'DisclosureSection', "t('connectionForm.sshTunnelSection')", "t('connectionForm.sslSection')", "t('connectionForm.advanced')"], 'connection dialog progressive disclosure')
 assert(!form.includes("t('connectionForm.projectDataSources')"), 'connection dialog should not render a project data sources sidebar')
 includesAll(

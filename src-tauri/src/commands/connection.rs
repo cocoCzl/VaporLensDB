@@ -1969,6 +1969,8 @@ mod tests {
             .map(|key| std::env::var(key).expect(key));
         let (mut state, root) = test_state();
         let installation = DriverInstallation {
+            version: None,
+            source: None,
             id: "sqlite-qa-v1".into(),
             driver_definition_id: "jdbc-sqlite".into(),
             label: "SQLite QA".into(),

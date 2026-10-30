@@ -41,3 +41,8 @@ export function deleteDriverInstallation(id: string) { return invokeCommand<void
 
 export function exportDriverConfiguration() { return invokeCommand<unknown>(COMMANDS.exportDriverConfiguration) }
 export function importDriverConfiguration(input: unknown) { return invokeCommand<number>(COMMANDS.importDriverConfiguration, { input }) }
+
+export function listJdbcDownloads() { return invokeCommand<import('@/types/driver').JdbcDownloadRecipe[]>(COMMANDS.listJdbcDownloads) }
+export function downloadJdbcDriver(driverDefinitionId: string) { return invokeCommand<import('@/types/task').TaskInfo>(COMMANDS.downloadJdbcDriver, { driverDefinitionId }) }
+
+export function checkJdbcRuntime() { return invokeCommand<void>(COMMANDS.checkJdbcRuntime) }

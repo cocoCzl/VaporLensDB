@@ -14,3 +14,5 @@ pub mod driver_registry;
 pub mod sql_dialect;
 
 pub mod driver_config;
+
+pub mod driver_download;

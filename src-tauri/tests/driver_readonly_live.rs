@@ -29,6 +29,8 @@ async fn resolved_jdbc_and_native_readonly_probe() {
         .expect("registered JDBC definition");
     store
         .publish_installation(&DriverInstallation {
+            version: None,
+            source: None,
             id: "readonly-install".into(),
             driver_definition_id: definition_id.clone(),
             label: "Read-only QA local JAR".into(),

@@ -8,6 +8,7 @@ import type { DatabaseProduct, DriverDefinition, DriverInstallation } from '@/ty
 
 const db = vi.hoisted(() => ({ products: [] as DatabaseProduct[], drivers: [] as DriverDefinition[], installations: [] as DriverInstallation[] }))
 vi.mock('@/ipc/driver', () => ({
+  listJdbcDownloads: vi.fn(async () => []), downloadJdbcDriver: vi.fn(),
   listDatabaseProducts: vi.fn(async () => [...db.products]), listDriverDefinitions: vi.fn(async () => [...db.drivers]), listDriverInstallations: vi.fn(async () => [...db.installations]),
   saveDatabaseProduct: vi.fn(async (p: DatabaseProduct) => { db.products.push(p); return p }),
   saveCustomDriverDefinition: vi.fn(async (d: DriverDefinition) => { db.drivers.push(d); return d }),
@@ -28,9 +29,9 @@ describe('Product → driver → installation workflows (mock IPC)', () => {
   it('creates two arbitrary products in the manager and immediately shows separate catalog entries', async () => {
     const manager=render(<DriverDefinitionsSettings />)
     for (const name of ['Arbitrary database A','Unrelated database B']) {
-      fireEvent.click(screen.getByRole('button',{name:i18n.t('drivers.add')}))
-      fireEvent.change(screen.getByLabelText(i18n.t('driverRefactor.productName')), {target:{value:name}})
-      fireEvent.change(screen.getByLabelText(i18n.t('drivers.name')), {target:{value:`${name} driver`}})
+      fireEvent.click(screen.getByRole('button',{name:i18n.t('driverRefactor.addProduct')}))
+      fireEvent.change(screen.getByLabelText(i18n.t('driverWorkflow.databaseName')), {target:{value:name}})
+      fireEvent.change(screen.getByLabelText(i18n.t('driverWorkflow.driverName')), {target:{value:`${name} driver`}})
       fireEvent.change(screen.getByLabelText(i18n.t('drivers.driverClass')), {target:{value:'example.Driver'}})
       fireEvent.click(screen.getByRole('button',{name:i18n.t('common.save')}))
       await waitFor(()=>expect(db.products.some((p)=>p.name===name)).toBe(true))
@@ -39,6 +40,7 @@ describe('Product → driver → installation workflows (mock IPC)', () => {
     manager.unmount();const {save}=form()
     const a=screen.getByRole('radio',{name:'Arbitrary database A'});const b=screen.getByRole('radio',{name:'Unrelated database B'})
     fireEvent.click(a);expect(a).toHaveAttribute('aria-checked','true');expect(b).toHaveAttribute('aria-checked','false')
+    fireEvent.click(screen.getByRole('button',{name:i18n.t('connectionCatalog.next')}))
     fireEvent.change(document.querySelector('#connection-url')!,{target:{value:'jdbc:example:fixture'}})
     await saveOnly();await waitFor(()=>expect(save).toHaveBeenCalledOnce())
     expect(save.mock.calls[0][0]).toMatchObject({productId:db.products.find((p)=>p.name==='Arbitrary database A')?.id,connectionMode:'urlOnly',driverType:'jdbc'})
@@ -46,6 +48,7 @@ describe('Product → driver → installation workflows (mock IPC)', () => {
   })
   it.each([5432,61234])('preserves explicit endpoint/account/database when switching implementation at port %s',async (port)=>{
     const {save}=form()
+    fireEvent.click(screen.getByRole('button',{name:i18n.t('connectionCatalog.next')}))
     for(const [id,value] of [['connection-host','custom.host'],['connection-username','alice'],['connection-database','catalog'],['connection-port',''],['connection-port',String(port)]]) fireEvent.change(document.querySelector(`#${id}`)!,{target:{value}})
     fireEvent.click(document.querySelector('#driver-profile')!)
     const option = await screen.findByRole('option',{name:/PG JDBC v2/})
@@ -77,7 +80,7 @@ describe('Product → driver → installation workflows (mock IPC)', () => {
   })
   it('keeps a saved null installation as a repair state even when a newer default exists', () => {
     render(<ConnectionForm connection={{id:'old',name:'Uninstalled',driverType:'postgres',productId:'postgres',driverDefinitionId:jdbc.id,driverInstallationId:null,connectionMode:'hostPort'}} driverDefinitions={[native,jdbc]} onSaveOnly={vi.fn()} onSaveAndConnect={vi.fn()} onTest={vi.fn()} onCancel={vi.fn()} />)
-    expect(screen.getByRole('alert')).toHaveTextContent(i18n.t('driverRefactor.missingReference'))
+    expect(screen.getByRole('alert')).toHaveTextContent(i18n.t('driverWorkflow.notInstalled'))
     expect(screen.getByRole('button',{name:i18n.t('connectionForm.testConnection')})).toBeDisabled()
   })
   it('preserves an explicitly enabled SSH tunnel when saving a raw URL', async () => {

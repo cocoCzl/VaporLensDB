@@ -296,6 +296,8 @@ fn legacy_installation_with_hashes(
     put_installation(
         conn,
         &DriverInstallation {
+            version: None,
+            source: None,
             id: id.clone(),
             driver_definition_id: definition.into(),
             label: "Legacy ordered dependency set (version unverified)".into(),
@@ -459,6 +461,20 @@ impl ConfigStore {
         let conn = self.conn()?;
         conn.execute_batch("BEGIN IMMEDIATE")?;
         let result = (|| {
+            // Imports/downloads can finish after another window removed a definition.
+            // Check under the same write transaction as publication, not just before it.
+            let backend: Option<String> = conn
+                .query_row(
+                    "SELECT backend FROM driver_definitions WHERE id=?1",
+                    [&installation.driver_definition_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if backend.as_deref() != Some("jdbc") {
+                return Err(invalid(
+                    "JDBC definition changed or was removed during installation",
+                ));
+            }
             put_installation(&conn, installation)?;
             conn.execute("UPDATE driver_definitions SET default_installation_id=?2, driver_artifacts_json=?3 WHERE id=?1",params![installation.driver_definition_id,installation.id,serde_json::to_string(&installation.artifacts.iter().map(|a|&a.path).collect::<Vec<_>>())?])?;
             Ok::<_, AppError>(())
@@ -930,6 +946,8 @@ mod tests {
         let artifact = store.config_dir().join("fixture.jar");
         std::fs::write(&artifact, b"deterministic fixture").unwrap();
         let install = |id: &str| DriverInstallation {
+            version: None,
+            source: None,
             id: id.into(),
             driver_definition_id: d.id.clone(),
             label: id.into(),
@@ -1086,6 +1104,8 @@ mod tests {
         std::fs::write(&artifact, b"fixture").unwrap();
         store
             .publish_installation(&DriverInstallation {
+                version: None,
+                source: None,
                 id: "new-default".into(),
                 driver_definition_id: d.id.clone(),
                 label: "new default".into(),
@@ -1178,6 +1198,8 @@ mod tests {
         std::fs::write(&path, b"fixture").unwrap();
         store
             .publish_installation(&DriverInstallation {
+                version: None,
+                source: None,
                 id: "owned-install".into(),
                 driver_definition_id: second.id.clone(),
                 label: "owned".into(),

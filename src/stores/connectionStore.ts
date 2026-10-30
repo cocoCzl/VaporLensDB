@@ -315,11 +315,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     try {
       await testConnection(input)
       set({ loading: false })
-      useUiStore.getState().notify({
-        kind: 'success',
-        title: i18n.t('notifications.connectionTestSucceeded'),
-        message: input.name,
-      })
+      // The form owns the result so a late test cannot announce success for a newer draft.
     } catch (error) {
       set({ error: errorMessage(error), loading: false })
       throw error

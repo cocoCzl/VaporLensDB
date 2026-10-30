@@ -241,6 +241,22 @@ To check missing Java without changing PATH in parallel tests, compile
 then run the printed test executable by absolute path with an empty PATH and
 `--include-ignored`. It checks Native SQLite and an explicit JDBC Java-missing error.
 
+## JDBC installation checks
+
+`pnpm test src/components/connection` covers real form/select components, a 50-product
+catalogue, draft isolation, local import and late download events using mocked IPC.
+`cargo test --lib services::driver_download` (from `src-tauri`) uses loopback HTTP
+fixtures for complete publication, network failure, cancellation, digest rejection,
+missing dependencies and retry. Production downloads accept only the embedded HTTPS
+manifest; test fixtures do not relax the production URL policy. These tests do not
+replace packaged desktop checks or vendor database verification.
+
+In an isolated packaged profile, review the dependency/licence preview, download and
+cancel a recommended version, import local JARs, and verify that existing connections
+remain pinned. Switch products or close the form during download; a late completion
+must not select an installation for a different draft. Check missing Java separately
+from file installation and class loading. Use no business database for these checks.
+
 ## Desktop manual checks
 
 Use the exact intended build and isolated configuration. Check normal, narrow

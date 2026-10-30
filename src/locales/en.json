@@ -3,7 +3,9 @@
     "name": "VaporLensDB",
     "tagline": "LIGHTWEIGHT DATABASE IDE",
     "moduleLoadFailed": "This view could not be loaded. Close and reopen the application when no query or transaction is active.",
-    "preparingWorkspace": "Preparing workspace…"
+    "preparingWorkspace": "Preparing workspace…",
+    "renderFailed": "This view encountered an error. Retry this view or close and reopen it; other workspace sessions remain available.",
+    "retryView": "Retry view"
   },
   "topBar": {
     "label": "Application toolbar",
@@ -298,7 +300,9 @@
       "oracle": "Oracle requires a user-provided local ojdbc.jar. Connection, query execution, object browsing, DDL/source, and completion are available.",
       "jdbc": "Custom JDBC dynamically loads the driver class, JDBC URL, and JAR paths through the JDBC bridge.",
       "sqlite": "Local SQLite file with query execution, object browsing, DDL, and read-only data preview."
-    }
+    },
+    "testing": "Testing current connection…",
+    "testNotRun": "Current connection has not been tested."
   },
   "notifications": {
     "operationFailed": "Operation failed",
@@ -1143,7 +1147,98 @@
     "modes": {
       "urlOnly": "Raw JDBC URL",
       "hostPort": "Host and port",
-      "file": "File path"
+      "file": "File path",
+      "oracleService": "Service name",
+      "oracleSid": "SID"
     }
+  },
+  "connectionCatalog": {
+    "title": "Choose a database",
+    "filter": "Database filter",
+    "common": "Common",
+    "all": "All",
+    "custom": "Custom",
+    "change": "Change database",
+    "next": "Next",
+    "empty": "No matching databases. Add a product in Database & drivers."
+  },
+  "jdbcDownload": {
+    "recommended": "Download recommended {{version}}",
+    "title": "Install JDBC driver",
+    "confirm": "Download & install",
+    "retry": "Review & retry",
+    "progress": "Download progress",
+    "integrity": "Files must match the pinned SHA-256 list. HTTPS and published checksums are not independent publisher signature verification; checksum provenance is listed for each file.",
+    "pinned": "Creates a new immutable installation. Existing connections keep their selected version.",
+    "separateChecks": "Files installed. Java availability, driver class loading and database connectivity are separate checks.",
+    "source": {
+      "localImport": "Local import",
+      "download": "Download"
+    },
+    "status": {
+      "pending": "Queued",
+      "running": "Downloading",
+      "cancelling": "Cancelling",
+      "cancelled": "Cancelled",
+      "succeeded": "Files installed",
+      "failed": "Download failed"
+    },
+    "scope": {
+      "jdbc-postgresql": "Standard JDBC authentication; Windows integrated authentication is not included.",
+      "jdbc-mysql": "Standard JDBC authentication; Oracle Cloud authentication dependencies are not included.",
+      "jdbc-sqlite": "File and session-scoped memory connections. SLF4J API is included without a logging provider.",
+      "jdbc-mssql": "SQL authentication only. Azure, integrated authentication and Always Encrypted dependencies are not included."
+    },
+    "checkJava": "Check Java",
+    "checkClass": "Load driver class",
+    "javaReady": "Java 21+ is available. Driver class and database connection have not been tested.",
+    "details": "Download details",
+    "sourceLabel": "Source: Maven Central",
+    "javaAvailable": "Java 21+ is available.",
+    "checksumPublisher": "Maven Central publisher SHA-256",
+    "checksumPgjdbc": "Official pgjdbc GitHub release API SHA-256 ({{tag}})",
+    "checksumReviewed": "Pinned SHA-256 of reviewed HTTPS artifact; Central SHA-1 cross-check, no independent publisher signature"
+  },
+  "driverWorkflow": {
+    "back": "Back",
+    "parameters": "Connection parameters",
+    "catalogHint": "Choose a database, then configure its connection.",
+    "databaseName": "Database name",
+    "managerHint": "Manage JDBC definitions and their installed versions.",
+    "saveFirst": "Save the database and driver definition first. Install JAR files afterwards.",
+    "sections": "Driver sections",
+    "basic": "Basic information",
+    "files": "Driver files",
+    "advanced": "Advanced",
+    "notInstalled": "No driver installation selected. Import JARs or download a version; you can save the connection first.",
+    "addDefinition": "Add driver definition",
+    "installations": "Installed versions",
+    "copySuffix": "(copy)",
+    "unknownSource": "Source not recorded",
+    "saveUse": "Save and use",
+    "localInstall": "Import local driver",
+    "jarHint": "Select the main driver first, followed by all required dependencies. Each import creates a separate installation.",
+    "chooseJars": "Select JAR files",
+    "moveUp": "Move earlier",
+    "moveDown": "Move later",
+    "cancelDownload": "Cancel download",
+    "installFiles": "Install files",
+    "chooseConfiguration": "Choose configuration file",
+    "unsaved": "There are unsaved changes. Leave this page and discard them?",
+    "keepEditing": "Keep editing",
+    "discard": "Discard changes",
+    "driverName": "Driver name",
+    "oracleName": "Oracle (JDBC driver required)",
+    "genericName": "Custom JDBC",
+    "complete": "Done — return",
+    "cancelTask": "Cancel connection setup",
+    "errors": {
+      "connection": "Connection test failed. Check the parameters and see details.",
+      "driver": "Driver operation failed. See details.",
+      "network": "Download or network request failed. Check the network and retry.",
+      "checksum": "File verification failed. Retry the download.",
+      "java": "Java runtime check failed. See details."
+    },
+    "backHint": "Return to the previous page; keep the connection draft."
   }
 }

@@ -21,9 +21,14 @@ outside the 1.0 scope. Plans in the [README](../README.md#plans) are not support
 | PostgreSQL | Implemented; recommended | Optional | Primary native support; JDBC remains driver-dependent |
 | MySQL | Implemented; recommended | Optional | Primary native support; JDBC remains driver-dependent |
 | SQLite | Implemented; recommended | Optional | Primary native support; file and memory semantics differ |
-| SQL Server | Implemented | User-configured definition possible | Native runtime verification incomplete; no primary-support commitment |
+| SQL Server | Implemented; recommended | Built-in optional JDBC definition | Native runtime verification incomplete; no primary-support commitment |
 | Oracle | No built-in native implementation | Built-in definition, user-supplied `ojdbc` | Experimental; Service connection/query probes do not verify SID or all Oracle capabilities |
 | User-defined product | No arbitrary native plugin loader | User JAR/class/URL and optional metadata SQL | Experimental; validate the selected driver/server combination |
+
+Fixed, reviewed JDBC download sets are available for PostgreSQL, MySQL, SQLite
+and SQL Server; custom definitions use local import. Installation does not certify
+Java availability, class loading or database compatibility. Optional authentication
+extensions are excluded from these download sets; see the download preview.
 
 A stable product ID, definition and immutable JDBC installation identify each
 connection. Custom products appear in the connection directory without adding a

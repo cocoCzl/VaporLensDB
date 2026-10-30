@@ -34,6 +34,8 @@ async fn independent_products_resolve_installations_and_fall_back_per_metadata_o
         definition.metadata_dialect_sql=Some(json!({"tables":"SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS name, 'table' AS table_type FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_TYPE = 'BASE TABLE'"}).to_string());
         let definition = store.save_custom_driver_definition(definition).unwrap();
         let installation = DriverInstallation {
+            version: None,
+            source: None,
             id: format!("installation-{}", uuid::Uuid::new_v4()),
             driver_definition_id: definition.id.clone(),
             label: "H2 local fixture (not vendor certification)".into(),

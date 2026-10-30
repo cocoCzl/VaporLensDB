@@ -59,14 +59,16 @@ function openDialog() {
 }
 
 async function fillForm() {
+  fireEvent.click(await screen.findByRole('button', { name: i18n.t('connectionCatalog.next') }))
   await waitFor(() => expect(document.querySelector('#connection-name')).toBeInTheDocument())
   fireEvent.change(document.querySelector('#connection-name')!, { target: { value: 'Dialog QA' } })
   fireEvent.change(document.querySelector('#connection-username')!, { target: { value: 'qa' } })
   fireEvent.change(document.querySelector('#connection-database')!, { target: { value: 'qa' } })
 }
 
-function closeWithX() {
-  fireEvent.click(screen.getByRole('button', { name: i18n.t('common.cancel') }))
+async function closeWithX() {
+  fireEvent.click(await screen.findByRole('button', { name: i18n.t('common.cancel') }))
+  const discard = screen.queryByRole('button', { name: i18n.t('driverWorkflow.discard') }); if (discard) fireEvent.click(discard)
 }
 
 async function saveOnly() {
@@ -90,7 +92,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
   it('removes the uncontrolled popup, overlay, and focus guards when Cancel/X is clicked', async () => {
     render(<ConnectionDialog />)
     openDialog()
-    closeWithX()
+    await closeWithX()
     await expectDialogClosed()
   })
 
@@ -154,11 +156,11 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     render(<ConnectionDialog />)
     openDialog()
     await fillForm()
-    closeWithX()
+    await closeWithX()
     await expectDialogClosed()
     openDialog()
-    expect(document.querySelector('#connection-name')).not.toHaveValue('Dialog QA')
-    closeWithX()
+    expect(screen.getByRole('radiogroup')).toBeVisible()
+    await closeWithX()
     await expectDialogClosed()
   })
 
@@ -166,7 +168,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     render(<ConnectionDialog />)
     for (let attempt = 0; attempt < 10; attempt += 1) {
       openDialog()
-      if (attempt % 2 === 0) closeWithX()
+      if (attempt % 2 === 0) await closeWithX()
       else fireEvent.keyDown(document, { key: 'Escape' })
       await expectDialogClosed()
     }
@@ -177,7 +179,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     render(<><button onClick={outsideClick}>Workbench</button><ConnectionDialog /></>)
     const trigger = openDialog()
     await waitFor(() => expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement))
-    closeWithX()
+    await closeWithX()
     await expectDialogClosed()
     await waitFor(() => expect(trigger).toHaveFocus())
     const outside = screen.getByRole('button', { name: 'Workbench' })
@@ -200,7 +202,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     render(<Controlled />)
     fireEvent.click(screen.getByRole('button', { name: 'Open controlled' }))
     expect(screen.getByRole('dialog')).toBeVisible()
-    if (action === 'X') closeWithX()
+    if (action === 'X') await closeWithX()
     else if (action === 'Escape') fireEvent.keyDown(document, { key: 'Escape' })
     else {
       await fillForm()
@@ -211,7 +213,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     expect(onOpenChange).toHaveBeenCalledWith(false)
     fireEvent.click(screen.getByRole('button', { name: 'Open controlled' }))
     expect(screen.getByRole('dialog')).toBeVisible()
-    closeWithX()
+    await closeWithX()
     await expectDialogClosed()
   })
 
@@ -227,7 +229,7 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
   it('does not open the dormant global dialog when the inline instance is opened', async () => {
     render(<><ConnectionDialog /><ConnectionDialog open={false} hideTrigger onOpenChange={vi.fn()} /></>)
     openDialog()
-    closeWithX()
+    await closeWithX()
     await expectDialogClosed()
   })
 })
