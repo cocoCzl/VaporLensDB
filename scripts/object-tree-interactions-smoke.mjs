@@ -70,7 +70,7 @@ includesAll(
     "t('explorer.viewDdlSource')",
     "t('explorer.copyQualifiedName')",
     "t('explorer.setCurrentSchema')",
-    'role="tree"',
+    "role={compact ? 'group' : 'tree'}",
   ],
   'object tree interactions',
 )

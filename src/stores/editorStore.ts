@@ -21,6 +21,7 @@ export interface EditorTab {
     | 'queryHistory'
     | 'settings'
     | 'objectSummary'
+    | 'browser'
   title: string
   sql: string
   /**
@@ -35,6 +36,7 @@ export interface EditorTab {
   definitionContext?: DefinitionTabContext | null
   diagramContext?: DiagramTabContext | null
   objectSummaryContext?: ObjectSummaryContext | null
+  browserContext?: BrowserContext | null
   tableContext?: TableEditContext | null
   lastQueryId?: string | null
   runningQueryId?: string | null
@@ -111,6 +113,14 @@ export interface ObjectSummaryContext {
   object: string
   objectKind: 'table' | 'view' | 'materializedView'
   driverType: TableEditContext['driverType']
+}
+
+/** Read-only navigation context; never used as an SQL execution target. */
+export interface BrowserContext {
+  kind: 'connection' | 'database' | 'schema'
+  database?: string | null
+  schema?: string | null
+  objectKind?: DbObjectKind | null
 }
 
 export interface TableEditContext {

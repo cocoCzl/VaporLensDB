@@ -27,6 +27,10 @@ function excludesAll(source, values, label) {
 const sidebar = read('src/components/layout/Sidebar.tsx')
 const dataSourcesSidebar = read('src/components/sidebar/DataSourcesSidebar.tsx')
 const connectionRow = read('src/components/sidebar/ConnectionRow.tsx')
+const databaseTree = read('src/components/explorer/DatabaseTree.tsx')
+assert(!dataSourcesSidebar.includes('<RecentSection'), 'recent connections must appear only on the home page')
+assert(!databaseTree.includes('resize-y'), 'embedded objects must share the sidebar scroll container')
+assert(dataSourcesSidebar.includes('onKeyDownCapture={handleTreeNavigation}'), 'keyboard focus must traverse the continuous tree')
 
 includesAll(
   dataSourcesSidebar,
@@ -37,10 +41,10 @@ includesAll(
     'await connectConnection(connection.id, { selectForBrowsing: false })',
     'setActiveConnection(connection.id)',
     'expandedDataSourceIds',
-    '<DatabaseTree connectionId={connection.id} compact />',
+    "<DatabaseTree connectionId={connection.id} compact filterQuery={searchObjects ? query : ''} />",
     'id="data-source-tree-search-input"',
     'const filteredGroups = useMemo(() => {',
-    'highlightDataSourceMatch(group.name, query)',
+    'highlightDataSourceMatch(group.name, connectionQuery)',
     '<ConnectionContextMenu',
     'dataSourceGroups',
     'browsingConnectionId',

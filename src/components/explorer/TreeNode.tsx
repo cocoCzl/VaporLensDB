@@ -18,6 +18,8 @@ import {
   CalendarClock,
   Code2,
   PanelRightOpen,
+  Users,
+  FolderOpen,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { KeyboardEvent, ReactNode } from 'react'
@@ -40,10 +42,12 @@ export type DatabaseTreeNodeKind =
   | 'trigger'
   | 'synonym'
   | 'event'
+  | 'user'
 
 export interface DatabaseTreeNodeData {
   id: string
   label: string
+  iconKind?: DatabaseTreeNodeKind
   kind: DatabaseTreeNodeKind
   depth: number
   expandable?: boolean
@@ -64,6 +68,9 @@ export interface TreeNodeQuickAction {
 
 interface TreeNodeProps {
   node: DatabaseTreeNodeData
+  embedded?: boolean
+  rowId?: string
+  parentRowId?: string
   selected?: boolean
   onToggle: (id: string) => void
   onSelect?: (id: string) => void
@@ -76,7 +83,7 @@ interface TreeNodeProps {
 
 const NODE_ICONS: Record<DatabaseTreeNodeKind, LucideIcon> = {
   database: Database,
-  schema: ListTree,
+  schema: FolderOpen,
   folder: Folder,
   table: Table2,
   view: Eye,
@@ -91,6 +98,7 @@ const NODE_ICONS: Record<DatabaseTreeNodeKind, LucideIcon> = {
   trigger: Zap,
   synonym: SquareCode,
   event: CalendarClock,
+  user: Users,
 }
 
 const QUICK_ACTION_ICONS: Record<TreeNodeQuickAction['icon'], LucideIcon> = {
@@ -122,6 +130,9 @@ const DATABASE_OBJECT_KINDS = new Set<DatabaseTreeNodeKind>([
 
 export function TreeNode({
   node,
+  embedded = false,
+  rowId,
+  parentRowId,
   selected,
   onToggle,
   onSelect,
@@ -132,7 +143,8 @@ export function TreeNode({
   quickActions = [],
 }: TreeNodeProps) {
   const { t } = useTranslation()
-  const Icon = NODE_ICONS[node.kind]
+  const iconKind = node.iconKind ?? node.kind
+  const Icon = NODE_ICONS[iconKind]
   const hasToggle = node.expandable || node.loading
   const ToggleIcon = node.expanded ? ChevronDown : ChevronRight
   const warning = node.detail?.toUpperCase() === 'INVALID'
@@ -140,20 +152,23 @@ export function TreeNode({
   return (
     <div
       className={[
-        'group flex h-7 items-center gap-1 rounded-sm px-1 text-xs text-foreground/90 hover:bg-accent-hover',
-        selected ? 'bg-accent-selected text-accent-foreground' : '',
+        'navigation-tree-row group relative flex h-8 min-w-0 items-center gap-1.5 pr-2 text-xs text-foreground/90',
+        selected ? 'text-foreground' : '',
       ].join(' ')}
+      data-tree-row={rowId}
+      data-tree-parent={parentRowId}
+      aria-level={embedded ? node.depth + 3 : node.depth + 1}
       data-muted={node.muted ? 'true' : undefined}
       data-selected={selected ? 'true' : undefined}
       title={node.tooltip ?? node.detail ?? node.label}
-      style={{ paddingLeft: `${node.depth * 14 + 4}px` }}
+      style={{ paddingLeft: `${(node.depth + (embedded ? 2 : 0)) * 16 + 8}px` }}
       role="treeitem"
       aria-selected={selected}
       aria-expanded={node.expandable ? node.expanded === true : undefined}
-      tabIndex={0}
+      tabIndex={embedded ? -1 : 0}
       onClick={() => onSelect?.(node.id)}
       onKeyDown={(event) => {
-        onNodeKeyDown?.(node, event)
+        if (event.target === event.currentTarget) onNodeKeyDown?.(node, event)
       }}
       onContextMenu={(event) => {
         event.preventDefault()
@@ -168,8 +183,11 @@ export function TreeNode({
     >
       <button
         type="button"
-        className="grid size-5 place-items-center text-muted-foreground disabled:opacity-30"
+        className="grid size-5 shrink-0 place-items-center text-muted-foreground disabled:opacity-30"
         disabled={!hasToggle}
+        data-tree-toggle
+        tabIndex={-1}
+        aria-label={t(node.expanded ? 'explorer.collapse' : 'explorer.expand')}
         onClick={(event) => {
           event.stopPropagation()
           if (node.expandable) {
@@ -185,26 +203,26 @@ export function TreeNode({
           <span className="size-3.5" />
         )}
       </button>
-      {isDatabaseObjectKind(node.kind) ? (
+      {isDatabaseObjectKind(iconKind) && iconKind !== 'schema' ? (
         <DatabaseObjectGlyph
-          kind={node.kind}
-          className={nodeIconTone(node.kind, node.muted)}
+          kind={iconKind}
+          className={nodeIconTone(iconKind, node.muted)}
         />
       ) : (
         <Icon
           className={[
-            'size-3.5 shrink-0',
-            nodeIconTone(node.kind, node.muted),
+            'size-4 shrink-0',
+            nodeIconTone(iconKind, node.muted),
           ].join(' ')}
         />
       )}
-      <span className={['min-w-0 flex-1 truncate', node.muted ? 'text-muted-foreground' : ''].join(' ')}>
+      <span className={['min-w-0 flex-1 truncate', quickActions.length > 0 ? 'group-hover:pr-6 group-focus-within:pr-6' : '', node.muted ? 'text-muted-foreground' : ''].join(' ')}>
         {node.label}
       </span>
       {node.detail && quickActions.length === 0 && (
         <span
           className={[
-            'inline-flex shrink-0 items-center gap-1 truncate text-[11px]',
+            'inline-flex min-w-0 max-w-[35%] items-center gap-1 truncate text-[11px]',
             warning ? 'text-warning' : 'text-muted-foreground',
           ].join(' ')}
         >
@@ -215,8 +233,8 @@ export function TreeNode({
       {quickActions.length > 0 && (
         <div
           className={[
-            'ml-auto flex shrink-0 items-center gap-0.5 px-0.5 opacity-0 transition-opacity',
-            'group-hover:opacity-100 group-focus-within:opacity-100',
+            'absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 bg-sidebar px-0.5 opacity-0 transition-opacity',
+            'pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto group-hover:opacity-100 group-focus-within:opacity-100',
             selected ? 'opacity-100' : '',
           ].join(' ')}
           aria-label={`${node.label} quick actions`}
@@ -263,8 +281,12 @@ export function TreeNode({
 
 function nodeIconTone(kind: DatabaseTreeNodeKind, muted?: boolean) {
   if (muted) return 'text-muted-foreground/50'
-  if (kind === 'database') return 'text-primary/80'
-  if (kind === 'schema') return 'text-foreground/70'
+  if (kind === 'database') return 'text-warning'
+  if (kind === 'table') return 'text-success'
+  if (kind === 'view' || kind === 'materializedView') return 'text-tree-view'
+  if (kind === 'function' || kind === 'procedure') return 'text-warning'
+  if (kind === 'sequence') return 'text-success'
+  if (kind === 'schema') return 'text-primary/80'
   if (CATEGORY_KINDS.has(kind)) return 'text-muted-foreground/75'
   if (KEY_KINDS.has(kind) || CODE_KINDS.has(kind)) return 'text-muted-foreground/80'
   return 'text-muted-foreground'
@@ -291,7 +313,7 @@ function DatabaseObjectGlyph({
       strokeWidth="1.35"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={`size-3.5 shrink-0 ${className}`}
+      className={`size-4 shrink-0 ${className}`}
       aria-hidden="true"
     >
       {databaseGlyphContent(kind)}

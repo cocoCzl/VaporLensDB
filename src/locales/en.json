@@ -67,6 +67,9 @@
     "disconnected": "Disconnected",
     "browsing": "Browsing",
     "select": "Select connection",
+    "locateCurrent": "Locate current connection",
+    "filterObjects": "Filter loaded objects",
+    "collapseAll": "Collapse all",
     "searchDataSources": "Search data sources…",
     "noMatches": "No matching Data Sources",
     "recent": "Recent",
@@ -467,6 +470,9 @@
     }
   },
   "workbench": {
+    "jdbcDdlUnsupported": "The current JDBC driver does not support automatic DDL generation.",
+    "metadataUnsupported": "The current driver does not provide metadata for this object type.",
+    "functionsUnsupported": "Function metadata is not supported by the current driver and has been skipped. Table, view and column completion remains available.",
     "previousResult": "previous result",
     "title": "Workbench",
     "noDataSourceConnected": "No Data Source connected",
@@ -622,6 +628,26 @@
     "explainSummary": "Explain · {{elapsedMs}} ms",
     "noResultsYet": "No results yet",
     "runQueryToSeeResults": "Run a query to see results here."
+  },
+  "browser": {
+    "workbench": "Workbench",
+    "homeDescription": "Browse database objects or open a query.",
+    "selectObject": "Select a connection or object in the sidebar to begin.",
+    "emptyDescription": "Add a data source to browse objects and write SQL.",
+    "workspace": "Database workspace",
+    "connectionUnavailable": "This connection is no longer available.",
+    "browsing": "Browsing · connected",
+    "session": "Session",
+    "liveSession": "Live session · metadata browsing",
+    "noSession": "No live session",
+    "databases": "Databases",
+    "schemas": "Schemas",
+    "objects": "Objects",
+    "filterObjects": "Filter objects…",
+    "name": "Name",
+    "kind": "Type",
+    "connectToBrowse": "Connect explicitly, or expand the connection in the sidebar, to load objects.",
+    "noObjects": "No objects in this scope."
   },
   "home": {
     "welcomeTitle": "Welcome back",

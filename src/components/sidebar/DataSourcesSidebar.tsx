@@ -1,16 +1,19 @@
-import { Plus, Search } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronsDownUp, Crosshair, Database, Eye, EyeOff, ListFilter, MoreHorizontal, Plus, RefreshCw, Search, Settings2, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
+import { openBrowserWorkspace } from '@/components/workspace/openBrowserWorkspace'
 import { ConnectionContextMenu } from '@/components/sidebar/ConnectionContextMenu'
 import { ConnectionGroup } from '@/components/sidebar/ConnectionGroup'
 import { ConnectionRow } from '@/components/sidebar/ConnectionRow'
 import { RenameConnectionDialog } from '@/components/sidebar/RenameConnectionDialog'
-import { RecentSection } from '@/components/sidebar/RecentSection'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { handleTreeNavigation, roveTreeFocus, syncTreeTabStop } from '@/components/sidebar/treeKeyboardNavigation'
+import { openDriverManager } from '@/lib/openDriverManager'
 import {
   filterConnections,
   highlightDataSourceMatch,
@@ -36,7 +39,6 @@ export function DataSourcesSidebar() {
     statuses,
     browsingConnectionId,
     busyConnectionIds,
-    recentDataSourceIds,
     favoriteDataSourceIds,
     loadConnections,
     connectConnection,
@@ -52,7 +54,6 @@ export function DataSourcesSidebar() {
     statuses: state.statuses,
     browsingConnectionId: state.browsingConnectionId,
     busyConnectionIds: state.busyConnectionIds,
-    recentDataSourceIds: state.recentDataSourceIds,
     favoriteDataSourceIds: state.favoriteDataSourceIds,
     loadConnections: state.loadConnections,
     connectConnection: state.connectConnection,
@@ -64,6 +65,9 @@ export function DataSourcesSidebar() {
     saveConnection: state.saveConnection,
   })))
   const notifyError = useUiStore((state) => state.notifyError)
+  const showSystemObjects = useUiStore((state) => state.showSystemObjects)
+  const setShowSystemObjects = useUiStore((state) => state.setShowSystemObjects)
+  const activeTabId = useEditorStore((state) => state.activeTabId)
   const tabs = useEditorStore((state) => state.tabs)
   const addTab = useEditorStore((state) => state.addTab)
   const setActiveTab = useEditorStore((state) => state.setActiveTab)
@@ -73,7 +77,15 @@ export function DataSourcesSidebar() {
   const [contextMenu, setContextMenu] = useState<{ connection: ConnectionConfig; x: number; y: number } | null>(null)
   const [renameConnectionTarget, setRenameConnectionTarget] = useState<ConnectionConfig | null>(null)
   const [query, setQuery] = useState('')
+  const [searchObjects, setSearchObjects] = useState(false)
+  const [connectionDialogOpen, setConnectionDialogOpen] = useState(false)
+  const treeRef = useRef<HTMLDivElement>(null)
+  const connectionQuery = searchObjects ? '' : query
   const pendingMoveConnectionIds = useRef(new Set<string>())
+
+  useLayoutEffect(() => {
+    if (treeRef.current) syncTreeTabStop(treeRef.current)
+  })
 
   useEffect(() => {
     void loadConnections()
@@ -98,7 +110,7 @@ export function DataSourcesSidebar() {
   }, [connections, dataSourceGroups, favoriteDataSourceIds, t])
 
   const filteredGroups = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase()
+    const normalizedQuery = connectionQuery.trim().toLocaleLowerCase()
     return groups
       .map((group) => {
         const groupMatches = normalizedQuery.length > 0 && group.name.toLocaleLowerCase().includes(normalizedQuery)
@@ -106,15 +118,11 @@ export function DataSourcesSidebar() {
           ...group,
           connections: groupMatches || normalizedQuery.length === 0
             ? group.connections
-            : filterConnections(group.connections, query),
+            : filterConnections(group.connections, connectionQuery),
         }
       })
       .filter((group) => group.connections.length > 0 || (normalizedQuery.length === 0 && group.id !== '__ungrouped__'))
-  }, [groups, query])
-
-  const recentConnections = useMemo(() => recentDataSourceIds
-    .map((id) => connections.find((connection) => connection.id === id))
-    .filter((connection): connection is ConnectionConfig => Boolean(connection)), [connections, recentDataSourceIds])
+  }, [groups, connectionQuery])
 
   function openBoundSql(connection: ConnectionConfig) {
     addTab({
@@ -131,6 +139,8 @@ export function DataSourcesSidebar() {
     setExpandedDataSourceIds((current) => ({ ...current, [connection.id]: opening }))
     if (!opening) return
 
+    selectConnection(connection)
+
     try {
       if (statuses[connection.id]?.status !== 'connected') {
         await connectConnection(connection.id, { selectForBrowsing: false })
@@ -139,6 +149,11 @@ export function DataSourcesSidebar() {
     } catch {
       setExpandedDataSourceIds((current) => ({ ...current, [connection.id]: false }))
     }
+  }
+
+  function selectConnection(connection: ConnectionConfig) {
+    setActiveConnection(connection.id)
+    openBrowserWorkspace(connection.id, connection.name)
   }
 
   function openManagement() {
@@ -182,45 +197,88 @@ export function DataSourcesSidebar() {
     void saveConnection({ ...input, name: `${connection.name} Copy` })
   }
 
+  const currentConnectionId = tabs.find((tab) => tab.id === activeTabId)?.connectionId ?? browsingConnectionId
+
+  function locateCurrentConnection() {
+    const connection = connections.find((item) => item.id === currentConnectionId)
+    if (!connection) return
+    setQuery('')
+    setCollapsedGroups((current) => ({ ...current, [connection.groupId ?? '__ungrouped__']: false }))
+    requestAnimationFrame(() => {
+      const row = Array.from(treeRef.current?.querySelectorAll<HTMLElement>('[data-connection-id]') ?? [])
+        .find((item) => item.dataset.connectionId === connection.id)
+      row?.focus()
+      row?.scrollIntoView({ block: 'nearest' })
+    })
+  }
+
+  function refreshCurrentConnection() {
+    // A user action refreshes only the current, already-open connection.
+    // Reloading saved configuration never opens a database session.
+    void loadConnections()
+    if (browsingConnectionId && statuses[browsingConnectionId]?.status === 'connected') {
+      useMetadataStore.getState().requestConnectionRefresh(browsingConnectionId)
+    }
+  }
+
   const menuConnectionStatus: ConnectionRuntimeStatus = contextMenu
     ? statuses[contextMenu.connection.id]?.status ?? 'disconnected'
     : 'disconnected'
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t('connection.dataSources')}>
-      <header className="flex h-10 shrink-0 items-center border-b border-border/55 px-3.5">
-        <h2 className="min-w-0 flex-1 truncate text-[14px] font-[650] tracking-[-0.02em]">{t('connection.dataSources')}</h2>
-        <ConnectionDialog
-          trigger={
-            <Button type="button" size="icon-xs" variant="ghost" className="rounded-md hover:bg-primary/[0.07] hover:text-primary" title={t('connection.new')} aria-label={t('connection.new')}>
-              <Plus />
-            </Button>
-          }
-        />
+      <header className="flex h-[38px] shrink-0 items-center gap-0.5 border-b border-border/55 px-2">
+        <h2 className="min-w-0 flex-1 truncate pl-1 text-xs font-semibold">{t('connection.dataSources')}</h2>
+        <Button type="button" size="icon-xs" variant="ghost" title={t('connection.new')} aria-label={t('connection.new')} onClick={() => setConnectionDialogOpen(true)}>
+          <Plus className="size-4" />
+        </Button>
+        <Button type="button" size="icon-xs" variant="ghost" title={t('connection.refresh')} aria-label={t('connection.refresh')} onClick={refreshCurrentConnection}>
+          <RefreshCw className="size-3.5" />
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button size="icon-xs" variant="ghost" title={t('common.moreActions')} aria-label={t('common.moreActions')}><MoreHorizontal className="size-4" /></Button>} />
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem onClick={() => { setExpandedDataSourceIds({}); setCollapsedGroups(Object.fromEntries(groups.map((group) => [group.id, true]))) }}>
+              <ChevronsDownUp />{t('connection.collapseAll')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowSystemObjects(!showSystemObjects)}>
+              {showSystemObjects ? <EyeOff /> : <Eye />}{showSystemObjects ? t('explorer.hideSystemObjects') : t('explorer.showSystemObjects')}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!browsingConnectionId || statuses[browsingConnectionId]?.status !== 'connected'} onClick={() => { if (browsingConnectionId) void useMetadataStore.getState().startIndexing(browsingConnectionId) }}>
+              <ListFilter />{t('explorer.indexCurrentConnection')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={openManagement}><Database />{t('connection.manageDataSources')}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openDriverManager()}><Settings2 />{t('drivers.title')}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
 
-      <div className="shrink-0 border-b border-border/45 px-3.5 py-3.5">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      {connections.length > 0 && <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/45 px-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             id="data-source-tree-search-input"
-            className="h-9 rounded-lg border-border/80 bg-surface-secondary/75 pl-8 text-xs shadow-none hover:bg-surface focus-visible:bg-surface"
+            className="h-7 min-w-0 rounded-sm border-border/70 bg-surface/70 pl-7 pr-6 text-xs shadow-none"
             value={query}
-            placeholder={t('connection.searchDataSources')}
-            aria-label={t('connection.searchDataSources')}
+            placeholder={t(searchObjects ? 'explorer.searchPlaceholder' : 'connection.searchDataSources')}
+            aria-label={t(searchObjects ? 'explorer.searchPlaceholder' : 'connection.searchDataSources')}
             onChange={(event) => setQuery(event.target.value)}
           />
+          {query && <button type="button" className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-sm text-muted-foreground hover:text-foreground" aria-label={t('common.clear')} onClick={() => setQuery('')}><X className="size-3" /></button>}
         </div>
-      </div>
+        <Button type="button" size="icon-xs" variant="ghost" title={t('connection.locateCurrent')} aria-label={t('connection.locateCurrent')} disabled={!currentConnectionId} onClick={locateCurrentConnection}><Crosshair className="size-3.5" /></Button>
+        <Button type="button" size="icon-xs" variant={searchObjects ? 'secondary' : 'ghost'} title={t('connection.filterObjects')} aria-label={t('connection.filterObjects')} aria-pressed={searchObjects} onClick={() => { setSearchObjects(!searchObjects); setQuery('') }}><ListFilter className="size-3.5" /></Button>
+      </div>}
 
-      <div className="min-h-0 flex-1 overflow-auto py-2" role="tree" aria-label={t('connection.dataSources')}>
-        {filteredGroups.map((group) => {
-          const collapsed = query.trim() ? false : collapsedGroups[group.id] === true
+      <div ref={treeRef} className="data-source-tree min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-1" role="tree" aria-label={t('connection.dataSources')} onKeyDownCapture={handleTreeNavigation} onFocusCapture={roveTreeFocus}>
+        {connections.length > 0 && filteredGroups.map((group) => {
+          const collapsed = connectionQuery.trim() ? false : collapsedGroups[group.id] === true
           return (
             <ConnectionGroup
               key={group.id}
               id={group.id}
-              name={highlightDataSourceMatch(group.name, query)}
+              name={highlightDataSourceMatch(group.name, connectionQuery)}
               count={group.connections.length}
               collapsed={collapsed}
               onToggle={() => setCollapsedGroups((current) => ({ ...current, [group.id]: !collapsed }))}
@@ -231,7 +289,7 @@ export function DataSourcesSidebar() {
                 const selected = browsingConnectionId === connection.id
                 const expanded = expandedDataSourceIds[connection.id] === true
                 return (
-                  <div key={connection.id}>
+                  <div key={connection.id} role="none" className="min-w-0">
                     <ConnectionRow
                       connection={connection}
                       status={status}
@@ -239,16 +297,16 @@ export function DataSourcesSidebar() {
                       selected={selected}
                       expanded={expanded}
                       favorite={favoriteDataSourceIds.includes(connection.id)}
-                      query={query}
+                      query={connectionQuery}
                       t={t}
-                      onSelect={() => setActiveConnection(connection.id)}
+                      onSelect={() => selectConnection(connection)}
                       onOpen={() => openBoundSql(connection)}
                       onToggle={() => void toggleDataSourceNode(connection)}
                       onOpenMenu={({ x, y }) => setContextMenu({ connection, x, y })}
                     />
                     {expanded && status === 'connected' && (
-                      <div className="ml-5 border-l border-border-subtle/75 pl-1">
-                        <DatabaseTree connectionId={connection.id} compact />
+                      <div role="group">
+                        <DatabaseTree connectionId={connection.id} compact filterQuery={searchObjects ? query : ''} />
                       </div>
                     )}
                     {expanded && status === 'failed' && (
@@ -262,18 +320,16 @@ export function DataSourcesSidebar() {
             </ConnectionGroup>
           )
         })}
-        {filteredGroups.length === 0 && (
-          <div className="px-3 py-6 text-center text-xs text-muted-foreground">{t('connection.noMatches')}</div>
-        )}
-        {!query.trim() && (
-          <RecentSection
-            connections={recentConnections}
-            activeConnectionId={browsingConnectionId}
-            onSelect={(connection) => setActiveConnection(connection.id)}
-            t={t}
-          />
-        )}
+        {connections.length === 0 ? (
+          <div className="space-y-2 px-3 py-4 text-xs text-muted-foreground">
+            <p>{t('connection.empty')}</p>
+            <Button type="button" size="sm" variant="outline" onClick={() => setConnectionDialogOpen(true)}><Plus />{t('connection.new')}</Button>
+          </div>
+        ) : filteredGroups.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-muted-foreground" role="status">{t('connection.noMatches')}</div>
+        ) : null}
       </div>
+      <ConnectionDialog open={connectionDialogOpen} onOpenChange={setConnectionDialogOpen} hideTrigger />
 
       <ConnectionContextMenu
         context={contextMenu}
@@ -285,7 +341,7 @@ export function DataSourcesSidebar() {
         onConnect={(connection) => void connectConnection(connection.id)}
         onDisconnect={(connection) => void requestDisconnect(connection)}
         onNewQuery={openBoundSql}
-        onRefresh={(connection) => useMetadataStore.getState().clearConnection(connection.id)}
+        onRefresh={(connection) => useMetadataStore.getState().requestConnectionRefresh(connection.id)}
         onEdit={openManagement}
         onRename={setRenameConnectionTarget}
         onDuplicate={duplicateConnection}

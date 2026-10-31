@@ -39,7 +39,7 @@ includesAll(
   ['const RAIL_ITEMS = [', "{ view: 'explorer'", 'function openSettings()', "kind: 'settings'", '<DataSourcesSidebar />'],
   'Explorer-first left rail',
 )
-includesAll(dataSourcesSidebar, ['<DatabaseTree connectionId={connection.id} compact />'], 'Explorer Data Source composition')
+includesAll(dataSourcesSidebar, ["<DatabaseTree connectionId={connection.id} compact filterQuery={searchObjects ? query : ''} />"], 'Explorer Data Source composition')
 excludesAll(
   sidebar.slice(sidebar.indexOf('const RAIL_ITEMS = ['), sidebar.indexOf('export function Sidebar')),
   ["view: 'sql'", "view: 'sessions'", "view: 'history'"],
@@ -68,7 +68,7 @@ includesAll(
   'main workspace opening workflow',
 )
 includesAll(read('src/lib/executionTargetSwitch.ts'), ['getConsoleTransactionState', 'setConsoleTransactionMode', 'database: target?.database ?? null', 'schema: null'], 'transaction-aware execution target switching')
-includesAll(workbenchHome, ["t('home.welcomeTitle')", '<HomeQuickActions', '<RecentConnections', '<RecentQueries'], 'home opening workflow')
+includesAll(workbenchHome, ["t('browser.homeDescription')", '<HomeQuickActions', '<RecentConnections', '<RecentQueries'], 'home opening workflow')
 assert(
   !mainPanel.includes('ensureTab(activeConnectionId)'),
   'main workspace should not auto-create a SQL tab and hide home state',

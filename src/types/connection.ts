@@ -51,6 +51,9 @@ export interface DriverCapabilities {
   supportsExplain: boolean
   supportsCancel: boolean
   supportsDdl: boolean
+  supportsTableDdl?: boolean
+  supportsFunctions?: boolean
+  supportsSchemaObjects?: boolean
   supportsStreaming: boolean
   driverFetchStatus?: 'supported' | 'unsupported' | 'unknown'
   fetchStrategy?: string

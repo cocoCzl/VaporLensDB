@@ -102,6 +102,9 @@ impl DatabaseDriver for SqliteDriver {
             supports_explain: true,
             supports_cancel: false,
             supports_ddl: true,
+            supports_table_ddl: true,
+            supports_functions: false,
+            supports_schema_objects: true,
             supports_streaming: true,
             driver_fetch_status: "unknown".into(),
             fetch_strategy: "native".into(),
@@ -262,12 +265,12 @@ impl DatabaseDriver for SqliteDriver {
                     name: row.get::<_, String>(0)?,
                     ordinal_position: row.get::<_, i32>(1)? + 1,
                     data_type: row.get::<_, String>(2)?,
-                    nullable: !row.get::<_, bool>(3)?,
+                    nullable: row.get::<_, i64>(3)? == 0,
                     default_value: row.get::<_, Option<String>>(4)?,
                     character_maximum_length: None,
                     numeric_precision: None,
                     numeric_scale: None,
-                    is_primary_key: row.get::<_, i32>(5)? > 0,
+                    is_primary_key: row.get::<_, i64>(5)? > 0,
                     is_identity: false,
                     is_generated: matches!(row.get::<_, i32>(6)?, 2 | 3),
                     is_auto_increment: false,
@@ -576,15 +579,7 @@ fn execute_sqlite_query(
         return Ok(result);
     }
 
-    let columns = statement
-        .column_names()
-        .into_iter()
-        .map(|name| ColumnMeta {
-            name: name.to_string(),
-            data_type: "UNKNOWN".to_string(),
-            nullable: true,
-        })
-        .collect::<Vec<_>>();
+    let columns = sqlite_result_columns(&statement);
     let mut rows = statement.query([]).map_err(|error| AppError::QueryFailed {
         sql: sql.to_string(),
         message: error.to_string(),
@@ -608,6 +603,24 @@ fn execute_sqlite_query(
         truncated: false,
         max_rows: None,
     })
+}
+
+// SQLite exposes declared types even for empty results. Expressions without a
+// declared type remain UNKNOWN rather than guessing from the first row.
+fn sqlite_result_columns(statement: &rusqlite::Statement<'_>) -> Vec<ColumnMeta> {
+    statement
+        .columns()
+        .iter()
+        .map(|column| ColumnMeta {
+            name: column.name().to_string(),
+            data_type: column
+                .decl_type()
+                .filter(|value| !value.is_empty())
+                .unwrap_or("UNKNOWN")
+                .to_string(),
+            nullable: true,
+        })
+        .collect()
 }
 
 fn execute_sqlite_parameterized_query(
@@ -641,15 +654,7 @@ fn execute_sqlite_parameterized_query(
         result.query_id = query_id;
         return Ok(result);
     }
-    let columns = statement
-        .column_names()
-        .into_iter()
-        .map(|name| ColumnMeta {
-            name: name.to_string(),
-            data_type: "UNKNOWN".to_string(),
-            nullable: true,
-        })
-        .collect::<Vec<_>>();
+    let columns = sqlite_result_columns(&statement);
     let mut rows = statement
         .query(rusqlite::params_from_iter(values.iter()))
         .map_err(|error| AppError::QueryFailed {
@@ -702,15 +707,7 @@ fn stream_sqlite_query(
         return Ok((0, affected_rows, false));
     }
 
-    let columns = statement
-        .column_names()
-        .into_iter()
-        .map(|name| ColumnMeta {
-            name: name.to_string(),
-            data_type: "UNKNOWN".to_string(),
-            nullable: true,
-        })
-        .collect::<Vec<_>>();
+    let columns = sqlite_result_columns(&statement);
     let readonly = statement.readonly();
     let mut cursor = statement.query([]).map_err(|error| AppError::QueryFailed {
         sql: sql.to_string(),

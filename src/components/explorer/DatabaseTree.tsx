@@ -20,6 +20,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
+import { openBrowserWorkspace } from '@/components/workspace/openBrowserWorkspace'
 import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
 import {
   TreeNode,
@@ -148,9 +149,11 @@ const OBJECT_CATEGORY_ORDER: ObjectCategoryDefinition[] = [
 export function DatabaseTree({
   connectionId: connectionIdOverride,
   compact = false,
+  filterQuery = '',
 }: {
   connectionId?: string | null
   compact?: boolean
+  filterQuery?: string
 } = {}) {
   const { t } = useTranslation()
   const { activeConnectionId: browsingConnectionId, connections, statuses, lifecycleEpochs, busyConnectionIds, setActiveConnection } = useConnectionStore(useShallow((state) => ({
@@ -195,8 +198,10 @@ export function DatabaseTree({
   const { runQuery } = useQuery()
   const [nodes, setNodes] = useState<NodeMap>({})
   const [childIds, setChildIds] = useState<Record<string, string[]>>({})
-  const [filter, setFilter] = useState('')
+  const [localFilter, setFilter] = useState('')
+  const filter = compact ? filterQuery : localFilter
   const [indexSearchActive, setIndexSearchActive] = useState(false)
+  const [indexedFilter, setIndexedFilter] = useState('')
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     nodeId: string
@@ -247,7 +252,11 @@ export function DatabaseTree({
     return () => generationController.invalidateView()
   }, [activeConnectionId, viewKey])
 
-  const loadedNodes = useMemo(() => flattenTree(nodes, childIds, ROOT_ID), [nodes, childIds])
+  const loadedNodes = useMemo(() => flattenTree(nodes, childIds, ROOT_ID).map((node) => {
+    if (node.kind !== 'folder' || !node.meta?.folder) return node
+    const label = t(`explorer.folders.${node.meta.folder}`)
+    return { ...node, label, tooltip: rawPath([node.meta.database, node.meta.schema, node.meta.table, label]) }
+  }), [nodes, childIds, t])
   const visibleNodes = useMemo(() => {
     const normalizedFilter = filter.trim().toLowerCase()
     if (!normalizedFilter) {
@@ -261,7 +270,7 @@ export function DatabaseTree({
   }, [loadedNodes, filter])
   const hasLoadedTreeFilter = filter.trim().length > 0
   const showIndexResults =
-    indexSearchActive && canSearchCurrentConnection && filter.trim().length >= 2
+    indexSearchActive && canSearchCurrentConnection && filter.trim().length >= 2 && indexedFilter === filter.trim()
 
   async function loadRoot(force = false) {
     if (!activeConnectionId || !isConnected || connectionBusy || currentView.current !== viewKey) {
@@ -474,6 +483,8 @@ export function DatabaseTree({
       return
     }
 
+    if (!force && (node.kind === 'database' || node.kind === 'schema' || node.kind === 'folder')) selectNode(id)
+
     setNodes((state) => ({ ...state, [id]: { ...node, expanded: true, loading: true } }))
 
     if (node.childrenLoaded && !force) {
@@ -576,6 +587,7 @@ export function DatabaseTree({
     if (!activeConnectionId || query.length < 2 || !canSearchCurrentConnection) {
       return
     }
+    setIndexedFilter(filter.trim())
     setIndexSearchActive(true)
     await searchIndex(query, activeConnectionId)
   }
@@ -872,8 +884,18 @@ export function DatabaseTree({
 
   function selectNode(nodeId: string) {
     setSelectedNodeId(nodeId)
+    if (activeConnectionId) setActiveConnection(activeConnectionId)
     const node = nodes[nodeId]
     openObjectSummary(node)
+    if (activeConnectionId && node?.meta?.database && (node.kind === 'database' || node.kind === 'schema' || (node.kind === 'folder' && !node.meta.table))) {
+      const objectKind = OBJECT_CATEGORY_ORDER.find(category => category.folder === node.meta?.folder)?.kind
+      openBrowserWorkspace(activeConnectionId, node.label, {
+        kind: node.meta.schema ? 'schema' : 'database',
+        database: node.meta.database,
+        schema: node.meta.schema,
+        objectKind,
+      })
+    }
     if (!activeConnectionId || node?.kind !== 'schema' || !node.meta?.schema) {
       return
     }
@@ -949,6 +971,7 @@ export function DatabaseTree({
       return
     }
     setSelectedNodeId(node.id)
+    if (compact && ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       moveSelection(1)
@@ -1145,10 +1168,10 @@ export function DatabaseTree({
   return (
     <section
       className={compact
-        ? 'relative flex h-[clamp(19rem,45vh,30rem)] min-h-[19rem] max-h-[calc(100vh-11rem)] min-w-0 resize-y flex-col overflow-hidden border-t ide-surface'
+        ? 'min-w-0'
         : 'flex min-h-0 flex-1 flex-col border-t ide-surface'}
-      title={compact ? t('explorer.resizeObjectTree') : undefined}
     >
+      {!compact && <>
       <div className="flex h-8 items-center gap-1.5 border-b border-border/60 px-2">
         <Server className="size-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
@@ -1207,7 +1230,9 @@ export function DatabaseTree({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-1">
+      </>}
+
+      <div className={compact ? 'min-w-0' : 'min-h-0 flex-1 overflow-auto p-1'}>
         {showIndexResults ? (
           <MetadataSearchResults results={indexResults} onOpen={openIndexResult} t={t} />
         ) : !activeConnection ? (
@@ -1279,11 +1304,14 @@ export function DatabaseTree({
           />
         ) : (
           <>
-            <div className="grid gap-0.5" role="tree" aria-label={t('explorer.treeAria')}>
+            <div className={compact ? 'min-w-0' : 'grid gap-0.5'} role={compact ? 'group' : 'tree'} aria-label={t('explorer.treeAria')}>
               {visibleNodes.map((node) => (
                 <TreeNode
                   key={node.id}
                   node={node}
+                  embedded={compact}
+                  rowId={compact ? `${activeConnectionId}:${node.id}` : undefined}
+                  parentRowId={compact ? node.parentId === ROOT_ID ? `connection:${activeConnectionId}` : `${activeConnectionId}:${node.parentId}` : undefined}
                   selected={selectedNodeId === node.id}
                   onToggle={toggleNode}
                   onSelect={selectNode}
@@ -1330,7 +1358,6 @@ export function DatabaseTree({
           onClose={() => setContextMenu(null)}
         />
       )}
-      {compact && <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-1 border-t border-border/80" />}
     </section>
   )
 }
@@ -1596,11 +1623,22 @@ function folderNode(
     parentId: parent.id,
     label,
     kind: 'folder',
+    iconKind: folderIconKind(folder),
     depth: parent.depth + 1,
     expandable: true,
     tooltip: rawPath([parent.meta?.database, schema, table, label]),
     meta: { ...parent.meta, schema, table, folder },
   }
+}
+
+function folderIconKind(folder: ObjectCategoryFolder): DatabaseTreeNodeData['iconKind'] {
+  const kinds: Partial<Record<NonNullable<ObjectCategoryFolder>, DatabaseTreeNodeData['iconKind']>> = {
+    databases: 'database', schemas: 'schema', tables: 'table', views: 'view',
+    materializedViews: 'materializedView', columns: 'column', indexes: 'index',
+    foreignKeys: 'foreignKey', procedures: 'procedure', functions: 'function',
+    packages: 'package', sequences: 'sequence', triggers: 'trigger', synonyms: 'synonym', events: 'event',
+  }
+  return folder ? kinds[folder] : undefined
 }
 
 function schemaCategoryNodes(

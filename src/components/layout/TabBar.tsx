@@ -99,7 +99,7 @@ export function TabBar() {
                 }
               }}
               className={[
-                'group flex h-9 min-w-24 max-w-48 shrink-0 items-center border-r border-border/25 text-xs transition-colors',
+                'group flex h-9 min-w-24 max-w-48 shrink-0 items-center border-r border-border/25 text-xs',
                 active
                   ? 'bg-surface text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary))]'
                   : 'text-muted-foreground hover:bg-accent-hover hover:text-foreground',
@@ -306,6 +306,7 @@ function TabKindGlyph({ kind }: { kind: EditorTab['kind'] }) {
   if (kind === 'dataSources') return <Database className={iconClass} />
   if (kind === 'settings') return <Settings2 className={iconClass} />
   if (kind === 'diagram') return <Network className={iconClass} />
+  if (kind === 'browser') return <Database className={iconClass} />
   if (kind === 'data' || kind === 'structure' || kind === 'objectSummary') return <Table2 className={iconClass} />
   return <FileCode2 className={iconClass} />
 }

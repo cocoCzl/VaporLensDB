@@ -1,5 +1,6 @@
 import { productDisplayName } from '@/lib/productPresentation'
 import { DatabaseProductLabel } from '@/components/common/DatabaseProductLabel'
+import { connectionStatusLabel } from '@/components/sidebar/connectionPresentation'
 import { useTranslation } from 'react-i18next'
 import { lazy, Suspense } from 'react'
 import { Activity, AlertCircle, Database, Loader2, Square, Trash2 } from 'lucide-react'
@@ -69,6 +70,7 @@ function CurrentDataSourceStatus() {
   const connectionStatus = connection
     ? statuses[connection.id]?.status ?? 'disconnected'
     : 'disconnected'
+  const busy = useConnectionStore(state => Boolean(connection && state.busyConnectionIds[connection.id]))
 
   if (!connection) {
     return (
@@ -107,7 +109,7 @@ function CurrentDataSourceStatus() {
                 : 'bg-muted-foreground/45',
         ].join(' ')}
       />
-      <span className="shrink-0 text-[10px] text-muted-foreground">{executionTab ? t('status.executionDataSource') : t('status.browsingDataSource')}</span>
+      <span className="shrink-0 text-[10px] text-muted-foreground">{executionTab ? t('status.executionDataSource') : busy ? t('connection.connecting') : connectionStatus === 'connected' ? t('status.browsingDataSource') : connectionStatusLabel(connectionStatus, t)}</span>
       <span className="max-w-32 truncate font-medium text-foreground/85">{connection.name}</span>
       {context && <span className="hidden max-w-72 truncate text-muted-foreground min-[900px]:inline">{context}</span>}
     </span>
@@ -141,11 +143,8 @@ function TaskSessionStatus() {
       message: statuses[connection.id]?.message ?? null,
       runningTabs: tabs.filter((tab) => tab.connectionId === connection.id && Boolean(tab.runningQueryId)),
     }))
-    .filter((session) => session.status !== 'disconnected' || session.runningTabs.length > 0)
-  const runningQueryCount = runtimeSessions.reduce(
-    (count, session) => count + session.runningTabs.length,
-    0,
-  )
+    .filter((session) => session.status === 'connected')
+  const runningQueryCount = tabs.filter((tab) => Boolean(tab.runningQueryId)).length
 
   return (
     <Sheet>

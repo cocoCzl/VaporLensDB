@@ -30,7 +30,7 @@ const sidebar = read('src/components/layout/Sidebar.tsx')
 const dataSourcesSidebar = read('src/components/sidebar/DataSourcesSidebar.tsx')
 const settings = read('src/components/settings/SettingsWorkspacePanel.tsx')
 includesAll(sidebar, ["view: 'explorer'", "kind: 'settings'", '<DataSourcesSidebar />'], 'left rail')
-includesAll(dataSourcesSidebar, ['<DatabaseTree connectionId={connection.id} compact />'], 'left rail data source tree')
+includesAll(dataSourcesSidebar, ["<DatabaseTree connectionId={connection.id} compact filterQuery={searchObjects ? query : ''} />"], 'left rail data source tree')
 excludesAll(
   sidebar,
   ["view: 'dataSources'", "view: 'sql'", "view: 'sessions'", "sidebarView === 'settings'", "sidebarView === 'sql'", "sidebarView === 'sessions'", "view: 'structure'", 'StructurePanel', 'ObjectDetails'],

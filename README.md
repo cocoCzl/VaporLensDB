@@ -3,7 +3,7 @@
 [简体中文](README.zh-CN.md)
 
 VaporLensDB is a SQL-first database client for developers, built with Tauri 2,
-Rust and React. **Version 0.9.1 is under active development, before 1.0; it is
+Rust and React. **Version 0.1.0 is under active development, before 1.0; it is
 not yet stable or production-ready.** Build locally from source.
 
 ## Features

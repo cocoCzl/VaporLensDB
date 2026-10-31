@@ -1012,6 +1012,18 @@ impl DatabaseDriver for JdbcDriver {
             supports_explain: self.driver_type == DriverType::Oracle,
             supports_cancel: true,
             supports_ddl,
+            supports_table_ddl: self
+                .metadata_sql
+                .as_ref()
+                .is_some_and(|sql| sql.table_ddl.is_some()),
+            supports_functions: self
+                .metadata_sql
+                .as_ref()
+                .is_some_and(|sql| sql.functions.is_some()),
+            supports_schema_objects: self
+                .metadata_sql
+                .as_ref()
+                .is_some_and(|sql| sql.schema_objects.is_some()),
             supports_streaming: true,
             driver_fetch_status: "unknown".into(),
             fetch_strategy: "hintOnly".into(),

@@ -32,14 +32,13 @@ assert(sidebar.includes("? 'bg-primary/70'"), 'sidebar resize handle must reserv
 
 const dataSourcesSidebar = readFileSync(resolve(root, 'src/components/sidebar/DataSourcesSidebar.tsx'), 'utf8')
 const connectionRow = readFileSync(resolve(root, 'src/components/sidebar/ConnectionRow.tsx'), 'utf8')
-const recentSection = readFileSync(resolve(root, 'src/components/sidebar/RecentSection.tsx'), 'utf8')
 assert(dataSourcesSidebar.includes('<ConnectionDialog'), 'data-source header must own the new-connection action after global toolbar consolidation')
 assert(dataSourcesSidebar.includes('<ConnectionGroup'), 'data-source list must use the dedicated group component')
 assert(dataSourcesSidebar.includes('<ConnectionContextMenu'), 'data-source list must preserve connection context actions')
 assert(connectionRow.includes('connectionEndpoint(connection)'), 'connection rows must expose endpoint secondary text')
 assert(connectionRow.includes('<DatabaseVendorIcon'), 'connection rows must keep the vendor mark distinct from status')
 assert(connectionRow.includes('connectionStatusDotClass(status)'), 'connection rows must render a semantic connection state dot')
-assert(recentSection.includes("t('connection.recent')"), 'sidebar must surface the existing recent data-source state')
+assert(!dataSourcesSidebar.includes('<RecentSection'), 'recent connections must not duplicate the main sidebar tree')
 assert(!connectionRow.includes('emerald-') && !connectionRow.includes('amber-') && !connectionRow.includes('red-'), 'connection state colors must use semantic tokens')
 
 const app = readFileSync(resolve(root, 'src/App.tsx'), 'utf8')

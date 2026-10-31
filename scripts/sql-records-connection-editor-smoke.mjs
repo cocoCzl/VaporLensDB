@@ -32,8 +32,8 @@ const connectionEditor = read('src/components/connection/ConnectionEditorPanel.t
 assert(connectionEditor.includes("t('connection.selectToEdit')"), 'detail panel must distinguish no selection from an empty data-source list')
 
 const objectTree = read('src/components/explorer/DatabaseTree.tsx')
-assert(objectTree.includes("h-[clamp(19rem,45vh,30rem)]"), 'compact object tree must have a useful default height')
-assert(objectTree.includes('resize-y'), 'compact object tree must be vertically resizable')
+assert(!objectTree.includes("h-[clamp(19rem,45vh,30rem)]"), 'embedded object rows must flow with connections')
+assert(!objectTree.includes('resize-y'), 'embedded object tree must share sidebar scrolling')
 assert(!objectTree.includes('max-h-80'), 'compact object tree must not be limited to 320px')
 
 const form = read('src/components/connection/ConnectionForm.tsx')

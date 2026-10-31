@@ -1,6 +1,6 @@
 # Support and Limitations
 
-VaporLensDB 0.9.1 is under development. This page separates available
+VaporLensDB 0.1.0 is under development. This page separates available
 implementations from verification coverage. A build, capability flag or passing
 unit test does not establish desktop or vendor compatibility.
 

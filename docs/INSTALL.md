@@ -1,6 +1,6 @@
 # Install and First Use
 
-VaporLensDB 0.9.1 is under development. Build locally from source; local packages
+VaporLensDB 0.1.0 is under development. Build locally from source; local packages
 are not official signed/notarized releases. Database and platform limits are
 maintained in [SUPPORT](SUPPORT.md).
 

@@ -104,7 +104,7 @@ export function Sidebar() {
         <div className="flex-1" />
         <RailButton active={settingsActive} icon={Settings} label={t('nav.settings')} onClick={openSettings} />
       </nav>
-      {!sidebarCollapsed && <DataSourcesSidebar />}
+      <div hidden={sidebarCollapsed} className="min-h-0 min-w-0 flex-1 flex-col data-source-sidebar-content"><DataSourcesSidebar /></div>
       {!sidebarCollapsed && (
         <div
           role="separator"
@@ -152,7 +152,7 @@ function RailButton({
     <button
       type="button"
       className={[
-        'grid size-7 place-items-center rounded-md text-muted-foreground transition-colors',
+        'grid size-7 place-items-center rounded-md text-muted-foreground',
         active
           ? 'bg-accent-selected text-accent-foreground'
           : 'hover:bg-accent-hover hover:text-accent-foreground',

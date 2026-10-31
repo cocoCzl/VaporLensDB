@@ -6,7 +6,7 @@ export function HomeHeroArtwork() {
   return (
     <svg
       viewBox="0 0 520 220"
-      className="pointer-events-none absolute -right-5 -top-8 hidden h-[210px] w-[500px] max-w-[46%] @min-[950px]/home:block"
+      className="pointer-events-none hidden h-12 w-28 shrink-0 @min-[700px]/home:block"
       aria-hidden="true"
     >
       <ellipse cx="259" cy="111" rx="202" ry="77" fill="hsl(var(--primary) / 0.025)" />

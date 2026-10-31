@@ -88,6 +88,7 @@ async fn connects_queries_and_streams_sqlite() {
         .expect("query sqlite");
     assert_eq!(result.row_count, 3);
     assert_eq!(result.rows[0][0], serde_json::json!("Ada"));
+    assert_eq!(result.columns[0].data_type, "TEXT");
 
     let (chunk_tx, mut chunk_rx) = mpsc::channel(8);
     let summary = driver
@@ -129,6 +130,8 @@ async fn connects_queries_and_streams_sqlite() {
 
     assert_eq!(empty_summary.row_count, 0);
     assert!(empty_chunk.rows.is_empty());
+    assert_eq!(empty_chunk.columns[0].data_type, "INTEGER");
+    assert_eq!(empty_chunk.columns[1].data_type, "TEXT");
     assert_eq!(
         empty_chunk
             .columns
@@ -179,6 +182,15 @@ async fn reads_sqlite_metadata_and_ddl() {
         .expect("get sqlite columns");
     assert!(columns.iter().any(|column| column.name == "account_id"));
     assert!(columns.iter().any(|column| column.is_primary_key));
+    let id = columns.iter().find(|column| column.name == "id").unwrap();
+    assert_eq!(id.data_type, "INTEGER");
+    assert!(id.is_primary_key);
+    let account = columns
+        .iter()
+        .find(|column| column.name == "account_id")
+        .unwrap();
+    assert!(!account.nullable);
+    assert!(!account.is_primary_key);
 
     let indexes = driver
         .get_indexes("main", "customers")

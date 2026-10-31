@@ -5130,7 +5130,7 @@ dependencies = [
 
 [[package]]
 name = "vapor-lens-db"
-version = "0.9.1"
+version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "async-trait",

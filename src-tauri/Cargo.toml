@@ -1,6 +1,6 @@
 [package]
 name = "vapor-lens-db"
-version = "0.9.1"
+version = "0.1.0"
 description = "A modern cross-platform database management tool"
 authors = ["VaporLensDB Team"]
 edition = "2021"
@@ -30,7 +30,7 @@ async-trait = "0.1"
 futures-util = "0.3"
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 mysql_async = { version = "0.37", default-features = false, features = ["minimal", "native-tls-tls"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled", "column_decltype"] }
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "native-tls", "chrono"] }
 url = "2"
 tokio-util = { version = "0.7", features = ["compat"] }

@@ -67,6 +67,9 @@
     "disconnected": "未连接",
     "browsing": "浏览中",
     "select": "选择连接",
+    "locateCurrent": "定位当前连接",
+    "filterObjects": "过滤已加载对象",
+    "collapseAll": "全部收起",
     "searchDataSources": "搜索数据源…",
     "noMatches": "没有匹配的数据源",
     "recent": "最近",
@@ -467,6 +470,9 @@
     }
   },
   "workbench": {
+    "jdbcDdlUnsupported": "当前 JDBC 驱动不支持自动生成 DDL",
+    "metadataUnsupported": "当前驱动未提供此类对象的元数据能力。",
+    "functionsUnsupported": "当前驱动不支持函数元数据，已跳过函数加载；表、视图和字段补全仍可使用。",
     "previousResult": "旧数据源结果",
     "title": "工作台",
     "noDataSourceConnected": "未连接数据源",
@@ -622,6 +628,26 @@
     "explainSummary": "执行计划 · {{elapsedMs}} ms",
     "noResultsYet": "暂无查询结果",
     "runQueryToSeeResults": "运行查询后将在这里显示结果。"
+  },
+  "browser": {
+    "workbench": "工作台",
+    "homeDescription": "浏览数据库对象，或打开查询。",
+    "selectObject": "从左侧选择连接或数据库对象以开始工作。",
+    "emptyDescription": "添加数据源后即可浏览对象和编写 SQL。",
+    "workspace": "数据库工作区",
+    "connectionUnavailable": "此连接已不可用。",
+    "browsing": "正在浏览 · 已连接",
+    "session": "会话",
+    "liveSession": "真实会话 · 用于读取元数据",
+    "noSession": "尚未建立真实会话",
+    "databases": "数据库",
+    "schemas": "Schema",
+    "objects": "对象",
+    "filterObjects": "过滤对象…",
+    "name": "名称",
+    "kind": "类型",
+    "connectToBrowse": "点击连接，或展开左侧连接后加载对象。",
+    "noObjects": "当前范围没有对象。"
   },
   "home": {
     "welcomeTitle": "欢迎回来",

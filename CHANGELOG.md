@@ -1,8 +1,10 @@
 # Changelog
 
 All notable changes to VaporLensDB are documented in this file.
+Version numbering starts at 0.1.0. Earlier entries describe development
+milestones, not published releases.
 
-## [0.9.1]
+## [0.1.0] — Unreleased
 
 ### Added
 
@@ -39,14 +41,14 @@ All notable changes to VaporLensDB are documented in this file.
   NULL, Unicode, special-character and SQL-looking values, victim-table
   survival, and PostgreSQL wide-table parameter budgeting.
 
-## [0.9.0]
+## Earlier development: build readiness
 
 ### Changed
 
 - Finalized native build-target readiness and platform-validation documentation.
 - Added local macOS development and QA application-registration hygiene.
 
-## [0.8.5]
+## Earlier development: connection presentation
 
 ### Fixed
 
@@ -57,7 +59,7 @@ All notable changes to VaporLensDB are documented in this file.
 - Reduced the startup splash delay after the backend becomes ready.
 - Removed redundant generic guidance from data-source editing headers.
 
-## [0.8.4]
+## Earlier development: IDE workspace
 
 ### Added
 
@@ -74,7 +76,7 @@ All notable changes to VaporLensDB are documented in this file.
 
 - Verified PostgreSQL, MySQL, and Oracle against the complete live integration and release gates.
 
-## [0.8.3]
+## Earlier development: local packaging
 
 ### Added
 
@@ -100,14 +102,14 @@ All notable changes to VaporLensDB are documented in this file.
 
 - Removed obsolete public and runtime brand assets.
 
-## [0.8.2]
+## Earlier development: vendor icons
 
 ### Changed
 
 - Added database-vendor icons across data-source surfaces, with a neutral
   fallback for custom JDBC connections.
 
-## [0.8.1]
+## Earlier development: data-source workspace
 
 ### Added
 

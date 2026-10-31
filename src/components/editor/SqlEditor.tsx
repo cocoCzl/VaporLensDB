@@ -1,7 +1,7 @@
 import { sqlCommandShortcut, type SqlCursor } from '@/lib/sqlCommands'
 import Editor, { loader, type BeforeMount, type Monaco, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { registerSqlCompletionProvider } from '@/components/editor/AutoComplete'
 import { useUiStore } from '@/stores/uiStore'
 import type { DriverType } from '@/types/connection'
@@ -52,7 +52,26 @@ export function SqlEditor({
   const resolvedTheme = useUiStore((state) => state.resolvedTheme)
   const editorFontSize = useUiStore((state) => state.editorFontSize)
   const monacoRef = useRef<Monaco | null>(null)
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null)
   const editorTheme = resolvedTheme === 'dark' ? 'vaporlens-dark' : 'vaporlens-light'
+
+  // WKWebView can resolve percentage-sized Monaco canvases to zero inside flex panes.
+  // Measure the positioned host and pass concrete dimensions to the editor.
+  useLayoutEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const measure = () => {
+      const { width, height } = host.getBoundingClientRect()
+      if (width <= 0 || height <= 0) return
+      setDimensions(current => current?.width === width && current.height === height ? current : { width, height })
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     if (!monacoRef.current) return
@@ -117,8 +136,10 @@ export function SqlEditor({
   }
 
   return (
+    <div ref={hostRef} className="absolute inset-0 min-h-0 min-w-0">
     <Editor
-      height="100%"
+      width={dimensions?.width ?? '100%'}
+      height={dimensions?.height ?? '100%'}
       defaultLanguage="pgsql"
       value={value}
       theme={editorTheme}
@@ -143,6 +164,7 @@ export function SqlEditor({
         domReadOnly: readOnly,
       }}
     />
+    </div>
   )
 }
 

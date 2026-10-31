@@ -14,6 +14,8 @@ import { useExecutionTargetSwitch } from '@/hooks/useExecutionTargetSwitch'
 import { EditorToolbar } from '@/components/editor/EditorToolbar'
 import { ConnectionEditorPanel } from '@/components/connection/ConnectionEditorPanel'
 import { WorkbenchHome } from '@/components/home/WorkbenchHome'
+import { BrowserWorkspace } from '@/components/workspace/BrowserWorkspace'
+import { ObjectStructurePreview } from '@/components/workspace/ObjectStructurePreview'
 import { DataGrid, ResultMetadataGrid } from '@/components/grid/DataGrid'
 import { TableTriggers } from '@/components/inspector/TableTriggers'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
@@ -226,6 +228,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   }
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
+  const navigationOnly = activeTab?.kind === 'browser'
   const activeQueryId = activeTab?.lastQueryId ?? null
   const activeReport = useQueryResultStore(state => activeQueryId ? state.reports[activeQueryId] : undefined)
   const activeResults = useQueryResultStore((state) => activeQueryId ? state.results[activeQueryId] : undefined)
@@ -328,7 +331,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
 
   useEffect(() => {
     const tabId = activeTab?.id
-    if (!tabId || !connectionId || !connectionIsConnected || !queryCapabilities.canReadMetadata) {
+    if (navigationOnly || !tabId || !connectionId || !connectionIsConnected || !queryCapabilities.canReadMetadata) {
       return
     }
 
@@ -367,6 +370,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
       cancelled = true
     }
   }, [
+    navigationOnly,
     connectionId,
     activeTab?.id,
     connectionIsConnected,
@@ -385,6 +389,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
 
   useEffect(() => {
     if (
+      navigationOnly ||
       !connectionId ||
       !connectionIsConnected ||
       !selectedSchema ||
@@ -408,6 +413,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
       cancelled = true
     }
   }, [
+    navigationOnly,
     connectionId,
     connectionIsConnected,
     queryCapabilities.canReadMetadata,
@@ -541,6 +547,9 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   }
 
   const activeDataContext = activeTab.kind === 'data' ? activeTab.dataContext : null
+  if (activeTab.kind === 'browser' && activeTab.browserContext) {
+    return <main className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"><BrowserWorkspace key={`${activeTab.connectionId}:${JSON.stringify(activeTab.browserContext)}`} connectionId={activeTab.connectionId} context={activeTab.browserContext} /></main>
+  }
   if (activeTab.kind === 'dataSources') {
     return (
       <main className="flex flex-1 overflow-hidden bg-background">
@@ -583,8 +592,16 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <ObjectSummaryTabPanel
             tab={{ ...activeTab, objectSummaryContext: activeObjectSummaryContext }}
-            onOpenDataPreview={() => {
+            onOpenDataPreview={async () => {
               if (!activeTab.connectionId) {
+                return
+              }
+              let primaryKeyColumns: string[]
+              try {
+                const columns = await useMetadataStore.getState().loadColumns(activeTab.connectionId, activeObjectSummaryContext.schema, activeObjectSummaryContext.object)
+                primaryKeyColumns = columns.filter(column => column.isPrimaryKey).sort((a, b) => a.ordinalPosition - b.ordinalPosition).map(column => column.name)
+              } catch (error) {
+                notifyError(normalizeAppError(error), t('notifications.loadObjectStructureFailed'))
                 return
               }
               const sql = buildDataTabSql({
@@ -593,7 +610,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                 table: activeObjectSummaryContext.object,
                 limit: dataPreviewDefaultRows,
                 offset: 0,
-                primaryKeyColumns: [],
+                primaryKeyColumns,
               })
               const tabId = crypto.randomUUID()
               addTab({
@@ -610,7 +627,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                   driverType: activeObjectSummaryContext.driverType,
                   limit: dataPreviewDefaultRows,
                   offset: 0,
-                  primaryKeyColumns: [],
+                  primaryKeyColumns,
                 },
               })
               runQuery(tabId, activeTab.connectionId, sql, { maxRows: dataTabFetchLimit(dataPreviewDefaultRows) })
@@ -629,6 +646,11 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                   objectKind: activeObjectSummaryContext.objectKind,
                 },
               })
+            }}
+            onOpenQuery={() => {
+              addTab({ id: crypto.randomUUID(), kind: 'sql', title: `SQL · ${activeObjectSummaryContext.object}`, connectionId: activeTab.connectionId,
+                database: activeObjectSummaryContext.database, schema: activeObjectSummaryContext.schema,
+                sql: buildDataTabSql({ driverType: activeObjectSummaryContext.driverType, schema: activeObjectSummaryContext.schema, table: activeObjectSummaryContext.object, limit: dataPreviewDefaultRows, offset: 0, primaryKeyColumns: [] }) })
             }}
             onOpenDefinition={() => {
               addTab({
@@ -793,6 +815,8 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                 title: t('workbench.sqlTabTitle', { name: activeDefinitionContext.object }),
                 sql: activeTab.sql,
                 connectionId: activeTab.connectionId,
+                database: activeDefinitionContext.database,
+                schema: activeDefinitionContext.schema,
               })
             }}
           />
@@ -825,6 +849,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
     <main className="flex flex-1 overflow-hidden bg-background">
       <SqlWorkspace view={workspaceView}>
         <ExecutionContextBar />
+        {actualCapabilities?.supportsFunctions === false && <p className="border-b px-3 py-1 text-[11px] text-muted-foreground" role="status">{t('workbench.functionsUnsupported')}</p>}
         <EditorToolbar
         connections={connections}
         dataSourceGroups={dataSourceGroups}
@@ -904,7 +929,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
 
         <div className="relative min-h-0 flex-1">
         <div className="flex h-full min-w-0 flex-col overflow-hidden">
-        <div data-sql-editor className={workspaceView === 'results' ? 'hidden' : 'ide-editor-surface min-h-0 flex-1'}>
+        <div data-sql-editor className={workspaceView === 'results' ? 'hidden' : 'ide-editor-surface relative min-h-0 flex-1'}>
         {editorLoaded ? (
           <Suspense
             fallback={
@@ -1471,6 +1496,7 @@ function ObjectSummaryTabPanel({
   onOpenDefinition,
   onOpenInspector,
   onOpenDiagram,
+  onOpenQuery,
 }: {
   tab: EditorTab & { objectSummaryContext: NonNullable<EditorTab['objectSummaryContext']> }
   onOpenDataPreview: () => void
@@ -1478,39 +1504,35 @@ function ObjectSummaryTabPanel({
   onOpenDefinition: () => void
   onOpenInspector: () => void
   onOpenDiagram: () => void
+  onOpenQuery: () => void
 }) {
   const { t } = useTranslation()
   const context = tab.objectSummaryContext
+  const connection = useConnectionStore(state => state.connections.find(connection => connection.id === tab.connectionId))
+  const connected = useConnectionStore(state => Boolean(tab.connectionId && state.statuses[tab.connectionId]?.status === 'connected'))
   const qualified = [context.database, context.schema, context.object].filter(Boolean).join('.')
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-auto bg-background">
-      <div className="border-b px-5 py-4">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto bg-background">
+      <div className="min-w-0 border-b bg-surface px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded border bg-muted/45 px-2 py-1 text-[11px] font-medium uppercase text-muted-foreground">
-            {context.objectKind}
+            {t(`inspector.${context.objectKind}`)}
           </span>
-          <h1 className="min-w-0 truncate text-lg font-semibold">{context.object}</h1>
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold" title={context.object}>{context.object}</h1>
         </div>
         <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{qualified}</p>
       </div>
-      <div className="grid max-w-3xl gap-4 p-5">
+      <div className="grid min-w-0 gap-4 p-4">
+        <p className="truncate text-xs text-muted-foreground" title={connection?.name}>{connection?.name ?? tab.connectionId} · {context.driverType} · {t(connected ? 'browser.browsing' : 'browser.noSession')}</p>
         <section className="grid gap-2">
-          <h2 className="text-sm font-semibold">{t('workbench.summary')}</h2>
-          <div className="grid gap-2 rounded-md border bg-card p-3 text-sm">
-            <SummaryFact label={t('connection.dataSource')} value={tab.connectionId ?? '-'} />
-            <SummaryFact label={t('workbench.schema')} value={context.schema} />
-            <SummaryFact label={t('workbench.object')} value={context.object} />
-            <SummaryFact label={t('connectionForm.driver').replace(':', '')} value={context.driverType} />
-          </div>
-        </section>
-        <section className="grid gap-2">
-          <h2 className="text-sm font-semibold">{t('workbench.actions')}</h2>
+          <h2 className="text-xs font-semibold">{t('workbench.actions')}</h2>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="secondary" onClick={onOpenDataPreview}>
+            <Button type="button" size="sm" variant="secondary" disabled={!connected} onClick={onOpenDataPreview}>
               <DatabaseIcon className="size-3.5" />
               {t('workbench.previewData')}
             </Button>
+            <Button type="button" size="sm" variant="outline" onClick={onOpenQuery}><FileCode2 />{t('workbench.openInSqlTab')}</Button>
             <Button type="button" size="sm" variant="outline" onClick={onOpenStructure}>
               <FileCode2 className="size-3.5" />
               {t('workbench.structure')}
@@ -1529,17 +1551,9 @@ function ObjectSummaryTabPanel({
             </Button>
           </div>
         </section>
+        <ObjectStructurePreview key={`${tab.connectionId}:${context.schema}:${context.object}`} connectionId={tab.connectionId} schema={context.schema} object={context.object} />
       </div>
     </section>
-  )
-}
-
-function SummaryFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="truncate font-mono text-xs">{value}</span>
-    </div>
   )
 }
 
@@ -1821,7 +1835,8 @@ function StructureTabPanel({
   const [triggerRefresh, setTriggerRefresh] = useState(0)
   const [ddl, setDdl] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [issues, setIssues] = useState<Partial<Record<StructureSection, string>>>({})
+  const requestVersion = useRef(0)
   const context = tab.structureContext
 
   async function loadStructure(force = false) {
@@ -1829,33 +1844,43 @@ function StructureTabPanel({
       return
     }
 
+    const request = ++requestVersion.current
     setLoading(true)
-    setError(null)
-    try {
-      const [nextColumns, nextIndexes, nextForeignKeys, nextDdl] = await Promise.all([
-        metadata.loadColumns(tab.connectionId, context.schema, context.object, force),
-        metadata.loadIndexes(tab.connectionId, context.schema, context.object, force),
-        metadata.loadForeignKeys(tab.connectionId, context.schema, context.object, force),
-        getTableDdl(tab.connectionId, context.schema, context.object),
-      ])
-      setColumns(nextColumns)
-      setIndexes(nextIndexes)
-      setForeignKeys(nextForeignKeys)
-      setDdl(nextDdl)
-    } catch (loadError) {
-      const appError = normalizeAppError(loadError)
-      setError(appError.message)
-      notifyError(appError, t('workbench.loadStructureFailed'))
-    } finally {
-      setLoading(false)
+    setIssues({})
+    const capabilities = useConnectionStore.getState().capabilities[tab.connectionId]
+    const load = async <T,>(section: StructureSection, task: () => Promise<T>, commit: (value: T) => void) => {
+      try {
+        const value = await task()
+        if (requestVersion.current === request) commit(value)
+      } catch (error) {
+        if (requestVersion.current !== request) return
+        const appError = normalizeAppError(error)
+        const message = appError.code === 'UNSUPPORTED_OPERATION'
+          ? t(section === 'ddl' ? 'workbench.jdbcDdlUnsupported' : 'workbench.metadataUnsupported')
+          : appError.message
+        setIssues(current => ({ ...current, [section]: message }))
+        if (appError.code !== 'UNSUPPORTED_OPERATION') notifyError(appError, t('workbench.loadStructureFailed'))
+      }
     }
+    const connectionId = tab.connectionId
+    await Promise.allSettled([
+      load('columns', () => metadata.loadColumns(connectionId, context.schema, context.object, force), setColumns),
+      load('indexes', () => metadata.loadIndexes(connectionId, context.schema, context.object, force), setIndexes),
+      load('foreignKeys', () => metadata.loadForeignKeys(connectionId, context.schema, context.object, force), setForeignKeys),
+      load('ddl', () => capabilities?.supportsTableDdl === false || (capabilities?.supportsTableDdl === undefined && capabilities?.supportsDdl === false)
+        ? Promise.reject({ code: 'UNSUPPORTED_OPERATION', message: '' })
+        : getTableDdl(connectionId, context.schema, context.object, force), setDdl),
+    ])
+    if (requestVersion.current === request) setLoading(false)
   }
 
   useEffect(() => {
-    queueMicrotask(() => {
-      void loadStructure(false)
-    })
-    // Structure context is immutable for the tab lifetime; reload when tab identity changes.
+    let current = true
+    queueMicrotask(() => { if (current) void loadStructure(false) })
+    // This ref is a request counter, not a DOM node; cleanup must invalidate its latest value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { current = false; requestVersion.current++ }
+    // The context is immutable; invalidate all section responses on tab switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.id, tab.connectionId, context.schema, context.object])
 
@@ -1924,8 +1949,11 @@ function StructureTabPanel({
             refresh={triggerRefresh}
             onOpenDefinition={openTriggerDefinition}
           />
-        ) : error ? (
-          <ErrorDetails message={error} />
+        ) : issues[section] ? (
+          <div className="p-3 text-xs text-muted-foreground" role="status">
+            {issues[section]}
+            {section === 'ddl' && <Button className="ml-2" size="sm" variant="ghost" onClick={() => useEditorStore.getState().addTab({ id: crypto.randomUUID(), kind: 'sql', title: `SQL · ${context.object}`, sql: '', connectionId: tab.connectionId, database: context.database, schema: context.schema })}>{t('workbench.openInSqlTab')}</Button>}
+          </div>
         ) : loading && columns.length === 0 && ddl.length === 0 ? (
           <div className="grid h-full place-items-center text-xs text-muted-foreground">
             {t('workbench.loadingStructure')}
@@ -1938,13 +1966,16 @@ function StructureTabPanel({
           <ForeignKeysView foreignKeys={foreignKeys} />
 
         ) : (
+          <div className="flex h-full flex-col">
+          <Button className="self-end" size="sm" variant="ghost" onClick={() => useEditorStore.getState().addTab({ id: crypto.randomUUID(), kind: 'sql', title: `SQL · ${context.object}`, sql: ddl, connectionId: tab.connectionId, database: context.database, schema: context.schema })}>{t('workbench.openInSqlTab')}</Button>
           <textarea
-            className="h-full w-full resize-none bg-card p-3 font-mono text-xs leading-5 outline-none"
+            className="min-h-0 flex-1 w-full resize-none bg-card p-3 font-mono text-xs leading-5 outline-none"
             readOnly
             spellCheck={false}
             value={ddl}
           aria-label={t('workbench.readOnlyDdlAria')}
           />
+          </div>
         )}
       </div>
     </section>
@@ -2085,6 +2116,8 @@ function DefinitionTabPanel({
   const notifyError = useUiStore((state) => state.notifyError)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [unsupported, setUnsupported] = useState(false)
+  const requestVersion = useRef(0)
   const context = tab.definitionContext
 
   async function loadDefinition(force = false) {
@@ -2092,9 +2125,15 @@ function DefinitionTabPanel({
       return
     }
 
+    const request = ++requestVersion.current
     setLoading(true)
     setError(null)
+    setUnsupported(false)
     try {
+      const capabilities = useConnectionStore.getState().capabilities[tab.connectionId]
+      if (context.operation === 'tableDdl' && (capabilities?.supportsTableDdl === false || (capabilities?.supportsTableDdl === undefined && capabilities?.supportsDdl === false))) {
+        throw { code: 'UNSUPPORTED_OPERATION', message: '' }
+      }
       const text =
         context.operation === 'tableDdl'
           ? await getTableDdl(tab.connectionId, context.schema, context.object, force)
@@ -2105,22 +2144,31 @@ function DefinitionTabPanel({
               context.objectKind,
               force,
             )
-      onTextLoaded(text)
+      if (requestVersion.current === request) onTextLoaded(text)
     } catch (loadError) {
+      if (requestVersion.current !== request) return
       const appError = normalizeAppError(loadError)
-      setError(appError.message)
-      notifyError(appError, t('workbench.loadDefinitionFailed', { kind: context.definitionKind }))
+      if (appError.code === 'UNSUPPORTED_OPERATION') {
+        setUnsupported(true)
+      } else {
+        setError(appError.message)
+        notifyError(appError, t('workbench.loadDefinitionFailed', { kind: context.definitionKind }))
+      }
     } finally {
-      setLoading(false)
+      if (requestVersion.current === request) setLoading(false)
     }
   }
 
   useEffect(() => {
+    let current = true
     if (!tab.sql) {
       queueMicrotask(() => {
-        void loadDefinition(false)
+        if (current) void loadDefinition(false)
       })
     }
+    // This ref is a request counter, not a DOM node; cleanup must invalidate its latest value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { current = false; requestVersion.current++ }
     // Definition context is immutable for the tab lifetime; reload only when the tab changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.id, tab.connectionId, context.schema, context.object, context.objectKind])
@@ -2158,7 +2206,7 @@ function DefinitionTabPanel({
           >
             {t('common.copy')}
           </Button>
-          <Button type="button" size="sm" variant="ghost" disabled={!tab.sql} onClick={onOpenSqlTab}>
+          <Button type="button" size="sm" variant="ghost" disabled={loading || (!tab.sql && !unsupported)} onClick={onOpenSqlTab}>
             {t('workbench.openInSqlTab')}
           </Button>
           <Button
@@ -2175,32 +2223,22 @@ function DefinitionTabPanel({
       </div>
       <div className="flex h-8 shrink-0 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
         <span>{t('workbench.readOnlyDefinition')}</span>
-        <span>{t('workbench.findHint')}</span>
       </div>
-      <div className="min-h-0 flex-1">
-        {error ? (
+      <div className="relative min-h-0 flex-1">
+        {unsupported ? <StructureEmpty label={t('workbench.jdbcDdlUnsupported')} /> : error ? (
           <DefinitionError context={context} message={error} />
         ) : loading && !tab.sql ? (
           <div className="grid h-full place-items-center text-xs text-muted-foreground">
             {t('workbench.loadingDefinition', { kind: context.definitionKind })}
           </div>
         ) : (
-          <Suspense
-            fallback={
-              <div className="grid h-full place-items-center bg-card text-xs text-muted-foreground">
-                {t('workbench.loadingReadOnlyEditor')}
-              </div>
-            }
-          >
-            <SqlEditor
-              value={tab.sql}
-              connectionId={null}
-              schema={context.schema}
-              readOnly
-              onChange={() => undefined}
-              onRun={() => undefined}
-            />
-          </Suspense>
+          <textarea
+            className="absolute inset-0 h-full w-full resize-none border-0 bg-card p-3 font-mono text-xs leading-5 text-foreground outline-none"
+            readOnly
+            spellCheck={false}
+            value={tab.sql}
+            aria-label={t('workbench.readOnlyDdlAria')}
+          />
         )}
       </div>
     </section>

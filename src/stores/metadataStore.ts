@@ -14,6 +14,7 @@ import {
   startMetadataIndexTask,
 } from '@/ipc/metadata'
 import { normalizeAppError } from '@/ipc/client'
+import { useConnectionStore } from '@/stores/connectionStore'
 import { useTaskStore } from '@/stores/taskStore'
 import { useUiStore } from '@/stores/uiStore'
 import type {
@@ -186,7 +187,8 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       set,
       metadataLoadingKey(cacheKey, 'functions'),
       force,
-      () => getFunctions(connectionId, schema),
+      () => useConnectionStore.getState().capabilities[connectionId]?.supportsFunctions === false
+        ? Promise.resolve([]) : getFunctions(connectionId, schema),
       (functions) => set((state) => ({ functions: putBounded(state.functions, cacheKey, functions) })),
     )
   },
@@ -200,7 +202,8 @@ export const useMetadataStore = create<MetadataState>()((set, get) => ({
       set,
       metadataLoadingKey(cacheKey, 'schemaObjects'),
       force,
-      () => getSchemaObjects(connectionId, schema, kind),
+      () => useConnectionStore.getState().capabilities[connectionId]?.supportsSchemaObjects === false
+        ? Promise.resolve([]) : getSchemaObjects(connectionId, schema, kind),
       (objects) => set((state) => ({ schemaObjects: putBounded(state.schemaObjects, cacheKey, objects) })),
     )
   },
