@@ -87,6 +87,7 @@ const SqlEditor = lazy(loadSqlEditor)
 const ERDiagram = lazy(() => import('@/components/diagram/ERDiagram').then((module) => ({
   default: module.ERDiagram,
 })))
+const DriverWorkspace = lazy(() => import('@/components/connection/DriverWorkspace').then(module => ({ default: module.DriverWorkspace })))
 const SettingsWorkspacePanel = lazy(() => import('@/components/settings/SettingsWorkspacePanel').then((module) => ({
   default: module.SettingsWorkspacePanel,
 })))
@@ -558,9 +559,15 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
     )
   }
 
+  if (activeTab.kind === 'drivers') {
+    return <main className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+      <Suspense fallback={<WorkspaceLoading label={t('common.loading')} />}><DriverWorkspace /></Suspense>
+    </main>
+  }
+
   if (activeTab.kind === 'settings') {
     return (
-      <main className="flex flex-1 overflow-hidden bg-background">
+      <main className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
         <Suspense fallback={<WorkspaceLoading label={t('common.loading')} />}>
           <SettingsWorkspacePanel />
         </Suspense>

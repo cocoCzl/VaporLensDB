@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import { DataSourcesSidebar } from './DataSourcesSidebar'
+import { NEW_CONNECTION_EVENT } from '@/lib/workspaceNavigation'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useMetadataStore } from '@/stores/metadataStore'
@@ -10,7 +11,6 @@ import { useUiStore } from '@/stores/uiStore'
 
 vi.mock('@/hooks/useQuery', () => ({ useQuery: () => ({ runQuery: vi.fn() }) }))
 vi.mock('@/hooks/useDisconnectRequest', () => ({ useDisconnectRequest: () => ({ requestDisconnect: vi.fn(), disconnectDialog: null }) }))
-vi.mock('@/components/connection/ConnectionDialog', () => ({ ConnectionDialog: ({ open }: { open?: boolean }) => open ? <div role="dialog">New connection</div> : null }))
 
 const loadConnections = vi.fn().mockResolvedValue(undefined)
 const connectConnection = vi.fn().mockResolvedValue(undefined)
@@ -140,14 +140,17 @@ describe('continuous data-source tree', () => {
     expect(requestConnectionRefresh).not.toHaveBeenCalled()
   })
 
-  it('uses a compact empty state and opens the existing connection dialog', () => {
+  it('uses a compact empty state and requests the shared connection workflow', () => {
+    const open = vi.fn()
+    window.addEventListener(NEW_CONNECTION_EVENT, open)
     useConnectionStore.setState({ connections: [] })
     render(<DataSourcesSidebar />)
     expect(screen.getByText('No data sources')).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('treeitem')).not.toBeInTheDocument()
     fireEvent.click(within(screen.getByRole('tree')).getByRole('button', { name: 'New Connection' }))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(open).toHaveBeenCalledOnce()
+    window.removeEventListener(NEW_CONNECTION_EVENT, open)
     expect(connectConnection).not.toHaveBeenCalled()
   })
 

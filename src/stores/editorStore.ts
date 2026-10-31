@@ -20,6 +20,7 @@ export interface EditorTab {
     | 'sqlScripts'
     | 'queryHistory'
     | 'settings'
+    | 'drivers'
     | 'objectSummary'
     | 'browser'
   title: string

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import { useDriverStore } from '@/stores/driverStore'
 import { ConnectionForm } from './ConnectionForm'
-import { DriverDefinitionsSettings } from '@/components/settings/SettingsWorkspacePanel'
+import { DriverWorkspace } from './DriverWorkspace'
 import type { DatabaseProduct, DriverDefinition, DriverInstallation } from '@/types/driver'
 
 const db = vi.hoisted(() => ({ products: [] as DatabaseProduct[], drivers: [] as DriverDefinition[], installations: [] as DriverInstallation[] }))
@@ -27,7 +27,7 @@ async function saveOnly() {fireEvent.click(screen.getByRole('button', { name: i1
 
 describe('Product → driver → installation workflows (mock IPC)', () => {
   it('creates two arbitrary products in the manager and immediately shows separate catalog entries', async () => {
-    const manager=render(<DriverDefinitionsSettings />)
+    const manager=render(<DriverWorkspace />)
     for (const name of ['Arbitrary database A','Unrelated database B']) {
       fireEvent.click(screen.getByRole('button',{name:i18n.t('driverRefactor.addProduct')}))
       fireEvent.change(screen.getByLabelText(i18n.t('driverWorkflow.databaseName')), {target:{value:name}})

@@ -101,7 +101,10 @@ excludesAll(
 
 const driverWorkspace = read('src/components/connection/DriverWorkspace.tsx')
 const installationPage = read('src/components/connection/JdbcInstallationActions.tsx')
-includesAll(settingsWorkspace, ['DriverDefinitionsSettings', '<DriverWorkspace />', "activeSection === 'drivers'"], 'shared settings driver content')
+includesAll(settingsWorkspace, ["openWorkspaceTab('drivers')", "activeSection === 'drivers'"], 'settings compatibility redirect to independent drivers workspace')
+assert(!settingsWorkspace.includes("import { DriverWorkspace }"), 'general settings must not eagerly import the driver manager')
+const mainPanel = read('src/components/layout/MainPanel.tsx')
+includesAll(mainPanel, ["lazy(() => import('@/components/connection/DriverWorkspace')", "activeTab.kind === 'drivers'", '<DriverWorkspace />'], 'lazy independent driver workspace')
 includesAll(driverWorkspace, [
   'WorkflowHeader', 'WorkflowFooter', "'manage' | 'product' | 'definition'", "@min-[700px]/driver:grid-cols-[15rem_minmax(0,1fr)]",
   'visibleDrivers', 'selectedId', 'newDefinition()', 'saveDriver', 'deleteDriver', 'deleteInstallation', 'validateDriver',

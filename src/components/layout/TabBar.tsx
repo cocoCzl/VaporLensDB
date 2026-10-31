@@ -1,4 +1,4 @@
-import { Check, Database, FileCode2, List, Network, Pin, Settings2, Table2, X } from 'lucide-react'
+import { Check, Database, FileCode2, HardDrive, List, Network, Pin, Settings2, Table2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -81,13 +81,13 @@ export function TabBar() {
   }
 
   return (
-    <div className="ide-tab-strip flex h-9 items-center border-b">
+    <div className="ide-tab-strip flex h-9 shrink-0 items-center border-b">
       <div className="tab-strip-scroll flex min-w-0 flex-1 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId
           const connection = connections.find((item) => item.id === tab.connectionId)
           const editing = editingTabId === tab.id
-          const managementTab = tab.kind === 'dataSources' || tab.kind === 'settings'
+          const managementTab = tab.kind === 'dataSources' || tab.kind === 'settings' || tab.kind === 'drivers'
           return (
             <div
               key={tab.id}
@@ -164,7 +164,7 @@ export function TabBar() {
                       title={connection ? `${connection.name} · ${connectionStatusLabel(statuses[connection.id]?.status ?? 'disconnected', t)}` : t('connection.disconnected')}
                     />
                   )}
-                  <span className="min-w-0 truncate">{tab.title}</span>
+                  <span className="min-w-0 truncate">{tab.kind === 'drivers' ? t('topBar.drivers') : tab.kind === 'settings' ? t('settings.title') : tab.title}</span>
                   {tab.dirty && (
                     <span
                       className="size-1.5 shrink-0 rounded-full bg-primary"
@@ -222,7 +222,7 @@ export function TabBar() {
                 }}
               >
                 <span className={['size-1.5 rounded-full', connectionStatusClass(tab.connectionId ? statuses[tab.connectionId]?.status ?? 'disconnected' : 'disconnected')].join(' ')} />
-                <span className="min-w-0 flex-1 truncate">{tab.title}</span>
+                <span className="min-w-0 flex-1 truncate">{tab.kind === 'drivers' ? t('topBar.drivers') : tab.kind === 'settings' ? t('settings.title') : tab.title}</span>
                 {tab.dirty && <span className="size-1.5 rounded-full bg-primary" title={t('sql.unsavedChanges')} />}
                 {tab.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" />}
               </button>
@@ -304,6 +304,7 @@ export function TabBar() {
 function TabKindGlyph({ kind }: { kind: EditorTab['kind'] }) {
   const iconClass = 'size-3.5 shrink-0 text-muted-foreground'
   if (kind === 'dataSources') return <Database className={iconClass} />
+  if (kind === 'drivers') return <HardDrive className={iconClass} />
   if (kind === 'settings') return <Settings2 className={iconClass} />
   if (kind === 'diagram') return <Network className={iconClass} />
   if (kind === 'browser') return <Database className={iconClass} />

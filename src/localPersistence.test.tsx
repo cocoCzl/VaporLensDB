@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DriverDefinition } from '@/types/driver'
 
@@ -59,7 +59,7 @@ describe('workbench local persistence degradation', () => {
       const { default: i18n } = await import('@/i18n')
       expect(i18n.language).toBe('zh')
       expect(screen.queryByRole('status', { name: i18n.t('app.name') + ' ' + i18n.t('common.loading') })).not.toBeInTheDocument()
-      fireEvent.click(screen.getByText(i18n.t('home.newConnection'), { selector: 'span' }).closest('button')!)
+      fireEvent.click(within(screen.getByRole('banner', { name: i18n.t('topBar.label') })).getByRole('button', { name: i18n.t('connection.new') }))
       expect(screen.getByRole('dialog', { name: i18n.t('connection.newTitle') })).toBeVisible()
       fireEvent.click(screen.getByRole('button', { name: i18n.t('common.cancel') }))
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })

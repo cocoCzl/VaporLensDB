@@ -1,5 +1,6 @@
 import { CredentialCleanupDiagnostics } from './CredentialCleanupDiagnostics'
-import { DriverWorkspace } from '@/components/connection/DriverWorkspace'
+import { openWorkspaceTab } from '@/lib/workspaceNavigation'
+import { AppSelect } from '@/components/ui/app-select'
 import {
   Check,
   Database,
@@ -81,6 +82,13 @@ export function SettingsWorkspacePanel() {
   const clearHistory = useQueryHistoryStore((state) => state.clear)
   const activeSection = useUiStore((state) => state.settingsSection)
   const setActiveSection = useUiStore((state) => state.setSettingsSection)
+  useEffect(() => {
+    if (activeSection === 'drivers') {
+      setActiveSection('general')
+      openWorkspaceTab('drivers')
+    }
+  }, [activeSection, setActiveSection])
+
   const [confirmClearHistory, setConfirmClearHistory] = useState(false)
   const [includeDiagnosticsSqlText, setIncludeDiagnosticsSqlText] = useState(false)
   const [diagnosticsExporting, setDiagnosticsExporting] = useState(false)
@@ -214,10 +222,20 @@ export function SettingsWorkspacePanel() {
   }
 
   return (
-    <section className="ide-workspace @container/settings flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <div className={`min-h-0 flex-1 ${activeSection === 'drivers' ? 'overflow-hidden' : 'overflow-auto'}`}>
-        <div className={`grid min-w-0 @min-[850px]/settings:grid-cols-[13.5rem_minmax(0,1fr)] ${activeSection === 'drivers' ? 'h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] @min-[850px]/settings:grid-rows-[minmax(0,1fr)]' : 'min-h-full'}`}>
-          <nav className="ide-settings-nav grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] content-start gap-1 border-b p-2 @min-[850px]/settings:block @min-[850px]/settings:border-r @min-[850px]/settings:border-b-0" aria-label={t('settings.title')}>
+    <section data-settings-workspace className="ide-workspace @container/settings flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="grid h-full min-h-0 min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden @min-[700px]/settings:grid-cols-[12rem_minmax(0,1fr)] @min-[700px]/settings:grid-rows-[minmax(0,1fr)]">
+          <div className="shrink-0 border-b p-2 @min-[700px]/settings:hidden">
+            <AppSelect aria-label={t('settings.sections')} value={activeSection} onValueChange={(section) => {
+              if (section === 'drivers') openWorkspaceTab('drivers')
+              else if (section === 'general' || section === 'import' || section === 'diagnostics') setActiveSection(section)
+            }} options={[
+              { value: 'general', label: t('settings.general') },
+              { value: 'drivers', label: t('drivers.title') },
+              { value: 'import', label: t('dbeaver.title') },
+              { value: 'diagnostics', label: t('settings.diagnostics.title') },
+            ]} />
+          </div>
+          <nav data-settings-nav className="ide-settings-nav hidden min-h-0 overflow-y-auto overscroll-contain border-r p-2 @min-[700px]/settings:block" aria-label={t('settings.title')}>
             <SettingsNavButton
               active={activeSection === 'general'}
               icon={Settings}
@@ -230,7 +248,7 @@ export function SettingsWorkspacePanel() {
               icon={HardDrive}
               title={t('drivers.title')}
               detail={t('drivers.navHint')}
-              onClick={() => setActiveSection('drivers')}
+              onClick={() => openWorkspaceTab('drivers')}
             />
             <SettingsNavButton
               active={activeSection === 'import'}
@@ -248,7 +266,7 @@ export function SettingsWorkspacePanel() {
             />
           </nav>
 
-          <div className={`min-w-0 p-4 md:px-6 md:py-5 ${activeSection === 'drivers' ? 'flex min-h-0 flex-col overflow-hidden' : ''}`}>
+          <div data-settings-content role="region" aria-label={t('settings.content')} tabIndex={0} className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain p-4 @min-[700px]/settings:px-6 @min-[700px]/settings:py-5">
             {activeSection === 'general' && (
               <div className="mx-auto grid max-w-[54rem] gap-5">
                 <div className="flex min-h-9 flex-wrap items-center justify-between gap-3 border-b border-border/70 px-1 pb-3 text-xs">
@@ -399,8 +417,6 @@ export function SettingsWorkspacePanel() {
               </div>
             )}
 
-            {activeSection === 'drivers' && <DriverDefinitionsSettings />}
-
             {activeSection === 'import' && (
               <div className="mx-auto max-w-5xl">
                 <DbeaverImportSettings
@@ -487,14 +503,9 @@ export function SettingsWorkspacePanel() {
               </div>
             )}
           </div>
-        </div>
       </div>
     </section>
   )
-}
-
-export function DriverDefinitionsSettings() {
-  return <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-surface"><DriverWorkspace /></div>
 }
 
 export function DbeaverImportSettings({
@@ -784,6 +795,7 @@ function SettingsNavButton({
           : 'text-muted-foreground hover:bg-background/75 hover:text-foreground',
       ].join(' ')}
       title={detail}
+      aria-current={active ? 'page' : undefined}
       onClick={onClick}
     >
       <Icon className="size-3.5" />

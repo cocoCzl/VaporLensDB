@@ -2,7 +2,7 @@ import { ChevronsDownUp, Crosshair, Database, Eye, EyeOff, ListFilter, MoreHoriz
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
+import { requestNewConnection } from '@/lib/workspaceNavigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DatabaseTree } from '@/components/explorer/DatabaseTree'
@@ -78,7 +78,6 @@ export function DataSourcesSidebar() {
   const [renameConnectionTarget, setRenameConnectionTarget] = useState<ConnectionConfig | null>(null)
   const [query, setQuery] = useState('')
   const [searchObjects, setSearchObjects] = useState(false)
-  const [connectionDialogOpen, setConnectionDialogOpen] = useState(false)
   const treeRef = useRef<HTMLDivElement>(null)
   const connectionQuery = searchObjects ? '' : query
   const pendingMoveConnectionIds = useRef(new Set<string>())
@@ -229,7 +228,7 @@ export function DataSourcesSidebar() {
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t('connection.dataSources')}>
       <header className="flex h-[38px] shrink-0 items-center gap-0.5 border-b border-border/55 px-2">
         <h2 className="min-w-0 flex-1 truncate pl-1 text-xs font-semibold">{t('connection.dataSources')}</h2>
-        <Button type="button" size="icon-xs" variant="ghost" title={t('connection.new')} aria-label={t('connection.new')} onClick={() => setConnectionDialogOpen(true)}>
+        <Button type="button" size="icon-xs" variant="ghost" title={t('connection.new')} aria-label={t('connection.new')} onClick={requestNewConnection}>
           <Plus className="size-4" />
         </Button>
         <Button type="button" size="icon-xs" variant="ghost" title={t('connection.refresh')} aria-label={t('connection.refresh')} onClick={refreshCurrentConnection}>
@@ -323,13 +322,12 @@ export function DataSourcesSidebar() {
         {connections.length === 0 ? (
           <div className="space-y-2 px-3 py-4 text-xs text-muted-foreground">
             <p>{t('connection.empty')}</p>
-            <Button type="button" size="sm" variant="outline" onClick={() => setConnectionDialogOpen(true)}><Plus />{t('connection.new')}</Button>
+            <Button type="button" size="sm" variant="outline" onClick={requestNewConnection}><Plus />{t('connection.new')}</Button>
           </div>
         ) : filteredGroups.length === 0 ? (
           <div className="px-3 py-4 text-xs text-muted-foreground" role="status">{t('connection.noMatches')}</div>
         ) : null}
       </div>
-      <ConnectionDialog open={connectionDialogOpen} onOpenChange={setConnectionDialogOpen} hideTrigger />
 
       <ConnectionContextMenu
         context={contextMenu}

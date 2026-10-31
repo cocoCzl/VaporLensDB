@@ -157,6 +157,11 @@ function main() {
   }
   const metrics = measureApplicationChunks(manifest)
   const failures = evaluateBudget(metrics)
+  const classification = classifyApplicationChunks(manifest)
+  const driverWorkspace = 'src/components/connection/DriverWorkspace.tsx'
+  if (!classification.lazy.has(driverWorkspace) || classification.startup.has(driverWorkspace)) {
+    failures.push('DriverWorkspace must remain a separate lazy chunk, outside startup imports')
+  }
   const report = formatBudgetReport(metrics)
   if (failures.length > 0) {
     process.stderr.write(`Bundle budget exceeded:\n${failures.map((failure) => `- ${failure}`).join('\n')}\n${report}\n`)

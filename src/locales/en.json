@@ -8,6 +8,10 @@
     "retryView": "Retry view"
   },
   "topBar": {
+    "drivers": "Driver Manager",
+    "more": "More",
+    "workspaces": "Switch workspace",
+    "home": "Home",
     "label": "Application toolbar",
     "backUnavailable": "Back — no navigation history",
     "forwardUnavailable": "Forward — no navigation history",
@@ -743,6 +747,8 @@
     "metadataEmpty": "No result-set field metadata is available"
   },
   "settings": {
+    "sections": "Settings sections",
+    "content": "Settings content",
     "title": "Settings",
     "subtitle": "Local Preferences",
     "theme": {

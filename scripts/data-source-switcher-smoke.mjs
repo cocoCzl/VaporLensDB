@@ -55,7 +55,7 @@ includesAll(
     'useDisconnectRequest',
     'requestDisconnect(connection)',
     'toggleFavoriteDataSource(connection.id)',
-    '<ConnectionDialog',
+    'onClick={requestNewConnection}',
   ],
   'grouped Data Source explorer workflow',
 )

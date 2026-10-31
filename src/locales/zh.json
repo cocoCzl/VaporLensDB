@@ -8,6 +8,10 @@
     "retryView": "重试当前界面"
   },
   "topBar": {
+    "drivers": "驱动管理",
+    "more": "更多",
+    "workspaces": "切换工作区",
+    "home": "首页",
     "label": "应用工具栏",
     "backUnavailable": "后退 — 暂无导航历史",
     "forwardUnavailable": "前进 — 暂无导航历史",
@@ -743,6 +747,8 @@
     "metadataEmpty": "暂无可显示的结果集字段元数据"
   },
   "settings": {
+    "sections": "设置分类",
+    "content": "设置内容",
     "title": "设置",
     "subtitle": "本地偏好",
     "theme": {
