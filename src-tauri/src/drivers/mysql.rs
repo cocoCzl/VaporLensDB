@@ -503,7 +503,7 @@ impl DatabaseDriver for MysqlDriver {
             SELECT table_schema, table_name, table_type, table_rows
             FROM information_schema.tables
             WHERE table_schema = ?
-              AND table_type = 'VIEW'
+              AND table_type IN ('VIEW', 'SYSTEM VIEW')
             ORDER BY table_name
         "#;
         let mut conn = self.conn.lock().await;
@@ -534,14 +534,17 @@ impl DatabaseDriver for MysqlDriver {
             escape_identifier(table)
         );
         let mut conn = self.conn.lock().await;
-        let row: Option<(String, String)> = conn
+        // SHOW CREATE returns two columns for tables, but four for views.
+        // Decoding a fixed tuple panics on a view and leaves the UI request pending.
+        let row: Option<Row> = conn
             .query_first(&sql)
             .await
             .map_err(|error| map_mysql_query_error(&sql, error))?;
-        row.map(|(_, ddl)| ddl).ok_or_else(|| AppError::NotFound {
+        let row = row.ok_or_else(|| AppError::NotFound {
             resource: "table".to_string(),
             id: format!("{schema}.{table}"),
-        })
+        })?;
+        mysql_required_metadata(&row, 1, "create_statement")
     }
 
     async fn get_schema_objects(
@@ -672,7 +675,9 @@ fn table_info_from_mysql(
     TableInfo {
         schema: Some(schema),
         name,
-        table_type: if table_type.eq_ignore_ascii_case("VIEW") {
+        table_type: if table_type.eq_ignore_ascii_case("VIEW")
+            || table_type.eq_ignore_ascii_case("SYSTEM VIEW")
+        {
             TableType::View
         } else {
             TableType::Table
@@ -845,6 +850,23 @@ fn escape_identifier(value: &str) -> String {
 #[cfg(test)]
 mod result_value_tests {
     use super::*;
+
+    #[test]
+    fn system_views_keep_their_view_identity() {
+        for kind in ["VIEW", "SYSTEM VIEW", "system view"] {
+            let info = table_info_from_mysql((
+                "information_schema".into(),
+                "CHARACTER_SETS".into(),
+                kind.into(),
+                None,
+            ));
+            assert!(matches!(info.table_type, TableType::View));
+        }
+        let table =
+            table_info_from_mysql(("test".into(), "items".into(), "BASE TABLE".into(), Some(3)));
+        assert!(matches!(table.table_type, TableType::Table));
+        assert_eq!(table.row_count, Some(3));
+    }
 
     fn test_column_metadata(
         default_value: Option<&str>,

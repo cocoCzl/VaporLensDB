@@ -1203,6 +1203,7 @@ impl ConfigStore {
                 definition = existing;
                 definition.capabilities = capabilities;
                 definition.notes = notes;
+                driver_catalog::upgrade_builtin_mysql_metadata(&mut definition);
             }
             upsert_builtin_driver_definition(&conn, &definition)?;
         }
@@ -4494,6 +4495,89 @@ mod tests {
             drafts.last().map(|draft| draft.sql.as_str()),
             Some("SELECT 5")
         );
+    }
+
+    #[test]
+    fn reopen_upgrades_shipped_mysql_metadata_without_overwriting_custom_queries() {
+        let root = std::env::temp_dir().join(format!("vapor-mysql-seed-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(root.clone()).unwrap();
+        let original = store.get_driver_definition("jdbc-mysql").unwrap().unwrap();
+        let current: serde_json::Value =
+            serde_json::from_str(original.metadata_dialect_sql.as_deref().unwrap()).unwrap();
+        let mut legacy = current.clone();
+        legacy["views"] = serde_json::Value::String(
+            current["views"]
+                .as_str()
+                .unwrap()
+                .replace("'view' AS table_type", "table_type")
+                .replace(
+                    "table_type IN ('VIEW', 'SYSTEM VIEW')",
+                    "table_type = 'VIEW'",
+                ),
+        );
+        legacy["schemaObjects"] = serde_json::Value::String(
+            current["schemaObjects"]
+                .as_str()
+                .unwrap()
+                .replace(" WHEN 'SYSTEM VIEW' THEN 'view'", "")
+                .replace(
+                    "table_type IN ('VIEW', 'SYSTEM VIEW')",
+                    "table_type = 'VIEW'",
+                ),
+        );
+        legacy["columns"] = serde_json::json!("SELECT custom_columns");
+        store
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE driver_definitions SET metadata_dialect_sql=?1 WHERE id='jdbc-mysql'",
+                [legacy.to_string()],
+            )
+            .unwrap();
+        drop(store);
+
+        let reopened = ConfigStore::new(root.clone()).unwrap();
+        let upgraded = reopened
+            .get_driver_definition("jdbc-mysql")
+            .unwrap()
+            .unwrap();
+        let mut expected = current;
+        expected["columns"] = serde_json::json!("SELECT custom_columns");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                upgraded.metadata_dialect_sql.as_deref().unwrap()
+            )
+            .unwrap(),
+            expected
+        );
+        assert_eq!(upgraded.jdbc_driver_class, original.jdbc_driver_class);
+        assert_eq!(upgraded.driver_artifacts, original.driver_artifacts);
+        expected["views"] = serde_json::json!("SELECT custom_views");
+        reopened
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE driver_definitions SET metadata_dialect_sql=?1 WHERE id='jdbc-mysql'",
+                [expected.to_string()],
+            )
+            .unwrap();
+        drop(reopened);
+        let reopened = ConfigStore::new(root.clone()).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                reopened
+                    .get_driver_definition("jdbc-mysql")
+                    .unwrap()
+                    .unwrap()
+                    .metadata_dialect_sql
+                    .as_deref()
+                    .unwrap()
+            )
+            .unwrap(),
+            expected
+        );
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn assert_seeded_metadata_sql(driver: &DriverDefinition) {

@@ -117,5 +117,38 @@ async fn resolved_jdbc_and_native_readonly_probe() {
         );
         assert_eq!(a.unwrap().row_count, 1);
         assert_eq!(b.unwrap().row_count, 1);
+        let jdbc_system_views = jdbc
+            .get_views("information_schema")
+            .await
+            .expect("read-only JDBC MySQL system views");
+        assert!(jdbc_system_views.iter().any(|view| {
+            view.name.eq_ignore_ascii_case("CHARACTER_SETS")
+                && matches!(
+                    view.table_type,
+                    vapor_lens_db_lib::models::metadata::TableType::View
+                )
+        }));
+        let system_views = native
+            .get_views("information_schema")
+            .await
+            .expect("read-only MySQL system views");
+        assert!(system_views.iter().any(|view| {
+            view.name.eq_ignore_ascii_case("CHARACTER_SETS")
+                && matches!(
+                    view.table_type,
+                    vapor_lens_db_lib::models::metadata::TableType::View
+                )
+        }));
+        let ddl = native
+            .get_table_ddl("information_schema", "CHARACTER_SETS")
+            .await
+            .expect("read-only MySQL four-column SHOW CREATE VIEW response");
+        assert!(ddl.contains("VIEW"));
+        assert!(ddl.contains("CHARACTER_SETS"));
+        assert!(!native
+            .get_columns("information_schema", "CHARACTER_SETS")
+            .await
+            .expect("view columns remain available after DDL")
+            .is_empty());
     }
 }

@@ -364,17 +364,44 @@ fn postgres_jdbc_metadata_sql() -> String {
     .to_string()
 }
 
+/// Upgrade only known shipped queries; preserve custom metadata and runtime choices.
+pub(crate) fn upgrade_builtin_mysql_metadata(definition: &mut DriverDefinition) {
+    if definition.id != "jdbc-mysql" {
+        return;
+    }
+    let Some(sql) = definition.metadata_dialect_sql.as_deref() else {
+        return;
+    };
+    let Ok(mut existing) = serde_json::from_str::<serde_json::Value>(sql) else {
+        return;
+    };
+    let current: serde_json::Value = serde_json::from_str(&mysql_jdbc_metadata_sql())
+        .expect("built-in MySQL metadata is valid JSON");
+    let legacy_views = "SELECT table_schema AS schema_name, table_name AS name, table_type, table_rows AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'VIEW' ORDER BY table_name";
+    let legacy_objects = "SELECT table_schema AS schema_name, table_name AS name, CASE table_type WHEN 'BASE TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' ELSE LOWER(table_type) END AS kind, table_type AS object_type, NULL AS status FROM information_schema.tables WHERE table_schema = '{schema}' AND CASE '{kind}' WHEN 'table' THEN table_type = 'BASE TABLE' WHEN 'view' THEN table_type = 'VIEW' ELSE false END UNION ALL SELECT routine_schema AS schema_name, routine_name AS name, LOWER(routine_type) AS kind, routine_type AS object_type, NULL AS status FROM information_schema.routines WHERE routine_schema = '{schema}' AND LOWER(routine_type) = LOWER('{kind}') ORDER BY name";
+    let mut changed = false;
+    for (key, legacy) in [("views", legacy_views), ("schemaObjects", legacy_objects)] {
+        if existing.get(key).and_then(|value| value.as_str()) == Some(legacy) {
+            existing[key] = current[key].clone();
+            changed = true;
+        }
+    }
+    if changed {
+        definition.metadata_dialect_sql = Some(existing.to_string());
+    }
+}
+
 fn mysql_jdbc_metadata_sql() -> String {
     serde_json::json!({
         "databases": "SELECT schema_name AS name FROM information_schema.schemata ORDER BY schema_name",
         "schemas": "SELECT schema_name AS name, schema_name AS database_name FROM information_schema.schemata ORDER BY schema_name",
         "tables": "SELECT table_schema AS schema_name, table_name AS name, table_type, table_rows AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'BASE TABLE' ORDER BY table_name",
-        "views": "SELECT table_schema AS schema_name, table_name AS name, table_type, table_rows AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type = 'VIEW' ORDER BY table_name",
+        "views": "SELECT table_schema AS schema_name, table_name AS name, 'view' AS table_type, table_rows AS row_count FROM information_schema.tables WHERE table_schema = '{schema}' AND table_type IN ('VIEW', 'SYSTEM VIEW') ORDER BY table_name",
         "columns": "SELECT table_schema AS schema_name, table_name AS table_name, column_name AS name, ordinal_position, column_type AS data_type, CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END AS nullable, column_default AS default_value, character_maximum_length, numeric_precision, numeric_scale, CASE WHEN column_key = 'PRI' THEN 1 ELSE 0 END AS is_primary_key, CASE WHEN LOWER(extra) LIKE '%generated%' THEN 1 ELSE 0 END AS is_generated, CASE WHEN LOWER(extra) LIKE '%auto_increment%' THEN 1 ELSE 0 END AS is_auto_increment FROM information_schema.columns WHERE table_schema = '{schema}' AND table_name = '{table}' ORDER BY ordinal_position",
         "indexes": "SELECT table_schema AS schema_name, table_name AS table_name, index_name AS name, GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ', ') AS column_names, CASE WHEN MIN(non_unique) = 0 THEN 1 ELSE 0 END AS is_unique, NULL AS definition FROM information_schema.statistics WHERE table_schema = '{schema}' AND table_name = '{table}' GROUP BY table_schema, table_name, index_name ORDER BY index_name",
         "foreignKeys": "SELECT table_schema AS schema_name, table_name AS table_name, constraint_name AS name, GROUP_CONCAT(column_name ORDER BY ordinal_position SEPARATOR ', ') AS column_names, referenced_table_schema AS referenced_schema, referenced_table_name AS referenced_table, GROUP_CONCAT(referenced_column_name ORDER BY ordinal_position SEPARATOR ', ') AS referenced_columns FROM information_schema.key_column_usage WHERE table_schema = '{schema}' AND table_name = '{table}' AND referenced_table_name IS NOT NULL GROUP BY table_schema, table_name, constraint_name, referenced_table_schema, referenced_table_name ORDER BY constraint_name",
         "functions": "SELECT routine_schema AS schema_name, routine_name AS name FROM information_schema.routines WHERE routine_schema = '{schema}' ORDER BY routine_name",
-        "schemaObjects": "SELECT table_schema AS schema_name, table_name AS name, CASE table_type WHEN 'BASE TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' ELSE LOWER(table_type) END AS kind, table_type AS object_type, NULL AS status FROM information_schema.tables WHERE table_schema = '{schema}' AND CASE '{kind}' WHEN 'table' THEN table_type = 'BASE TABLE' WHEN 'view' THEN table_type = 'VIEW' ELSE false END UNION ALL SELECT routine_schema AS schema_name, routine_name AS name, LOWER(routine_type) AS kind, routine_type AS object_type, NULL AS status FROM information_schema.routines WHERE routine_schema = '{schema}' AND LOWER(routine_type) = LOWER('{kind}') ORDER BY name"
+        "schemaObjects": "SELECT table_schema AS schema_name, table_name AS name, CASE table_type WHEN 'BASE TABLE' THEN 'table' WHEN 'VIEW' THEN 'view' WHEN 'SYSTEM VIEW' THEN 'view' ELSE LOWER(table_type) END AS kind, table_type AS object_type, NULL AS status FROM information_schema.tables WHERE table_schema = '{schema}' AND CASE '{kind}' WHEN 'table' THEN table_type = 'BASE TABLE' WHEN 'view' THEN table_type IN ('VIEW', 'SYSTEM VIEW') ELSE false END UNION ALL SELECT routine_schema AS schema_name, routine_name AS name, LOWER(routine_type) AS kind, routine_type AS object_type, NULL AS status FROM information_schema.routines WHERE routine_schema = '{schema}' AND LOWER(routine_type) = LOWER('{kind}') ORDER BY name"
     })
     .to_string()
 }
