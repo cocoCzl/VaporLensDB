@@ -62,7 +62,11 @@ function CurrentDataSourceStatus() {
   const tabs = useEditorStore((state) => state.tabs)
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const executionTab = activeTab && (activeTab.kind === 'sql' || !activeTab.kind) ? activeTab : null
-  const activeConnectionId = executionTab ? executionTab.connectionId : browsingConnectionId
+  const objectContext = activeTab?.dataContext ?? activeTab?.structureContext
+    ?? activeTab?.definitionContext ?? activeTab?.diagramContext
+    ?? activeTab?.objectSummaryContext ?? activeTab?.browserContext
+  const activeConnectionId = executionTab || objectContext
+    ? activeTab?.connectionId : browsingConnectionId
   const catalogSchemaPath = useMetadataStore((state) =>
     activeConnectionId ? state.catalogSchemaPaths[activeConnectionId] : null,
   )
@@ -87,7 +91,9 @@ function CurrentDataSourceStatus() {
 
   const context = (executionTab
     ? [executionTab.database ?? connection.database, executionTab.schema]
-    : [catalogSchemaPath?.database, catalogSchemaPath?.schema])
+    : objectContext
+      ? [objectContext.database, objectContext.schema]
+      : [catalogSchemaPath?.database, catalogSchemaPath?.schema])
     .filter((value): value is string => Boolean(value))
     .join(' / ')
 

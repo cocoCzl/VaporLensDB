@@ -1730,9 +1730,9 @@ function DataTabPanel({
         {hasNoStableOrder && <span className="text-warning">{t('workbench.noPrimaryKeyUnstable')}</span>}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex min-h-10 items-center gap-2 border-b px-3 py-1.5 text-xs">
+        <div className="flex min-h-10 flex-wrap items-center gap-2 border-b px-3 py-1.5 text-xs">
           <input
-            className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-[11px]"
+            className="h-7 min-w-40 flex-1 basis-48 rounded-md border bg-background px-2 font-mono text-[11px]"
             placeholder={t('workbench.wherePredicatePlaceholder')}
             value={whereText}
             onChange={(event) => setWhereText(event.target.value)}
@@ -1747,7 +1747,7 @@ function DataTabPanel({
             {t('workbench.applyFilter')}
           </Button>
           <AppSelect
-            className="h-7 min-w-32"
+            className="h-7 w-40 shrink-0"
             value={tab.dataContext.sortColumn ?? ''}
             onValueChange={(value) => changeSort(value || null)}
             options={[{ value: '', label: t('workbench.sort') }, ...(displayResult?.columns.map((column) => ({ value: column.name, label: column.name })) ?? [])]}
