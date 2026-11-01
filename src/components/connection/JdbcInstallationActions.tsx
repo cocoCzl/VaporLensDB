@@ -119,7 +119,7 @@ export function DriverInstallationPage({ driver, initialMode, onInstalled, onBac
     } catch (error) { setError(normalizeAppError(error).message) }
   }
   const move = (index: number, direction: number) => setPaths(current => { const next = [...current]; [next[index], next[index + direction]] = [next[index + direction], next[index]]; return next })
-  return <section role="region" aria-label={t('jdbcDownload.title')} className="workflow-page flex h-full min-h-0 flex-col">
+  return <section role="region" aria-label={t('jdbcDownload.title')} className="workflow-page flex h-full min-h-0 min-w-0 w-full flex-1 flex-col">
     <WorkflowHeader focus={initialMode === 'download'} title={t(initialMode === 'local' ? 'driverWorkflow.localInstall' : 'jdbcDownload.title')} description={driverDisplayName(driver, t)} onBack={back} />
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-5 text-xs [overflow-wrap:anywhere]">
       {initialMode === 'download' ? recipe ? <>

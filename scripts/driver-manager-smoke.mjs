@@ -109,9 +109,10 @@ includesAll(driverWorkspace, [
   'WorkflowHeader', 'WorkflowFooter', "'manage' | 'product' | 'definition'", "@min-[700px]/driver:grid-cols-[15rem_minmax(0,1fr)]",
   'visibleDrivers', 'selectedId', 'newDefinition()', 'saveDriver', 'deleteDriver', 'deleteInstallation', 'validateDriver',
   'defaultInstallationId: null', 'productId: selected.productId', "t('driverRefactor.copyDefinition')", "t('drivers.metadataSql')",
-  'draft.metadataDialectSql',
+  'draft.metadataDialectSql', 'min-w-0 w-full flex-1 flex-col',
 ], 'shared driver manager and editor')
 includesAll(installationPage, ['importJdbcArtifacts', 'validateExternalDriver', 'driver.builtIn', 'recipe.files.map', "t('drivers.removeJar')", "t('driverWorkflow.chooseJars')", 'checksumSource'], 'installation and validation controls')
+assert(installationPage.includes('min-w-0 w-full flex-1 flex-col'), 'installation pages must fill the standalone workspace too')
 excludesAll(driverWorkspace + installationPage, ['<Dialog', 'artifactPathInput', 'Choose File'], 'single task navigation and localised import')
 
 const sidebar = read('src/components/layout/Sidebar.tsx')

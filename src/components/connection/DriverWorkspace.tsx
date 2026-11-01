@@ -28,7 +28,7 @@ export interface DriverWorkspaceProps {
   registerBack?: (handler: () => void) => void
 }
 
-/** Content shared by Settings and the connection task. No dialog or settings shell. */
+/** Shared by the standalone workspace and connection task. No dialog shell. */
 export function DriverWorkspace({ entry, onBack, onCancel, onUse, onInstalled, registerBack }: DriverWorkspaceProps) {
   const { t } = useTranslation()
   const { drivers, products, installations, loading, error, loadDrivers, saveDriver, deleteDriver, deleteInstallation, validateDriver } = useDriverStore()
@@ -81,7 +81,9 @@ export function DriverWorkspace({ entry, onBack, onCancel, onUse, onInstalled, r
   if (page === 'configuration') return <ConfigurationPage onBack={() => setPage('manage')} onCancel={onCancel} registerBack={registerBack} />
   const visibleDrivers = drivers.filter(d => d.backend === 'jdbc' && d.status !== 'planned' && `${d.name} ${products.find(p => p.id === d.productId)?.name ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   const title = editing ? t(page === 'product' ? 'driverRefactor.addProduct' : draft.id ? 'drivers.editCustom' : 'driverWorkflow.addDefinition') : t('drivers.title')
-  return <section className="workflow-page @container/driver flex h-full min-h-0 min-w-0 flex-col" aria-label={title}>
+  // Inline-size containment has no intrinsic width: grow in the workspace flex
+  // row, and fill the block host used by the connection workflow.
+  return <section className="workflow-page @container/driver flex h-full min-h-0 min-w-0 w-full flex-1 flex-col" aria-label={title}>
     <WorkflowHeader focus={!editing} title={title} description={editing ? t('driverWorkflow.saveFirst') : t('driverWorkflow.managerHint')} onBack={editing || onBack || selectedId ? goBack : undefined} />
     {editing ? <>
       <div role="tablist" aria-label={t('driverWorkflow.sections')} className="flex shrink-0 gap-1 border-b px-5 py-2">{(['basic', 'files', 'advanced'] as const).map(value => <Button key={value} type="button" role="tab" aria-selected={tab === value} variant={tab === value ? 'secondary' : 'ghost'} onClick={() => setTab(value)}>{t(`driverWorkflow.${value}`)}</Button>)}</div>
@@ -172,7 +174,7 @@ function ConfigurationPage({ onBack, onCancel, registerBack }: { onBack: () => v
   const fileInput = useRef<HTMLInputElement>(null)
   const guard = useLeaveGuard(Boolean(json.trim()))
   useEffect(() => { registerBack?.(() => guard.request(onBack)) })
-  return <section className="flex h-full min-h-0 flex-col"><WorkflowHeader focus title={t('driverRefactor.configuration')} description={t('driverRefactor.configurationHint')} onBack={() => guard.request(onBack)} />
+  return <section className="workflow-page flex h-full min-h-0 min-w-0 w-full flex-1 flex-col"><WorkflowHeader focus title={t('driverRefactor.configuration')} description={t('driverRefactor.configurationHint')} onBack={() => guard.request(onBack)} />
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-5">
       <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => fileInput.current?.click()}><Upload />{t('driverWorkflow.chooseConfiguration')}</Button><input ref={fileInput} hidden type="file" accept=".json,application/json" aria-label={t('driverWorkflow.chooseConfiguration')} onChange={e => { const file = e.target.files?.[0]; if (file) void file.text().then(setJson).catch(error => setError(normalizeAppError(error).message)) }} /><Button type="button" variant="outline" onClick={() => { void exportDriverConfiguration().then(bundle => { const href = URL.createObjectURL(new Blob([JSON.stringify(bundle,null,2)],{type:'application/json'})); const link = document.createElement('a'); link.href=href; link.download='vaporlensdb-drivers.json'; link.click(); URL.revokeObjectURL(href) }).catch(error => setError(normalizeAppError(error).message)) }}><Download />{t('driverRefactor.exportConfiguration')}</Button></div>
       <label className="grid gap-2 text-xs">{t('driverRefactor.configuration')}<textarea className="ide-input min-h-44 w-full font-mono text-xs" value={json} onChange={e => setJson(e.target.value)} /></label>
