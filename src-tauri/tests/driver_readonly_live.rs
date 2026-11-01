@@ -10,6 +10,15 @@ use vapor_lens_db_lib::{
     },
     services::{config_store::ConfigStore, driver_registry::artifact_hash},
 };
+
+struct ProbeDirectory(std::path::PathBuf);
+
+impl Drop for ProbeDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires explicit read-only endpoint credentials and JDBC JAR"]
 async fn resolved_jdbc_and_native_readonly_probe() {
@@ -21,12 +30,29 @@ async fn resolved_jdbc_and_native_readonly_probe() {
     let password = required("TEST_READONLY_PASSWORD");
     let jar = required("TEST_READONLY_JDBC_DRIVER_PATH");
     let definition_id = required("TEST_READONLY_DRIVER_DEFINITION");
-    let root = std::env::temp_dir().join(format!("vapor-readonly-probe-{}", uuid::Uuid::new_v4()));
-    let store = ConfigStore::new(root).unwrap();
+    let root = ProbeDirectory(
+        std::env::temp_dir().join(format!("vapor-readonly-probe-{}", uuid::Uuid::new_v4())),
+    );
+    let store = ConfigStore::new(root.0.clone()).unwrap();
     let definition = store
         .get_driver_definition(&definition_id)
         .unwrap()
         .expect("registered JDBC definition");
+    let mut artifacts = vec![DriverArtifact {
+        path: jar.clone(),
+        sha256: Some(artifact_hash(&jar).unwrap()),
+        role: "primary".into(),
+    }];
+    if let Some(dependencies) = std::env::var_os("TEST_READONLY_JDBC_DEPENDENCIES") {
+        for path in std::env::split_paths(&dependencies) {
+            let path = path.to_str().expect("UTF-8 dependency path");
+            artifacts.push(DriverArtifact {
+                path: path.into(),
+                sha256: Some(artifact_hash(path).unwrap()),
+                role: "dependency".into(),
+            });
+        }
+    }
     store
         .publish_installation(&DriverInstallation {
             version: None,
@@ -34,16 +60,12 @@ async fn resolved_jdbc_and_native_readonly_probe() {
             id: "readonly-install".into(),
             driver_definition_id: definition_id.clone(),
             label: "Read-only QA local JAR".into(),
-            artifacts: vec![DriverArtifact {
-                path: jar.clone(),
-                sha256: Some(artifact_hash(&jar).unwrap()),
-                role: "primary".into(),
-            }],
+            artifacts,
             java_requirement: "Java 21+".into(),
             validation: None,
         })
         .unwrap();
-    let c:ConnectionConfig=serde_json::from_value(json!({"id":uuid::Uuid::new_v4(),"name":"Read-only probe","driverType":definition.driver_type,"driverDefinitionId":definition_id,"productId":definition.product_id,"connectionMode":"urlOnly","connectionUrl":url,"username":user,"driverPaths":[],"createdAt":chrono::Utc::now(),"updatedAt":chrono::Utc::now()})).unwrap();
+    let c:ConnectionConfig=serde_json::from_value(json!({"id":uuid::Uuid::new_v4(),"name":"Read-only probe","driverType":definition.driver_type,"driverDefinitionId":definition_id,"driverInstallationId":"readonly-install","productId":definition.product_id,"connectionMode":"urlOnly","connectionUrl":url,"username":user,"driverPaths":[],"createdAt":chrono::Utc::now(),"updatedAt":chrono::Utc::now()})).unwrap();
     let saved = store.create_connection(c, None, false).unwrap();
     let (runtime, definition) = store.resolve_connection(&saved).unwrap();
     let jdbc = JdbcDriver::connect(&runtime, Some(&password), Some(&definition))
