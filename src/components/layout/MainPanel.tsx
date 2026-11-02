@@ -1597,6 +1597,12 @@ function DataTabPanel({
   const [importLoaded, setImportLoaded] = useState(false)
   const page = Math.floor(tab.dataContext.offset / tab.dataContext.limit) + 1
   const displayResult = result ? dataTabDisplayResult(result, tab.dataContext.limit) : undefined
+  const sortOptions = displayResult?.columns.map((column) => ({ value: column.name, label: column.name })) ?? []
+  // A replacement stream initially has no columns. Keep the selected option
+  // mounted so the select cannot clear it while the next page is loading.
+  if (tab.dataContext.sortColumn && !sortOptions.some(option => option.value === tab.dataContext.sortColumn)) {
+    sortOptions.push({ value: tab.dataContext.sortColumn, label: tab.dataContext.sortColumn })
+  }
   const hasNextPage = result ? result.rows.length > tab.dataContext.limit : false
   const hasPrimaryKeyOrder =
     !tab.dataContext.sortColumn && tab.dataContext.primaryKeyColumns.length > 0
@@ -1750,7 +1756,7 @@ function DataTabPanel({
             className="h-7 w-40 shrink-0"
             value={tab.dataContext.sortColumn ?? ''}
             onValueChange={(value) => changeSort(value || null)}
-            options={[{ value: '', label: t('workbench.sort') }, ...(displayResult?.columns.map((column) => ({ value: column.name, label: column.name })) ?? [])]}
+            options={[{ value: '', label: t('workbench.sort') }, ...sortOptions]}
           />
           <Button
             type="button"
