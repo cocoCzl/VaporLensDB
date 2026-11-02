@@ -79,7 +79,7 @@ includesAll(
     "state.loadSchemaObjects(connectionId, schema, 'materializedView').catch(() => [])",
     'findAlias(context.memberOwner, context.aliases)',
     'findColumnsForOwner(',
-    'tableObjectKey(connectionId, schema, table.name)',
+    'tableObjectKey(connectionId, schema, table)',
     'schema.name === preferredSchema ? `0_schema_',
     'item.schema === preferredSchema ? `0_table_',
     'schema === preferredSchema ? `0_function_',

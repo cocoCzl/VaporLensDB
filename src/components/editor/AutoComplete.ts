@@ -73,7 +73,7 @@ export function registerSqlCompletionProvider(
       const range = completionRange(monaco, model, position)
       const context = completionContext(model, position)
       const suggestions: CompletionItem[] = [
-        ...keywordSuggestions(monaco, range, driverType),
+        ...(context.memberOwner ? [] : keywordSuggestions(monaco, range, driverType)),
         ...(await metadataSuggestions(
           monaco,
           range,
@@ -269,24 +269,35 @@ async function findColumnsForOwner(
   showSystemObjects: boolean,
 ) {
   const alias = findAlias(owner, aliases)
-  const normalizedResolvedOwner = unquoteIdentifier(alias?.target ?? owner).toLowerCase()
+  const resolvedOwner = normalizeDottedIdentifier(alias?.target ?? owner)
+  const normalizedResolvedOwner = resolvedOwner.toLowerCase()
   const tables = knownTables(connectionId, preferredSchema, driverType, showSystemObjects).filter(
     ({ schema, table }) =>
       table.name.toLowerCase() === normalizedResolvedOwner ||
       `${schema}.${table.name}`.toLowerCase() === normalizedResolvedOwner,
   )
 
+  // Explicit schema references must work before the object tree is expanded.
+  // Unqualified references use the editor schema, never a union of same-name tables.
+  const parts = resolvedOwner.split('.')
+  const targets = parts.length === 2
+    ? [{ schema: parts[0], table: parts[1] }]
+    : preferredSchema
+      ? [{ schema: preferredSchema, table: resolvedOwner }]
+      : tables.map(({ schema, table }) => ({ schema, table: table.name }))
+  const visibleTargets = targets.filter(({ schema }) => showSystemObjects || !isSystemSchema(driverType, schema))
+
   const state = useMetadataStore.getState()
   await Promise.all(
-    tables.map(({ schema, table }) =>
-      state.loadColumns(connectionId, schema, table.name).catch(() => []),
+    visibleTargets.map(({ schema, table }) =>
+      state.loadColumns(connectionId, schema, table).catch(() => []),
     ),
   )
   const nextState = useMetadataStore.getState()
 
   return uniqueBy(
-    tables.flatMap(
-      ({ schema, table }) => nextState.columns[tableObjectKey(connectionId, schema, table.name)] ?? [],
+    visibleTargets.flatMap(
+      ({ schema, table }) => nextState.columns[tableObjectKey(connectionId, schema, table)] ?? [],
     ),
     (column) => column.name,
   )
@@ -440,7 +451,7 @@ function completionContext(
     endColumn: position.column,
   })
   const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1)
-  const memberMatch = linePrefix.match(/((?:"[^"]+"|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|[A-Za-z_][\w$]*))?)\.\s*$/)
+  const memberMatch = linePrefix.match(/((?:"[^"]+"|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|[A-Za-z_][\w$]*))?)\.\s*(?:[A-Za-z_][\w$]*)?$/)
   return {
     memberOwner: memberMatch?.[1],
     aliases: extractAliases(prefix),
