@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import { useDriverStore } from '@/stores/driverStore'
+import { useConnectionStore } from '@/stores/connectionStore'
 import { ConnectionForm } from './ConnectionForm'
 import { DriverWorkspace } from './DriverWorkspace'
 import type { DatabaseProduct, DriverDefinition, DriverInstallation } from '@/types/driver'
@@ -21,6 +22,7 @@ beforeEach(() => {
   db.products = [{ id: 'postgres', name: 'PostgreSQL', builtIn: true, iconKey: 'postgres', adapterId: 'postgresql', defaultDriverDefinitionId: 'postgres' }]
   db.drivers = [native, jdbc]; db.installations = [{ id: 'install-pg', driverDefinitionId: jdbc.id, label: 'User version 2', javaRequirement: '21', artifacts: [] }]
   useDriverStore.setState({ products: db.products, drivers: db.drivers, installations: db.installations, loading: false, error: null })
+  useConnectionStore.setState({ connections: [], statuses: {} })
 })
 function form() { const save = vi.fn().mockResolvedValue(undefined); return { ...render(<ConnectionForm driverDefinitions={useDriverStore.getState().drivers} onSaveOnly={save} onSaveAndConnect={save} onTest={vi.fn()} onCancel={vi.fn()} />), save } }
 async function saveOnly() {fireEvent.click(screen.getByRole('button', { name: i18n.t('common.moreActions') }));fireEvent.click(await screen.findByRole('menuitem', {name:i18n.t('connectionForm.saveOnly')}))}
@@ -108,4 +110,20 @@ describe('Product → driver → installation workflows (mock IPC)', () => {
     await act(async()=>{await useDriverStore.getState().saveDriver({...jdbc,id:'custom-second-pg',builtIn:false})})
     expect(useDriverStore.getState().drivers.filter((d)=>d.productId==='postgres')).toHaveLength(3)
   })
+})
+
+it.each([
+  ['en', 'Files imported; no successful standalone class-load check recorded. See each connection for its connection test result.'],
+  ['zh', "\u6587\u4ef6\u5df2\u5bfc\u5165\uff1b\u6682\u65e0\u72ec\u7acb\u7c7b\u52a0\u8f7d\u68c0\u67e5\u901a\u8fc7\u8bb0\u5f55\u3002\u8fde\u63a5\u6d4b\u8bd5\u7ed3\u679c\u8bf7\u5728\u5bf9\u5e94\u8fde\u63a5\u4e2d\u67e5\u770b\u3002"],
+])('distinguishes the installation receipt from a successful pinned connection in %s', async (language, receipt) => {
+  await i18n.changeLanguage(language)
+  useConnectionStore.setState({
+    connections: [{ id: 'connected-qa', name: 'Connected QA', driverType: 'postgres', driverDefinitionId: jdbc.id, driverInstallationId: db.installations[0].id }],
+    statuses: { 'connected-qa': { connectionId: 'connected-qa', status: 'connected' } },
+  })
+  render(<DriverWorkspace entry={{ page: 'manage', driverId: jdbc.id }} />)
+  expect(await screen.findByText(receipt)).toBeVisible()
+  expect(screen.getByText(/Connected QA/)).toBeVisible()
+  expect(screen.queryByText(i18n.t('connectionForm.testNotRun'))).not.toBeInTheDocument()
+  expect(useDriverStore.getState().installations[0].validation).toBeUndefined()
 })

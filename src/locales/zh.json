@@ -1160,7 +1160,7 @@
     "requireUsername": "需要用户名",
     "requireDatabase": "需要数据库名",
     "dialect": "已验证 SQL 方言",
-    "filesPresent": "文件已导入；类加载和连接尚未验证",
+    "filesPresent": "文件已导入；暂无独立类加载检查通过记录。连接测试结果请在对应连接中查看。",
     "properties": "JDBC 属性（默认敏感）",
     "propertyName": "属性名",
     "propertyValue": "属性值",

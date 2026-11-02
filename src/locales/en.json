@@ -1160,7 +1160,7 @@
     "requireUsername": "Username required",
     "requireDatabase": "Database required",
     "dialect": "Verified SQL dialect",
-    "filesPresent": "Files imported; class loading and connectivity unverified",
+    "filesPresent": "Files imported; no successful standalone class-load check recorded. See each connection for its connection test result.",
     "properties": "JDBC properties (sensitive by default)",
     "propertyName": "Property name",
     "propertyValue": "Property value",
