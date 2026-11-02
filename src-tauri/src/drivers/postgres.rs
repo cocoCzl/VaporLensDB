@@ -594,11 +594,31 @@ impl DatabaseDriver for PostgresDriver {
             ORDER BY c.ordinal_position
         ";
 
-        let rows = self
+        let mut rows = self
             .client
             .query(sql, &[&schema, &table])
             .await
             .map_err(|error| self.map_query_error(sql, error))?;
+
+        // information_schema.columns excludes materialized views. Read their
+        // actual attributes without changing the table/view metadata path.
+        if rows.is_empty() {
+            let materialized_sql = "SELECT n.nspname, c.relname, a.attname, a.attnum::integer,
+                pg_catalog.format_type(a.atttypid, a.atttypmod), NOT a.attnotnull,
+                NULL::text, NULL::bigint, NULL::integer, NULL::integer,
+                false, false, false, false
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_attribute a ON a.attrelid = c.oid
+                WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'm'
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND (pg_has_role(c.relowner, 'USAGE') OR has_table_privilege(c.oid, 'SELECT'))
+                ORDER BY a.attnum";
+            rows = self
+                .client
+                .query(materialized_sql, &[&schema, &table])
+                .await
+                .map_err(|error| self.map_query_error(materialized_sql, error))?;
+        }
 
         Ok(rows.into_iter().map(column_info_from_row).collect())
     }
@@ -761,6 +781,23 @@ impl DatabaseDriver for PostgresDriver {
         schema: &str,
         kind: DbObjectKind,
     ) -> Result<Vec<DbObjectInfo>, AppError> {
+        if kind == DbObjectKind::MaterializedView {
+            let sql = "SELECT schemaname, matviewname FROM pg_matviews WHERE schemaname = $1 ORDER BY matviewname";
+            return Ok(self
+                .client
+                .query(sql, &[&schema])
+                .await
+                .map_err(|error| self.map_query_error(sql, error))?
+                .into_iter()
+                .map(|row| DbObjectInfo {
+                    schema: Some(row.get(0)),
+                    name: row.get(1),
+                    kind: DbObjectKind::MaterializedView,
+                    object_type: Some("MATERIALIZED VIEW".into()),
+                    status: None,
+                })
+                .collect());
+        }
         if !matches!(kind, DbObjectKind::Trigger) {
             return Ok(Vec::new());
         }
@@ -889,6 +926,36 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn get_table_ddl(&self, schema: &str, table: &str) -> Result<String, AppError> {
+        // Views have real query definitions. Reconstructing them from columns
+        // would silently turn a view into a CREATE TABLE and discard its query.
+        let relation_sql = "SELECT c.relkind::text, CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid, true) END, c.relispopulated FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2";
+        if let Some(row) = self
+            .client
+            .query_opt(relation_sql, &[&schema, &table])
+            .await
+            .map_err(|error| self.map_query_error(relation_sql, error))?
+        {
+            let kind: &str = row.get(0);
+            if matches!(kind, "v" | "m") {
+                let definition: String = row.get(1);
+                let object_type = if kind == "m" {
+                    "MATERIALIZED VIEW"
+                } else {
+                    "VIEW"
+                };
+                let population = if kind == "m" && !row.get::<_, bool>(2) {
+                    "\nWITH NO DATA"
+                } else {
+                    ""
+                };
+                return Ok(format!(
+                    "CREATE {object_type} {}.{} AS\n{}{population};",
+                    quote_identifier(schema),
+                    quote_identifier(table),
+                    definition.trim().trim_end_matches(';'),
+                ));
+            }
+        }
         let columns = self.get_columns(schema, table).await?;
         if columns.is_empty() {
             return Err(AppError::NotFound {

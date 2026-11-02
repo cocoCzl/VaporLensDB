@@ -152,3 +152,58 @@ async fn resolved_jdbc_and_native_readonly_probe() {
             .is_empty());
     }
 }
+
+#[tokio::test]
+#[ignore = "requires explicit read-only PostgreSQL endpoint and existing table/view fixtures"]
+async fn postgres_relation_ddl_preserves_database_object_kind() {
+    let required = |key| std::env::var(key).unwrap_or_else(|_| panic!("missing {key}"));
+    let native = PostgresDriver::connect_with_url_credentials(
+        &required("TEST_PG_DDL_URL"),
+        Some(&required("TEST_PG_DDL_USER")),
+        Some(&required("TEST_PG_DDL_PASSWORD")),
+    )
+    .await
+    .expect("read-only PostgreSQL connection");
+    let schema = required("TEST_PG_DDL_SCHEMA");
+    let materialized = native
+        .get_schema_objects(
+            &schema,
+            vapor_lens_db_lib::models::metadata::DbObjectKind::MaterializedView,
+        )
+        .await
+        .unwrap();
+    assert!(materialized
+        .iter()
+        .any(|object| object.name == required("TEST_PG_DDL_MATERIALIZED_VIEW")));
+    let materialized_columns = native
+        .get_columns(&schema, &required("TEST_PG_DDL_MATERIALIZED_VIEW"))
+        .await
+        .unwrap();
+    assert_eq!(
+        materialized_columns
+            .iter()
+            .map(|column| (column.name.as_str(), column.data_type.as_str()))
+            .collect::<Vec<_>>(),
+        [("id", "integer"), ("display_name", "text")]
+    );
+    for (key, prefix) in [
+        ("TEST_PG_DDL_TABLE", "CREATE TABLE "),
+        ("TEST_PG_DDL_VIEW", "CREATE VIEW "),
+        ("TEST_PG_DDL_MATERIALIZED_VIEW", "CREATE MATERIALIZED VIEW "),
+    ] {
+        let name = required(key);
+        let ddl = native.get_table_ddl(&schema, &name).await.unwrap();
+        assert!(
+            ddl.starts_with(prefix),
+            "incorrect relation kind for {name}"
+        );
+        assert!(ddl.contains(&format!("\"{schema}\".\"{name}\"")));
+        if prefix != "CREATE TABLE " {
+            assert!(ddl.contains("SELECT"), "missing database view definition");
+            assert!(ddl.contains("qa_customers"));
+        }
+        if prefix == "CREATE MATERIALIZED VIEW " {
+            assert!(ddl.contains("WITH NO DATA"));
+        }
+    }
+}
