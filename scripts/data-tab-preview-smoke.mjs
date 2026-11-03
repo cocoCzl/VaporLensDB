@@ -72,7 +72,7 @@ includesAll(
     'max={10_000}',
     "t('workbench.dataPreviewLimitTitle')",
     'updateDataTabContext',
-    'buildDataTabSql',
+    'buildDataTabPreviewSql',
     'dataTabFetchLimit',
     'dataTabDisplayResult',
     '<DataGrid',

@@ -369,15 +369,15 @@ export function ConnectionForm({
   }
 
   return (
-    <div className="h-full min-h-0 min-w-0">
-    <div hidden={Boolean(auxiliary)} className="h-full min-h-0">
+    <div className="flex min-h-0 min-w-0 flex-col">
+    <div hidden={Boolean(auxiliary)} className={`${auxiliary ? 'hidden' : 'flex'} min-h-0 flex-col`}>
     <form
-      className="connection-form @container/form flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      className="connection-form @container/form flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       autoComplete="off"
       onSubmit={submit}
     >
       <WorkflowHeader title={connection ? t('connection.editTitle') : stage === 'catalog' ? t('connectionCatalog.title') : t('driverWorkflow.parameters')} description={stage === 'catalog' ? t('driverWorkflow.catalogHint') : undefined} />
-      <div className={`min-h-0 flex-1 ${stage === 'catalog' ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden [scrollbar-gutter:stable]`}>
+      <div className={`min-h-0 ${stage === 'catalog' ? 'h-96 overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden [scrollbar-gutter:stable]`}>
         <div className={`mx-auto ${stage === 'catalog' ? 'flex h-full min-h-0 flex-col gap-4' : 'grid gap-3'} w-full p-5`}>
           {stage === 'catalog' ? <section className="flex h-full min-h-0 flex-col gap-4" aria-label={t('connectionCatalog.title')}>
             <div className="flex flex-wrap gap-2">
@@ -557,7 +557,7 @@ export function ConnectionForm({
         </div>
       </div>
 
-      {stage === 'parameters' && <div className="shrink-0 border-t border-border/75 bg-surface px-5 py-2" data-connection-feedback>
+      {stage === 'parameters' && <div className="h-[88px] shrink-0 overflow-y-auto border-t border-border/75 bg-surface px-5 py-2" data-connection-feedback>
         {currentTest ? <div
           role={currentTest.status === 'failed' ? 'alert' : 'status'}
           aria-live={currentTest.status === 'failed' ? 'assertive' : 'polite'}
@@ -570,7 +570,7 @@ export function ConnectionForm({
               <p className="font-medium">{currentTest.status === 'failed' ? t('connectionForm.testFailed') : testMessage}</p>
               {currentTest.elapsedMs !== undefined && <span className="tabular-nums">{t('connectionForm.testElapsed', { ms: Math.round(currentTest.elapsedMs).toLocaleString() })}</span>}
             </div>
-            <p className="mt-1 leading-4">{currentTest.status === 'failed' ? testMessage : t('connectionForm.testScope')}</p>
+            <p className="mt-1 leading-4">{currentTest.status === 'failed' ? testMessage : t(currentTest.status === 'succeeded' ? connection ? 'connectionForm.testNextEdit' : 'connectionForm.testNextNew' : 'connectionForm.testScope')}</p>
             {testDetail && <div className="mt-2 flex flex-wrap items-start gap-x-3 gap-y-1">
               <details className="min-w-0 flex-1">
                 <summary className="w-fit cursor-pointer underline underline-offset-2">{t('connectionForm.errorDetails')}</summary>
@@ -583,7 +583,7 @@ export function ConnectionForm({
             </div>}
           </div>
         </div> : null}
-        {(message || (!currentTest && readinessIssue)) && <p role="status" className="break-words text-xs text-muted-foreground">{message ?? readinessIssue}</p>}
+        {(message || !currentTest) && <p role="status" className="break-words text-xs leading-4 text-muted-foreground">{message ?? readinessIssue ?? t('connectionForm.testScope')}</p>}
       </div>}
 
       <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border/75 bg-surface px-5 py-2">

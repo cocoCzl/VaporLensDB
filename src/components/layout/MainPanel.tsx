@@ -34,7 +34,8 @@ import {
   exportTableCsv,
 } from '@/ipc/export'
 import { getObjectDdl, getTableDdl } from '@/ipc/metadata'
-import { buildDataTabSql, dataTabFetchLimit } from '@/lib/dataTabSql'
+import { buildDataTabSql, buildDataTabPreviewSql, dataTabFetchLimit } from '@/lib/dataTabSql'
+import { executionDatabase } from '@/lib/executionContext'
 import { splitSqlStatements } from '@/lib/sqlLexer'
 import { persistDirtySqlDrafts } from '@/lib/sqlDraftPersistence'
 import { captureResultExport } from '@/lib/resultExport'
@@ -252,7 +253,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   }
   const selectedDatabase =
     connectionId != null
-      ? activeTab?.database ?? activeConnection?.database ?? null
+      ? executionDatabase(activeConnection, activeTab?.database)
       : null
   const selectedSchema = connectionId != null ? activeTab?.schema ?? null : null
   const connectionIsConnected = Boolean(
@@ -611,7 +612,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                 notifyError(normalizeAppError(error), t('notifications.loadObjectStructureFailed'))
                 return
               }
-              const sql = buildDataTabSql({
+              const sql = buildDataTabPreviewSql({
                 driverType: activeObjectSummaryContext.driverType,
                 schema: activeObjectSummaryContext.schema,
                 table: activeObjectSummaryContext.object,
@@ -739,7 +740,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                 return
               }
               const nextContext = { ...activeTab.dataContext, limit, offset: 0 }
-              const nextSql = buildDataTabSql(dataContextToSqlInput(nextContext))
+              const nextSql = buildDataTabPreviewSql(dataContextToSqlInput(nextContext))
               updateDataTabContext(activeTab.id, nextContext, nextSql)
               runQuery(activeTab.id, activeTab.connectionId, nextSql, { maxRows: dataTabFetchLimit(nextContext.limit) })
             }}
@@ -748,7 +749,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                 return
               }
               const nextContext = { ...activeTab.dataContext, ...patch }
-              const nextSql = buildDataTabSql(dataContextToSqlInput(nextContext))
+              const nextSql = buildDataTabPreviewSql(dataContextToSqlInput(nextContext))
               updateDataTabContext(activeTab.id, nextContext, nextSql)
               runQuery(activeTab.id, activeTab.connectionId, nextSql, { maxRows: dataTabFetchLimit(nextContext.limit) })
             }}
@@ -757,8 +758,10 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                 id: crypto.randomUUID(),
                 kind: 'sql',
                 title: t('workbench.generatedSqlTitle', { name: activeDataContext.object }),
-                sql: activeTab.sql,
+                sql: buildDataTabSql(dataContextToSqlInput(activeDataContext)),
                 connectionId: activeTab.connectionId,
+                database: activeDataContext.database,
+                schema: activeDataContext.schema,
               })
             }}
             onExport={() =>
@@ -1707,7 +1710,7 @@ function DataTabPanel({
           >
             <RefreshCw className={running ? 'animate-spin' : undefined} />
           </IconTooltipButton>
-          <IconTooltipButton label={t('workbench.openInSqlTab')} variant="ghost" onClick={onOpenSqlTab}>
+          <IconTooltipButton label={t('workbench.openInSqlTab')} title={t('workbench.previewSqlRule')} variant="ghost" onClick={onOpenSqlTab}>
             <FileCode2 />
           </IconTooltipButton>
           <IconTooltipButton
@@ -1807,8 +1810,9 @@ function DataTabPanel({
         <textarea
           className="h-20 shrink-0 resize-none border-b bg-muted/20 p-2 font-mono text-[11px] text-muted-foreground outline-none"
           readOnly
-          value={tab.sql}
+          value={buildDataTabSql(dataContextToSqlInput(tab.dataContext))}
           aria-label={t('workbench.generatedSqlAria')}
+          title={t('workbench.previewSqlRule')}
         />
         <div className="min-h-0 flex-1">
         {error ? (

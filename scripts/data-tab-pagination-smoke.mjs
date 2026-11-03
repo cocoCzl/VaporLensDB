@@ -55,7 +55,7 @@ const databaseTree = read('src/components/explorer/DatabaseTree.tsx')
 includesAll(
   databaseTree,
   [
-    'buildDataTabSql',
+    'buildDataTabPreviewSql',
     'primaryKeyColumns',
     'offset: 0',
     'limit: dataPreviewDefaultRows',

@@ -73,12 +73,12 @@ export function ConnectionDialog({
         }
       />}
       <DialogContent
-        className="connection-workflow flex h-[min(600px,calc(100dvh-2rem))] w-[min(900px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-xl border-border-strong bg-surface p-0 sm:max-w-none data-open:animate-none data-closed:animate-none"
+        className="connection-workflow flex max-h-[calc(100dvh-2rem)] w-[min(720px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-xl border-border-strong bg-surface p-0 sm:max-w-none data-open:animate-none data-closed:animate-none"
         overlayClassName="bg-[hsl(var(--overlay)/0.36)] backdrop-blur-none"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">{connection ? t('connection.editTitle') : t('connection.newTitle')}</DialogTitle>
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-col overflow-hidden">
           {isOpen && <ModuleBoundary>
             <Suspense fallback={<div className="flex h-full flex-col"><p role="status" className="flex-1 p-5 text-sm">{t('common.loading')}</p><div className="border-t p-4"><Button variant="ghost" onClick={() => setDialogOpen(false)}>{t('common.cancel')}</Button></div></div>}>
               <ConnectionForm

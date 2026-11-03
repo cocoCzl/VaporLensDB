@@ -17,7 +17,7 @@ export interface DataTabSqlInput {
 
 export function buildDataTabSql(input: DataTabSqlInput) {
   const dialect = sqlDialectDescriptor(input.driverType)
-  const limit = dataTabFetchLimit(input.limit)
+  const limit = Math.max(1, Math.round(input.limit))
   const offset = Math.max(0, Math.round(input.offset ?? 0))
   const lines = [`SELECT *`, `FROM ${qualifiedName(input.driverType, input.schema, input.table)}`]
   const wherePredicate = input.wherePredicate?.trim()
@@ -62,6 +62,13 @@ export function buildDataTabSql(input: DataTabSqlInput) {
 
 export function dataTabFetchLimit(limit: number) {
   return Math.max(1, Math.round(limit)) + 1
+}
+
+/** Only internal preview requests fetch a sentinel row for next-page detection.
+ * User SQL keeps the current page's limit/offset, filter and deterministic order.
+ */
+export function buildDataTabPreviewSql(input: DataTabSqlInput) {
+  return buildDataTabSql({ ...input, limit: dataTabFetchLimit(input.limit) })
 }
 
 export function qualifiedName(driverType: DriverType, schema: string, table: string) {

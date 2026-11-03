@@ -1,6 +1,7 @@
 import { DatabaseProductLabel } from '@/components/common/DatabaseProductLabel'
 import { sqlCommandShortcut } from '@/lib/sqlCommands'
 import { dispatchSqlFileAction } from '@/lib/sqlFileActions'
+import { connectionSqlDialect } from '@/lib/databaseDialect'
 import { Check, ChartNoAxesCombined, ChevronDown, GitBranch, History, ListFilter, Maximize2, Minimize2, MoreHorizontal, Play, Search, Square, Undo2, Wand2 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -91,6 +92,8 @@ export function EditorToolbar({
   const { t } = useTranslation()
   const explainTitle = canExplain ? t('editor.explain') : (explainUnsupportedReason ?? t('editor.explainUnsupported'))
   const runShortcut = isMacPlatform() ? '⌘↵' : 'Ctrl+Enter'
+  const executionConnection = connections.find(connection => connection.id === connectionId)
+  const dialect = executionConnection && connectionSqlDialect(executionConnection)
 
   return (
     <div className="workspace-context-bar" role="toolbar" aria-label={t('editor.run')}>
@@ -105,15 +108,16 @@ export function EditorToolbar({
         />
         <span className="ide-toolbar-separator" aria-hidden="true" />
         <ContextSelect label={t('metadata.database')}>
+        {dialect === 'sqlite' ? <span className="workspace-context-select flex h-8 w-48 items-center" title={database ?? ''} aria-label={t('metadata.database')}><span className="truncate">{database?.split(/[\\/]/).pop() || database || t('executionContext.none')}</span></span> :
         <AppSelect
           className="workspace-context-select h-8 w-36 shrink-0"
           aria-label={t('metadata.database')}
           value={database ?? ''}
           disabled={running || contextDisabled || !connectionId || databases.length === 0}
-          title={t('editor.databaseSelectHint')}
+          title={dialect === 'postgres' ? t('editor.databaseSelectHint') : undefined}
           onValueChange={(value) => onDatabaseChange?.(value || null)}
           options={[...(!database ? [{ value: '', label: t('metadata.database') }] : []), ...databases.map((item) => ({ value: item.name, label: item.name }))]}
-        />
+        />}
         </ContextSelect>
         <span className="ide-toolbar-separator hidden md:block" aria-hidden="true" />
         <ContextSelect label={t('metadata.schema')} className="hidden md:flex">

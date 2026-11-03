@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useEditorStore } from '@/stores/editorStore'
 import { useConnectionStore } from '@/stores/connectionStore'
+import { executionDatabase } from '@/lib/executionContext'
 
 /** Uses the tab's execution context, never the Explorer metadata path. */
 export function ExecutionContextBar() {
@@ -18,7 +19,7 @@ export function ExecutionContextBar() {
   return (
     <div aria-label={t('executionContext.title')} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b bg-muted/20 px-3 py-1 text-xs">
       <span className="break-all font-medium">{t('executionContext.execution')}: {execution?.name ?? tab.unavailableConnectionName ?? t('executionContext.none')}</span>
-      <span>{t('metadata.database')}: {tab.database ?? execution?.database ?? t('executionContext.none')}</span>
+      <span className="min-w-0 break-all">{t('metadata.database')}: {executionDatabase(execution, tab.database) ?? t('executionContext.none')}</span>
       <span>{t('metadata.schema')}: {tab.schema ?? t('executionContext.defaultSchema')}</span>
       {(!execution || statuses[execution.id]?.status !== 'connected') && <span className="text-warning">{t('connection.disconnected')}</span>}
       <span className={phase === 'failed' ? 'font-medium text-destructive' : phase === 'active' ? 'font-medium text-warning' : 'text-muted-foreground'}>{t(`executionContext.${phase}`)}</span>

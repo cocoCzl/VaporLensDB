@@ -9,7 +9,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Eye, EyeOff, ListFilter, RefreshCw, Search, Server } from 'lucide-react'
 import { normalizeAppError } from '@/ipc/client'
 import { useQuery } from '@/hooks/useQuery'
-import { buildDataTabSql, dataTabFetchLimit, qualifiedName, quoteIdentifier } from '@/lib/dataTabSql'
+import { buildDataTabPreviewSql, dataTabFetchLimit, qualifiedName, quoteIdentifier } from '@/lib/dataTabSql'
 import { isSystemDatabase, isSystemSchema } from '@/lib/systemObjects'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore } from '@/stores/editorStore'
@@ -620,7 +620,7 @@ export function DatabaseTree({
     }
 
     if (connectionSqlDialect(connection) === 'jdbc') { notify({ kind: 'warning', title: t('driverRefactor.unknownDialect') }); return }
-    const sql = buildDataTabSql({
+    const sql = buildDataTabPreviewSql({
       driverType: connectionSqlDialect(connection),
       schema: entry.schema,
       table,
@@ -665,7 +665,7 @@ export function DatabaseTree({
     } catch (error) {
       notifyError(normalizeAppError(error), t('notifications.loadPrimaryKeysFailed'))
     }
-    const sql = buildDataTabSql({
+    const sql = buildDataTabPreviewSql({
       driverType: connectionSqlDialect(activeConnection),
       schema: node.meta.schema,
       table: node.meta.table,

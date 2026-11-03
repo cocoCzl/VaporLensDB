@@ -1,9 +1,9 @@
 /* eslint-disable react-hooks/incompatible-library -- TanStack Virtual intentionally exposes non-memoizable instance methods. */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Braces, Check, Copy, Maximize2, Rows3, X } from 'lucide-react'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual'
 import { useTranslation } from 'react-i18next'
-import { copyToClipboard } from '@/lib/clipboard'
+import { useClipboardFeedback } from '@/hooks/useClipboardFeedback'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, type ContextMenuAction } from '@/components/explorer/ContextMenu'
 import { readStorageJson, writeStorageJson } from '@/lib/safeStorage'
@@ -28,8 +28,10 @@ export function DataGrid({
   result,
 }: DataGridProps) {
   const { t } = useTranslation()
+  const { copy, feedback } = useClipboardFeedback()
   const scrollRef = useRef<HTMLDivElement>(null)
   const activeCellRef = useRef<HTMLButtonElement>(null)
+  const focusPending = useRef(false)
   const [selection, setSelection] = useState<GridSelection | null>(null)
   const [cellContextMenu, setCellContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [includeHeaders, setIncludeHeaders] = useState(false)
@@ -50,6 +52,25 @@ export function DataGrid({
     overscan: 12,
   })
   const virtualRows = virtualizer.getVirtualItems()
+  const wide = (resultColumns?.length ?? 0) > 24
+  const columnRange = useCallback((range: Parameters<typeof defaultRangeExtractor>[0]) => {
+    const indexes = defaultRangeExtractor(range)
+    // Keep the keyboard focus target mounted when scrolling it out of view.
+    const focus = selection?.focusColumn
+    if (focus != null && focus < range.count && !indexes.includes(focus)) indexes.push(focus)
+    return indexes.sort((a, b) => a - b)
+  }, [selection?.focusColumn])
+  const columnVirtualizer = useVirtualizer({
+    count: wide ? resultColumns!.length : 0,
+    horizontal: true,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: index => columnWidths[index] ?? defaultColumnWidth(resultColumns![index]),
+    paddingStart: ROW_INDEX_WIDTH,
+    overscan: 2,
+    rangeExtractor: columnRange,
+  })
+  useEffect(() => { columnVirtualizer.measure() }, [columnWidths, resultColumns, columnVirtualizer])
+  const visibleColumns = wide ? columnVirtualizer.getVirtualItems().map(item => item.index) : (resultColumns ?? []).map((_, index) => index)
   const gridTemplateColumns = useMemo(() => {
     const widths = (resultColumns ?? []).map((column, index) => `${columnWidths[index] ?? defaultColumnWidth(column)}px`)
     return `${ROW_INDEX_WIDTH}px ${widths.join(' ')}`
@@ -58,9 +79,13 @@ export function DataGrid({
     return ROW_INDEX_WIDTH + (resultColumns ?? []).reduce((sum, column, index) => sum + (columnWidths[index] ?? defaultColumnWidth(column)), 0)
   }, [columnWidths, resultColumns])
 
+  useEffect(() => { focusPending.current = Boolean(selection) }, [selection])
   useEffect(() => {
-    activeCellRef.current?.focus({ preventScroll: true })
-  }, [selection])
+    if (focusPending.current && activeCellRef.current) {
+      activeCellRef.current.focus({ preventScroll: true })
+      focusPending.current = false
+    }
+  })
 
   if (!result) {
     return (
@@ -91,14 +116,48 @@ export function DataGrid({
 
   return (
     <div
-      className="data-grid-shell flex h-full min-h-0 min-w-0 overflow-hidden bg-surface text-xs tabular-nums"
+      className="data-grid-shell relative flex h-full min-h-0 min-w-0 overflow-hidden bg-surface text-xs tabular-nums"
       onKeyDownCapture={(event) => {
-        if (event.key.toLowerCase() !== 'c' || (!event.metaKey && !event.ctrlKey)) return
         if (!selection || document.activeElement !== activeCellRef.current) return
+        if (event.key.toLowerCase() === 'c' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault()
+          void copy(activeCellValue(result, selection))
+          return
+        }
+        let row = selection.focusRow, column = selection.focusColumn
+        switch (event.key) {
+          case 'ArrowLeft': column--; break
+          case 'ArrowRight': column++; break
+          case 'ArrowUp': row--; break
+          case 'ArrowDown': row++; break
+          case 'Home': column = 0; if (event.metaKey || event.ctrlKey) row = 0; break
+          case 'End': column = result.columns.length - 1; if (event.metaKey || event.ctrlKey) row = result.rows.length - 1; break
+          case 'Tab': {
+            const index = row * result.columns.length + column + (event.shiftKey ? -1 : 1)
+            if (index < 0 || index >= result.rows.length * result.columns.length) return
+            row = Math.floor(index / result.columns.length); column = index % result.columns.length
+            break
+          }
+          default: return
+        }
         event.preventDefault()
-        copyToClipboard(activeCellValue(result, selection))
+        row = clampNumber(row, 0, result.rows.length - 1)
+        column = clampNumber(column, 0, result.columns.length - 1)
+        virtualizer.scrollToIndex(row, { align: 'auto' })
+        if (wide) columnVirtualizer.scrollToIndex(column, { align: 'auto' })
+        else {
+          const element = scrollRef.current
+          const start = ROW_INDEX_WIDTH + result.columns.slice(0, column).reduce((sum, item, i) => sum + (columnWidths[i] ?? defaultColumnWidth(item)), 0)
+          const end = start + (columnWidths[column] ?? defaultColumnWidth(result.columns[column]))
+          if (element && start < element.scrollLeft) element.scrollLeft = start
+          else if (element && end > element.scrollLeft + element.clientWidth) element.scrollLeft = end - element.clientWidth
+        }
+        setSelection(current => nextCellSelection(current, row, column, event.shiftKey && event.key !== 'Tab'))
       }}
     >
+      <div role="status" aria-live="polite" aria-atomic="true" className="pointer-events-none absolute bottom-10 left-3 z-40 max-w-[calc(100%-1.5rem)]">
+        {feedback && <span className="inline-flex items-center gap-1.5 rounded-md border border-border-strong bg-surface px-3 py-2 text-xs font-medium shadow-sm">{feedback === 'success' && <Check className="size-3.5" aria-hidden="true" />}{t(feedback === 'success' ? 'result.copySucceeded' : 'result.copyFailed')}</span>}
+      </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-auto">
         <div className="relative" style={{ minWidth: minGridWidth }}>
@@ -121,8 +180,10 @@ export function DataGrid({
             <div className="data-grid-index flex items-center justify-end border-b border-r border-grid-border/55 px-2.5 font-medium text-muted-foreground">
               #
             </div>
-            {resultColumns!.map((column, columnIndex) => (
-              <div key={columnIndex} className="data-grid-column group relative min-w-0 border-b border-r border-grid-border/55 px-3">
+            {visibleColumns.map(columnIndex => {
+              const column = resultColumns![columnIndex]
+              return (
+              <div key={columnIndex} style={{ gridColumn: columnIndex + 2 }} className="data-grid-column group relative min-w-0 border-b border-r border-grid-border/55 px-3">
                 <div
                   className="flex h-full min-w-0 flex-col justify-center gap-px pr-1"
                   title={columnTooltip(column, t('result.nullable'), t('result.notNullable'))}
@@ -145,7 +206,7 @@ export function DataGrid({
                   }
                 />
               </div>
-            ))}
+            )})}
           </div>
 
           {result.rows.length === 0 ? (
@@ -175,7 +236,8 @@ export function DataGrid({
                     <div className="data-grid-index flex items-center justify-end border-b border-r border-grid-border/55 px-2.5 text-right font-mono text-[10px] text-muted-foreground">
                       {virtualRow.index + 1}
                     </div>
-                    {resultColumns!.map((column, columnIndex) => {
+                    {visibleColumns.map(columnIndex => {
+                      const column = resultColumns![columnIndex]
                       const rawValue = formatValue(row[columnIndex])
                       const presentation = presentCellValue(row[columnIndex], column)
                       const selected = selectionContains(selection, virtualRow.index, columnIndex)
@@ -185,6 +247,7 @@ export function DataGrid({
                       return (
                         <div
                           key={`${virtualRow.index}-${columnIndex}`}
+                          style={{ gridColumn: columnIndex + 2 }}
                           className={[
                             'data-grid-cell group relative min-w-0 border-b border-r border-grid-border/55 font-mono outline-none',
                             selected ? 'bg-grid-selected text-foreground' : '',
@@ -256,6 +319,7 @@ export function DataGrid({
           inspectorOpen={inspectorOpen}
           onIncludeHeadersChange={setIncludeHeaders}
           onInspectorOpenChange={setInspectorOpen}
+          onCopy={copy}
           t={t}
         />
       </div>
@@ -265,6 +329,7 @@ export function DataGrid({
           selection={selection}
           onClose={() => setInspectorOpen(false)}
           onOpenValue={setViewerValue}
+          onCopy={copy}
           t={t}
         />
       )}
@@ -274,7 +339,7 @@ export function DataGrid({
           x={cellContextMenu.x}
           y={cellContextMenu.y}
           actions={cellContextActions(result, selection, t, {
-            copy: copyToClipboard,
+            copy,
             openInspector: () => setInspectorOpen(true),
           })}
           onClose={() => {
@@ -354,6 +419,7 @@ function CellInspector({
   inspectorOpen,
   onIncludeHeadersChange,
   onInspectorOpenChange,
+  onCopy,
   t,
 }: {
   result: QueryResult
@@ -362,6 +428,7 @@ function CellInspector({
   inspectorOpen: boolean
   onIncludeHeadersChange: (includeHeaders: boolean) => void
   onInspectorOpenChange: (open: boolean) => void
+  onCopy: (value: string) => void
   t: ReturnType<typeof useTranslation>['t']
 }) {
   if (!selection) {
@@ -406,11 +473,11 @@ function CellInspector({
           />
           {t('result.copyHeaders')}
         </label>
-        <Button type="button" size="xs" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => copyToClipboard(value)}>
+        <Button type="button" size="xs" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => onCopy(value)}>
           <Copy className="size-3" />
-          {t('result.cell')}
+          {t('result.copyCell')}
         </Button>
-        <Button type="button" size="xs" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => copyToClipboard(rowValue)}>
+        <Button type="button" size="xs" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => onCopy(rowValue)}>
           <Rows3 className="size-3" />
           {t('result.copyRow')}
         </Button>
@@ -430,7 +497,7 @@ function CellInspector({
           size="xs"
           variant="ghost"
           className="h-6 px-1.5 text-[11px]"
-          onClick={() => copyToClipboard(formatRange(result, range, includeHeaders, 'text'))}
+          onClick={() => onCopy(formatRange(result, range, includeHeaders, 'text'))}
         >
           Text
         </Button>
@@ -439,7 +506,7 @@ function CellInspector({
           size="xs"
           variant="ghost"
           className="h-6 px-1.5 text-[11px]"
-          onClick={() => copyToClipboard(formatRange(result, range, includeHeaders, 'csv'))}
+          onClick={() => onCopy(formatRange(result, range, includeHeaders, 'csv'))}
         >
           CSV
         </Button>
@@ -448,7 +515,7 @@ function CellInspector({
           size="xs"
           variant="ghost"
           className="h-6 px-1.5 text-[11px]"
-          onClick={() => copyToClipboard(formatRange(result, range, includeHeaders, 'json'))}
+          onClick={() => onCopy(formatRange(result, range, includeHeaders, 'json'))}
         >
           JSON
         </Button>
@@ -462,12 +529,14 @@ function RowInspector({
   selection,
   onClose,
   onOpenValue,
+  onCopy,
   t,
 }: {
   result: QueryResult
   selection: GridSelection | null
   onClose: () => void
   onOpenValue: (value: { title: string; value: string }) => void
+  onCopy: (value: string) => void
   t: ReturnType<typeof useTranslation>['t']
 }) {
   const activeRow = selection ? clampNumber(selection.focusRow, 0, Math.max(0, result.rows.length - 1)) : null
@@ -508,7 +577,7 @@ function RowInspector({
                     className="row-inspector-copy shrink-0"
                     aria-label={t('result.copyFieldValue', { field: column.name })}
                     title={t('common.copy')}
-                    onClick={() => copyToClipboard(raw)}
+                    onClick={() => onCopy(raw)}
                   >
                     <Copy className="size-3" />
                   </Button>
@@ -612,6 +681,7 @@ function ValueViewer({
 }) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
+  const { copy, feedback } = useClipboardFeedback()
   const [formatted, setFormatted] = useState(false)
   const raw = value?.value ?? ''
   const display = formatted ? formatJsonIfPossible(raw) : raw
@@ -636,7 +706,7 @@ function ValueViewer({
             onChange={(event) => setQuery(event.target.value)}
           />
           <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground min-[560px]:inline">{t('result.matchCount', { count: matchCount })}</span>
-          <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-[11px]" onClick={() => copyToClipboard(raw)}>
+          <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-[11px]" onClick={() => copy(raw)}>
             <Copy className="size-3.5" />
             {t('common.copy')}
           </Button>
@@ -652,6 +722,7 @@ function ValueViewer({
             JSON
           </Button>
         </div>
+        <span role="status" aria-live="polite" className="px-5 text-xs">{feedback && t(feedback === 'success' ? 'result.copySucceeded' : 'result.copyFailed')}</span>
         <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words bg-surface p-5 font-mono text-xs leading-5">
           {display}
         </pre>

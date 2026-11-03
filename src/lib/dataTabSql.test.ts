@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildDataTabSql, dataTabFetchLimit, qualifiedName } from './dataTabSql'
+import { buildDataTabPreviewSql as buildDataTabSql, buildDataTabSql as buildVisibleSql, dataTabFetchLimit, qualifiedName } from './dataTabSql'
 
 describe('SQL Server data preview pagination', () => {
   const base = { driverType: 'mssql' as const, schema: 'dbo', table: 'items', limit: 20 }
@@ -66,5 +66,19 @@ describe('other data preview dialects', () => {
 describe('unverified SQL dialects', () => {
   it('refuses guessed pagination for generic JDBC', () => {
     expect(() => buildDataTabSql({driverType:'jdbc',schema:'PUBLIC',table:'items',limit:10})).toThrow(/unknown dialect/)
+  })
+})
+
+describe('user-visible current-page SQL', () => {
+  it.each(['postgres', 'mysql', 'sqlite', 'mssql', 'oracle'] as const)('keeps %s page/filter/order without the internal sentinel', driverType => {
+    for (const offset of [0, 40]) {
+      const input = { driverType, schema: 'app', table: 'items', limit: 20, offset, wherePredicate: 'active = 1', sortColumn: 'id', sortDirection: 'desc' as const, primaryKeyColumns: ['id'] }
+      const visible = buildVisibleSql(input), preview = buildDataTabSql(input)
+      expect(visible).toContain('WHERE active = 1')
+      expect(visible).toContain('DESC')
+      expect(visible).toContain(`OFFSET ${offset}`)
+      expect(visible).toContain(driverType === 'mssql' || driverType === 'oracle' ? 'FETCH NEXT 20 ROWS ONLY' : 'LIMIT 20')
+      expect(preview).toContain(driverType === 'mssql' || driverType === 'oracle' ? 'FETCH NEXT 21 ROWS ONLY' : 'LIMIT 21')
+    }
   })
 })

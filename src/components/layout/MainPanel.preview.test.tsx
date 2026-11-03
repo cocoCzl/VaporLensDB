@@ -57,3 +57,14 @@ it('keeps the chosen sort while replacement rows are loading and uses it on the 
   expect(current().sql).toContain('ORDER BY "id" DESC')
   expect(current().sql).toContain('OFFSET 2')
 })
+
+it.each([0, 2])('converts page offset %s with its own execution context, filter/order and visible limit', offset => {
+  useEditorStore.setState(state => ({ tabs: state.tabs.map(tab => ({ ...tab, sql: 'internal SQL with LIMIT 3', dataContext: { ...tab.dataContext!, database: 'fixture.sqlite', wherePredicate: 'id > 0', sortColumn: 'id', sortDirection: 'desc', offset } })) }))
+  render(<MainPanel />)
+  expect(screen.getByRole('textbox', { name: i18n.t('workbench.generatedSqlAria') })).toHaveValue(`SELECT *\nFROM "main"."fixture"\nWHERE id > 0\nORDER BY "id" DESC\nLIMIT 2 OFFSET ${offset};`)
+  fireEvent.click(screen.getByRole('button', { name: i18n.t('workbench.openInSqlTab') }))
+  const sqlTab = useEditorStore.getState().tabs.at(-1)!
+  expect(sqlTab).toMatchObject({ kind: 'sql', connectionId: 'c', database: 'fixture.sqlite', schema: 'main' })
+  expect(sqlTab.sql).toBe(`SELECT *\nFROM "main"."fixture"\nWHERE id > 0\nORDER BY "id" DESC\nLIMIT 2 OFFSET ${offset};`)
+  expect(ipc.run).not.toHaveBeenCalled()
+})

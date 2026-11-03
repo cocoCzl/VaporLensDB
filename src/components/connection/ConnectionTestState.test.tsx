@@ -117,7 +117,7 @@ it('immediately shows busy text, prevents duplicate tests and retains measured s
   const feedback = document.querySelector('[data-connection-feedback]')!
   expect(feedback).toHaveTextContent(i18n.t('connectionForm.connectionTestSucceeded'))
   expect(feedback).toHaveTextContent(i18n.t('connectionForm.testElapsed', { ms: '123' }))
-  expect(feedback).toHaveTextContent(i18n.t('connectionForm.testScope'))
+  expect(feedback).toHaveTextContent(i18n.t('connectionForm.testNextEdit'))
   expect(feedback.querySelector('svg')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: i18n.t('connectionForm.saveOnly') })).toBeEnabled()
   expect(screen.getByRole('button', { name: i18n.t('connectionForm.saveAndConnect') })).toBeEnabled()

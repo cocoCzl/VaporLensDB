@@ -16,6 +16,8 @@ vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getVirtualItems: () => Array.from({ length: count }, (_, index) => ({ index, key: index, size: 30, start: index * 30 })),
     getTotalSize: () => count * 30,
+    measure: vi.fn(),
+    scrollToIndex: vi.fn(),
   }),
 }))
 
@@ -596,6 +598,8 @@ describe('DataGrid clipboard failure feedback', () => {
 
   it('keeps Clipboard API success quiet without using fallback', async () => {
     await copy(renderCopyCell())
+    expect(screen.getByRole('status')).toHaveTextContent('Copied to clipboard')
+    expect(screen.getByRole('button', { name: 'Copy Cell' })).toBeVisible()
     expect(writeText).toHaveBeenCalledWith(payload)
     expect(execCommand).not.toHaveBeenCalled()
     expect(useUiStore.getState().notifications).toEqual([])
@@ -614,6 +618,7 @@ describe('DataGrid clipboard failure feedback', () => {
     await copy(renderCopyCell())
     expect(execCommand).toHaveBeenCalledWith('copy')
     expect(useUiStore.getState().notifications).toHaveLength(1)
+    expect(screen.getByRole('status')).toHaveTextContent('Copy failed. Try again.')
   })
 
   it.each([true, false])('uses fallback when the Clipboard API is unavailable (success=%s)', async (success) => {
