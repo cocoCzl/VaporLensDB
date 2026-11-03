@@ -16,8 +16,8 @@
   };
   window.__vaporStartupMark = mark;
   mark('document_start', { hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 });
-  for (const event of ['visibilitychange', 'focus', 'blur', 'pageshow', 'pagehide']) {
-    addEventListener(event, () => mark('perf_visibility', { hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 }));
+  for (const [code, name] of ['visibilitychange', 'focus', 'blur', 'pageshow', 'pagehide', 'freeze', 'resume'].entries()) {
+    addEventListener(name, event => mark('perf_visibility', { event: code + 1, persisted: event.persisted ? 1 : 0, hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 }), true);
   }
   addEventListener('error', event => mark('window_error', {
     resizeObserver: /ResizeObserver loop/.test(event.message || '') ? 1 : 0,
@@ -116,5 +116,10 @@
       if (!framesRemaining) { framesRemaining = 30; requestAnimationFrame(frame); }
     }, { capture: true, passive: true });
   }
-  new MutationObserver(queueSample).observe(document, { subtree: true, childList: true });
+  new MutationObserver(() => {
+    mark('perf_dom', { interaction, forms: document.querySelectorAll('.connection-form').length,
+      menus: document.querySelectorAll('[role="menu"]').length,
+      hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 });
+    queueSample();
+  }).observe(document, { subtree: true, childList: true });
 })();

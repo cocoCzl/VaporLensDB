@@ -355,6 +355,15 @@ pub fn run() {
             shutdown_coordinator: ApplicationShutdownCoordinator::new(),
         })
         .on_window_event(|window, event| {
+            let stage = match event {
+                tauri::WindowEvent::Focused(true) => Some("native_focus_in"),
+                tauri::WindowEvent::Focused(false) => Some("native_focus_out"),
+                tauri::WindowEvent::Resized(_) => Some("native_resized"),
+                tauri::WindowEvent::Moved(_) => Some("native_moved"),
+                tauri::WindowEvent::CloseRequested { .. } => Some("native_close_requested"),
+                _ => None,
+            };
+            if let Some(stage) = stage { utils::startup::window_snapshot(window, stage, Default::default()); }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = commands::lifecycle::request_application_close(window.app_handle());
@@ -451,7 +460,17 @@ pub fn run() {
         ])
         .build(context)
         .expect("error while building tauri application")
-        .run(|_, event| {
+        .run(|app, event| {
+            let stage = match &event {
+                tauri::RunEvent::Ready => Some("native_app_ready"),
+                tauri::RunEvent::Resumed => Some("native_app_resumed"),
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => Some("native_app_reopen"),
+                _ => None,
+            };
+            if let Some(stage) = stage {
+                if let Some(window) = app.get_webview_window("main") { utils::startup::window_snapshot(&window.as_ref().window(), stage, Default::default()); }
+            }
             if matches!(event, tauri::RunEvent::Ready) {
                 utils::startup::mark("backend_ready");
             }

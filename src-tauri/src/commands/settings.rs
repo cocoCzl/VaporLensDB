@@ -21,10 +21,14 @@ pub fn set_application_menu_language(
 /// Records numeric startup timings only when local tracing was explicitly enabled.
 #[tauri::command]
 pub fn startup_trace(
+    window: tauri::Window,
     stage: String,
     epoch_ms: f64,
     metrics: std::collections::BTreeMap<String, f64>,
 ) {
+    if matches!(stage.as_str(), "perf_visibility" | "perf_input" | "perf_dom") {
+        crate::utils::startup::window_snapshot(&window, "native_page_state", metrics.clone());
+    }
     crate::utils::startup::record(stage, epoch_ms, metrics);
 }
 
