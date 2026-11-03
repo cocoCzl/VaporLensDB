@@ -8,7 +8,7 @@
     for (const payload of pending.splice(0)) void invoke('startup_trace', payload).catch(() => {});
   };
   const mark = (stage, metrics = {}) => {
-    if (seen.has(stage) && stage !== 'layout') return;
+    if (seen.has(stage) && stage !== 'layout' && !stage.startsWith('perf_') && !stage.startsWith('ipc_')) return;
     seen.add(stage);
     const epochMs = performance.timeOrigin + performance.now();
     pending.push({ stage, epochMs, metrics });
@@ -72,4 +72,45 @@
   observer.observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
   addEventListener('resize', schedule);
   addEventListener('DOMContentLoaded', () => { mark('dom_loaded'); schedule(); });
+  // Numeric, opt-in interaction probes. No labels, field values, SQL, IDs or
+  // credentials leave the renderer. Present-at-rAF is not physical screen paint.
+  let interaction = 0, inputAt = 0, category = 0, sampleQueued = false;
+  let previousFrame = 0, framesRemaining = 0, frameGaps = [];
+  const sample = () => {
+    sampleQueued = false;
+    if (!interaction) return;
+    mark('perf_frame', {
+      interaction, category, latencyMs: performance.now() - inputAt,
+      forms: document.querySelectorAll('.connection-form').length,
+      cells: document.querySelectorAll('.data-grid-cell').length,
+      columns: document.querySelectorAll('.data-grid-column').length,
+      treeRows: document.querySelectorAll('[data-tree-row]').length,
+      connections: document.querySelectorAll('[data-connection-id]').length,
+      width: innerWidth, height: innerHeight, dpr: devicePixelRatio,
+    });
+  };
+  const queueSample = () => {
+    if (!sampleQueued) { sampleQueued = true; requestAnimationFrame(() => requestAnimationFrame(sample)); }
+  };
+  const frame = time => {
+    if (previousFrame) frameGaps.push(time - previousFrame);
+    previousFrame = time;
+    if (--framesRemaining > 0) requestAnimationFrame(frame);
+    else {
+      frameGaps.sort((a, b) => a - b);
+      mark('perf_frame_gaps', { interaction, category, count: frameGaps.length,
+        medianMs: frameGaps[Math.floor(frameGaps.length / 2)] ?? 0,
+        maxMs: frameGaps.at(-1) ?? 0 });
+      previousFrame = 0; frameGaps = [];
+    }
+  };
+  for (const [eventName, code] of [['click', 1], ['keydown', 2], ['input', 3], ['scroll', 4]]) {
+    addEventListener(eventName, () => {
+      interaction++; category = code; inputAt = performance.now();
+      mark('perf_input', { interaction, category });
+      queueSample();
+      if (!framesRemaining) { framesRemaining = 30; requestAnimationFrame(frame); }
+    }, { capture: true, passive: true });
+  }
+  new MutationObserver(queueSample).observe(document, { subtree: true, childList: true });
 })();

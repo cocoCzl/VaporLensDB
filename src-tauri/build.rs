@@ -14,7 +14,9 @@ fn main() {
             .join(&profile)
             .join("vapor-lens-db");
 
-        if binary_path.exists() {
+        // Local release measurements and --no-sign builds must remain unsigned.
+        // Signing of distribution builds belongs to the bundler, not build.rs.
+        if profile == "debug" && binary_path.exists() {
             let entitlements_path = std::path::Path::new(&manifest_dir)
                 .join("gen")
                 .join("apple")
