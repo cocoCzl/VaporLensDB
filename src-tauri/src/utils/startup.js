@@ -15,7 +15,10 @@
     queueMicrotask(flush);
   };
   window.__vaporStartupMark = mark;
-  mark('document_start');
+  mark('document_start', { hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 });
+  for (const event of ['visibilitychange', 'focus', 'blur', 'pageshow', 'pagehide']) {
+    addEventListener(event, () => mark('perf_visibility', { hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 }));
+  }
   addEventListener('error', event => mark('window_error', {
     resizeObserver: /ResizeObserver loop/.test(event.message || '') ? 1 : 0,
     resource: event.target instanceof Element ? 1 : 0,
@@ -87,6 +90,7 @@
       treeRows: document.querySelectorAll('[data-tree-row]').length,
       connections: document.querySelectorAll('[data-connection-id]').length,
       width: innerWidth, height: innerHeight, dpr: devicePixelRatio,
+      hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0,
     });
   };
   const queueSample = () => {

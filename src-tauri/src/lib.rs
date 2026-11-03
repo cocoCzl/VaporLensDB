@@ -293,6 +293,7 @@ pub fn run() {
         appearance.configure_startup_window(window);
     }
     utils::startup::mark("native_appearance_ready");
+    utils::startup::mark("native_runtime_start");
     tauri::Builder::default()
         .append_invoke_initialization_script(utils::startup::initialization_script())
         .on_page_load(|_, payload| {
@@ -305,6 +306,11 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
+            // Tauri has constructed its configured window before setup. This
+            // bounds creation; it is not the later page-load notification.
+            if app.get_webview_window("main").is_some() {
+                utils::startup::mark("webview_available_in_setup");
+            }
             #[cfg(target_os = "macos")]
             utils::appearance::set_canvas_background(
                 &app.get_webview_window("main")
