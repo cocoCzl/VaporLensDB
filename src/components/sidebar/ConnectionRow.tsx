@@ -18,6 +18,7 @@ interface ConnectionRowProps {
   busy: boolean
   selected: boolean
   expanded: boolean
+  menuOpen?: boolean
   favorite: boolean
   query: string
   t: TFunction
@@ -33,6 +34,7 @@ export function ConnectionRow({
   busy,
   selected,
   expanded,
+  menuOpen = false,
   favorite,
   query,
   t,
@@ -126,6 +128,8 @@ export function ConnectionRow({
           selected ? 'opacity-100' : 'opacity-0',
         ].join(' ')}
         aria-label={t('common.moreActions')}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
         title={t('common.moreActions')}
         onClick={openMenu}
       >

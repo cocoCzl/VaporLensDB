@@ -63,7 +63,7 @@ describe('DataGrid', () => {
     [{ truncated: false, displayTruncated: false }, false, false],
     [{ truncated: true, displayTruncated: false }, true, false],
     [{ truncated: false, displayTruncated: true }, false, true],
-    [{ truncated: true, displayTruncated: true }, true, false],
+    [{ truncated: true, displayTruncated: true }, true, true],
   ])('presents backend and renderer truncation separately %#', (flags, backendWarning, rendererWarning) => {
     render(
       <DataGrid
@@ -81,14 +81,14 @@ describe('DataGrid', () => {
     )
 
     if (backendWarning) {
-      expect(screen.getByText(/query limit/i)).toBeInTheDocument()
+      expect(screen.getByText(/query row limit/i)).toBeInTheDocument()
     } else {
-      expect(screen.queryByText(/query limit/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/query row limit/i)).not.toBeInTheDocument()
     }
     if (rendererWarning) {
-      expect(screen.getByText(/rows; grid cap/i)).toBeInTheDocument()
+      expect(screen.getByText(/grid retention limit/i)).toBeInTheDocument()
     } else {
-      expect(screen.queryByText(/rows; grid cap/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/grid retention limit/i)).not.toBeInTheDocument()
     }
   })
 

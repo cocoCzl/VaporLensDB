@@ -231,4 +231,25 @@ describe('ConnectionDialog dismissal with the real form and Base UI portal', () 
     await closeWithX()
     await expectDialogClosed()
   })
+
+  it('releases the portal and focus lock even when the page never receives an animation frame', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getAnimations')
+    Object.defineProperty(HTMLElement.prototype, 'getAnimations', { configurable: true, value: () => [] })
+    const frames = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+    try {
+      const view = render(<><button>Outside dialog</button><ConnectionDialog open hideTrigger /></>)
+      expect(screen.getByRole('dialog')).toBeVisible()
+      view.rerender(<><button>Outside dialog</button><ConnectionDialog open={false} hideTrigger /></>)
+      await expectDialogClosed()
+      const outside = screen.getByRole('button', { name: 'Outside dialog' })
+      outside.focus()
+      expect(outside).toHaveFocus()
+      expect(outside.closest('[data-base-ui-inert]')).toBeNull()
+      view.unmount()
+    } finally {
+      frames.mockRestore()
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, 'getAnimations', descriptor)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'getAnimations')
+    }
+  })
 })

@@ -1,7 +1,9 @@
+import { resultLimitNotice } from '@/lib/resultLimitNotice'
+import { SqlEditorSurface } from '@/components/editor/SqlEditorSurface'
 import { connectionProductType } from '@/lib/productPresentation'
 import { connectionSqlDialect } from '@/lib/databaseDialect'
 import { useDriverStore } from '@/stores/driverStore'
-import { dispatchSqlCommand, sqlCommandShortcut, registerSqlCommands, executionSql, EMPTY_CURSOR, focusElement, type SqlCursor } from '@/lib/sqlCommands'
+import { dispatchSqlCommand, registerSqlCommands, executionSql, EMPTY_CURSOR, focusElement, type SqlCursor } from '@/lib/sqlCommands'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import i18n from '@/i18n'
@@ -62,7 +64,6 @@ import type { TaskInfo } from '@/types/task'
 import type { EditorTab } from '@/stores/editorStore'
 import type { AppNotification } from '@/stores/uiStore'
 
-type SqlEditorModule = { default: typeof import('@/components/editor/SqlEditor').SqlEditor }
 type ConnectionListModule = { ConnectionList: typeof import('@/components/connection/ConnectionList').ConnectionList }
 
 interface QueryCapabilities {
@@ -73,18 +74,8 @@ interface QueryCapabilities {
   canComplete: boolean
 }
 
-let sqlEditorPreload: Promise<SqlEditorModule> | null = null
-
-function loadSqlEditor() {
-  sqlEditorPreload ??= import('@/components/editor/SqlEditor').then((module) => ({
-    default: module.SqlEditor,
-  }))
-  return sqlEditorPreload
-}
-
 const CsvImportWorkflow = lazy(() => import('@/components/workspace/CsvImportWorkflow').then(module => ({ default: module.CsvImportWorkflow })))
 const ExecutionSummary = lazy(() => import('@/components/workspace/ExecutionSummary').then(module => ({ default: module.ExecutionSummary })))
-const SqlEditor = lazy(loadSqlEditor)
 const ERDiagram = lazy(() => import('@/components/diagram/ERDiagram').then((module) => ({
   default: module.ERDiagram,
 })))
@@ -143,7 +134,6 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   const upsertTask = useTaskStore((state) => state.upsertTask)
   const loadSqlDrafts = useSqlDraftStore((state) => state.loadDrafts)
   const saveTabDraft = useSqlDraftStore((state) => state.saveTabDraft)
-  const editorFontSize = useUiStore((state) => state.editorFontSize)
   const queryMaxRows = useUiStore((state) => state.queryMaxRows)
   const setQueryMaxRows = useUiStore((state) => state.setQueryMaxRows)
   const dataPreviewDefaultRows = useUiStore((state) => state.dataPreviewDefaultRows)
@@ -165,8 +155,6 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
     setCursor({ tabId, value })
   }
   function currentCursor() { return cursorRef.current.tabId === activeTab?.id ? cursorRef.current.value : EMPTY_CURSOR }
-  const [editorLoaded, setEditorLoaded] = useState(false)
-  const [editorShouldFocus, setEditorShouldFocus] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyPanelWidth, setHistoryPanelWidth] = useState(380)
   const [resultView, setResultView] = useState<'data' | 'metadata'>('data')
@@ -940,59 +928,22 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         <div className="relative min-h-0 flex-1">
         <div className="flex h-full min-w-0 flex-col overflow-hidden">
         <div data-sql-editor className={workspaceView === 'results' ? 'hidden' : 'ide-editor-surface relative min-h-0 flex-1'}>
-        {editorLoaded ? (
-          <Suspense
-            fallback={
-              <div className="grid h-full place-items-center bg-card text-xs text-muted-foreground">
-                {t('workbench.loadingSqlEditor')}
-              </div>
-            }
-          >
-            <SqlEditor
-              key={activeTab.id}
-              readOnly={Boolean(activeTab.fileBusy || (activeTab.filePath && activeTab.closing))}
-              value={activeTab.sql}
-              connectionId={queryCapabilities.canComplete ? connectionId : null}
-              schema={selectedSchema}
-              driverType={activeDriverType}
-              showSystemObjects={showSystemObjects}
-              onChange={(sql) => updateTabSql(activeTab.id, sql)}
-              onRun={() => dispatchSqlCommand('runCurrent')}
-              onScopeChange={(value) => updateCursor(activeTab.id, value)}
-              onFormat={() => dispatchSqlCommand('format')}
-              onFocusReady={(focus) => { focusEditorRef.current = focus }}
-              autoFocus={editorShouldFocus}
-            />
-          </Suspense>
-        ) : (
-          <div className="flex h-full flex-col bg-card">
-            <textarea
-              readOnly={Boolean(activeTab.fileBusy || (activeTab.filePath && activeTab.closing))}
-              className="min-h-0 flex-1 resize-none bg-card p-3 font-mono text-[13px] leading-5 text-foreground outline-none"
-              style={{ fontSize: editorFontSize, lineHeight: `${Math.max(18, editorFontSize + 7)}px` }}
-              value={activeTab.sql}
-              spellCheck={false}
-              onFocus={() => {
-                loadSqlEditor()
-                setEditorShouldFocus(true)
-                setEditorLoaded(true)
-              }}
-              onChange={(event) => updateTabSql(activeTab.id, event.target.value)}
-              onSelect={(event) => {
-                const target = event.currentTarget
-                updateCursor(activeTab.id, { start: target.selectionStart, end: target.selectionEnd, cursor: target.selectionDirection === 'backward' ? target.selectionStart : target.selectionEnd })
-              }}
-              onKeyDown={(event) => {
-                if (sqlCommandShortcut('format') && event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'f') { event.preventDefault(); dispatchSqlCommand('format'); return }
-                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                  event.preventDefault()
-                  updateCursor(activeTab.id, { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd, cursor: event.currentTarget.selectionEnd })
-                  dispatchSqlCommand('runCurrent')
-                }
-              }}
-            />
-          </div>
-        )}
+        <SqlEditorSurface
+          key={activeTab.id}
+          draftId={activeTab.id}
+          readOnly={Boolean(activeTab.fileBusy || (activeTab.filePath && activeTab.closing))}
+          value={activeTab.sql}
+          connectionId={queryCapabilities.canComplete ? connectionId : null}
+          schema={selectedSchema}
+          driverType={activeDriverType}
+          showSystemObjects={showSystemObjects}
+          onChange={(sql) => updateTabSql(activeTab.id, sql)}
+          onRun={() => dispatchSqlCommand('runCurrent')}
+          onScopeChange={(value) => updateCursor(activeTab.id, value)}
+          onFormat={() => dispatchSqlCommand('format')}
+          onFocusReady={(focus) => { focusEditorRef.current = focus }}
+          autoFocus
+        />
         </div>
 
         {!bottomPanelCollapsed && workspaceView === 'split' && (
@@ -2587,14 +2538,7 @@ function dataTabDisplayResult(result: QueryResult, limit: number): QueryResult {
 }
 
 function largeResultNotice(result: QueryResult) {
-  if (result.displayTruncated) {
-    return i18n.t('workbench.visualResultLimitNotice', {
-      count: result.rows.length,
-    })
-  }
-  return result.truncated
-    ? i18n.t('workbench.largeResultNotice', { count: result.maxRows ?? result.rowCount })
-    : resultHeaderSummary(result)
+  return resultLimitNotice(result, i18n.t.bind(i18n)) ?? resultHeaderSummary(result)
 }
 
 function sqlPreview(sql: string) {

@@ -11,7 +11,7 @@ const MONACO_ENTER = 3
 
 loader.config({ paths: { vs: '/monaco/vs' } })
 
-interface SqlEditorProps {
+export interface SqlEditorProps {
   value: string
   connectionId?: string | null
   schema?: string | null
@@ -22,6 +22,7 @@ interface SqlEditorProps {
   onFormat?: () => void
   onScopeChange?: (cursor: SqlCursor) => void
   onFocusReady?: (focus: (() => void) | null) => void
+  onReady?: (instance: editor.IStandaloneCodeEditor) => void
   readOnly?: boolean
   autoFocus?: boolean
 }
@@ -37,6 +38,7 @@ export function SqlEditor({
   onScopeChange,
   onFormat,
   onFocusReady,
+  onReady,
   readOnly = false,
   autoFocus = false,
 }: SqlEditorProps) {
@@ -133,6 +135,7 @@ export function SqlEditor({
       completionProvider.dispose()
       monacoRef.current = null
     })
+    onReady?.(instance)
   }
 
   return (

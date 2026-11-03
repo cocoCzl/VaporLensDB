@@ -4,7 +4,7 @@ import { MAX_INTERACTIVE_RESULT_ROWS } from '@/stores/uiStore'
 
 // The database can stream more rows for counting/export, but the grid keeps a
 // fixed visual window so several open SQL tabs cannot retain unbounded data.
-const MAX_RENDERED_RESULT_ROWS = 10_000
+export const MAX_RENDERED_RESULT_ROWS = 10_000
 export const MAX_RENDERED_RESULT_BYTES = 4 * 1024 * 1024
 const MAX_RETAINED_QUERY_RESULTS = 20
 const utf8Encoder = new TextEncoder()
@@ -38,14 +38,15 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
       let bytes = 0
       const bounded = results.map((result) => {
         const rows: unknown[][] = []
+        let displayLimitReason = result.displayLimitReason
         for (const row of result.rows) {
-          if (rows.length >= MAX_RENDERED_RESULT_ROWS) break
+          if (rows.length >= MAX_RENDERED_RESULT_ROWS) { displayLimitReason = 'rows'; break }
           const rowBytes = estimateRetainedRowBytes(row)
-          if (rowBytes > MAX_RENDERED_RESULT_BYTES - bytes) break
+          if (rowBytes > MAX_RENDERED_RESULT_BYTES - bytes) { displayLimitReason = 'bytes'; break }
           rows.push(row)
           bytes += rowBytes
         }
-        return { ...result, rows, streaming: false, statementKind: result.statementKind ?? statementKind, displayTruncated: result.displayTruncated || rows.length < result.rows.length }
+        return { ...result, rows, displayLimitReason, streaming: false, statementKind: result.statementKind ?? statementKind, displayTruncated: result.displayTruncated || rows.length < result.rows.length }
       })
       return retainResultData({ ...s.results, [queryId]: bounded }, { ...s.retainedBytes, [queryId]: bytes })
     }),
@@ -84,11 +85,12 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
       // prior rows (the old spread was O(n²) for a large streamed result).
       let bytes = s.retainedBytes[chunk.queryId] ?? 0
       let retained = 0
+      let displayLimitReason = current.displayLimitReason
       if (!current.displayTruncated) {
         for (const row of chunk.rows) {
-          if (current.rows.length >= MAX_RENDERED_RESULT_ROWS) break
+          if (current.rows.length >= MAX_RENDERED_RESULT_ROWS) { displayLimitReason = 'rows'; break }
           const rowBytes = estimateRetainedRowBytes(row)
-          if (rowBytes > MAX_RENDERED_RESULT_BYTES - bytes) break
+          if (rowBytes > MAX_RENDERED_RESULT_BYTES - bytes) { displayLimitReason = 'bytes'; break }
           current.rows.push(row)
           bytes += rowBytes
           retained += 1
@@ -99,6 +101,7 @@ export const useQueryResultStore = create<QueryResultState>((set) => ({
         columns: current.columns.length ? current.columns : chunk.columns,
         rowCount: Math.max(current.rowCount, chunk.rowOffset + chunk.rows.length),
         displayTruncated: current.displayTruncated || retained < chunk.rows.length,
+        displayLimitReason,
         maxRows: current.maxRows ?? MAX_RENDERED_RESULT_ROWS,
       }
 

@@ -11,6 +11,7 @@ import { ConnectionContextMenu } from '@/components/sidebar/ConnectionContextMen
 import { ConnectionGroup } from '@/components/sidebar/ConnectionGroup'
 import { ConnectionRow } from '@/components/sidebar/ConnectionRow'
 import { RenameConnectionDialog } from '@/components/sidebar/RenameConnectionDialog'
+import { ConnectionDialog } from '@/components/connection/ConnectionDialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { handleTreeNavigation, roveTreeFocus, syncTreeTabStop } from '@/components/sidebar/treeKeyboardNavigation'
 import { openDriverManager } from '@/lib/openDriverManager'
@@ -76,6 +77,7 @@ export function DataSourcesSidebar() {
   const [expandedDataSourceIds, setExpandedDataSourceIds] = useState<Record<string, boolean>>({})
   const [contextMenu, setContextMenu] = useState<{ connection: ConnectionConfig; x: number; y: number } | null>(null)
   const [renameConnectionTarget, setRenameConnectionTarget] = useState<ConnectionConfig | null>(null)
+  const [editConnectionTarget, setEditConnectionTarget] = useState<ConnectionConfig | null>(null)
   const [query, setQuery] = useState('')
   const [searchObjects, setSearchObjects] = useState(false)
   const treeRef = useRef<HTMLDivElement>(null)
@@ -295,6 +297,7 @@ export function DataSourcesSidebar() {
                       busy={busy}
                       selected={selected}
                       expanded={expanded}
+                      menuOpen={contextMenu?.connection.id === connection.id}
                       favorite={favoriteDataSourceIds.includes(connection.id)}
                       query={connectionQuery}
                       t={t}
@@ -340,7 +343,7 @@ export function DataSourcesSidebar() {
         onDisconnect={(connection) => void requestDisconnect(connection)}
         onNewQuery={openBoundSql}
         onRefresh={(connection) => useMetadataStore.getState().requestConnectionRefresh(connection.id)}
-        onEdit={openManagement}
+        onEdit={setEditConnectionTarget}
         onRename={setRenameConnectionTarget}
         onDuplicate={duplicateConnection}
         onMove={moveToGroup}
@@ -351,6 +354,8 @@ export function DataSourcesSidebar() {
           }
         }}
       />
+
+      <ConnectionDialog connection={editConnectionTarget} open={Boolean(editConnectionTarget)} hideTrigger onOpenChange={(open) => { if (!open) setEditConnectionTarget(null) }} />
 
       <RenameConnectionDialog
         key={renameConnectionTarget?.id ?? 'closed'}

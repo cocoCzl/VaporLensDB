@@ -80,7 +80,7 @@ describe('stream result completion', () => {
     const result = useQueryResultStore.getState().results.bytes[0]
     expect(result.rows.length).toBeLessThan(100)
     expect(result.rows.length).toBeGreaterThan(0)
-    expect(result).toMatchObject({ columns, streaming: true, displayTruncated: true, truncated: false })
+    expect(result).toMatchObject({ columns, streaming: true, displayTruncated: true, displayLimitReason: 'bytes', truncated: false })
     store.finishStreamResult({ queryId: 'bytes', rowCount: 100, affectedRows: 0, elapsedMs: 1, receivedBytes: 100, truncated: false })
     expect(useQueryResultStore.getState().results.bytes[0]).toMatchObject({ rowCount: 100, streaming: false, truncated: false, displayTruncated: true })
     expect(useQueryResultStore.getState().retainedBytes.bytes).toBeLessThanOrEqual(MAX_RENDERED_RESULT_BYTES)
@@ -102,7 +102,7 @@ describe('stream result completion', () => {
     const store = useQueryResultStore.getState()
     store.startStreamResult('rows')
     store.appendResultChunk({ queryId: 'rows', columns: [], rows: Array.from({ length: 10_001 }, () => [1]), rowOffset: 0 })
-    expect(useQueryResultStore.getState().results.rows[0]).toMatchObject({ rowCount: 10_001, displayTruncated: true, truncated: false })
+    expect(useQueryResultStore.getState().results.rows[0]).toMatchObject({ rowCount: 10_001, displayTruncated: true, displayLimitReason: 'rows', truncated: false })
     expect(useQueryResultStore.getState().results.rows[0].rows).toHaveLength(10_000)
     expect(useQueryResultStore.getState().retainedBytes.rows).toBeLessThan(MAX_RENDERED_RESULT_BYTES)
   })

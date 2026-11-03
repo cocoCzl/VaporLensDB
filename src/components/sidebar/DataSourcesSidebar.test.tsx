@@ -8,6 +8,10 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useMetadataStore } from '@/stores/metadataStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useDriverStore } from '@/stores/driverStore'
+import type { ConnectionConfig } from '@/types/connection'
+
+vi.mock('@/components/connection/ConnectionForm', () => ({ ConnectionForm: ({ connection, onCancel }: { connection: ConnectionConfig; onCancel: () => void }) => <><input aria-label="Edited connection name" value={connection.name} readOnly /><button onClick={onCancel}>Cancel edit</button></> }))
 
 vi.mock('@/hooks/useQuery', () => ({ useQuery: () => ({ runQuery: vi.fn() }) }))
 vi.mock('@/hooks/useDisconnectRequest', () => ({ useDisconnectRequest: () => ({ requestDisconnect: vi.fn(), disconnectDialog: null }) }))
@@ -29,6 +33,7 @@ function expand(row: HTMLElement) {
 beforeEach(async () => {
   await i18n.changeLanguage('en')
   vi.clearAllMocks()
+  useDriverStore.setState({ loadDrivers: vi.fn().mockResolvedValue(undefined) })
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
   loadDatabases.mockResolvedValue([{ name: 'business_database_with_a_very_long_name_'.repeat(3) }])
   loadSchemas.mockResolvedValue([{ name: 'public' }])
@@ -54,6 +59,17 @@ beforeEach(async () => {
 })
 
 describe('continuous data-source tree', () => {
+  it('opens the selected row for editing from its more menu and releases the popup on cancel', async () => {
+    const { container } = render(<DataSourcesSidebar />)
+    const row = connectionRow(container, 'c1')
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
+    expect(await screen.findByRole('textbox', { name: 'Edited connection name' })).toHaveValue(useConnectionStore.getState().connections[1].name)
+    expect(useEditorStore.getState().tabs).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
   it('renders 50 saved connections once, without connecting or loading metadata', () => {
     const { container } = render(<DataSourcesSidebar />)
     expect(container.querySelectorAll('[data-connection-id]')).toHaveLength(50)

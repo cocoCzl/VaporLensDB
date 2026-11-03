@@ -1,4 +1,4 @@
-import { isValidElement, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import { isValidElement, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -37,10 +37,14 @@ export function ConnectionDialog({
   const { t } = useTranslation()
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
   const closeRequest = useRef<(() => void) | null>(null)
+  const dialogActions = useRef<{ unmount: () => void; close: () => void } | null>(null)
   const { saveConnection, testConnectionInput, connectConnection, loading } = useConnectionStore()
   const { drivers, loadDrivers } = useDriverStore()
 
   const isOpen = open ?? uncontrolledOpen
+  // This popup has no close animation. Complete its teardown on state commit,
+  // including in hidden/occluded windows where animation frames are suspended.
+  useLayoutEffect(() => { if (!isOpen) dialogActions.current?.unmount() }, [isOpen])
   useEffect(() => { if (isOpen) void loadDrivers() }, [isOpen, loadDrivers])
   const setDialogOpen = (nextOpen: boolean) => {
     if (open === undefined) setUncontrolledOpen(nextOpen)
@@ -60,6 +64,7 @@ export function ConnectionDialog({
   return (
     <Dialog
       open={isOpen}
+      actionsRef={dialogActions}
       onOpenChange={(nextOpen) => {
         if (!nextOpen && closeRequest.current) closeRequest.current()
         else setDialogOpen(nextOpen)

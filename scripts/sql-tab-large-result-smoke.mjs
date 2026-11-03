@@ -53,7 +53,7 @@ includesAll(
     'const sql = (sqlOverride ?? sqlToRun()).trim()',
     'runQuery(activeTab.id, connectionId, sql, {',
     'largeResultNotice(activeResult)',
-    "i18n.t('workbench.largeResultNotice'",
+    'resultLimitNotice(result,',
     'runQuery(activeTab.id, activeTab.connectionId, activeTab.sql, {',
     'maxRows: dataTabFetchLimit(activeDataContext.limit)',
     'maxRows: dataTabFetchLimit(nextContext.limit)',

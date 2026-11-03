@@ -707,7 +707,8 @@
     "databaseSelectHint": "PostgreSQL queries still run against the database configured on the connection. Reconnect to change databases.",
     "maximizeResults": "Maximize Results",
     "maximizeEditor": "Maximize Editor",
-    "restoreSplit": "Restore Split"
+    "restoreSplit": "Restore Split",
+    "inputLabel": "SQL editor"
   },
   "metadata": {
     "database": "Database",
@@ -723,7 +724,7 @@
     "commitSuccess": "Transaction committed · {{elapsedMs}} ms",
     "rollbackSuccess": "Transaction rolled back · {{elapsedMs}} ms",
     "truncated": "{{count}} rows; query limit {{maxRows}}",
-    "visualResultLimitNotice": "{{count}} rows; grid cap",
+    "visualResultLimitNotice": "{{count}} rows retained · {{reason}}",
     "pendingChange": "Pending change",
     "selectCellHint": "Select a cell to inspect the full value",
     "selectRowHint": "Select a row to inspect its values.",
@@ -754,7 +755,14 @@
     "metadataLabel": "Label",
     "metadataType": "Type",
     "metadataHint": "{{count}} fields in this result set; metadata comes from this query's driver response.",
-    "metadataEmpty": "No result-set field metadata is available"
+    "metadataEmpty": "No result-set field metadata is available",
+    "byteLimitReason": "Grid retained-data size budget ({{mib}} MiB)",
+    "rowLimitReason": "Grid retention limit ({{count}} rows)",
+    "visualLimitReason": "Grid retention limit",
+    "queryLimitReason": "Query row limit ({{count}} rows)",
+    "queryLimitReasonUnknown": "Query return limit",
+    "receivedRowCount": "{{count}} rows received",
+    "totalUnknown": "Full result row count unknown"
   },
   "settings": {
     "sections": "Settings sections",

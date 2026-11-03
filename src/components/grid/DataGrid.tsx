@@ -1,3 +1,4 @@
+import { resultLimitNotice } from '@/lib/resultLimitNotice'
 /* eslint-disable react-hooks/incompatible-library -- TanStack Virtual intentionally exposes non-memoizable instance methods. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Braces, Check, Copy, Maximize2, Rows3, X } from 'lucide-react'
@@ -161,20 +162,17 @@ export function DataGrid({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-auto">
         <div className="relative" style={{ minWidth: minGridWidth }}>
+          <div className="sticky top-0 z-30">
           {displayIncomplete && (
-            <div className="sticky top-0 z-30 border-b border-warning/35 bg-warning-bg px-3 py-1.5 text-warning-foreground">
-              {t(result.truncated ? 'result.truncated' : 'result.visualResultLimitNotice', {
-                count: result.rows.length,
-                maxRows: result.maxRows ?? '',
-              })}
+            <div className="border-b border-warning/35 bg-warning-bg px-3 py-1.5 text-warning-foreground">
+              {resultLimitNotice(result, t)}
             </div>
           )}
           <div
-            className="data-grid-header sticky top-0 z-20 grid h-11 bg-grid-header text-[11px]"
+            className="data-grid-header grid h-11 bg-grid-header text-[11px]"
             style={{
               gridTemplateColumns,
               minWidth: minGridWidth,
-              top: displayIncomplete ? 29 : 0,
             }}
           >
             <div className="data-grid-index flex items-center justify-end border-b border-r border-grid-border/55 px-2.5 font-medium text-muted-foreground">
@@ -207,6 +205,8 @@ export function DataGrid({
                 />
               </div>
             )})}
+          </div>
+
           </div>
 
           {result.rows.length === 0 ? (

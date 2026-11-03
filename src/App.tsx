@@ -3,6 +3,7 @@ import { useDriverStore } from './stores/driverStore'
 import { SqlFileDialog } from './components/editor/SqlFileDialog'
 import { dispatchSqlFileAction } from './lib/sqlFileActions'
 import { useEffect, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Sidebar } from './components/layout/Sidebar'
 import { WorkspacePanel } from './components/layout/WorkspacePanel'
 import { StatusBar } from './components/layout/StatusBar'
@@ -165,7 +166,9 @@ export default function App() {
             ? activeTab?.connectionId ?? connections.browsingConnectionId
             : connections.browsingConnectionId
           const connection = connections.connections.find((item) => item.id === connectionId)
-          editor.addTab({ id: crypto.randomUUID(), kind: 'sql', title: connection ? `SQL · ${connection.name}` : 'SQL', sql: '', connectionId })
+          // Native menu events are outside React's input event batch. Commit the
+          // new draft/focus before the next OS keystroke can reach the old Tab.
+          flushSync(() => editor.addTab({ id: crypto.randomUUID(), kind: 'sql', title: connection ? `SQL · ${connection.name}` : 'SQL', sql: '', connectionId }))
           break
         }
         case 'new-connection':

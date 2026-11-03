@@ -707,7 +707,8 @@
     "databaseSelectHint": "PostgreSQL 查询仍运行在连接配置的数据库中；切换数据库需要重新连接。",
     "maximizeResults": "最大化结果",
     "maximizeEditor": "最大化编辑器",
-    "restoreSplit": "恢复分栏"
+    "restoreSplit": "恢复分栏",
+    "inputLabel": "SQL 编辑器"
   },
   "metadata": {
     "database": "数据库",
@@ -723,7 +724,7 @@
     "commitSuccess": "事务已提交 · 用时 {{elapsedMs}} ms",
     "rollbackSuccess": "事务已回滚 · 用时 {{elapsedMs}} ms",
     "truncated": "{{count}} 行；查询上限 {{maxRows}}",
-    "visualResultLimitNotice": "{{count}} 行；网格受限",
+    "visualResultLimitNotice": "已保留 {{count}} 行 · {{reason}}",
     "pendingChange": "待提交变更",
     "selectCellHint": "选择一个单元格可查看完整值",
     "selectRowHint": "选择一行以查看其字段值。",
@@ -754,7 +755,14 @@
     "metadataLabel": "显示名",
     "metadataType": "类型",
     "metadataHint": "此结果集包含 {{count}} 个字段；元数据来自本次查询的驱动响应。",
-    "metadataEmpty": "暂无可显示的结果集字段元数据"
+    "metadataEmpty": "暂无可显示的结果集字段元数据",
+    "byteLimitReason": "网格保留数据大小预算（{{mib}} MiB）",
+    "rowLimitReason": "网格保留上限（{{count}} 行）",
+    "visualLimitReason": "网格保留数据上限",
+    "queryLimitReason": "查询行数上限（{{count}} 行）",
+    "queryLimitReasonUnknown": "查询返回上限",
+    "receivedRowCount": "已接收 {{count}} 行",
+    "totalUnknown": "完整结果总行数未知"
   },
   "settings": {
     "sections": "设置分类",

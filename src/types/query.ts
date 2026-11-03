@@ -20,6 +20,8 @@ export interface QueryResult {
   truncated: boolean
   /** The grid discarded rows beyond its bounded in-memory visual window. */
   displayTruncated?: boolean
+  /** Which frontend retention budget discarded rows; not a database total. */
+  displayLimitReason?: 'bytes' | 'rows'
   maxRows?: number | null
   firstRowMs?: number | null
   receivedBytes?: number | null
