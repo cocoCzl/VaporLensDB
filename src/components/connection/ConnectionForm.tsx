@@ -2,10 +2,9 @@ import { useLeaveGuard } from './useLeaveGuard'
 import { FormEvent, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, Database, Download, Plus, Search, Eye, EyeOff, MoreHorizontal, Network, PlugZap, ShieldCheck, SlidersHorizontal } from 'lucide-react'
+import { CheckCircle2, CircleAlert, Copy, ChevronRight, Database, Download, LoaderCircle, Plus, Search, Eye, EyeOff, Network, PlugZap, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DatabaseVendorIcon } from '@/components/common/DatabaseVendorIcon'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AppSelect } from '@/components/ui/app-select'
@@ -18,6 +17,8 @@ import { normalizeConnectionUrl } from '@/lib/connectionUrlNormalization'
 import { defaultConnectionName } from '@/lib/defaultConnectionName'
 import { extractUrlCredentials } from '@/lib/connectionUrlCredentials'
 import { supportedSslModes } from '@/lib/connectionSslModes'
+import { copyToClipboard } from '@/lib/clipboard'
+import { redactConnectionDiagnostic } from '@/lib/connectionTestDiagnostics'
 import { useDriverStore } from '@/stores/driverStore'
 import { WorkflowHeader } from './WorkflowPage'
 import type { DriverWorkspaceEntry } from './DriverWorkspace'
@@ -133,9 +134,10 @@ export function ConnectionForm({
         },
   })
   const [message, setMessage] = useState<string | null>(null)
-  const [messageDetail, setMessageDetail] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<{ key: string; status: 'running' | 'succeeded' | 'failed'; error?: AppError; input: ConnectionInput } | null>(null)
+  const [testResult, setTestResult] = useState<{ key: string; status: 'running' | 'succeeded' | 'failed'; elapsedMs?: number; error?: AppError; input: ConnectionInput } | null>(null)
   const testGeneration = useRef(0)
+  const runningTest = useRef<number | null>(null)
+  const [copiedTest, setCopiedTest] = useState(false)
   const [nameIsGenerated, setNameIsGenerated] = useState(!connection)
   const [passwordVisible, setPasswordVisible] = useState(false)
   const [groupSelection, setGroupSelection] = useState(connection?.groupId ?? '')
@@ -184,16 +186,17 @@ export function ConnectionForm({
   const testedInstallation = installations.find(i => i.id === installationId)
   const testKey = JSON.stringify([testParameters, selectedDriver && { id: selectedDriver.id, backend: selectedDriver.backend, implementation: selectedDriver.nativeImplementationId, metadataDialectSql: selectedDriver.metadataDialectSql }, testedInstallation && { id: testedInstallation.id, definition: testedInstallation.driverDefinitionId, version: testedInstallation.version, artifacts: testedInstallation.artifacts, java: testedInstallation.javaRequirement }])
   const [testDraftKey, setTestDraftKey] = useState(testKey)
-  if (testDraftKey !== testKey) { setTestDraftKey(testKey); setTestResult(null) }
+  if (testDraftKey !== testKey) { setTestDraftKey(testKey); setTestResult(null); setCopiedTest(false) }
   useLayoutEffect(() => {
     testGeneration.current += 1
     return () => { testGeneration.current += 1 }
   }, [testKey])
   const currentTest = testResult?.key === testKey ? testResult : null
   const testMessage = currentTest ? currentTest.status === 'failed'
-    ? workflowErrorSummary(currentTest.error!, t, 'connection')
+    ? redactConnectionDiagnostic(workflowErrorSummary(currentTest.error!, t, 'connection'), currentTest.input)
     : t(currentTest.status === 'succeeded' ? 'connectionForm.connectionTestSucceeded' : 'connectionForm.testing') : null
-  const testDetail = currentTest?.error ? formatConnectionErrorDetail(currentTest.error, currentTest.input, t) : null
+  const testDetail = currentTest?.error ? redactConnectionDiagnostic(formatConnectionErrorDetail(currentTest.error, currentTest.input, t) ?? '', currentTest.input) : null
+  const testing = currentTest?.status === 'running'
 
   const update = (key: keyof ConnectionInput, value: string | number | string[] | boolean | null) => {
     setExplicitFields((current) => new Set([...current, key]))
@@ -251,10 +254,10 @@ export function ConnectionForm({
     const previous = !sameProduct ? productDrafts.get(productId) : undefined
     initialized.current = true
     if (previous) {
-      setForm(previous.form); setBaseline(previous.baseline); setExplicitFields(previous.explicit); setConnectionVariant(previous.variant); setNameIsGenerated(previous.generated); setGroupSelection(previous.group); setPasswordVisible(false); setMessage(null); setMessageDetail(null)
+      setForm(previous.form); setBaseline(previous.baseline); setExplicitFields(previous.explicit); setConnectionVariant(previous.variant); setNameIsGenerated(previous.generated); setGroupSelection(previous.group); setPasswordVisible(false); setMessage(null)
       return
     }
-    if (!sameProduct) { setExplicitFields(new Set()); setNameIsGenerated(true); setGroupSelection(''); setPasswordVisible(false); setMessage(null); setMessageDetail(null) }
+    if (!sameProduct) { setExplicitFields(new Set()); setNameIsGenerated(true); setGroupSelection(''); setPasswordVisible(false); setMessage(null) }
     const next: ConnectionInput = {
       ...form,
       id: sameProduct ? form.id : undefined,
@@ -322,7 +325,6 @@ export function ConnectionForm({
     event.preventDefault()
     if (stage === 'catalog') { enterParameters(); return }
     setMessage(null)
-    setMessageDetail(null)
     const validationError = validate(true)
     if (validationError) {
       setMessage(validationError)
@@ -334,7 +336,6 @@ export function ConnectionForm({
 
   const saveOnly = async () => {
     setMessage(null)
-    setMessageDetail(null)
     const validationError = validate(false)
     if (validationError) {
       setMessage(validationError)
@@ -345,8 +346,9 @@ export function ConnectionForm({
   }
 
   const test = async () => {
+    // Also guard synchronous double activation, before React paints disabled.
+    if (runningTest.current === testGeneration.current) return
     setMessage(null)
-    setMessageDetail(null)
     const validationError = validate(true)
     if (validationError) {
       setMessage(validationError)
@@ -355,12 +357,14 @@ export function ConnectionForm({
 
     const input = normalizeInput(form, activeConnectionVariant, driverProfile, selectedDriver)
     const generation = ++testGeneration.current
+    runningTest.current = generation
+    setCopiedTest(false)
     setTestResult({ key: testKey, status: 'running', input })
     try {
-      await onTest(input)
-      if (generation === testGeneration.current) setTestResult({ key: testKey, status: 'succeeded', input })
-    } catch (error) {
-      if (generation === testGeneration.current) setTestResult({ key: testKey, status: 'failed', error: normalizeAppError(error), input })
+      const result = await measureConnectionTest(onTest, input)
+      if (generation === testGeneration.current) setTestResult({ key: testKey, input, ...result })
+    } finally {
+      if (runningTest.current === generation) runningTest.current = null
     }
   }
 
@@ -374,7 +378,7 @@ export function ConnectionForm({
     >
       <WorkflowHeader title={connection ? t('connection.editTitle') : stage === 'catalog' ? t('connectionCatalog.title') : t('driverWorkflow.parameters')} description={stage === 'catalog' ? t('driverWorkflow.catalogHint') : undefined} />
       <div className={`min-h-0 flex-1 ${stage === 'catalog' ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden [scrollbar-gutter:stable]`}>
-        <div className={`mx-auto ${stage === 'catalog' ? 'flex h-full min-h-0 flex-col' : 'grid'} w-full gap-4 p-5`}>
+        <div className={`mx-auto ${stage === 'catalog' ? 'flex h-full min-h-0 flex-col gap-4' : 'grid gap-3'} w-full p-5`}>
           {stage === 'catalog' ? <section className="flex h-full min-h-0 flex-col gap-4" aria-label={t('connectionCatalog.title')}>
             <div className="flex flex-wrap gap-2">
               <div className="relative min-w-40 flex-1"><Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input autoFocus className="pl-9" disableTextAssistance aria-label={t('driverRefactor.searchProducts')} placeholder={t('driverRefactor.searchProducts')} value={productSearch} onChange={(e) => setProductSearch(e.target.value)} /></div>
@@ -398,7 +402,7 @@ export function ConnectionForm({
             {!connection && <Button type="button" size="sm" variant="outline" onClick={() => { setPendingProduct(form.productId ?? form.driverType); setStage('catalog') }}>{t('connectionCatalog.change')}</Button>}
           </div>
 
-          <div className="grid gap-3 rounded-md bg-muted/25 p-3">
+          <div className="grid gap-3">
               {driverVariants.length > 0 && (
                 <FormRow label={t('connectionForm.driver')}>
                   <AppSelect
@@ -418,6 +422,11 @@ export function ConnectionForm({
               <AppSelect aria-label={t('driverRefactor.installation')} value={installationId ?? ''} onValueChange={(id) => update('driverInstallationId', id || null)} options={[{ value: '', label: t('driverRefactor.chooseInstallation') }, ...availableInstallations.map((i) => ({ value: i.id, label: i.label }))]} />
             </FormRow>}
             {selectedDriver?.backend === 'jdbc' && <div className="grid gap-2"><JdbcInstallationActions key={selectedDriver.id} driver={selectedDriver} installationId={installationId} connectionTestStatus={currentTest?.status} onNavigate={page => openPage({ page, driverId: selectedDriver.id })} /><Button type="button" variant="ghost" className="w-fit" onClick={() => openPage({ page: 'manage', driverId: selectedDriver.id })}>{t('driverRefactor.manage')}</Button></div>}
+            {driverProfile.connectionVariants.length > 1 && (
+              <FormRow label={t('connectionForm.connectionType')}>
+                <SegmentedControl options={driverProfile.connectionVariants} value={activeConnectionVariant} onChange={setConnectionVariant} />
+              </FormRow>
+            )}
 
           </div>
 
@@ -512,11 +521,6 @@ export function ConnectionForm({
 
           <DisclosureSection title={t('connectionForm.advanced')} icon={<SlidersHorizontal />}>
             <div className="grid gap-3 pt-3">
-              {driverProfile.connectionVariants.length > 1 && (
-                <FormRow label={t('connectionForm.connectionType')}>
-                  <SegmentedControl options={driverProfile.connectionVariants} value={activeConnectionVariant} onChange={setConnectionVariant} />
-                </FormRow>
-              )}
               <FormRow label={t('connectionForm.group')}>
                 <AppSelect id="connection-group" value={groupSelection} onValueChange={selectGroup} options={[{ value: '', label: t('connectionForm.ungrouped') }, ...dataSourceGroups.map((group) => ({ value: group.id, label: group.name }))]} />
               </FormRow>
@@ -553,23 +557,43 @@ export function ConnectionForm({
         </div>
       </div>
 
-      <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/75 bg-surface px-6 py-2">
+      {stage === 'parameters' && <div className="shrink-0 border-t border-border/75 bg-surface px-5 py-2" data-connection-feedback>
+        {currentTest ? <div
+          role={currentTest.status === 'failed' ? 'alert' : 'status'}
+          aria-live={currentTest.status === 'failed' ? 'assertive' : 'polite'}
+          aria-atomic="true"
+          className={`flex min-w-0 gap-2.5 rounded-md border p-3 text-xs ${currentTest.status === 'succeeded' ? 'border-success/30 bg-success-bg text-success-foreground' : currentTest.status === 'failed' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-border bg-surface-secondary text-foreground'}`}
+        >
+          {currentTest.status === 'succeeded' ? <CheckCircle2 aria-hidden="true" className="mt-0.5 size-4 shrink-0" /> : currentTest.status === 'failed' ? <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" /> : <LoaderCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0 animate-spin" />}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <p className="font-medium">{currentTest.status === 'failed' ? t('connectionForm.testFailed') : testMessage}</p>
+              {currentTest.elapsedMs !== undefined && <span className="tabular-nums">{t('connectionForm.testElapsed', { ms: Math.round(currentTest.elapsedMs).toLocaleString() })}</span>}
+            </div>
+            <p className="mt-1 leading-4">{currentTest.status === 'failed' ? testMessage : t('connectionForm.testScope')}</p>
+            {testDetail && <div className="mt-2 flex flex-wrap items-start gap-x-3 gap-y-1">
+              <details className="min-w-0 flex-1">
+                <summary className="w-fit cursor-pointer underline underline-offset-2">{t('connectionForm.errorDetails')}</summary>
+                <pre className="mt-2 max-h-20 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] [overflow-wrap:anywhere]">{testDetail}</pre>
+              </details>
+              <Button type="button" size="xs" variant="ghost" onClick={async () => {
+                const generation = testGeneration.current
+                if (await copyToClipboard(testDetail) && generation === testGeneration.current) setCopiedTest(true)
+              }}><Copy aria-hidden="true" />{t(copiedTest ? 'connectionForm.detailsCopied' : 'connectionForm.copyRedactedDetails')}</Button>
+            </div>}
+          </div>
+        </div> : null}
+        {(message || (!currentTest && readinessIssue)) && <p role="status" className="break-words text-xs text-muted-foreground">{message ?? readinessIssue}</p>}
+      </div>}
+
+      <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border/75 bg-surface px-5 py-2">
         {guard.prompt}
         {stage === 'catalog' ? <><Button type="button" variant="ghost" onClick={cancel}>{t('common.cancel')}</Button><Button type="button" onClick={enterParameters} disabled={!filteredDatabaseTypes.some(option => option.productId === pendingProduct)}>{t('connectionCatalog.next')}</Button></> : <>
         <Button type="button" variant="ghost" onClick={cancel}>{t('common.cancel')}</Button>
-        <div className="min-w-0 flex-1 text-xs text-muted-foreground" role={testMessage || message ? 'status' : undefined}>
-          <span className={testMessage || message ? 'text-foreground' : undefined}>{testMessage ?? message ?? readinessIssue ?? ' '}</span>
-          {(testDetail || messageDetail) && <details className="mt-1 text-[11px]"><summary className="cursor-pointer">{t('connectionForm.errorDetails')}</summary><pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap font-sans">{testDetail ?? messageDetail}</pre></details>}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button type="button" variant="outline" className="h-9 px-3" onClick={test} disabled={loading || currentTest?.status === 'running' || runtimeCapabilityUnavailable}><PlugZap />{t('connectionForm.testConnection')}</Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button type="button" size="icon" variant="ghost" aria-label={t('common.moreActions')}><MoreHorizontal /></Button>} />
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={saveOnly} disabled={loading}>{t('connectionForm.saveOnly')}</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button type="submit" className="h-9 px-3" title={t('connectionForm.saveAndConnect')} disabled={loading || Boolean(readinessIssue) || runtimeCapabilityUnavailable}><Database />{t('connection.connect')}</Button>
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          <Button type="button" variant="outline" className="h-9 px-3" onClick={test} aria-busy={testing} disabled={loading || testing || runtimeCapabilityUnavailable}>{testing ? <LoaderCircle aria-hidden="true" className="animate-spin" /> : <PlugZap aria-hidden="true" />}{t(testing ? 'connectionForm.testing' : 'connectionForm.testConnection')}</Button>
+          <Button type="button" variant="outline" className="h-9 px-3" onClick={saveOnly} disabled={loading || testing}>{t('connectionForm.saveOnly')}</Button>
+          <Button type="submit" className="h-9 px-3" disabled={loading || testing || Boolean(readinessIssue) || runtimeCapabilityUnavailable}><Database aria-hidden="true" />{t('connectionForm.saveAndConnect')}</Button>
         </div>
         </>}
       </div>
@@ -579,6 +603,16 @@ export function ConnectionForm({
     {auxiliary && <ModuleBoundary><Suspense fallback={<p role="status" className="p-5">{t('common.loading')}</p>}><DriverWorkspace entry={auxiliary} registerBack={handler => { auxiliaryBack.current = handler }} onBack={returnToForm} onCancel={() => { setAuxiliary(null); cancel() }} onUse={driver => { changeDriver(driver.id, driver); setStage('parameters'); setAuxiliary(null); queueMicrotask(() => document.querySelector<HTMLInputElement>('#connection-name')?.focus()) }} onInstalled={(driverId, id) => { if (!connection && form.driverDefinitionId === driverId && !form.driverInstallationId) update('driverInstallationId', id) }} /></Suspense></ModuleBoundary>}
     </div>
   )
+}
+
+async function measureConnectionTest(onTest: ConnectionFormProps['onTest'], input: ConnectionInput) {
+  const started = performance.now()
+  try {
+    await onTest(input)
+    return { status: 'succeeded' as const, elapsedMs: performance.now() - started }
+  } catch (error) {
+    return { status: 'failed' as const, elapsedMs: performance.now() - started, error: normalizeAppError(error) }
+  }
 }
 
 /** Local editable values only; catalogue metadata cannot change the baseline. */
@@ -712,12 +746,12 @@ function DisclosureSection({
   const [isOpen, setIsOpen] = useState(defaultOpen)
 
   return (
-    <details className="group rounded-lg border border-transparent bg-surface transition-colors hover:border-border/70 hover:bg-surface-secondary/60" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
-      <summary className="flex h-12 cursor-pointer list-none items-center justify-between px-3.5 text-[13px] font-medium text-foreground [&::-webkit-details-marker]:hidden">
-        <span className="flex items-center gap-2.5"><span className="grid size-6 place-items-center rounded-md bg-primary/[0.065] text-primary [&_svg]:size-[15px]">{icon}</span>{title}</span>
+    <details className="group border-t border-border/60 bg-surface" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="flex h-9 cursor-pointer list-none items-center justify-between text-xs font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+        <span className="flex items-center gap-2"><span className="text-muted-foreground [&_svg]:size-3.5">{icon}</span>{title}</span>
         <ChevronRight className="size-4 text-muted-foreground transition-transform group-open:rotate-90" />
       </summary>
-      <div className="border-t border-border/60 px-3.5 pb-3.5">{children}</div>
+      <div className="pb-3">{children}</div>
     </details>
   )
 }

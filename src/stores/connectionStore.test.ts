@@ -232,7 +232,21 @@ describe('connection store save lifecycle', () => {
     await expect(useConnectionStore.getState().testConnectionInput(input('mysql'))).rejects.toThrow('invalid credentials')
 
     expect(useConnectionStore.getState().loading).toBe(false)
-    expect(useConnectionStore.getState().error).toContain('invalid credentials')
+    expect(useConnectionStore.getState().error).toBeNull()
+    expect(useUiStore.getState().notifications).toHaveLength(0)
+  })
+
+  it.each([true, false])('a late test completion (success=%s) preserves newer global page state', async success => {
+    let complete!: () => void
+    let fail!: (error: unknown) => void
+    connectionMocks.testConnection.mockReturnValue(new Promise<void>((resolve, reject) => { complete = resolve; fail = reject }))
+    const pending = useConnectionStore.getState().testConnectionInput(input('mysql'))
+    const outcome = pending.catch(() => {})
+    useConnectionStore.setState({ loading: true, error: 'new page state' })
+    if (success) complete(); else fail(new Error('old test failure'))
+    await outcome
+    expect(useConnectionStore.getState().loading).toBe(true)
+    expect(useConnectionStore.getState().error).toBe('new page state')
     expect(useUiStore.getState().notifications).toHaveLength(0)
   })
 })

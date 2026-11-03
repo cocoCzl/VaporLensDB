@@ -1958,6 +1958,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repeated_connection_tests_never_save_or_install_working_sessions() {
+        let (state, root) = test_state();
+        let path = root.join("test-only.sqlite");
+        for _ in 0..5 {
+            let mut request = input(path.to_str().unwrap());
+            request.driver_type = DriverType::Sqlite;
+            request.driver_definition_id = Some("sqlite".into());
+            request.product_id = Some("sqlite".into());
+            request.connection_mode = Some("file".into());
+            test_connection_state(&state, request).await.unwrap();
+            assert!(
+                !path.exists(),
+                "testing a new path must not create a saved database"
+            );
+            assert!(state.config_store.list_connections().unwrap().is_empty());
+            assert!(state.connection_manager.lock().await.statuses().is_empty());
+        }
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn explicit_new_sqlite_connection_still_creates_its_database() {
         let path =
             std::env::temp_dir().join(format!("vaporlensdb-create-test-{}.sqlite", Uuid::new_v4()));

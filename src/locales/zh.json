@@ -263,7 +263,7 @@
     "saveAndConnect": "保存并连接",
     "discardChanges": "有未保存的连接更改，确定放弃吗？",
     "localDriverValidated": "本地驱动配置校验成功",
-    "connectionTestSucceeded": "连接成功",
+    "connectionTestSucceeded": "连接测试成功",
     "localDriverRequired": "需本地驱动文件",
     "editable": "可编辑",
     "builtInReadOnly": "内置定义只读",
@@ -308,7 +308,12 @@
       "jdbc": "自定义 JDBC 会通过 JDBC bridge 动态加载驱动类、JDBC URL 和 jar 路径。",
       "sqlite": "本地 SQLite 文件，支持查询、对象浏览、DDL 和只读数据预览。"
     },
-    "testing": "正在测试当前连接…",
+    "testing": "正在测试…",
+    "testFailed": "连接测试失败",
+    "testElapsed": "耗时 {{ms}} 毫秒",
+    "testScope": "测试不会保存更改或建立工作会话。",
+    "copyRedactedDetails": "复制脱敏详情",
+    "detailsCopied": "详情已复制",
     "testNotRun": "当前连接尚未测试。"
   },
   "notifications": {

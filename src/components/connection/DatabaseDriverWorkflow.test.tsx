@@ -25,7 +25,7 @@ beforeEach(() => {
   useConnectionStore.setState({ connections: [], statuses: {} })
 })
 function form() { const save = vi.fn().mockResolvedValue(undefined); return { ...render(<ConnectionForm driverDefinitions={useDriverStore.getState().drivers} onSaveOnly={save} onSaveAndConnect={save} onTest={vi.fn()} onCancel={vi.fn()} />), save } }
-async function saveOnly() {fireEvent.click(screen.getByRole('button', { name: i18n.t('common.moreActions') }));fireEvent.click(await screen.findByRole('menuitem', {name:i18n.t('connectionForm.saveOnly')}))}
+async function saveOnly() {fireEvent.click(await screen.findByRole('button', {name:i18n.t('connectionForm.saveOnly')}))}
 
 describe('Product → driver → installation workflows (mock IPC)', () => {
   it('creates two arbitrary products in the manager and immediately shows separate catalog entries', async () => {

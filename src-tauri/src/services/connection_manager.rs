@@ -1003,7 +1003,12 @@ pub(crate) async fn test_connection(
     super::connection_tls::validate_connection_tls(config, definition)?;
     let (_tunnel, runtime_config) = open_tunnel(config, definition).await?;
     let driver = create_driver(&runtime_config, password, definition).await?;
-    driver.ping().await
+    let result = driver.ping().await;
+    // In particular, await JDBC CLOSE and child reaping instead of returning
+    // success while its Drop fallback still has a bridge process to dispose of.
+    // Test drivers never enter the working-session registry.
+    let cleanup = driver.cancel_all_queries().await;
+    result.and(cleanup)
 }
 
 async fn open_tunnel(

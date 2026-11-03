@@ -5,6 +5,9 @@ import { ConnectionForm } from './ConnectionForm'
 import { useDriverStore } from '@/stores/driverStore'
 import { checkJdbcRuntime, validateExternalDriver } from '@/ipc/driver'
 import type { DriverDefinition, DriverInstallation } from '@/types/driver'
+import { copyToClipboard } from '@/lib/clipboard'
+
+vi.mock('@/lib/clipboard', () => ({ copyToClipboard: vi.fn(async () => true) }))
 
 vi.mock('@/ipc/driver', () => ({ listJdbcDownloads: vi.fn(async () => []), checkJdbcRuntime: vi.fn(async () => {}), validateExternalDriver: vi.fn(async () => ({valid:true,message:'backend class loaded'})) }))
 const driver: DriverDefinition = { id:'jdbc-postgresql', productId:'postgres', name:'PostgreSQL JDBC', backend:'jdbc', driverType:'postgres', driverDialect:'postgresql', status:'configurable', builtIn:true, userDriverRequired:true, jdbcDriverClass:'org.postgresql.Driver', driverArtifacts:[], connectionVariants:[{id:'hostPort',label:'Host / port',requiredFields:['host','port','database','username']}], capabilities:{canConnect:true,canQuery:true,canStream:true,canReadMetadata:true,canCancel:true,canGenerateDdl:true} }
@@ -94,4 +97,60 @@ it('invalidates results after SSH settings or JDBC properties change',async()=>{
   fireEvent.click(screen.getByRole('button',{name:i18n.t('driverRefactor.addProperty')}))
   fireEvent.change(screen.getByRole('textbox',{name:i18n.t('driverRefactor.propertyName')}),{target:{value:'applicationName'}})
   expect(screen.queryByText(i18n.t('connectionForm.connectionTestSucceeded'))).not.toBeInTheDocument()
+})
+
+it('immediately shows busy text, prevents duplicate tests and retains measured success without saving or connecting', async () => {
+  const request = deferred()
+  let now = 100
+  vi.spyOn(performance, 'now').mockImplementation(() => now)
+  const view = setup(vi.fn(() => request.promise))
+  test()
+  const busy = screen.getByRole('button', { name: i18n.t('connectionForm.testing') })
+  expect(busy).toBeDisabled()
+  expect(busy).toHaveAttribute('aria-busy', 'true')
+  expect(busy.querySelector('.animate-spin')).toBeInTheDocument()
+  fireEvent.click(busy)
+  expect(view.onTest).toHaveBeenCalledOnce()
+  expect(screen.getByRole('button', { name: i18n.t('connectionForm.saveOnly') })).toBeDisabled()
+  now = 223
+  await act(async () => request.resolve())
+  const feedback = document.querySelector('[data-connection-feedback]')!
+  expect(feedback).toHaveTextContent(i18n.t('connectionForm.connectionTestSucceeded'))
+  expect(feedback).toHaveTextContent(i18n.t('connectionForm.testElapsed', { ms: '123' }))
+  expect(feedback).toHaveTextContent(i18n.t('connectionForm.testScope'))
+  expect(feedback.querySelector('svg')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: i18n.t('connectionForm.saveOnly') })).toBeEnabled()
+  expect(screen.getByRole('button', { name: i18n.t('connectionForm.saveAndConnect') })).toBeEnabled()
+  expect(view.props.onSaveOnly).not.toHaveBeenCalled()
+  expect(view.props.onSaveAndConnect).not.toHaveBeenCalled()
+})
+
+it.each(['resolve', 'reject'] as const)('cannot publish an old %s after closing and reopening a form', async finish => {
+  const old = deferred()
+  const view = setup(vi.fn(() => old.promise))
+  test()
+  view.unmount()
+  const fresh = setup()
+  expect(screen.queryByText(i18n.t('connectionForm.connectionTestSucceeded'))).not.toBeInTheDocument()
+  test()
+  await screen.findAllByText(i18n.t('connectionForm.connectionTestSucceeded'))
+  await act(async () => finish === 'resolve' ? old.resolve() : old.reject(new Error('obsolete failure')))
+  expect(screen.queryByText('obsolete failure')).not.toBeInTheDocument()
+  expect(fresh.onTest).toHaveBeenCalledOnce()
+  expect(document.querySelector('[data-connection-feedback]')).toHaveTextContent(i18n.t('connectionForm.connectionTestSucceeded'))
+})
+
+it('shows and copies only redacted failure diagnostics, with inline clipboard confirmation', async () => {
+  setup(vi.fn().mockRejectedValue({ code: 'CONNECTION_FAILED', message: 'Login failed: fixture-secret', detail: 'password="saved secret"; host=fixture.invalid' }))
+  change('password', 'fixture-secret')
+  test()
+  await screen.findByText(i18n.t('connectionForm.testFailed'))
+  const feedback = document.querySelector('[data-connection-feedback]')!
+  expect(feedback).not.toHaveTextContent('fixture-secret')
+  expect(feedback).not.toHaveTextContent('saved secret')
+  expect(feedback.querySelector('details')).not.toHaveAttribute('open')
+  fireEvent.click(screen.getByRole('button', { name: i18n.t('connectionForm.copyRedactedDetails') }))
+  await screen.findByRole('button', { name: i18n.t('connectionForm.detailsCopied') })
+  expect(copyToClipboard).toHaveBeenCalledWith(expect.stringContaining('host=fixture.invalid'))
+  expect(copyToClipboard).toHaveBeenCalledWith(expect.not.stringContaining('fixture-secret'))
 })

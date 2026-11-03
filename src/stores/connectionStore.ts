@@ -339,15 +339,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
   testConnectionInput: async (input) => {
-    set({ loading: true, error: null })
-    try {
-      await testConnection(input)
-      set({ loading: false })
-      // The form owns the result so a late test cannot announce success for a newer draft.
-    } catch (error) {
-      set({ error: errorMessage(error), loading: false })
-      throw error
-    }
+    // A test belongs to its form generation. It must not change global busy/error
+    // state after edits, dismissal, or another form opening.
+    await testConnection(input)
   },
   connectConnection: async (id, options = {}) => {
     advanceLifecycle(id)

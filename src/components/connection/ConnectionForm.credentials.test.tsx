@@ -39,8 +39,7 @@ describe('ConnectionForm URL credential storage consent', () => {
       password: 'authorityDummy', username: 'alice', savePassword,
       connectionUrl: 'postgres://host/db?sslmode=require',
     })
-    fireEvent.click(screen.getByRole('button', { name: i18n.t('common.moreActions') }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: i18n.t('connectionForm.saveOnly') }))
+    fireEvent.click(await screen.findByRole('button', { name: i18n.t('connectionForm.saveOnly') }))
     await waitFor(() => expect(onSaveOnly).toHaveBeenCalledOnce())
     expect(onSaveOnly.mock.calls[0][0]).toMatchObject({ password: 'authorityDummy', savePassword })
   })

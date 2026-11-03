@@ -72,12 +72,11 @@ async function closeWithX() {
 }
 
 async function saveOnly() {
-  fireEvent.click(screen.getByRole('button', { name: i18n.t('common.moreActions') }))
-  fireEvent.click(await screen.findByRole('menuitem', { name: i18n.t('connectionForm.saveOnly') }))
+  fireEvent.click(await screen.findByRole('button', { name: i18n.t('connectionForm.saveOnly') }))
 }
 
 function saveAndConnect() {
-  fireEvent.click(screen.getByRole('button', { name: i18n.t('connection.connect') }))
+  fireEvent.click(screen.getByRole('button', { name: i18n.t('connectionForm.saveAndConnect') }))
 }
 
 beforeEach(() => {
