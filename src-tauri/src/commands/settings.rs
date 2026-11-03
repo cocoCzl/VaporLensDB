@@ -18,18 +18,23 @@ pub fn set_application_menu_language(
         .map_err(|error| error.to_string())
 }
 
-/// Records numeric startup timings only when local tracing was explicitly enabled.
+/// Records numeric lifecycle evidence and allowlisted, redacted error details.
+/// Disabled unless local tracing was explicitly enabled.
 #[tauri::command]
 pub fn startup_trace(
     window: tauri::Window,
     stage: String,
     epoch_ms: f64,
     metrics: std::collections::BTreeMap<String, f64>,
+    details: Option<crate::utils::startup::ErrorDetails>,
 ) {
-    if matches!(stage.as_str(), "perf_visibility" | "perf_input" | "perf_dom") {
+    if matches!(
+        stage.as_str(),
+        "perf_visibility" | "perf_input" | "perf_dom"
+    ) {
         crate::utils::startup::window_snapshot(&window, "native_page_state", metrics.clone());
     }
-    crate::utils::startup::record(stage, epoch_ms, metrics);
+    crate::utils::startup::record(stage, epoch_ms, metrics, details);
 }
 
 /// Synchronizes the canvas and a disposable startup hint without gating HTML.

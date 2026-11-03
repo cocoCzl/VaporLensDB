@@ -39,8 +39,10 @@ documented reboot/cache protocol with the same isolated profile.
 In a real native session, run connection test/save/connect, expand 500 and 1000
 tables, search, preview, execute the same SQL, scroll and switch tabs. Repeat five
 times. Record first visible content separately from IPC duration. The opt-in
-`VAPORLENSDB_STARTUP_TRACE` accepts only numeric interaction/IPC metrics; it never
-records SQL or field values. Summarize with:
+`VAPORLENSDB_STARTUP_TRACE` records numeric interaction/IPC metrics and optional
+allowlisted, redacted error positions; it never records SQL or field values.
+Lifecycle and first-loading experiments are documented in
+[`../diagnostics/README.md`](../diagnostics/README.md). Summarize with:
 
 ```sh
 python3 scripts/performance/local-baseline.py summarize \

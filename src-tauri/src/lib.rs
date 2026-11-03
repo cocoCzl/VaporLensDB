@@ -294,8 +294,9 @@ pub fn run() {
     }
     utils::startup::mark("native_appearance_ready");
     utils::startup::mark("native_runtime_start");
+    let diagnostic_script = format!("{}\n{}", utils::startup::initialization_script(), utils::startup::qa_workspace_initialization(&context.config().identifier));
     tauri::Builder::default()
-        .append_invoke_initialization_script(utils::startup::initialization_script())
+        .append_invoke_initialization_script(diagnostic_script)
         .on_page_load(|_, payload| {
             utils::startup::mark(match payload.event() {
                 tauri::webview::PageLoadEvent::Started => "webview_started",
@@ -310,6 +311,9 @@ pub fn run() {
             // bounds creation; it is not the later page-load notification.
             if app.get_webview_window("main").is_some() {
                 utils::startup::mark("webview_available_in_setup");
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                utils::startup::install_window_observers(&window.as_ref().window());
             }
             #[cfg(target_os = "macos")]
             utils::appearance::set_canvas_background(
@@ -361,6 +365,10 @@ pub fn run() {
                 tauri::WindowEvent::Resized(_) => Some("native_resized"),
                 tauri::WindowEvent::Moved(_) => Some("native_moved"),
                 tauri::WindowEvent::CloseRequested { .. } => Some("native_close_requested"),
+                tauri::WindowEvent::Destroyed => {
+                    utils::startup::clear_window_observers();
+                    Some("native_destroyed")
+                },
                 _ => None,
             };
             if let Some(stage) = stage { utils::startup::window_snapshot(window, stage, Default::default()); }

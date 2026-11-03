@@ -1,125 +1,161 @@
-// Only installed when VAPORLENSDB_STARTUP_TRACE points to a local log.
+// Opt-in local lifecycle evidence. Never log field values, SQL, keys or raw errors.
 ;(() => {
-  const invoke = (...args) => window.__TAURI_INTERNALS__.invoke(...args);
-  const seen = new Set();
   const pending = [];
+  const seen = new Set();
+  let sent = 0;
   const flush = () => {
     if (typeof window.__TAURI_INTERNALS__?.invoke !== 'function') return;
-    for (const payload of pending.splice(0)) void invoke('startup_trace', payload).catch(() => {});
+    for (const payload of pending.splice(0)) void window.__TAURI_INTERNALS__.invoke('startup_trace', payload).catch(() => {});
   };
-  const mark = (stage, metrics = {}) => {
-    if (seen.has(stage) && stage !== 'layout' && !stage.startsWith('perf_') && !stage.startsWith('ipc_')) return;
-    seen.add(stage);
-    const epochMs = performance.timeOrigin + performance.now();
-    pending.push({ stage, epochMs, metrics });
+  const mark = (stage, metrics = {}, details) => {
+    if (sent >= 1200 || (seen.has(stage) && !stage.startsWith('perf_') && !stage.startsWith('ipc_'))) return;
+    seen.add(stage); sent++;
+    pending.push({ stage, epochMs: performance.timeOrigin + performance.now(), metrics, ...(details ? { details } : {}) });
+    if (pending.length > 128) pending.shift();
     queueMicrotask(flush);
   };
   window.__vaporStartupMark = mark;
-  mark('document_start', { hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 });
-  for (const [code, name] of ['visibilitychange', 'focus', 'blur', 'pageshow', 'pagehide', 'freeze', 'resume'].entries()) {
-    addEventListener(name, event => mark('perf_visibility', { event: code + 1, persisted: event.persisted ? 1 : 0, hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 }), true);
-  }
-  addEventListener('error', event => mark('window_error', {
-    resizeObserver: /ResizeObserver loop/.test(event.message || '') ? 1 : 0,
-    resource: event.target instanceof Element ? 1 : 0,
-    image: event.target?.tagName === 'IMG' ? 1 : 0,
-    script: event.target?.tagName === 'SCRIPT' ? 1 : 0,
-    stylesheet: event.target?.tagName === 'LINK' && event.target.rel === 'stylesheet' ? 1 : 0,
-  }), true);
-  addEventListener('unhandledrejection', () => mark('promise_rejected'));
-  let queued = false;
-  const nativeSamples = new Set();
-  const nativeTheme = stage => {
-    if (nativeSamples.has(stage)) return;
-    nativeSamples.add(stage);
-    void invoke('plugin:window|theme', { label: 'main' })
-      .then(theme => mark(stage, { dark: theme === 'dark' ? 1 : 0 })).catch(() => {});
+  const state = () => ({ hidden: document.visibilityState === 'hidden' ? 1 : 0, focused: document.hasFocus() ? 1 : 0 });
+  mark('document_start', state());
+
+  // All text fields below come from finite templates or bundled source positions.
+  // Unknown messages are wholly redacted; regex-removing passwords alone cannot
+  // guarantee that an arbitrary error did not echo SQL or editor/IME contents.
+  const safeLocation = value => {
+    if (typeof value !== 'string') return '[redacted location]';
+    try {
+      const url = new URL(value, location.href);
+      const app = new URL(location.href);
+      if (url.protocol !== app.protocol || url.host !== app.host || url.username || url.password) return '[external or opaque location]';
+      const path = url.pathname;
+      if (['/', '/index.html', '/boot-status.js', '/favicon.png', '/probe.html', '/probe.js'].includes(path) || /^\/assets\/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,12}\.(js|css|svg|png|woff2|ttf)$/.test(path)) return `app:${path}`;
+      return '[redacted app location]';
+    } catch { return '[redacted location]'; }
   };
-  const layout = () => {
-    queued = false;
-    const home = document.querySelector('.ide-workspace h1')?.closest('section');
-    const cards = home?.querySelectorAll('section[aria-label] button') ?? [];
-    const content = home?.getBoundingClientRect();
-    if (document.getElementById('startup-status')) {
-      mark('loading_interface');
-      const shell = document.querySelector('.startup-shell');
-      if (shell) mark('skeleton_layout', { top: shell.querySelector('.shell-top').getBoundingClientRect().height, sidebar: shell.querySelector('.shell-sidebar').getBoundingClientRect().width, content: shell.querySelector('.startup-workspace').getBoundingClientRect().width });
-      nativeTheme('loading_native_theme');
-    }
-    let overflow = 0;
-    for (const card of cards) {
-      const box = card.getBoundingClientRect();
-      for (const span of card.querySelectorAll('span')) {
-        const r = span.getBoundingClientRect();
-        if (r.bottom > box.bottom + 1 || r.right > box.right + 1 || r.top < box.top - 1) overflow++;
-      }
-    }
-    mark('layout', { width: innerWidth, height: innerHeight, dpr: devicePixelRatio, contentWidth: content?.width ?? 0, cardCount: cards.length, rows: new Set([...cards].map(card => Math.round(card.getBoundingClientRect().top))).size, overflow, dark: document.documentElement.dataset.theme === 'dark' ? 1 : 0, english: document.documentElement.lang === 'en' ? 1 : 0 });
-    if (home && !document.querySelector('.app-splash-grid')) {
-      mark('home_interactive', { width: innerWidth, contentWidth: content.width });
-      nativeTheme('home_native_theme');
-      requestAnimationFrame(() => mark('first_interface', { resources: performance.getEntriesByType('resource').length }));
-    }
+  const safeMessage = value => {
+    if (typeof value !== 'string') return '[non-string message redacted]';
+    if (/ResizeObserver loop/.test(value)) return 'ResizeObserver loop [details redacted]';
+    if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(value)) return 'Dynamic module import failed [details redacted]';
+    if (/not allowed|not permitted|permission denied/i.test(value)) return 'Operation not permitted [details redacted]';
+    if (/is not a function/.test(value)) return 'Value is not a function [expression redacted]';
+    if (/undefined is not an object|null is not an object|Cannot read properties of/.test(value)) return 'Cannot access null or undefined [expression redacted]';
+    if (/is not defined/.test(value)) return 'Reference is not defined [expression redacted]';
+    if (/^Load failed$|^Failed to fetch$|^NetworkError/.test(value)) return 'Network or resource load failed [details redacted]';
+    if (/^Script error\.?$/.test(value)) return 'Script error [details unavailable]';
+    return '[unknown message redacted]';
   };
-  const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(layout); } };
-  // Opt-in frame probe distinguishes a missing entry placeholder from a
-  // later React handoff. A rAF sample is not proof of physical screen paint.
-  const probe = () => {
-    const root = document.getElementById('root');
-    if (root && !root.firstElementChild) mark('empty_root_frame');
-    if (document.querySelector('.ide-top-bar')) { mark('react_shell_frame'); return; }
-    requestAnimationFrame(probe);
-  };
-  requestAnimationFrame(probe);
-  const observer = new MutationObserver(schedule);
-  observer.observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
-  addEventListener('resize', schedule);
-  addEventListener('DOMContentLoaded', () => { mark('dom_loaded'); schedule(); });
-  // Numeric, opt-in interaction probes. No labels, field values, SQL, IDs or
-  // credentials leave the renderer. Present-at-rAF is not physical screen paint.
-  let interaction = 0, inputAt = 0, category = 0, sampleQueued = false;
-  let previousFrame = 0, framesRemaining = 0, frameGaps = [];
-  const sample = () => {
-    sampleQueued = false;
-    if (!interaction) return;
-    mark('perf_frame', {
-      interaction, category, latencyMs: performance.now() - inputAt,
-      forms: document.querySelectorAll('.connection-form').length,
-      cells: document.querySelectorAll('.data-grid-cell').length,
-      columns: document.querySelectorAll('.data-grid-column').length,
-      treeRows: document.querySelectorAll('[data-tree-row]').length,
-      connections: document.querySelectorAll('[data-connection-id]').length,
-      width: innerWidth, height: innerHeight, dpr: devicePixelRatio,
-      hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0,
+  const names = new Set(['Error', 'TypeError', 'SyntaxError', 'RangeError', 'ReferenceError', 'DOMException', 'AbortError', 'SecurityError', 'NotAllowedError', 'InvalidStateError', 'NetworkError', 'UnknownError']);
+  const elementNames = new Set(['img', 'image', 'svg', 'use', 'link', 'script', 'style', 'iframe', 'video', 'audio', 'source']);
+  const safeStack = value => {
+    if (typeof value !== 'string') return [];
+    return value.split('\n').slice(0, 16).flatMap(line => {
+      const match = line.match(/((?:tauri|https?):\/\/[^\s)]+?):(\d+):(\d+)\)?$/);
+      if (!match) return [];
+      return [`${safeLocation(match[1])}:${Number(match[2])}:${Number(match[3])}`];
     });
   };
-  const queueSample = () => {
-    if (!sampleQueued) { sampleQueued = true; requestAnimationFrame(() => requestAnimationFrame(sample)); }
+  let errors = 0;
+  const errorDetails = (kind, reason, resource, filename, line = 0, column = 0) => {
+    const name = typeof reason?.name === 'string' && names.has(reason.name) ? reason.name : '[redacted type]';
+    return { kind, name, element: 'none', locationClass: 'unknown', message: kind === 'resource' ? 'Resource failed to load [details redacted]' : safeMessage(typeof reason === 'string' ? reason : reason?.message),
+      location: safeLocation(resource || filename), line: Number(line) || 0, column: Number(column) || 0, stack: safeStack(reason?.stack) };
   };
-  const frame = time => {
-    if (previousFrame) frameGaps.push(time - previousFrame);
-    previousFrame = time;
-    if (--framesRemaining > 0) requestAnimationFrame(frame);
-    else {
-      frameGaps.sort((a, b) => a - b);
-      mark('perf_frame_gaps', { interaction, category, count: frameGaps.length,
-        medianMs: frameGaps[Math.floor(frameGaps.length / 2)] ?? 0,
-        maxMs: frameGaps.at(-1) ?? 0 });
-      previousFrame = 0; frameGaps = [];
+  addEventListener('error', event => {
+    if (++errors > 20) return;
+    const resource = event.target instanceof Element ? event.target : null;
+    const href = resource?.currentSrc || resource?.src || resource?.href;
+    const url = typeof href === 'string' ? href : typeof href?.baseVal === 'string' ? href.baseVal : undefined;
+    const details = errorDetails(resource ? 'resource' : 'javascript', event.error || { message: event.message }, url, event.filename, event.lineno, event.colno);
+    if (resource) {
+      const tag = resource.localName || resource.tagName?.toLowerCase();
+      details.element = elementNames.has(tag) ? tag : 'other';
+      try {
+        if (!url) throw new TypeError();
+        const parsed = new URL(url, location.href), app = new URL(location.href);
+        details.locationClass = parsed.protocol === app.protocol && parsed.host === app.host ? 'app' : ['data:', 'blob:'].includes(parsed.protocol) ? parsed.protocol.slice(0, -1) : 'external';
+      } catch { /* Only the finite unknown classification is logged. */ }
     }
+    mark('perf_error', { resource: resource ? 1 : 0, image: resource?.tagName === 'IMG' ? 1 : 0, script: resource?.tagName === 'SCRIPT' ? 1 : 0, stylesheet: resource?.tagName === 'LINK' && resource.rel === 'stylesheet' ? 1 : 0, icon: resource?.tagName === 'LINK' && /icon/.test(resource.rel) ? 1 : 0 }, details);
+  }, true);
+  addEventListener('unhandledrejection', event => {
+    if (++errors <= 20) mark('perf_error', { rejection: 1 }, errorDetails('promise', event.reason));
+  });
+
+  // No perpetual frame loop. Each event requests at most one rAF, carries its
+  // own immutable request ID, and is capped while hidden. Callback gaps are not
+  // click latency or proof that pixels reached the screen.
+  let request = 0, outstanding = 0;
+  const requestFrame = category => {
+    if (outstanding >= 8) return;
+    const id = ++request;
+    outstanding++;
+    mark('perf_raf_requested', { request: id, category, ...state() });
+    requestAnimationFrame(() => {
+      outstanding--;
+      mark('perf_frame', { request: id, category, ...state() });
+    });
   };
-  for (const [eventName, code] of [['click', 1], ['keydown', 2], ['input', 3], ['scroll', 4]]) {
-    addEventListener(eventName, () => {
-      interaction++; category = code; inputAt = performance.now();
-      mark('perf_input', { interaction, category });
-      queueSample();
-      if (!framesRemaining) { framesRemaining = 30; requestAnimationFrame(frame); }
+  for (const [code, name] of ['visibilitychange', 'focus', 'blur', 'pageshow', 'pagehide', 'freeze', 'resume'].entries()) {
+    addEventListener(name, event => {
+      mark('perf_visibility', { event: code + 1, persisted: event.persisted ? 1 : 0, ...state() });
+      requestFrame(code + 10);
+    }, true);
+  }
+  let interaction = 0;
+  for (const [name, code] of [['pointerdown', 1], ['click', 2], ['keydown', 3]]) {
+    addEventListener(name, () => {
+      mark('perf_input', { interaction: ++interaction, category: code, ...state() });
+      requestFrame(code);
     }, { capture: true, passive: true });
   }
-  new MutationObserver(() => {
-    mark('perf_dom', { interaction, forms: document.querySelectorAll('.connection-form').length,
-      menus: document.querySelectorAll('[role="menu"]').length,
-      hidden: document.hidden ? 1 : 0, focused: document.hasFocus() ? 1 : 0 });
-    queueSample();
-  }).observe(document, { subtree: true, childList: true });
+  // Bounded boot-only observer. Disconnect at shell commit; no ongoing DOM
+  // traversal on Monaco mutations, table scroll or result streaming.
+  let bootQueued = false;
+  const bootObserver = new MutationObserver(() => {
+    if (bootQueued) return;
+    bootQueued = true;
+    queueMicrotask(() => {
+      bootQueued = false;
+      if (document.querySelector('.ide-top-bar')) {
+        mark('shell_committed', state());
+        bootObserver.disconnect();
+        requestAnimationFrame(() => { mark('react_shell_frame', state()); mark('first_interface', state()); });
+      }
+    });
+  });
+  bootObserver.observe(document, { subtree: true, childList: true });
+  addEventListener('DOMContentLoaded', () => { mark('dom_loaded', state()); flush(); requestFrame(20); });
+
+  // Explicit experimental gate only; never a product workaround or fixed delay.
+  // A real input/composition event releases the selected first-loading boundary.
+  // Allows IME readiness overlap to be proved rather than inferred from speed.
+  const config = window.__vaporDiagnosticGateConfig;
+  if (typeof config === 'string') {
+    const [phase, trigger] = config.split('-');
+    let resolveGate, used = false, released = false;
+    window.__vaporDiagnosticEditorGate = name => {
+      if (name !== phase || used) return undefined;
+      used = true;
+      if (released) return undefined;
+      mark('perf_editor_gate', { phase: phase === 'workspace' ? 1 : 2, waiting: 1, composition: trigger === 'composition' ? 1 : 0 });
+      return new Promise(resolve => { resolveGate = resolve; });
+    };
+    addEventListener(trigger === 'composition' ? 'compositionstart' : 'input', event => {
+      if (released || event.target?.dataset?.sqlLoadingDraft !== phase) return;
+      released = true;
+      mark('perf_editor_gate', { phase: phase === 'workspace' ? 1 : 2, waiting: 0, composition: trigger === 'composition' ? 1 : 0 });
+      resolveGate?.(); resolveGate = null;
+    }, true);
+  }
+  let editorEvents = 0;
+  for (const [code, name] of ['focusin', 'focusout', 'beforeinput', 'input', 'compositionstart', 'compositionend', 'select'].entries()) {
+    addEventListener(name, event => {
+      const target = event.target;
+      const phase = target?.dataset?.sqlLoadingDraft;
+      if (!phase || ++editorEvents > 120) return;
+      mark('perf_editor_input', { event: code + 1, phase: phase === 'workspace' ? 1 : 2,
+        length: target.value.length, start: target.selectionStart, end: target.selectionEnd,
+        composing: event.isComposing ? 1 : 0, focused: document.activeElement === target ? 1 : 0 });
+    }, true);
+  }
 })();

@@ -4,6 +4,7 @@ import { WorkbenchHome } from '@/components/home/WorkbenchHome'
 import { ModuleBoundary } from '@/components/common/ModuleBoundary'
 import { useEditorStore } from '@/stores/editorStore'
 import { rememberDraftSelection } from '@/lib/editorDraftHandoff'
+import { editorDiagnosticGate, traceEditorPhase } from '@/lib/startupDiagnostics'
 
 type Panel = typeof import('./MainPanel').MainPanel
 
@@ -24,7 +25,14 @@ function WorkspaceLoader() {
   const tab = useEditorStore(state => state.tabs.find(tab => tab.id === state.activeTabId))
   useEffect(() => {
     let disposed = false
-    void import('./MainPanel').then(module => { if (!disposed) setPanel(() => module.MainPanel) }, failure => { if (!disposed) setError(failure) })
+    traceEditorPhase(1, 1)
+    void import('./MainPanel').then(module => {
+      traceEditorPhase(1, 2)
+      const commit = () => { if (!disposed) setPanel(() => module.MainPanel) }
+      const gate = editorDiagnosticGate('workspace')
+      if (gate) void gate.then(commit)
+      else commit()
+    }, failure => { if (!disposed) setError(failure) })
     return () => { disposed = true }
   }, [])
   if (error) throw error
@@ -39,13 +47,15 @@ function WorkspaceDraft({ tabId, value, readOnly, onComposing }: { tabId: string
   useLayoutEffect(() => {
     const element = input.current
     element?.focus()
+    traceEditorPhase(1, 3, { focused: document.activeElement === element ? 1 : 0 })
     return () => {
       if (element) rememberDraftSelection({ tabId, start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection, focused: document.activeElement === element })
+      if (element) traceEditorPhase(1, 4, { length: element.value.length, start: element.selectionStart, end: element.selectionEnd, focused: document.activeElement === element ? 1 : 0 })
       onComposing(false)
     }
   }, [tabId, onComposing])
   return <section className="ide-workspace relative flex min-h-0 flex-1 flex-col">
-    <textarea ref={input} aria-label={t('editor.inputLabel')} className="min-h-0 flex-1 resize-none bg-card p-3 font-mono text-[13px] text-foreground outline-none" value={value} readOnly={readOnly} spellCheck={false}
+    <textarea ref={input} data-sql-loading-draft="workspace" aria-label={t('editor.inputLabel')} className="min-h-0 flex-1 resize-none bg-card p-3 font-mono text-[13px] text-foreground outline-none" value={value} readOnly={readOnly} spellCheck={false}
       onChange={event => useEditorStore.getState().updateTabSql(tabId, event.currentTarget.value)}
       onCompositionStart={() => onComposing(true)}
       onCompositionEnd={event => { useEditorStore.getState().updateTabSql(tabId, event.currentTarget.value); onComposing(false) }} />
