@@ -173,7 +173,10 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
     let id = event.id().0.as_str();
     match id {
         "open-sql-file" | "save-sql-file" | "save-sql-file-as" => emit_workspace_command(app, id),
-        FILE_NEW_SQL_ID => emit_workspace_command(app, "new-sql"),
+        FILE_NEW_SQL_ID => {
+            crate::utils::startup::mark("perf_new_sql_native_menu");
+            emit_workspace_command(app, "new-sql");
+        }
         FILE_NEW_CONNECTION_ID => emit_workspace_command(app, "new-connection"),
         FILE_CLOSE_TAB_ID => emit_workspace_command(app, "close-tab"),
         DATABASE_CONNECT_ID => emit_workspace_command(app, "connect-browsing-data-source"),

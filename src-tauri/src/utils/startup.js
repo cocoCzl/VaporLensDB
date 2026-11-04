@@ -103,8 +103,12 @@
   }
   let interaction = 0;
   for (const [name, code] of [['pointerdown', 1], ['click', 2], ['keydown', 3]]) {
-    addEventListener(name, () => {
-      mark('perf_input', { interaction: ++interaction, category: code, ...state() });
+    addEventListener(name, event => {
+      const target = event.target;
+      mark('perf_input', { interaction: ++interaction, category: code, ...state(),
+        editable: target?.matches?.('input,textarea,[contenteditable="true"]') ? 1 : 0,
+        draft: target?.dataset?.sqlLoadingDraft ? 1 : 0,
+        newSql: name === 'keydown' && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key?.toLowerCase() === 'n' ? 1 : 0 });
       requestFrame(code);
     }, { capture: true, passive: true });
   }

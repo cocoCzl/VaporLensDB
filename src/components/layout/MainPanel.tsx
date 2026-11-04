@@ -162,6 +162,14 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   const [resultResizing, setResultResizing] = useState(false)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
   const [workspaceView, setWorkspaceView] = useState<SqlWorkspaceView>('split')
+  const [viewTabId, setViewTabId] = useState(activeTabId)
+  // A result-only view belongs to its current Tab. Reset during render so a
+  // newly mounted SQL draft can acquire focus in the same command commit,
+  // rather than mounting at 0×0 and missing the next keystroke.
+  if (viewTabId !== activeTabId) {
+    setViewTabId(activeTabId)
+    if (workspaceView === 'results') setWorkspaceView('split')
+  }
   const draftSaveTimer = useRef<number | null>(null)
   const handledHistoryRequest = useRef(0)
 

@@ -2,8 +2,7 @@ import './styles/globals.css'
 import { useDriverStore } from './stores/driverStore'
 import { SqlFileDialog } from './components/editor/SqlFileDialog'
 import { dispatchSqlFileAction } from './lib/sqlFileActions'
-import { useEffect, useState } from 'react'
-import { flushSync } from 'react-dom'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { Sidebar } from './components/layout/Sidebar'
 import { WorkspacePanel } from './components/layout/WorkspacePanel'
 import { StatusBar } from './components/layout/StatusBar'
@@ -28,6 +27,7 @@ import { onConsoleTransactionUpdated } from './ipc/query'
 import type { ConnectionStatus } from './types/connection'
 import { normalizeAppError } from './ipc/client'
 import { watchAppTheme } from './lib/appTheme'
+import { installNewSqlShortcut, openNewSqlTab } from './lib/newSqlCommand'
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
@@ -53,6 +53,8 @@ export default function App() {
       .catch(() => {})
     return () => { cancelled = true; unlisten?.() }
   }, [])
+
+  useLayoutEffect(installNewSqlShortcut, [])
 
   useEffect(() => { void useDriverStore.getState().loadDrivers() }, [])
 
@@ -146,7 +148,6 @@ export default function App() {
     listen<string>('vaporlensdb:workspace-command', ({ payload }) => {
       const editor = useEditorStore.getState()
       const connections = useConnectionStore.getState()
-      const activeTab = editor.tabs.find((tab) => tab.id === editor.activeTabId) ?? null
       const openDataSources = () => {
         const existing = editor.tabs.find((tab) => tab.kind === 'dataSources')
         if (existing) editor.setActiveTab(existing.id)
@@ -161,16 +162,7 @@ export default function App() {
         case 'open-sql-file': dispatchSqlFileAction('open'); break
         case 'save-sql-file': dispatchSqlFileAction('save'); break
         case 'save-sql-file-as': dispatchSqlFileAction('saveAs'); break
-        case 'new-sql': {
-          const connectionId = activeTab?.kind === 'sql' || !activeTab?.kind
-            ? activeTab?.connectionId ?? connections.browsingConnectionId
-            : connections.browsingConnectionId
-          const connection = connections.connections.find((item) => item.id === connectionId)
-          // Native menu events are outside React's input event batch. Commit the
-          // new draft/focus before the next OS keystroke can reach the old Tab.
-          flushSync(() => editor.addTab({ id: crypto.randomUUID(), kind: 'sql', title: connection ? `SQL · ${connection.name}` : 'SQL', sql: '', connectionId }))
-          break
-        }
+        case 'new-sql': openNewSqlTab(1); break
         case 'new-connection':
         case 'manage-data-sources': openDataSources(); break
         case 'close-tab': if (editor.activeTabId) void closeEditorTab(editor.activeTabId); break

@@ -40,12 +40,20 @@ be reported separately: the gate proves handoff behavior under a controlled
 overlap, not its natural frequency. Always start a fresh process with no restored
 SQL tab; a later Tab in an already loaded workspace is insufficient.
 
-`perf_editor_phase` uses boundary 1=workspace, 2=Monaco; event 1=module requested,
+`perf_editor_phase` boundary 0 is the new-SQL command: event 1=entry,
+2=committed draft/focus; source 1=native menu, 2=DOM accelerator. The native
+`perf_new_sql_native_menu` mark precedes its frontend command emission.
+Boundary 1=workspace, 2=Monaco uses event 1=module requested,
 2=module/instance available, 3=draft mounted, 4=draft handoff, 5=Monaco focused/ready.
 Numeric lengths, selection offsets, focus, composing and equality flags are
 allowed. Text, SQL, keys, event.data, tab/connection IDs and labels are not.
 `perf_editor_input` events are 1=focusin, 2=focusout, 3=beforeinput, 4=input,
 5=compositionstart, 6=compositionend, 7=select. They observe loading drafts only.
+`perf_input` classifies targets with numeric `editable`, `draft` and `newSql`
+flags, never ordinary key values. Compare event order, not just receive order
+across native and renderer clocks. A missing rAF callback is not a measured
+click latency. Keyboard first-input runs contain no observation or artificial
+wait between the command and the next key.
 
 At the visible Monaco handoff, `perf_editor_layout` records numeric geometry,
 visibility and mounted line count. Up to eight `perf_editor_ancestor` records
