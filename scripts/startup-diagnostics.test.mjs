@@ -26,6 +26,29 @@ function harness(gate = null) {
 }
 const flushed = () => new Promise(resolve => queueMicrotask(resolve))
 
+test('release allows generated editor styles without opting scripts out of CSP protection', () => {
+  const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'))
+  assert.deepEqual(config.app.security.dangerousDisableAssetCspModification, ['style-src'])
+  assert.match(config.app.security.csp, /style-src 'self' 'unsafe-inline'/)
+  assert.match(config.app.security.csp, /script-src 'self';/)
+  assert(!config.app.security.csp.includes('unsafe-eval'))
+})
+
+test('CSP evidence classifies style blocks without retaining policy, CSS or input', async () => {
+  const h = harness()
+  for (let index = 0; index < 40; index++) h.emit('securitypolicyviolation', {
+    effectiveDirective: index === 0 ? 'style-src-attr' : 'style-src-elem', blockedURI: 'inline',
+    disposition: 'enforce', originalPolicy: "style-src 'nonce-private'; SELECT secret", sample: 'private input',
+  })
+  await flushed()
+  const records = h.records.filter(x => x.stage === 'perf_csp_violation')
+  assert.equal(records.length, 30)
+  assert.equal(records[0].metrics.styleAttribute, 1)
+  assert.equal(records[1].metrics.styleElement, 1)
+  assert.equal(records[0].metrics.noncePolicy, 1)
+  assert(!/private|secret|SELECT/.test(JSON.stringify(records)))
+})
+
 test('error evidence retains type, static message and source positions without raw SQL/input/credentials', async () => {
   const h = harness()
   h.emit('unhandledrejection', { reason: { name: 'TypeError', message: "Cannot read properties of SELECT secret password=private", stack: "SELECT secret\ninput@tauri://localhost/assets/MainPanel-Abcd1234.js:2:45\nprivate@file:///Users/private/config.db:1:2" } })

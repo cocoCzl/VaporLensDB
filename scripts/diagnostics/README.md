@@ -13,6 +13,22 @@ The DOM observer disconnects at shell commit. rAF requests are event-driven,
 limited to eight outstanding requests and use immutable IDs. A callback is not
 physical paint; an absent/late callback must not be called click latency.
 
+`perf_editor_render` separates received `beforeinput`, model change and visible
+line DOM mutation. `Ctrl+Alt+Shift+F12` takes a bounded read-only snapshot after
+input, including host/editor sizes, line geometry, overlay hit test and focus.
+`domMatches` compares only short, single, unwrapped nonempty lines without tabs;
+other samples are explicitly incomparable (-1). No text is logged, and no
+render, layout or focus is requested by the probe. `perf_editor_line_style`
+compares inline and computed geometry. `perf_csp_violation` classifies at most
+30 violations without logging policy text, nonce, CSS, URLs or input contents.
+
+The release CSP intentionally permits runtime styles for Monaco (theme rules
+and generated line dimensions). Tauri's automatic nonce/hash addition to
+`style-src` overrides `unsafe-inline` and blocks those styles. Only that
+directive opts out of asset CSP modification; script CSP and its asset
+nonce/hash processing remain enabled. Do not disable all CSP modification or
+add inline/eval script permissions as a style compatibility fix.
+
 Error evidence is capped at 20 renderer events. It preserves standard error type,
 finite message templates, bundled source positions and redacted stack locations.
 Arbitrary messages are wholly redacted because they may echo SQL, clipboard,

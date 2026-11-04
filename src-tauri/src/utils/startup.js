@@ -55,6 +55,20 @@
     });
   };
   let errors = 0;
+  let policyErrors = 0;
+  addEventListener('securitypolicyviolation', event => {
+    if (++policyErrors > 30) return;
+    // Finite classifications only; never policy text, nonce, CSS or input.
+    mark('perf_csp_violation', {
+      styleElement: Number(event.effectiveDirective === 'style-src-elem'),
+      styleAttribute: Number(event.effectiveDirective === 'style-src-attr'),
+      style: Number(event.effectiveDirective === 'style-src'),
+      script: Number(event.effectiveDirective.startsWith('script-src')),
+      inline: Number(event.blockedURI === 'inline'),
+      enforced: Number(event.disposition === 'enforce'),
+      noncePolicy: Number(/style-src[^;]*'nonce-/.test(event.originalPolicy)),
+    });
+  });
   const errorDetails = (kind, reason, resource, filename, line = 0, column = 0) => {
     const name = typeof reason?.name === 'string' && names.has(reason.name) ? reason.name : '[redacted type]';
     return { kind, name, element: 'none', locationClass: 'unknown', message: kind === 'resource' ? 'Resource failed to load [details redacted]' : safeMessage(typeof reason === 'string' ? reason : reason?.message),

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { registerSqlCompletionProvider } from '@/components/editor/AutoComplete'
 import { useUiStore } from '@/stores/uiStore'
 import type { DriverType } from '@/types/connection'
+import { observeEditorRendering } from '@/lib/startupDiagnostics'
 
 const MONACO_CTRL_CMD = 2048
 const MONACO_ENTER = 3
@@ -109,6 +110,7 @@ export function SqlEditor({
   }, [onScopeChange, onFormat, onFocusReady])
 
   const handleMount: OnMount = (instance, monaco) => {
+    const stopRenderingDiagnostics = observeEditorRendering(instance)
     monacoRef.current = monaco
     defineVaporLensThemes(monaco)
     if (autoFocus) {
@@ -131,6 +133,7 @@ export function SqlEditor({
       onScopeChangeRef.current?.(cursorSnapshot(instance))
     })
     instance.onDidDispose(() => {
+      stopRenderingDiagnostics()
       onFocusReadyRef.current?.(null)
       completionProvider.dispose()
       monacoRef.current = null
