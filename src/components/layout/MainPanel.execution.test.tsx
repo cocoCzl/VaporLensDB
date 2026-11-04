@@ -50,7 +50,7 @@ describe('MainPanel execution target integration', () => {
     render(<MainPanel />)
     act(() => useConnectionStore.getState().setActiveConnection('B'))
     expect(current().connectionId).toBe('A')
-    expect(screen.getByText('Execution: Connection A')).toBeVisible()
+    expect(screen.getByLabelText(i18n.t('executionContext.title'))).toHaveTextContent('Execution: Connection A')
     expect(screen.getByText('Browsing: Connection B')).toBeVisible()
     fireEvent.click(screen.getByText('Run fixture'))
     await waitFor(() => expect(ipc.execute).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'A', consoleId: 'tab', database: 'db-A', schema: 'schema-A', sql: current().sql.replace(/;$/, '') })))

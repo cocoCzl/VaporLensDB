@@ -121,7 +121,7 @@ describe('transaction-aware execution target UI', () => {
     expect(ipc.connect).toHaveBeenCalledWith('B', { selectForBrowsing: false })
     expect(current()).toMatchObject({ database: 'db-B', schema: null, transactionMode: 'auto', transactionPhase: 'idle', transactionBusy: false, lastQueryId: 'result-A' })
     expect(useQueryResultStore.getState().sources['result-A'].connectionId).toBe('A')
-    expect(screen.getByText('Execution: Connection B')).toBeVisible()
+    expect(screen.getByLabelText(i18n.t('executionContext.title'))).toHaveTextContent('Execution: Connection B')
     expect(screen.queryByText('Manual · Active transaction')).not.toBeInTheDocument()
   })
 
@@ -140,7 +140,7 @@ describe('transaction-aware execution target UI', () => {
     expect(current()).toMatchObject({ connectionId: 'A', transactionPhase: phase })
     expect(sessionExists).toBe(true)
     expect(ipc.connect).not.toHaveBeenCalled()
-    expect(screen.getByText('Execution: Connection A')).toBeVisible()
+    expect(screen.getByLabelText(i18n.t('executionContext.title'))).toHaveTextContent('Execution: Connection A')
     fireEvent.click(within(dialog).getByRole('button', { name: label }))
     await waitFor(() => expect(current().connectionId).toBe('B'))
   })

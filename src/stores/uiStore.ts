@@ -120,7 +120,7 @@ export const useUiStore = create<UiState>((set) => ({
     set((state) => {
       const next = {
         ...settingsFromState(state),
-        bottomPanelHeight: clampNumber(bottomPanelHeight, 160, 800, DEFAULT_RESULT_PANEL_HEIGHT),
+        bottomPanelHeight: clampNumber(bottomPanelHeight, 88, 800, DEFAULT_RESULT_PANEL_HEIGHT),
         resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,
       }
       writeStoredSettings(next)
@@ -256,7 +256,7 @@ function readStoredSettings(): UserSettings {
     // Versions before 2 auto-fitted every result, shrinking one-row queries
     // to 160px and overwriting the user's preferred layout in local storage.
     bottomPanelHeight: parsed.resultPanelLayoutVersion === RESULT_PANEL_LAYOUT_VERSION
-      ? clampNumber(parsed.bottomPanelHeight, 160, 800, DEFAULT_RESULT_PANEL_HEIGHT)
+      ? clampNumber(parsed.bottomPanelHeight, 88, 800, DEFAULT_RESULT_PANEL_HEIGHT)
       : DEFAULT_RESULT_PANEL_HEIGHT,
     bottomPanelCollapsed: parsed.bottomPanelCollapsed === true,
     resultPanelLayoutVersion: RESULT_PANEL_LAYOUT_VERSION,

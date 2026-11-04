@@ -21,9 +21,9 @@ import { ObjectStructurePreview } from '@/components/workspace/ObjectStructurePr
 import { DataGrid, ResultMetadataGrid } from '@/components/grid/DataGrid'
 import { TableTriggers } from '@/components/inspector/TableTriggers'
 import { ObjectInspectorPanel } from '@/components/inspector/ObjectInspectorPanel'
-import { EmptyState } from '@/components/ui/empty-state'
 import { ResultPanel } from '@/components/workspace/ResultPanel'
-import { SqlWorkspace, type SqlWorkspaceView } from '@/components/workspace/SqlWorkspace'
+import { SqlWorkspace } from '@/components/workspace/SqlWorkspace'
+import { useSqlPaneLayout } from '@/hooks/useSqlPaneLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AppSelect } from '@/components/ui/app-select'
@@ -143,7 +143,6 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   const bottomPanelHeight = useUiStore((state) => state.bottomPanelHeight)
   const bottomPanelCollapsed = useUiStore((state) => state.bottomPanelCollapsed)
   const setBottomPanelHeight = useUiStore((state) => state.setBottomPanelHeight)
-  const setBottomPanelCollapsed = useUiStore((state) => state.setBottomPanelCollapsed)
   const { runQuery, runExplain, cancelRunningQuery } = useQuery()
   const [cursor, setCursor] = useState<{ tabId: string | null; value: SqlCursor }>({ tabId: null, value: EMPTY_CURSOR })
   const cursorRef = useRef(cursor)
@@ -158,28 +157,25 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyPanelWidth, setHistoryPanelWidth] = useState(380)
   const [resultView, setResultView] = useState<'data' | 'metadata'>('data')
-  const [resultPanelHeight, setResultPanelHeightLocal] = useState(bottomPanelHeight)
   const [resultResizing, setResultResizing] = useState(false)
   const [resultIndexes, setResultIndexes] = useState<Record<string, number>>({})
-  const [workspaceView, setWorkspaceView] = useState<SqlWorkspaceView>('split')
-  const [viewTabId, setViewTabId] = useState(activeTabId)
-  // A result-only view belongs to its current Tab. Reset during render so a
-  // newly mounted SQL draft can acquire focus in the same command commit,
-  // rather than mounting at 0×0 and missing the next keystroke.
-  if (viewTabId !== activeTabId) {
-    setViewTabId(activeTabId)
-    if (workspaceView === 'results') setWorkspaceView('split')
-  }
+  const layoutTab = tabs.find(tab => tab.id === activeTabId)
+  const layoutQueryId = layoutTab?.lastQueryId
+  const hasOutput = useQueryResultStore(state => Boolean(layoutQueryId && (state.results[layoutQueryId] || state.explains[layoutQueryId] || state.reports[layoutQueryId]))) || Boolean(layoutTab?.running || layoutTab?.error)
+  const {
+    setHost: setSqlSplitHost, height: resultPanelHeight, view: workspaceView, setView: setWorkspaceView,
+    collapsed: resultsCollapsed, setCollapsed: setResultsCollapsed, setHeight: setResultHeight,
+    minHeight: minResultHeight, maxHeight: maxResultHeight, revealResults,
+  } = useSqlPaneLayout(activeTabId, tabs, hasOutput, bottomPanelHeight, bottomPanelCollapsed)
   const draftSaveTimer = useRef<number | null>(null)
   const handledHistoryRequest = useRef(0)
 
   function revealQueryResults() {
-    setBottomPanelCollapsed(false)
-    setWorkspaceView((view) => view === 'editor' ? 'split' : view)
+    revealResults()
   }
 
   function startResultResize(event: ReactPointerEvent<HTMLDivElement>) {
-    if (bottomPanelCollapsed) return
+    if (resultsCollapsed) return
     event.preventDefault()
     const startY = event.clientY
     const startHeight = resultPanelHeight
@@ -189,9 +185,8 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
     setResultResizing(true)
 
     const onMove = (moveEvent: PointerEvent) => {
-      const maxHeight = Math.max(160, window.innerHeight - 260)
-      nextHeight = Math.min(maxHeight, Math.max(160, startHeight + startY - moveEvent.clientY))
-      setResultPanelHeightLocal(nextHeight)
+      nextHeight = Math.min(maxResultHeight, Math.max(minResultHeight, startHeight + startY - moveEvent.clientY))
+      setResultHeight(nextHeight)
     }
     const stopResize = () => {
       document.body.style.cursor = previousCursor
@@ -855,8 +850,10 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
     <main className="flex flex-1 overflow-hidden bg-background">
       <SqlWorkspace view={workspaceView}>
         <ExecutionContextBar />
-        {actualCapabilities?.supportsFunctions === false && <p className="border-b px-3 py-1 text-[11px] text-muted-foreground" role="status">{t('workbench.functionsUnsupported')}</p>}
         <EditorToolbar
+        metadataNotice={actualCapabilities?.supportsFunctions === false ? t('workbench.functionsUnsupported') : undefined}
+        hasDatabase={actualCapabilities?.hasDatabase}
+        hasSchema={actualCapabilities?.hasSchema}
         connections={connections}
         dataSourceGroups={dataSourceGroups}
         connectionStatuses={Object.fromEntries(
@@ -933,7 +930,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         onWorkspaceViewChange={setWorkspaceView}
         />
 
-        <div className="relative min-h-0 flex-1">
+        <div ref={setSqlSplitHost} data-sql-split-area className="relative min-h-0 flex-1">
         <div className="flex h-full min-w-0 flex-col overflow-hidden">
         <div data-sql-editor className={workspaceView === 'results' ? 'hidden' : 'ide-editor-surface relative min-h-0 flex-1'}>
         <SqlEditorSurface
@@ -954,30 +951,30 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         />
         </div>
 
-        {!bottomPanelCollapsed && workspaceView === 'split' && (
+        {!resultsCollapsed && workspaceView === 'split' && (
           <div
             className={resultResizing ? 'ide-splitter ide-splitter--dragging' : 'ide-splitter'}
             role="separator"
             tabIndex={0}
             aria-orientation="horizontal"
             aria-label={t('workbench.results')}
-            aria-valuemin={160}
-            aria-valuemax={800}
+            aria-valuemin={Math.round(minResultHeight)}
+            aria-valuemax={Math.round(maxResultHeight)}
             aria-valuenow={Math.round(resultPanelHeight)}
             onPointerDown={startResultResize}
-            onDoubleClick={() => setBottomPanelCollapsed(true)}
+            onDoubleClick={() => setResultsCollapsed(true)}
             onKeyDown={(event) => {
               if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
               event.preventDefault()
-              const next = Math.max(160, Math.min(800, resultPanelHeight + (event.key === 'ArrowUp' ? 16 : -16)))
-              setResultPanelHeightLocal(next)
+              const next = Math.max(minResultHeight, Math.min(maxResultHeight, resultPanelHeight + (event.key === 'ArrowUp' ? 16 : -16)))
+              setResultHeight(next)
               setBottomPanelHeight(next)
             }}
           />
         )}
         {workspaceView !== 'editor' && <ResultPanel
           title={t('workbench.results')}
-          collapsed={bottomPanelCollapsed}
+          collapsed={resultsCollapsed}
           fillAvailableSpace={workspaceView === 'results'}
           height={resultPanelHeight}
           status={activeTab.running ? (
@@ -993,11 +990,11 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
             {activeResult?.columns.length ? <ResultViewTabs value={resultView} onChange={setResultView} /> : null}
             <IconTooltipButton
               size="icon-xs"
-              label={bottomPanelCollapsed ? t('explorer.expand') : t('explorer.collapse')}
+              label={resultsCollapsed ? t('editor.expandResults') : t('editor.collapseResults')}
               variant="ghost"
-              onClick={() => setBottomPanelCollapsed(!bottomPanelCollapsed)}
+              onClick={() => setResultsCollapsed(!resultsCollapsed)}
             >
-              {bottomPanelCollapsed ? <PanelBottomOpen /> : <PanelBottomClose />}
+              {resultsCollapsed ? <PanelBottomOpen /> : <PanelBottomClose />}
             </IconTooltipButton>
             <IconTooltipButton
               size="icon-xs"
@@ -1043,7 +1040,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                   setWorkspaceView('split')
                   return
                 }
-                setBottomPanelCollapsed(false)
+                setResultsCollapsed(false)
                 setWorkspaceView('results')
               }}
             >
@@ -1052,7 +1049,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
           </>}
         >
 
-        {!bottomPanelCollapsed && <div className="flex min-h-0 flex-1 overflow-hidden">
+        {(!resultsCollapsed || workspaceView === 'results') && <div className="flex min-h-0 flex-1 overflow-hidden">
           <div className="flex h-full min-h-0 min-w-0 flex-1">
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {activeReport && activeQueryId && <Suspense fallback={null}><ExecutionSummary key={activeQueryId} report={activeReport} onSelectResult={index => setResultIndexes(state => ({ ...state, [activeQueryId]: index }))} /></Suspense>}
@@ -1085,7 +1082,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
                   </div>
                 </div>
               ) : (
-                <EmptyState className="h-full" title={t(activeReport ? 'executionReport.noResults' : 'workbench.noResultsYet')} description={activeReport ? undefined : t('workbench.runQueryToSeeResults')} />
+                <p className="flex h-full items-center justify-center px-3 text-center text-xs text-muted-foreground">{t(activeReport ? 'executionReport.noResults' : 'workbench.runQueryToSeeResults')}</p>
               )}
               </div>
             </div>

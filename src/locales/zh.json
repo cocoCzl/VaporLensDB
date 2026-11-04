@@ -679,6 +679,8 @@
     "noRecentQueriesDescription": "运行查询后，它会显示在这里。"
   },
   "editor": {
+    "collapseResults": "折叠结果",
+    "expandResults": "展开结果",
     "dataSource": "数据源",
     "run": "执行",
     "format": "格式化",
@@ -1032,6 +1034,9 @@
     "unknownDriver": "未知驱动"
   },
   "executionContext": {
+    "selectToRun": "选择执行连接后运行 SQL",
+    "connectOnRun": "未连接 · 执行时将连接",
+    "unavailable": "原连接“{{name}}”不可用，请选择执行连接",
     "title": "执行上下文",
     "execution": "执行连接",
     "browsing": "浏览连接",

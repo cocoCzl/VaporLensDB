@@ -25,6 +25,9 @@ interface EditorToolbarProps {
   schema?: string | null
   databases?: DatabaseInfo[]
   schemas?: SchemaInfo[]
+  hasDatabase?: boolean
+  hasSchema?: boolean
+  metadataNotice?: string
   maxRows: number
   running?: boolean
   canCancel?: boolean
@@ -65,6 +68,7 @@ export function EditorToolbar({
   schema,
   databases = [],
   schemas = [],
+  hasDatabase, hasSchema, metadataNotice,
   maxRows,
   running = false,
   canCancel = false,
@@ -97,7 +101,7 @@ export function EditorToolbar({
 
   return (
     <div className="workspace-context-bar" role="toolbar" aria-label={t('editor.run')}>
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none]">
+      <div className="workspace-context-controls flex min-w-0 flex-wrap items-center gap-2">
         <ExecutionDataSourcePicker
           connections={connections}
           groups={dataSourceGroups}
@@ -106,9 +110,10 @@ export function EditorToolbar({
           disabled={running || contextDisabled}
           onChange={onConnectionChange}
         />
+        {executionConnection && (dialect === 'sqlite' || hasDatabase !== false) && <>
         <span className="ide-toolbar-separator" aria-hidden="true" />
         <ContextSelect label={t('metadata.database')}>
-        {dialect === 'sqlite' ? <span className="workspace-context-select flex h-8 w-48 items-center" title={database ?? ''} aria-label={t('metadata.database')}><span className="truncate">{database?.split(/[\\/]/).pop() || database || t('executionContext.none')}</span></span> :
+        {dialect === 'sqlite' ? <span className="workspace-context-select flex h-8 w-36 items-center" title={database ?? ''} aria-label={t('metadata.database')}><span className="truncate">{database?.split(/[\\/]/).pop() || database || t('executionContext.none')}</span></span> :
         <AppSelect
           className="workspace-context-select h-8 w-36 shrink-0"
           aria-label={t('metadata.database')}
@@ -116,23 +121,24 @@ export function EditorToolbar({
           disabled={running || contextDisabled || !connectionId || databases.length === 0}
           title={dialect === 'postgres' ? t('editor.databaseSelectHint') : undefined}
           onValueChange={(value) => onDatabaseChange?.(value || null)}
-          options={[...(!database ? [{ value: '', label: t('metadata.database') }] : []), ...databases.map((item) => ({ value: item.name, label: item.name }))]}
+          options={contextOptions(databases, database, t('executionContext.none'))}
         />}
-        </ContextSelect>
-        <span className="ide-toolbar-separator hidden md:block" aria-hidden="true" />
-        <ContextSelect label={t('metadata.schema')} className="hidden md:flex">
+        </ContextSelect></>}
+        {executionConnection && (hasSchema ?? dialect !== 'mysql') && <>
+        <span className="ide-toolbar-separator" aria-hidden="true" />
+        <ContextSelect label={t('metadata.schema')}>
         <AppSelect
-          className="workspace-context-select h-8 w-32 shrink-0"
+          className="workspace-context-select h-8 w-28 shrink-0"
           aria-label={t('metadata.schema')}
           value={schema ?? ''}
           disabled={running || contextDisabled || !connectionId || schemas.length === 0}
           onValueChange={(value) => onSchemaChange?.(value || null)}
-          options={[...(!schema ? [{ value: '', label: t('metadata.schema') }] : []), ...schemas.map((item) => ({ value: item.name, label: item.name }))]}
+          options={contextOptions(schemas, schema, t('common.default'))}
         />
-        </ContextSelect>
+        </ContextSelect></>}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {running && canCancel ? (
           <Button type="button" size="sm" variant="destructive" className="workspace-run-action" onClick={onCancel}><Square />{t('sqlCommands.cancel')}</Button>
         ) : running ? (
@@ -141,6 +147,7 @@ export function EditorToolbar({
           <Button type="button" size="sm" disabled={disabled || contextDisabled} className="workspace-run-action" onClick={() => onRun()} aria-label={t(hasSelection ? 'sqlCommands.runSelection' : 'sqlCommands.runCurrent')} title={`${t(hasSelection ? 'sqlCommands.runSelection' : 'sqlCommands.runCurrent')} (${runShortcut})`}><Play className="size-3.5" />{t(hasSelection ? 'sqlCommands.runSelection' : 'sqlCommands.runCurrent')}<kbd className="hidden font-mono text-[10px] opacity-75 lg:inline">{runShortcut}</kbd></Button>
         )}
         <SqlMoreActions
+          metadataNotice={metadataNotice}
           onRunAll={onRunAll}
           runAllDisabled={runAllDisabled || running || contextDisabled}
           maxRows={maxRows}
@@ -166,6 +173,14 @@ export function EditorToolbar({
   )
 }
 
+// Metadata can still be loading or unavailable. Keep the actual selected target
+// readable without introducing a different execution target.
+function contextOptions(items: { name: string }[], current: string | null | undefined, emptyLabel: string) {
+  const options = items.map(item => ({ value: item.name, label: item.name }))
+  if (!current || !items.some(item => item.name === current)) options.unshift({ value: current ?? '', label: current || emptyLabel })
+  return options
+}
+
 function ContextSelect({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
   return (
     <div className={['min-w-0 shrink-0 items-center gap-1.5', className ?? 'flex'].join(' ')}>
@@ -176,6 +191,7 @@ function ContextSelect({ label, className, children }: { label: string; classNam
 }
 
 function SqlMoreActions({
+  metadataNotice,
   onRunAll,
   runAllDisabled,
   maxRows,
@@ -196,6 +212,7 @@ function SqlMoreActions({
   workspaceView,
   onWorkspaceViewChange,
 }: {
+  metadataNotice?: string
   onRunAll?: () => void
   runAllDisabled: boolean
   maxRows: number
@@ -231,6 +248,7 @@ function SqlMoreActions({
           <button type="button" className={itemClass} disabled={formatDisabled} onClick={() => onFormat()}><Wand2 className="size-3.5" />{t('editor.format')}{sqlCommandShortcut('format') && <kbd className="ml-auto text-[10px]">{sqlCommandShortcut('format')}</kbd>}</button>
           <button type="button" className={itemClass} aria-pressed={historyOpen} onClick={() => { onHistoryToggle?.(); setOpen(false) }}><History className="size-3.5" />{t('sql.history')}</button>
         </div>
+        {metadataNotice && <p className="border-t px-2 py-2 text-[11px] leading-relaxed text-muted-foreground">{metadataNotice}</p>}
         <div className="my-1 border-t" />
         <div className="flex items-center justify-between gap-2 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {t('editor.rowLimit')}

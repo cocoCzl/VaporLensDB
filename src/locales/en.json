@@ -679,6 +679,8 @@
     "noRecentQueriesDescription": "Run a query and it will appear here."
   },
   "editor": {
+    "collapseResults": "Collapse Results",
+    "expandResults": "Expand Results",
     "dataSource": "Data Source",
     "run": "Run",
     "format": "Format",
@@ -1032,6 +1034,9 @@
     "unknownDriver": "Unknown driver"
   },
   "executionContext": {
+    "selectToRun": "Select an execution connection to run SQL",
+    "connectOnRun": "Disconnected · connects when you run",
+    "unavailable": "Connection “{{name}}” is unavailable. Select an execution connection.",
     "title": "Execution context",
     "execution": "Execution",
     "browsing": "Browsing",

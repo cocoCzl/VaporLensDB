@@ -35,7 +35,7 @@ export function ResultPanel({
         'workspace-results-panel flex min-h-0 shrink-0 flex-col bg-surface',
         fillAvailableSpace ? 'flex-1' : '',
       ].join(' ')}
-      style={fillAvailableSpace ? undefined : { height: collapsed ? 32 : height }}
+      style={fillAvailableSpace ? undefined : { height: collapsed ? 44 : height }}
     >
       <header className="result-panel-header">
         <div className="flex min-w-0 items-center gap-2.5">
