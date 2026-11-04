@@ -78,7 +78,8 @@ export function ConnectionDialog({
         }
       />}
       <DialogContent
-        className="connection-workflow flex max-h-[calc(100dvh-2rem)] w-[min(720px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-xl border-border-strong bg-surface p-0 sm:max-w-none data-open:animate-none data-closed:animate-none"
+        animated={false}
+        className="connection-workflow flex max-h-[calc(100dvh-2rem)] w-[min(720px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-xl border-border-strong bg-surface p-0 sm:max-w-none"
         overlayClassName="bg-[hsl(var(--overlay)/0.36)] backdrop-blur-none"
         showCloseButton={false}
       >

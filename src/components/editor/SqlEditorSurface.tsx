@@ -5,7 +5,7 @@ import { sqlCommandShortcut } from '@/lib/sqlCommands'
 import { useUiStore } from '@/stores/uiStore'
 import type { SqlEditorProps } from './SqlEditor'
 import { takeDraftSelection } from '@/lib/editorDraftHandoff'
-import { editorDiagnosticGate, traceEditorPhase } from '@/lib/startupDiagnostics'
+import { editorDiagnosticGate, traceEditorLayout, traceEditorPhase } from '@/lib/startupDiagnostics'
 
 const SqlEditor = lazy(() => import('./SqlEditor').then(module => ({ default: module.SqlEditor })))
 
@@ -61,6 +61,15 @@ export function SqlEditorSurface(props: SqlEditorProps & { draftId?: string }) {
 
   useLayoutEffect(() => {
     if (!ready || !instance) return
+    // The loading surface has just become visible. Monaco's initial automatic
+    // layout can still be queued on a suspended native animation frame (5×5
+    // editor inside a full-sized host). Commit the actual host dimensions at
+    // this ownership handoff, before moving the caret/focus into Monaco.
+    const host = instance.getDomNode?.()?.parentElement
+    const bounds = host?.getBoundingClientRect()
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      instance.layout({ width: bounds.width, height: bounds.height })
+    }
     latest.current.onFocusReady?.(() => instance.focus())
     if (restoreFocus.current) { instance.focus(); restoreFocus.current = false }
     const selection = instance.getSelection?.()
@@ -68,6 +77,7 @@ export function SqlEditorSurface(props: SqlEditorProps & { draftId?: string }) {
     traceEditorPhase(2, 5, { length: instance.getValue().length, focused: instance.hasTextFocus?.() ? 1 : 0,
       start: selection && model ? model.getOffsetAt(selection.getStartPosition()) : -1,
       end: selection && model ? model.getOffsetAt(selection.getEndPosition()) : -1 })
+    traceEditorLayout(instance.getDomNode?.(), 5)
   }, [ready, instance])
 
   const handleReady = useCallback((editor: editor.IStandaloneCodeEditor) => {

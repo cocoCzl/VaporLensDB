@@ -24,13 +24,15 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
 
 function DialogOverlay({
   className,
+  animated = true,
   ...props
-}: DialogPrimitive.Backdrop.Props) {
+}: DialogPrimitive.Backdrop.Props & { animated?: boolean }) {
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-[hsl(var(--overlay)/0.28)] backdrop-blur-[2px] duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-[hsl(var(--overlay)/0.28)] backdrop-blur-[2px]",
+        animated && "duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -43,21 +45,25 @@ function DialogContent({
   children,
   showCloseButton = true,
   overlayClassName,
+  animated = true,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
   /** Lets a focused dialog tune its depth without changing other overlays. */
   overlayClassName?: string
+  /** Omit animation classes entirely: plugin animate-in survives twMerge's animate-none. */
+  animated?: boolean
 }) {
   const { t } = useTranslation()
 
   return (
     <DialogPortal>
-      <DialogOverlay className={overlayClassName} />
+      <DialogOverlay className={overlayClassName} animated={animated} />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-border-strong bg-popover p-4 text-sm text-popover-foreground shadow-[0_28px_72px_-38px_hsl(var(--shadow-floating)/0.6)] duration-150 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.98] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98]",
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-border-strong bg-popover p-4 text-sm text-popover-foreground shadow-[0_28px_72px_-38px_hsl(var(--shadow-floating)/0.6)] outline-none sm:max-w-sm",
+          animated && "duration-150 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.98] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98]",
           className
         )}
         {...props}

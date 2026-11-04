@@ -55,6 +55,11 @@ function openDialog() {
   expect(screen.getByRole('dialog', { name: i18n.t('connection.newTitle') })).toBeVisible()
   expect(document.querySelectorAll('[data-slot="dialog-content"]')).toHaveLength(1)
   expect(document.querySelectorAll('[data-slot="dialog-overlay"]')).toHaveLength(1)
+  // Production CSS's animate-in plugin survives animate-none in twMerge and
+  // holds opacity at zero when the native page has no animation frames.
+  for (const node of document.querySelectorAll('[data-slot="dialog-content"], [data-slot="dialog-overlay"]')) {
+    expect(node.className).not.toMatch(/animate-(in|out)|fade-(in|out)|zoom-(in|out)/)
+  }
   return trigger
 }
 

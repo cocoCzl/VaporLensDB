@@ -47,6 +47,20 @@ allowed. Text, SQL, keys, event.data, tab/connection IDs and labels are not.
 `perf_editor_input` events are 1=focusin, 2=focusout, 3=beforeinput, 4=input,
 5=compositionstart, 6=compositionend, 7=select. They observe loading drafts only.
 
+At the visible Monaco handoff, `perf_editor_layout` records numeric geometry,
+visibility and mounted line count. Up to eight `perf_editor_ancestor` records
+identify a zero-sized or hidden ancestor. This is one bounded snapshot, not a
+DOM polling loop; diagnostics off performs no diagnostic layout reads. Compare
+these records with actual screenshots: preserved model text does not prove that
+the editor is visible. The product commits the measured host dimensions once at
+this handoff, before transferring focus; later resizing remains Monaco's job.
+
+For popup controls, inspect the generated production CSS as well as class names.
+The animation plugin's `animate-in` can survive `twMerge` with `animate-none`.
+Connection dialogs omit animation classes entirely via `animated={false}`;
+other dialogs retain their defaults. A hidden document/no rAF alone does not
+prove that all painting has stopped or explain the underlying occlusion state.
+
 Run redaction/probe regressions with:
 
 ```sh

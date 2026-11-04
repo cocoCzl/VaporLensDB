@@ -20,6 +20,14 @@ async function mountEditor() {
     setValue: vi.fn((next: string) => { value = next; fake.props!.onChange(next) }),
     getModel: () => ({ getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }) }),
     setSelection: vi.fn(), focus: vi.fn(),
+    getDomNode: () => {
+      const host = document.createElement('div')
+      Object.defineProperty(host, 'getBoundingClientRect', { value: () => ({ width: 912, height: 71 }) as DOMRect })
+      const node = document.createElement('div')
+      host.append(node)
+      return node
+    },
+    layout: vi.fn(),
   }
   act(() => fake.props!.onReady!(instance as never))
   return instance
@@ -36,6 +44,8 @@ describe('SQL loading draft handoff', () => {
     expect(instance.getValue()).toBe('SELECT \u4f60\u597d;\nSELECT 2;')
     expect(instance.setSelection).toHaveBeenCalledWith({ selectionStartLineNumber: 1, selectionStartColumn: 9, positionLineNumber: 1, positionColumn: 3 })
     expect(instance.focus).toHaveBeenCalledOnce()
+    expect(instance.layout).toHaveBeenCalledExactlyOnceWith({ width: 912, height: 71 })
+    expect(instance.layout.mock.invocationCallOrder[0]).toBeLessThan(instance.focus.mock.invocationCallOrder[0])
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
 
@@ -47,10 +57,12 @@ describe('SQL loading draft handoff', () => {
     const instance = await mountEditor()
     expect(input).toBeInTheDocument()
     expect(instance.focus).not.toHaveBeenCalled()
+    expect(instance.layout).not.toHaveBeenCalled()
     fireEvent.change(input, { target: { value: 'SELECT \u4e2d\u6587' } })
     fireEvent.compositionEnd(input, { data: '\u4e2d\u6587' })
     expect(instance.getValue()).toBe('SELECT \u4e2d\u6587')
     expect(instance.focus).toHaveBeenCalledOnce()
+    expect(instance.layout).toHaveBeenCalledExactlyOnceWith({ width: 912, height: 71 })
     view.unmount()
     render(<Draft />)
     expect(screen.getByRole('textbox')).toHaveValue('')
