@@ -379,7 +379,10 @@ function ExecutionDataSourcePicker({
         </span>
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 gap-1 p-1.5">
+      {/* Closing must remove the execution picker immediately. A retained exit
+          dialog can keep focus and block New SQL even after open becomes false.
+          Keep this frequent context switch independent of animation progress. */}
+      {open && <PopoverContent align="start" className="w-80 gap-1 p-1.5" style={{ animation: 'none' }}>
         <div className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input autoFocus className="h-8 pl-7 text-xs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('connection.searchDataSources')} />
@@ -405,7 +408,7 @@ function ExecutionDataSourcePicker({
             </section>
           ))}
         </div>
-      </PopoverContent>
+      </PopoverContent>}
     </Popover>
   )
 }
