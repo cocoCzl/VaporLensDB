@@ -479,6 +479,24 @@ pub fn run() {
             if let Some(stage) = stage {
                 if let Some(window) = app.get_webview_window("main") { utils::startup::window_snapshot(&window.as_ref().window(), stage, Default::default()); }
             }
+            // A LaunchServices/Dock reopen can activate the app while leaving
+            // an existing NSWindow behind other apps.
+            // Present it once in response to this explicit user action. Do not
+            // couple rendering, focus events or visibility probes to this path.
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                if let Some(window) = app.get_webview_window("main") {
+                    if window.is_minimized().unwrap_or(false) {
+                        if let Err(error) = window.unminimize() {
+                            log::warn!("Unable to restore main window on reopen: {error}");
+                        }
+                    }
+                    if let Err(error) = window.show().and_then(|()| window.set_focus()) {
+                        log::warn!("Unable to present main window on reopen: {error}");
+                    }
+                    utils::startup::window_snapshot(&window.as_ref().window(), "native_reopen_presented", Default::default());
+                }
+            }
             if matches!(event, tauri::RunEvent::Ready) {
                 utils::startup::mark("backend_ready");
             }
