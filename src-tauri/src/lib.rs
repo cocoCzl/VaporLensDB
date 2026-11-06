@@ -471,7 +471,9 @@ pub fn run() {
         .run(|app, event| {
             let stage = match &event {
                 tauri::RunEvent::Ready => Some("native_app_ready"),
-                tauri::RunEvent::Resumed => Some("native_app_resumed"),
+                // In tauri-runtime-wry this is NewEvents(StartCause::Poll),
+                // not an AppKit activation/restore notification. Scheduling
+                // snapshots from it can itself enqueue another event-loop turn.
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => Some("native_app_reopen"),
                 _ => None,

@@ -9,6 +9,11 @@ The event stream records Rust monotonic receive time, renderer event time and
 wall-clock time (for matching external experiment annotations). AppKit observers
 read activation, key-window, occlusion, minimize/restore and hide/unhide state.
 They do not activate, show, redraw or resize windows, or replace native delegates.
+App activation and restore evidence comes from these AppKit notifications.
+Do not treat Tauri `RunEvent::Resumed` as a native restore: the locked Wry
+runtime emits it for `NewEvents(StartCause::Poll)`. Posting another main-thread
+snapshot from that event can feed the event loop instead of observing a window
+lifecycle transition.
 The DOM observer disconnects at shell commit. rAF requests are event-driven,
 limited to eight outstanding requests and use immutable IDs. A callback is not
 physical paint; an absent/late callback must not be called click latency.
