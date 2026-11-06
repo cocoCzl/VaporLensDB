@@ -24,6 +24,25 @@ beforeEach(async () => {
 })
 
 describe('global navigation', () => {
+  it.each(['A', null])('More → New SQL preserves the active execution target (%s) and its database/schema', async connectionId => {
+    useConnectionStore.setState({ connections: [
+      { id: 'A', name: 'Execution A', driverType: 'mysql', database: 'configured_database' },
+      { id: 'B', name: 'Explorer B', driverType: 'mysql' },
+    ], browsingConnectionId: 'B' })
+    useEditorStore.setState({ tabs: [{ id: 'old', kind: 'sql', title: 'SQL', sql: 'SELECT 1', connectionId,
+      database: connectionId ? 'selected_database' : null, schema: connectionId ? 'selected_schema' : null }], activeTabId: 'old' })
+    render(<AppTopBar />)
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('topBar.more') }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: i18n.t('workbench.newSql') }))
+    const { tabs, activeTabId } = useEditorStore.getState()
+    expect(tabs).toHaveLength(2)
+    expect(tabs[1]).toMatchObject({ kind: 'sql', sql: '', connectionId,
+      database: connectionId ? 'selected_database' : null, schema: connectionId ? 'selected_schema' : null })
+    expect(activeTabId).toBe(tabs[1].id)
+    expect(tabs[0].sql).toBe('SELECT 1')
+    expect(connect).not.toHaveBeenCalled()
+  })
+
   it('opens one existing workflow from both the top bar and explorer action, restoring focus', async () => {
     render(<><AppTopBar /><button onClick={requestNewConnection}>Explorer fixture entry</button></>)
     for (const name of [i18n.t('connection.new'), 'Explorer fixture entry']) {

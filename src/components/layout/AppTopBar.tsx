@@ -7,7 +7,7 @@ import { IconTooltipButton } from '@/components/common/IconTooltipButton'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { NEW_CONNECTION_EVENT, openSettingsSection, openWorkspaceTab, requestNewConnection } from '@/lib/workspaceNavigation'
-import { useConnectionStore } from '@/stores/connectionStore'
+import { createNewSqlTab } from '@/lib/newSqlCommand'
 import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
 import { VaporLensMark } from '@/components/layout/VaporLensMark'
@@ -18,12 +18,7 @@ export function AppTopBar() {
   const [connectionDialogOpen, setConnectionDialogOpen] = useState(false)
   const connectionTrigger = useRef<HTMLElement | null>(null)
   const commandShortcut = isMacPlatform() ? '⌘K' : 'Ctrl K'
-  const { tabs, activeTabId, addTab } = useEditorStore(useShallow((state) => ({
-    tabs: state.tabs, activeTabId: state.activeTabId, addTab: state.addTab,
-  })))
-  const { connections, browsingConnectionId } = useConnectionStore(useShallow((state) => ({
-    connections: state.connections, browsingConnectionId: state.browsingConnectionId,
-  })))
+  const addTab = useEditorStore(state => state.addTab)
   const { sidebarCollapsed, setSidebarCollapsed } = useUiStore(useShallow((state) => ({
     sidebarCollapsed: state.sidebarCollapsed, setSidebarCollapsed: state.setSidebarCollapsed,
   })))
@@ -38,11 +33,7 @@ export function AppTopBar() {
   }, [])
 
   function openNewQuery() {
-    const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
-    const connectionId = activeTab?.kind === 'sql' || !activeTab?.kind
-      ? activeTab?.connectionId ?? browsingConnectionId : browsingConnectionId
-    const connection = connections.find((item) => item.id === connectionId)
-    addTab({ id: crypto.randomUUID(), kind: 'sql', title: connection ? `SQL · ${connection.name}` : 'SQL', sql: '', connectionId })
+    addTab(createNewSqlTab())
   }
 
   return (
