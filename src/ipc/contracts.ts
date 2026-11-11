@@ -98,6 +98,8 @@ export const COMMANDS = {
   explainQuery: 'explain_query',
   cancelQuery: 'cancel_query',
   analyzeSqlRisk: 'analyze_sql_risk',
+  endLostConsoleSession: 'end_lost_console_session',
+  recoverLostConsoleSession: 'recover_lost_console_session',
   consoleTransactionState: 'console_transaction_state',
   setConsoleTransactionMode: 'set_console_transaction_mode',
   commitConsoleTransaction: 'commit_console_transaction',

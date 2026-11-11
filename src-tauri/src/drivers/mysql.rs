@@ -132,6 +132,12 @@ fn tls_transport_options(opts: Opts) -> Result<Opts, AppError> {
 
 #[async_trait]
 impl DatabaseDriver for MysqlDriver {
+    fn physical_session_lost(&self) -> bool {
+        self.conn
+            .try_lock()
+            .is_ok_and(|conn| conn.is_disconnected())
+    }
+
     fn driver_name(&self) -> &'static str {
         "mysql"
     }
@@ -837,9 +843,14 @@ fn map_mysql_connection_error(error: mysql_async::Error) -> AppError {
 }
 
 fn map_mysql_query_error(sql: &str, error: mysql_async::Error) -> AppError {
+    let message = if matches!(&error, mysql_async::Error::Server(error) if error.code == 1046) {
+        "No database selected for this SQL tab. Select an execution database, or qualify table names explicitly. Queries that do not require a default database can run with an unset target.".into()
+    } else {
+        error.to_string()
+    };
     AppError::QueryFailed {
         sql: sql.to_string(),
-        message: error.to_string(),
+        message,
     }
 }
 

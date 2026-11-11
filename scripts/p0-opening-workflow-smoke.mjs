@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -89,7 +90,7 @@ includesAll(
   'SQL tab context and naming',
 )
 includesAll(read('src/lib/closeEditorTab.ts'), ['saveTabDraft', 'rollbackConsoleTransaction', 'setConsoleTransactionMode'], 'shared tab close protection')
-includesAll(app, ["case 'new-sql'", 'connection ? `SQL · ${connection.name}` : \'SQL\'', 'connectionId', "case 'query-history'"], 'application SQL creation and history commands')
+includesAll(app, ["case 'new-sql'", 'openNewSqlTab(1)', 'connectionId', "case 'query-history'"], 'application SQL creation and history commands')
 
 assert(!tabBar.includes('CreateDatabaseDialog'), 'tab bar must not expose database creation')
 assert(
@@ -103,6 +104,8 @@ includesAll(
   ['test:p0-opening-workflow', 'scripts/p0-opening-workflow-smoke.mjs'],
   'P0 smoke registration',
 )
+
+verifyBehavior(['src/lib/newSqlCommand.test.tsx'])
 
 if (failures.length > 0) {
   console.error('P0 opening workflow smoke failed:')

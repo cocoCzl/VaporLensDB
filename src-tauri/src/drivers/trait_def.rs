@@ -105,6 +105,11 @@ pub struct DriverStreamRequest<'request> {
 pub trait DatabaseDriver: Send + Sync {
     fn driver_name(&self) -> &'static str;
     fn capabilities(&self) -> DriverCapabilities;
+    /// Positive transport evidence only; never infer rollback or reconnect.
+    fn physical_session_lost(&self) -> bool {
+        false
+    }
+
     fn supports_parameterized_import(&self) -> bool {
         false
     }

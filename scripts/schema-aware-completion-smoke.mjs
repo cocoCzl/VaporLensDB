@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -36,8 +37,6 @@ includesAll(
     'canComplete: true',
     'driverType={activeDriverType}',
     'showSystemObjects={showSystemObjects}',
-    'autoFocus={editorShouldFocus}',
-    'setEditorLoaded(true)',
     'loadTables(connectionId, selectedSchema)',
     'loadViews(connectionId, selectedSchema)',
     'loadFunctions(connectionId, selectedSchema)',
@@ -100,6 +99,8 @@ includesAll(
   ['test:schema-aware-completion', 'scripts/schema-aware-completion-smoke.mjs'],
   'schema-aware completion smoke registration',
 )
+
+verifyBehavior(['src/components/editor/SqlEditorSurface.test.tsx', 'src/components/editor/AutoComplete.test.ts'])
 
 if (failures.length > 0) {
   console.error('Schema-aware completion smoke failed:')

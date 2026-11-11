@@ -54,6 +54,8 @@ describe('stream failure lifecycle', () => {
     expect(useQueryResultStore.getState().reports[queryId].statements).toEqual(statements)
     expect(useQueryResultStore.getState().sources[queryId]).toMatchObject({ connectionId: 'source', connectionGeneration: 7, sql: 'SELECT 1; bad; SELECT 2' })
     expect(tab).toMatchObject({ dirty: true, filePath: '/selected/file.sql', transactionPhase: 'failed' })
+    act(() => useEditorStore.getState().updateTabSql('stream-tab', 'SELECT 999'))
+    expect(useEditorStore.getState().tabs[0].errorSql).toBe('SELECT 1; bad; SELECT 2')
     expect(useQueryHistoryStore.getState().addEntry).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'failed', sql: 'SELECT 1; bad; SELECT 2' }))
   })
 
@@ -344,4 +346,20 @@ describe('query result statement classification', () => {
   ] as const)('classifies %s as %s', (sql, kind) => {
     expect(classifyStatement(sql)).toBe(kind)
   })
+})
+
+it('captures request context before awaiting execution, even if the caller mutates its options', async () => {
+  useEditorStore.setState({ tabs: [{ id: 'qa-snapshot', title: 'QA', sql: 'SELECT 1; SELECT 2', connectionId: 'qa-source' }], activeTabId: 'qa-snapshot' })
+  useQueryResultStore.setState({ results: {}, sources: {}, explains: {} })
+  vi.spyOn(useQueryHistoryStore.getState(), 'addEntry').mockResolvedValue(undefined)
+  let finish!: (value: Awaited<ReturnType<typeof executeQuery>>) => void
+  vi.mocked(executeQuery).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const options = { database: 'executed_db', schema: 'executed_schema', connectionName: 'Executed source' }
+  const { result } = renderHook(() => useQuery())
+  let pending!: Promise<boolean>
+  act(() => { pending = result.current.runQuery('qa-snapshot', 'qa-source', 'SELECT 1; SELECT 2', options) })
+  options.database = 'later_db'; options.schema = 'later_schema'; options.connectionName = 'Later name'
+  await act(async () => { finish({ connectionGeneration: 42, results: [] }); await pending })
+  const id = useEditorStore.getState().tabs[0].lastQueryId!
+  expect(useQueryResultStore.getState().sources[id]).toMatchObject({ connectionId: 'qa-source', database: 'executed_db', schema: 'executed_schema', connectionGeneration: 42, connectionName: 'Executed source' })
 })

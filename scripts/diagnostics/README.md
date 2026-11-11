@@ -103,14 +103,7 @@ operation do not select, activate, snapshot or inspect any window with CUA. Read
 passive log files only, after the user reports completion. Preserve first failed
 runs even if closing/reopening succeeds.
 
-For a known empty workspace, the disposable bundle
-`com.vaporlensdb.qa.lifecycle` can additionally set
-`VAPORLENSDB_DIAGNOSTIC_EMPTY_WORKSPACE=1`. This removes only its
-`vaporlensdb.sqlWorkspace.v1` localStorage snapshot before application modules
-execute, independently of trace on/off. Ordinary bundle IDs cannot opt in.
-A fresh backend `VAPORLENSDB_CONFIG_DIR` alone does **not** reset this browser
-snapshot. Keep website/OS caches labeled retained; this is not strict cold cache.
-The locked Tauri 2.11.1 `WebviewAttributes::from(WindowConfig)` does not copy
-`data_store_identifier`, so setting that config field did not isolate storage
-in our experiment. The ineffective approach was removed; no dependency upgrade
-or alternate window-creation path is used.
+A fresh backend `VAPORLENSDB_CONFIG_DIR` does **not** reset browser workspace
+storage. The product does not clear localStorage during startup, including
+special QA bundles; use a separately prepared disposable profile when isolation
+is needed. Keep website/OS caches labeled retained; this is not strict cold cache.

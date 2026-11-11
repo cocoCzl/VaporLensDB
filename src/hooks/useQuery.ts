@@ -40,8 +40,10 @@ export function useQuery() {
       connectionName?: string
     } = {},
   ) {
+    // Capture before any IPC await: callers and the visible tab may change later.
+    options = { ...options }
     const tab = useEditorStore.getState().tabs.find((item) => item.id === tabId)
-    if (!tab || tab.connectionId !== connectionId || tab.closing || tab.transactionBusy || tab.running) return false
+    if (!tab || tab.connectionId !== connectionId || tab.closing || tab.transactionBusy || tab.running || tab.transactionPhase === 'lost') return false
     const queryId = crypto.randomUUID()
     const startedAt = new Date().toISOString()
     const startedMs = performance.now()
@@ -111,6 +113,7 @@ export function useQuery() {
         queryId,
         sql,
         connectionId,
+        connectionName: options.connectionName,
         connectionGeneration,
         database: options.database ?? null,
         schema: options.schema ?? null,
@@ -149,7 +152,7 @@ export function useQuery() {
         errorMessage: appError.message,
       })
       if (isCurrentQuery(tabId, connectionId, queryId)) {
-        setTabQueryState(tabId, queryId, cancelled ? null : formatLocalError(appError))
+        setTabQueryState(tabId, queryId, cancelled ? null : formatLocalError(appError), sql)
       }
       if (!cancelled) notify({ kind: 'error', title: i18n.t('notifications.queryFailed') })
       return false
@@ -167,7 +170,7 @@ export function useQuery() {
 
   async function runExplain(tabId: string, connectionId: string, sql: string, context: ExplainQueryContext = {}) {
     const tab = useEditorStore.getState().tabs.find((item) => item.id === tabId)
-    if (!tab || tab.connectionId !== connectionId || tab.closing || tab.transactionBusy || tab.running) return
+    if (!tab || tab.connectionId !== connectionId || tab.closing || tab.transactionBusy || tab.running || tab.transactionPhase === 'lost') return
     const queryId = crypto.randomUUID()
     setTabRunning(tabId, true, queryId)
     try {
@@ -176,7 +179,7 @@ export function useQuery() {
       setTabQueryState(tabId, queryId)
     } catch (error) {
       const appError = normalizeAppError(error)
-      setTabQueryState(tabId, queryId, appError.code === 'CANCELLED' ? null : appError.message)
+      setTabQueryState(tabId, queryId, appError.code === 'CANCELLED' ? null : appError.message, sql)
       if (appError.code !== 'CANCELLED') notifyError(appError, i18n.t('notifications.explainFailed'))
     } finally {
       if (context.consoleId) {

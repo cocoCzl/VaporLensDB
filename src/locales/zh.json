@@ -206,6 +206,7 @@
     }
   },
   "connectionForm": {
+    "nativeUrlMode": "连接 URL",
     "projectDataSources": "项目数据源",
     "name": "名称:",
     "databaseType": "数据库类型",
@@ -1055,7 +1056,13 @@
     "retrySwitch": "重试切换",
     "switching": "正在处理事务并切换连接…",
     "switchPending": "正在处理操作…",
-    "switchFailed": "切换未完成，执行连接保持不变。请查看事务状态后重试；服务器不可用时显示最后确认的状态。"
+    "switchFailed": "切换未完成，执行连接保持不变。请查看事务状态后重试；服务器不可用时显示最后确认的状态。",
+    "lost": "原物理会话已丢失，旧事务无法通过新连接继续提交或回滚。事务最终结果未知。请先通过独立会话核对数据库结果，再结束失效控制台或创建新会话；这不代表已回滚成功。",
+    "recover": "结束失效控制台状态并新建会话",
+    "recoverConfirm": "请重新确认新会话的执行目标：{{target}}。请先通过独立数据库会话核对旧事务结果；此处仍无法确认最终结果。保留 SQL 文本和历史结果，不自动重放任何 SQL。",
+    "unsetTarget": "未选择默认数据库",
+    "recoverFailed": "无法创建新的控制台会话",
+    "closeLostConfirm": "原物理会话已丢失，旧事务最终结果未知，无法通过新连接提交或回滚。请先通过独立会话核对数据库结果。结束失效控制台并关闭标签页？这不会报告回滚成功。"
   },
   "runtime": {
     "tauriUnavailable": "当前页面不在 Tauri 桌面运行时中，请使用 pnpm tauri dev 启动应用"
@@ -1278,6 +1285,10 @@
     "localInstall": "导入本地驱动",
     "jarHint": "先选择主驱动，再添加所需依赖；可调整顺序。每次导入创建独立安装。",
     "chooseJars": "选择 JAR 文件",
+    "enterJarPath": "输入本地 JAR 路径",
+    "jarPathHint": "文件选择器不可用时，可逐个添加本机 JAR 的完整路径。安装时检查文件是否存在及扩展名。",
+    "jarPath": "JAR 完整路径",
+    "addJarPath": "添加路径",
     "moveUp": "上移",
     "moveDown": "下移",
     "cancelDownload": "取消下载",

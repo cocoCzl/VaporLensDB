@@ -21,13 +21,13 @@ export function ExecutionContextBar() {
   const browsingDiffers = browsing && browsingId !== tab.connectionId
   const hasDetails = disconnected || tab.transactionMode === 'manual' || tab.transactionBusy || browsingDiffers
   const database = executionDatabase(execution, tab.database)
-  const hasSchema = execution && (capabilities[execution.id]?.hasSchema ?? connectionSqlDialect(execution) !== 'mysql')
+  const hasSchema = execution && connectionSqlDialect(execution) !== 'mysql' && (capabilities[execution.id]?.hasSchema ?? true)
   const phase = tab.transactionMode === 'manual' ? tab.transactionPhase ?? 'idle' : 'auto'
   return (
     <div aria-label={t('executionContext.title')} className={hasDetails ? "flex flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/20 px-3 py-1 text-xs" : "sr-only"}>
       <span className="sr-only">{t('executionContext.execution')}: {execution?.name ?? tab.unavailableConnectionName ?? t('executionContext.none')}{database ? ` · ${t('metadata.database')}: ${database}` : ''}{hasSchema && tab.schema ? ` · ${t('metadata.schema')}: ${tab.schema}` : ''}</span>
       {disconnected && <span className="text-muted-foreground">{t(execution ? 'executionContext.connectOnRun' : tab.unavailableConnectionName ? 'executionContext.unavailable' : 'executionContext.selectToRun', { name: tab.unavailableConnectionName })}</span>}
-      {tab.transactionMode === 'manual' && <span className={phase === 'failed' ? 'font-medium text-destructive' : phase === 'active' ? 'font-medium text-warning' : 'text-muted-foreground'}>{t(`executionContext.${phase}`)}</span>}
+      {tab.transactionMode === 'manual' && <span className={['failed', 'lost'].includes(phase) ? 'font-medium text-destructive' : phase === 'active' ? 'font-medium text-warning' : 'text-muted-foreground'}>{t(`executionContext.${phase}`)}</span>}
       {tab.transactionBusy && <span role="status">{t('executionContext.switchPending')}</span>}
       {browsingDiffers && <span className="break-all text-muted-foreground">{t('executionContext.browsing')}: {browsing?.name ?? t('executionContext.none')}</span>}
     </div>

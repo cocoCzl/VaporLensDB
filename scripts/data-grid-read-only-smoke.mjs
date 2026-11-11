@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -30,8 +31,6 @@ includesAll(
   [
     'nextCellSelection',
     'selectionContains(selection, virtualRow.index, columnIndex)',
-    'copyToClipboard(value)',
-    'copyToClipboard(rowValue)',
     'const ROW_HEIGHT = 30',
     'cellAlignment(column)',
     "presentation.kind === 'null' ? 'font-sans text-[11px] italic text-muted-foreground' : ''",
@@ -92,6 +91,8 @@ assert(
   !packageJson.includes('test:data-editing-queue'),
   'data editing queue smoke script should be removed from package scripts',
 )
+
+verifyBehavior(['src/components/grid/DataGrid.test.tsx'])
 
 if (failures.length > 0) {
   console.error('Read-only data grid smoke failed:')

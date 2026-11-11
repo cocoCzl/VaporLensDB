@@ -21,10 +21,17 @@ export const useTaskStore = create<TaskState>((set) => ({
   loading: false,
   cancellingIds: [],
   loadTasks: async () => {
+    const initialTasks = new Set(useTaskStore.getState().tasks)
     set({ loading: true })
     try {
       const tasks = await listTasks()
-      set({ tasks: sortTasks(tasks) })
+      set(state => {
+        const incomingIds = new Set(tasks.map(task => task.id))
+        const merged = tasks.map(task => mergeTask(state.tasks.find(previous => previous.id === task.id), task))
+        // The list snapshot may predate an event for a newly created/updated task.
+        const newerTasks = state.tasks.filter(task => !incomingIds.has(task.id) && !initialTasks.has(task))
+        return { tasks: sortTasks([...merged, ...newerTasks]) }
+      })
     } catch (error) {
       useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('notifications.loadTasksFailed'))
     } finally {
@@ -35,13 +42,7 @@ export const useTaskStore = create<TaskState>((set) => ({
     if (task.kind.startsWith('driver.download:') && task.status === 'succeeded' && useTaskStore.getState().tasks.find(t => t.id === task.id)?.status !== 'succeeded') void useDriverStore.getState().loadDrivers(true)
     set((state) => {
       const previous = state.tasks.find((candidate) => candidate.id === task.id)
-      if ((task.kind === 'metadata-index' || task.kind.startsWith('driver.download:')) && previous) {
-        const active = ['pending', 'running', 'cancelling'].includes(task.status)
-        const terminal = !['pending', 'running', 'cancelling'].includes(previous.status)
-        // IPC responses can arrive after a newer progress/terminal event.
-        const staleRunningState = previous.status === 'cancelling' && ['pending', 'running'].includes(task.status)
-        if ((terminal && active) || staleRunningState || task.updatedAt < previous.updatedAt) return state
-      }
+      if (mergeTask(previous, task) === previous) return state
       return { tasks: sortTasks([task, ...state.tasks.filter((candidate) => candidate.id !== task.id)]) }
     })
   },
@@ -73,4 +74,16 @@ export const useTaskStore = create<TaskState>((set) => ({
 
 function sortTasks(tasks: TaskInfo[]) {
   return [...tasks].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+/** A task id denotes one lifecycle; a terminal outcome cannot be reopened. */
+function mergeTask(previous: TaskInfo | undefined, task: TaskInfo): TaskInfo {
+  if (!previous) return task
+  const ranks = { pending: 0, running: 1, cancelling: 2, succeeded: 3, failed: 3, cancelled: 3 }
+  const oldTime = Date.parse(previous.updatedAt)
+  const newTime = Date.parse(task.updatedAt)
+  if (ranks[previous.status] === 3 || ranks[task.status] < ranks[previous.status]
+    || newTime < oldTime
+    || (task.status === previous.status && newTime === oldTime && task.progress.current < previous.progress.current)) return previous
+  return task
 }

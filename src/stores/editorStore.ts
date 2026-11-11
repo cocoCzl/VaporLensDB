@@ -48,6 +48,8 @@ export interface EditorTab {
   /** The backend/driver delivered a terminal event after a cancellation request. */
   cancellationConfirmed?: boolean
   error?: string | null
+  /** SQL captured when the displayed query failure occurred. */
+  errorSql?: string | null
   draftId?: string | null
   dirty?: boolean
   filePath?: string
@@ -154,7 +156,7 @@ interface EditorState {
   setTabClosing: (id: string, closing: boolean) => void
   setTabTransactionBusy: (id: string, transactionBusy: boolean) => void
   setTabCancelling: (id: string, cancelling: boolean) => void
-  setTabQueryState: (id: string, queryId: string | null, error?: string | null) => void
+  setTabQueryState: (id: string, queryId: string | null, error?: string | null, errorSql?: string | null) => void
   setTabTransactionState: (id: string, mode: TransactionMode, phase: TransactionPhase) => void
   syncConsoleTransactionState: (transaction: ConsoleTransactionState) => void
   markConnectionUnavailable: (connectionId: string, name: string) => void
@@ -296,7 +298,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, cancelling } : t)),
     })),
-  setTabQueryState: (id, queryId, error = null) =>
+  setTabQueryState: (id, queryId, error = null, errorSql = null) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === id
@@ -305,6 +307,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               lastQueryId: queryId,
               runningQueryId: null,
               error,
+              errorSql: error ? errorSql : null,
               running: false,
               cancellationConfirmed: Boolean(t.cancelling),
               cancelling: false,

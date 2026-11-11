@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -98,7 +99,6 @@ includesAll(
     "t('connectionForm.description.oracle')",
     "t('connectionForm.validation.missingJarReadiness')",
     "t('connectionForm.saveAndConnect')",
-    "t('connectionForm.testConnection')",
   ],
   'oracle external driver readiness coverage',
 )
@@ -230,6 +230,8 @@ includesAll(
   ],
   'real database command documentation',
 )
+
+verifyBehavior(['src/components/connection/ConnectionTestState.test.tsx'])
 
 if (failures.length > 0) {
   console.error('Object Tree workflow smoke failed:')

@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -15,9 +16,9 @@ const store = read('src/stores/uiStore.ts')
 assert(panel.includes('<SqlWorkspace view={workspaceView}>'), 'SQL workspace must use the dedicated workspace frame')
 assert(panel.includes('<ResultPanel'), 'SQL workspace must use the dedicated result panel shell')
 assert(panel.includes("workspaceView === 'results'"), 'SQL workspace must support maximizing results')
-assert(panel.includes('function revealQueryResults()') && panel.includes('setBottomPanelCollapsed(false)'), 'query execution must reveal a persisted collapsed result panel')
+// Reveal/compact-height contracts are exercised on the actual pane hook below.
 assert(panel.includes("setWorkspaceView('results')"), 'maximizing results must use the explicit results-only state transition')
-assert(panel.includes('<EmptyState className="h-full"'), 'unexecuted SQL tabs must use the compact empty state')
+assert(panel.includes('useSqlPaneLayout('), 'SQL execution must use the tested tab-local layout')
 assert(panel.includes("className={resultResizing ? 'ide-splitter ide-splitter--dragging'"), 'splitter must distinguish dragging from resting state')
 assert(toolbar.includes('<SqlMoreActions'), 'secondary SQL actions must be consolidated into More')
 assert(toolbar.includes('<PopoverContent align="end" className="w-60 gap-0 p-1.5">'), 'SQL More Actions must override the shared popover gap without changing nested popovers')
@@ -30,6 +31,8 @@ assert(results.includes('data-first shell') && results.includes('fillAvailableSp
 assert(results.includes('const contentVisible = !collapsed || fillAvailableSpace'), 'results-only view must render its body even if split view was persisted as collapsed')
 assert(store.includes('DEFAULT_RESULT_PANEL_HEIGHT = 520'), 'new workspaces must give results a larger default share')
 assert(!panel.includes("t('workbench.lightSqlInput')"), 'SQL workspace must not retain a permanent editor helper bar')
+
+verifyBehavior(['src/hooks/useSqlPaneLayout.test.ts', 'src/components/layout/MainPanel.commands.test.tsx'])
 
 if (failures.length) {
   console.error('SQL workspace smoke failed:')

@@ -112,3 +112,11 @@ export function onConsoleTransactionUpdated(
 ): Promise<UnlistenFn> {
   return listen<ConsoleTransactionState>('console_transaction_updated', (event) => handler(event.payload))
 }
+
+export function recoverLostConsoleSession(input: { connectionId: string; consoleId: string; newConsoleId: string; database: string | null; schema: string | null }) {
+  return invokeCommand<ConsoleTransactionState>(COMMANDS.recoverLostConsoleSession, { input })
+}
+
+export function endLostConsoleSession(connectionId: string, consoleId: string) {
+  return invokeCommand<ConsoleTransactionState>(COMMANDS.endLostConsoleSession, { input: { connectionId, consoleId } })
+}

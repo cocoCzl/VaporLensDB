@@ -220,6 +220,10 @@ fn postgres_error_message(error: &tokio_postgres::Error) -> String {
 
 #[async_trait]
 impl DatabaseDriver for PostgresDriver {
+    fn physical_session_lost(&self) -> bool {
+        self.client.is_closed()
+    }
+
     fn driver_name(&self) -> &'static str {
         "postgres"
     }

@@ -1,5 +1,9 @@
 /// Mask comments and quoted regions while preserving UTF-8 byte offsets.
 pub fn mask_sql(sql: &str) -> String {
+    mask_sql_regions(sql, true)
+}
+
+fn mask_sql_regions(sql: &str, mask_quoted: bool) -> String {
     let bytes = sql.as_bytes();
     let mut output = bytes.to_vec();
     let mut i = 0;
@@ -55,6 +59,10 @@ pub fn mask_sql(sql: &str) -> String {
             i = (i + length).min(bytes.len());
         } else {
             i += 1;
+            continue;
+        }
+        if !mask_quoted && !bytes[start..].starts_with(b"--") && !bytes[start..].starts_with(b"/*")
+        {
             continue;
         }
         for byte in &mut output[start..i] {
@@ -126,6 +134,7 @@ fn dollar_delimiter(bytes: &[u8], i: usize) -> Option<usize> {
 pub fn split_sql_statements(sql: &str) -> Vec<String> {
     let normalized = normalize_go_batch_separators(sql);
     let mask = mask_sql(&normalized).into_bytes();
+    let without_comments = mask_sql_regions(&normalized, false);
     let mut statements = Vec::new();
     let mut start = 0;
     for end in mask
@@ -135,7 +144,7 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
         .chain(std::iter::once(normalized.len()))
     {
         let statement = normalized[start..end].trim();
-        if !statement.is_empty() {
+        if !without_comments[start..end].trim().is_empty() {
             statements.push(statement.to_string());
         }
         start = end + 1;

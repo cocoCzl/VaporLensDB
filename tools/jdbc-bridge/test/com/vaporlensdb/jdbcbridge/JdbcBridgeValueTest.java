@@ -43,7 +43,40 @@ public final class JdbcBridgeValueTest {
         checkStreamChunkBudget();
         checkNonStreamingResultBudget();
         checkFailureFrames();
+        checkCloseNeverCommits();
         System.out.println("JDBC scalar JSON contract tests passed.");
+    }
+
+    private static void checkCloseNeverCommits() {
+        for (String mode : new String[] { "auto", "manual", "rollback-failed", "abort-failed" }) {
+            var calls = new java.util.ArrayList<String>();
+            var connection = (java.sql.Connection) java.lang.reflect.Proxy.newProxyInstance(
+                JdbcBridgeValueTest.class.getClassLoader(), new Class<?>[] { java.sql.Connection.class },
+                (proxy, method, args) -> {
+                    calls.add(method.getName());
+                    return switch (method.getName()) {
+                        case "getAutoCommit" -> mode.equals("auto");
+                        case "rollback" -> {
+                            if (mode.endsWith("failed")) throw new java.sql.SQLException("rollback unavailable");
+                            yield null;
+                        }
+                        case "abort" -> {
+                            if (mode.equals("abort-failed")) throw new java.sql.SQLException("abort unavailable");
+                            yield null;
+                        }
+                        case "close" -> null;
+                        default -> throw new AssertionError("unexpected connection action " + method.getName());
+                    };
+                });
+            boolean failed = false;
+            try { JdbcBridge.closeWithoutCommit(connection); }
+            catch (Exception expected) { failed = true; }
+            var expected = mode.equals("auto") ? List.of("getAutoCommit", "close")
+                : mode.equals("manual") ? List.of("getAutoCommit", "rollback", "close")
+                : List.of("getAutoCommit", "rollback", "abort");
+            if (!calls.equals(expected) || failed != mode.endsWith("failed"))
+                throw new AssertionError("unsafe close sequence " + mode + ": " + calls);
+        }
     }
 
     private static void check(Object value, String expected) {
@@ -61,11 +94,14 @@ public final class JdbcBridgeValueTest {
             System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
             JdbcBridge.respondFailure("17", new JdbcBridge.ResultLimitException("fixture input must not be echoed"));
             JdbcBridge.respondFailure("18", new IllegalStateException("statement failed"));
+            JdbcBridge.respondFailure("19", new java.sql.SQLException("transport closed", "08006"));
+            JdbcBridge.respondFailure("20", new java.sql.SQLException("ORA-01005: null password given", "28000"));
+            JdbcBridge.respondFailure("21", new java.sql.SQLException("transaction aborted", "25P02"));
         } finally {
             System.setOut(original);
         }
         String[] frames = output.toString(StandardCharsets.UTF_8).split("\\R");
-        if (frames.length != 2 || !frames[0].startsWith("LIMIT\t17\t") || !frames[1].startsWith("ERR\t18\t")) {
+        if (frames.length != 5 || !frames[2].startsWith("SESSION_LOST\t19\t") || !frames[3].startsWith("ERR\t20\t") || !frames[4].startsWith("ERR\t21\t") || !frames[0].startsWith("LIMIT\t17\t") || !frames[1].startsWith("ERR\t18\t")) {
             throw new AssertionError("client limits and database failures must have distinct protocol statuses");
         }
         String message = new String(Base64.getDecoder().decode(frames[0].split("\t")[2]), StandardCharsets.UTF_8);

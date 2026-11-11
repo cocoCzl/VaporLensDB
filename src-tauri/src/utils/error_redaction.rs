@@ -19,6 +19,12 @@ pub fn sanitize_diagnostic_error(message: &str, executed_sql: Option<&str>) -> S
         sanitized = sanitized.replace(sql, "[REDACTED SQL]");
     }
 
+    // Oracle thin URLs also permit user/password without URI // userinfo.
+    static ORACLE_LOGIN: OnceLock<Regex> = OnceLock::new();
+    sanitized = ORACLE_LOGIN
+        .get_or_init(|| Regex::new(r"(?i)(jdbc:oracle:[a-z0-9]+:)[^\s/@;]+/[^\s@;]+@").unwrap())
+        .replace_all(&sanitized, "${1}[REDACTED]@")
+        .into_owned();
     sanitized = uri_userinfo_pattern()
         .replace_all(&sanitized, "$1:[REDACTED]@")
         .into_owned();

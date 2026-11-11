@@ -1,3 +1,4 @@
+import { connectionSqlDialect } from '@/lib/databaseDialect'
 import { productDisplayName } from '@/lib/productPresentation'
 import { DatabaseProductLabel } from '@/components/common/DatabaseProductLabel'
 import { connectionStatusLabel } from '@/components/sidebar/connectionPresentation'
@@ -90,7 +91,7 @@ function CurrentDataSourceStatus() {
   }
 
   const context = (executionTab
-    ? [executionTab.database ?? connection.database, executionTab.schema]
+    ? [executionTab.database ?? connection.database, connectionSqlDialect(connection) === 'mysql' ? null : executionTab.schema]
     : objectContext
       ? [objectContext.database, objectContext.schema]
       : [catalogSchemaPath?.database, catalogSchemaPath?.schema])

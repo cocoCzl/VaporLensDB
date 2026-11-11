@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -30,7 +31,6 @@ const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
   [
-    'activeTab?.database ?? activeConnection?.database ?? null',
     'activeTab?.schema ?? null',
     'updateSqlTabContext(tabId, {',
     'setCatalogSchemaPath',
@@ -67,7 +67,6 @@ includesAll(
   mainPanel,
   [
     "activeDriverType === 'postgres'",
-    "? activeConnection?.database ?? null",
     "? [{ name: activeConnection.database }]",
   ],
   'PostgreSQL toolbar is scoped to the active connection database',
@@ -92,6 +91,8 @@ includesAll(
   ['test:catalog-schema-linkage', 'scripts/catalog-schema-linkage-smoke.mjs'],
   'catalog/schema linkage smoke registration',
 )
+
+verifyBehavior(['src/lib/executionContext.test.ts', 'src/components/editor/ExecutionContext.test.tsx', 'src/components/layout/MainPanel.execution.test.tsx', 'src/components/layout/MainPanel.qa-regression.test.tsx'])
 
 if (failures.length > 0) {
   console.error('Catalog/schema linkage smoke failed:')

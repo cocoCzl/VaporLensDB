@@ -153,10 +153,28 @@ public final class JdbcBridge {
                 properties.setProperty(decode(pair[0]), value);
             }
         }
-        try (Connection connection = DriverManager.getConnection(url, properties)) {
+        Connection connection = DriverManager.getConnection(url, properties);
+        try {
             respondOk("0", "{\"ok\":true}");
             serveRequests(reader, connection, queryTimeoutSeconds);
+        } finally {
+            closeWithoutCommit(connection);
         }
+    }
+
+    // JDBC leaves close-with-an-active-transaction vendor-defined. Oracle may
+    // commit it. Never delegate that decision to Connection.close(). If rollback
+    // cannot be confirmed, abort the transport and let the owning process exit;
+    // do not fall through to a potentially committing close.
+    static void closeWithoutCommit(Connection connection) throws Exception {
+        try {
+            if (!connection.getAutoCommit()) connection.rollback();
+        } catch (Exception rollbackError) {
+            try { connection.abort(Runnable::run); }
+            catch (Exception abortError) { rollbackError.addSuppressed(abortError); }
+            throw rollbackError;
+        }
+        connection.close();
     }
 
     private static void serveRequests(BufferedReader reader, Connection connection, int queryTimeoutSeconds) throws Exception {
@@ -925,11 +943,21 @@ public final class JdbcBridge {
     }
 
     static void respondFailure(String requestId, Throwable error) {
-        if (error instanceof ResultLimitException) {
+        if (isConnectionLoss(error)) {
+            respond("SESSION_LOST", requestId, "Original JDBC physical session lost; transaction final outcome is unknown. " + redactRuntimeSecrets(error.getMessage() == null ? error.toString() : error.getMessage()));
+        } else if (error instanceof ResultLimitException) {
             respond("LIMIT", requestId, "JDBC result exceeded the interactive byte limit");
         } else {
             respondErr(requestId, redactRuntimeSecrets(error.getMessage() == null ? error.toString() : error.getMessage()));
         }
+    }
+
+    private static boolean isConnectionLoss(Throwable error) {
+        for (int depth = 0; error != null && depth < 16; depth++, error = error.getCause()) {
+            if (error instanceof java.sql.SQLRecoverableException) return true;
+            if (error instanceof java.sql.SQLException sql && sql.getSQLState() != null && sql.getSQLState().startsWith("08")) return true;
+        }
+        return false;
     }
 
     private static synchronized void respond(String status, String requestId, String payload) {

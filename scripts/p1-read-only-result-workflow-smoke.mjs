@@ -54,7 +54,7 @@ const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(
   mainPanel,
   [
-    '<ErrorDetails message={activeTab.error} sql={activeTab.sql} onRetry={() => void execute()} />',
+    '<ErrorDetails message={activeTab.error} sql={activeTab.errorSql ?? undefined} onRetry={() => void execute()} />',
     "activeTab.cancelling ? t('workbench.cancelRequested') : t('workbench.queryRunning')",
     "{t('workbench.retryQuery')}",
     'navigator.clipboard?.writeText(copyText)',

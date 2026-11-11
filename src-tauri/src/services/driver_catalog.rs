@@ -54,7 +54,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
             built_in: true,
             download_url: None,
             notes: Some("内置 mysql_async，支持查询、流式结果和基础元数据。".to_string()),
-            connection_variants: host_port_variants(),
+            connection_variants: mysql_variants(),
             metadata_dialect_sql: Some("mysql".to_string()),
             capabilities: DriverDefinitionCapabilities {
                 can_connect: true,
@@ -146,7 +146,7 @@ pub fn driver_definitions() -> Vec<DriverDefinition> {
                 driver_artifact: "mysql-connector-j-*.jar",
                 download_url: "https://dev.mysql.com/downloads/connector/j/",
                 notes: "MySQL JDBC 是原生 MySQL 连接的可选路径；适合需要厂商 JDBC JAR 的场景。",
-                connection_variants: host_port_variants(),
+                connection_variants: mysql_variants(),
                 metadata_dialect_sql: Some(mysql_jdbc_metadata_sql),
             },
         ),
@@ -421,6 +421,13 @@ fn oracle_metadata_sql() -> String {
         "objectDdl": "SELECT CASE WHEN CASE '{kind}' WHEN 'procedure' THEN 'SOURCE' WHEN 'function' THEN 'SOURCE' WHEN 'package' THEN 'SOURCE' WHEN 'trigger' THEN 'SOURCE' ELSE 'DDL' END = 'SOURCE' THEN (SELECT XMLAGG(XMLELEMENT(e, text).EXTRACT('//text()') ORDER BY CASE type WHEN 'PACKAGE' THEN 0 WHEN 'PACKAGE BODY' THEN 1 ELSE 0 END, line).GETCLOBVAL() FROM all_source WHERE owner = UPPER('{schema}') AND name = UPPER('{name}') AND type IN (CASE '{kind}' WHEN 'procedure' THEN 'PROCEDURE' WHEN 'function' THEN 'FUNCTION' WHEN 'package' THEN 'PACKAGE' WHEN 'trigger' THEN 'TRIGGER' ELSE 'PACKAGE' END, CASE '{kind}' WHEN 'package' THEN 'PACKAGE BODY' ELSE CASE '{kind}' WHEN 'trigger' THEN 'TRIGGER' WHEN 'procedure' THEN 'PROCEDURE' ELSE 'FUNCTION' END END)) ELSE DBMS_METADATA.GET_DDL(CASE '{kind}' WHEN 'table' THEN 'TABLE' WHEN 'view' THEN 'VIEW' WHEN 'materializedView' THEN 'MATERIALIZED_VIEW' WHEN 'index' THEN 'INDEX' WHEN 'sequence' THEN 'SEQUENCE' WHEN 'synonym' THEN 'SYNONYM' ELSE UPPER('{kind}') END, UPPER('{name}'), UPPER('{schema}')) END AS ddl FROM dual"
     })
     .to_string()
+}
+
+fn mysql_variants() -> Vec<DriverConnectionVariant> {
+    vec![
+        variant("hostPort", "Host/Port", &["host", "port", "username"]),
+        variant("urlOnly", "URL only", &["connectionUrl"]),
+    ]
 }
 
 fn host_port_variants() -> Vec<DriverConnectionVariant> {

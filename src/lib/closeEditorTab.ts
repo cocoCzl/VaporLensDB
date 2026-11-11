@@ -1,7 +1,7 @@
 import { chooseSqlFileAction } from './sqlFileChoice'
 import i18n from '@/i18n'
 import { normalizeAppError } from '@/ipc/client'
-import { rollbackConsoleTransaction, setConsoleTransactionMode } from '@/ipc/query'
+import { getConsoleTransactionState, endLostConsoleSession, rollbackConsoleTransaction, setConsoleTransactionMode } from '@/ipc/query'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useEditorStore, type EditorTab } from '@/stores/editorStore'
 import { useSqlDraftStore } from '@/stores/sqlDraftStore'
@@ -45,7 +45,7 @@ async function closeTab(id: string, options?: { confirmTransaction?: boolean }):
   }
   if (options?.confirmTransaction !== false
     && initial.connectionId && initial.transactionMode === 'manual' && initial.transactionPhase !== 'idle'
-    && !window.confirm(i18n.t('workbench.closeTabRollbackConfirm'))) return false
+    && !window.confirm(i18n.t(initial.transactionPhase === 'lost' ? 'executionContext.closeLostConfirm' : 'workbench.closeTabRollbackConfirm'))) return false
 
   useEditorStore.getState().setTabClosing(id, true)
   let savedClosed = false
@@ -60,6 +60,10 @@ async function closeTab(id: string, options?: { confirmTransaction?: boolean }):
       if (choice === 'save' && !(await (await import('./sqlFileWorkflow')).saveSqlFile(id, false, true))) return false
     }
     if (initial.connectionId && initial.transactionMode === 'manual') {
+      if (initial.transactionPhase === 'lost') {
+        const next = await endLostConsoleSession(initial.connectionId, id)
+        useEditorStore.getState().setTabTransactionState(id, next.mode, next.phase)
+      } else {
       if (initial.transactionPhase !== 'idle') {
         const next = await rollbackConsoleTransaction(initial.connectionId, id)
         if (getTab(id)?.connectionId === initial.connectionId) {
@@ -69,6 +73,7 @@ async function closeTab(id: string, options?: { confirmTransaction?: boolean }):
       const next = await setConsoleTransactionMode(initial.connectionId, id, 'auto')
       if (getTab(id)?.connectionId === initial.connectionId) {
         useEditorStore.getState().setTabTransactionState(id, next.mode, next.phase)
+      }
       }
     }
     const tab = getTab(id)
@@ -87,6 +92,12 @@ async function closeTab(id: string, options?: { confirmTransaction?: boolean }):
     useEditorStore.getState().closeTab(id)
     return true
   } catch (error) {
+    if (initial.connectionId && initial.transactionMode === 'manual') {
+      try {
+        const next = await getConsoleTransactionState(initial.connectionId, id)
+        if (next && getTab(id)?.connectionId === initial.connectionId) useEditorStore.getState().setTabTransactionState(id, next.mode, next.phase)
+      } catch { /* State lookup failure must not hide the original error. */ }
+    }
     useUiStore.getState().notifyError(normalizeAppError(error), i18n.t('workbench.closeTabFailed'))
     return false
   } finally {

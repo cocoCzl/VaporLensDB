@@ -289,12 +289,13 @@ pub fn run() {
     utils::startup::mark("config_ready");
     let appearance = utils::appearance::read_hint(config_store.config_dir());
     let mut context = tauri::generate_context!();
+    utils::startup::runtime_identity(config_store.config_dir(), &context.config().identifier);
     if let Some(window) = context.config_mut().app.windows.first_mut() {
         appearance.configure_startup_window(window);
     }
     utils::startup::mark("native_appearance_ready");
     utils::startup::mark("native_runtime_start");
-    let diagnostic_script = format!("{}\n{}", utils::startup::initialization_script(), utils::startup::qa_workspace_initialization(&context.config().identifier));
+    let diagnostic_script = utils::startup::initialization_script();
     tauri::Builder::default()
         .append_invoke_initialization_script(diagnostic_script)
         .on_page_load(|_, payload| {
@@ -368,10 +369,12 @@ pub fn run() {
                 tauri::WindowEvent::Destroyed => {
                     utils::startup::clear_window_observers();
                     Some("native_destroyed")
-                },
+                }
                 _ => None,
             };
-            if let Some(stage) = stage { utils::startup::window_snapshot(window, stage, Default::default()); }
+            if let Some(stage) = stage {
+                utils::startup::window_snapshot(window, stage, Default::default());
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = commands::lifecycle::request_application_close(window.app_handle());
@@ -452,6 +455,8 @@ pub fn run() {
             commands::query::set_console_transaction_mode,
             commands::query::commit_console_transaction,
             commands::query::rollback_console_transaction,
+            commands::query::recover_lost_console_session,
+            commands::query::end_lost_console_session,
             commands::query_history::add_query_history,
             commands::query_history::list_query_history,
             commands::query_history::clear_query_history,
@@ -479,7 +484,13 @@ pub fn run() {
                 _ => None,
             };
             if let Some(stage) = stage {
-                if let Some(window) = app.get_webview_window("main") { utils::startup::window_snapshot(&window.as_ref().window(), stage, Default::default()); }
+                if let Some(window) = app.get_webview_window("main") {
+                    utils::startup::window_snapshot(
+                        &window.as_ref().window(),
+                        stage,
+                        Default::default(),
+                    );
+                }
             }
             // A LaunchServices/Dock reopen can activate the app while leaving
             // an existing NSWindow behind other apps.
@@ -496,7 +507,11 @@ pub fn run() {
                     if let Err(error) = window.show().and_then(|()| window.set_focus()) {
                         log::warn!("Unable to present main window on reopen: {error}");
                     }
-                    utils::startup::window_snapshot(&window.as_ref().window(), "native_reopen_presented", Default::default());
+                    utils::startup::window_snapshot(
+                        &window.as_ref().window(),
+                        "native_reopen_presented",
+                        Default::default(),
+                    );
                 }
             }
             if matches!(event, tauri::RunEvent::Ready) {

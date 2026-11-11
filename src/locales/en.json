@@ -206,6 +206,7 @@
     }
   },
   "connectionForm": {
+    "nativeUrlMode": "Connection URL",
     "projectDataSources": "Project Data Sources",
     "name": "Name:",
     "databaseType": "Database Type",
@@ -1055,7 +1056,13 @@
     "retrySwitch": "Retry switch",
     "switching": "Finishing the transaction and switching…",
     "switchPending": "Operation in progress…",
-    "switchFailed": "The switch did not complete. The execution connection is unchanged. Review the transaction state and retry; if the server is unavailable, the last confirmed state is shown."
+    "switchFailed": "The switch did not complete. The execution connection is unchanged. Review the transaction state and retry; if the server is unavailable, the last confirmed state is shown.",
+    "lost": "Original physical session lost. The old transaction cannot be committed or rolled back through a new connection. Its final outcome is unknown. First verify the database outcome through an independent session, then end the invalid console or create a new session. This does not imply rollback succeeded.",
+    "recover": "End invalid console state and create new session",
+    "recoverConfirm": "Confirm the execution target for the new session: {{target}}. First verify the old transaction outcome through an independent database session; it remains unknown here. SQL text and historical results will be kept. No SQL will be replayed.",
+    "unsetTarget": "No default database selected",
+    "recoverFailed": "Unable to create a new console session",
+    "closeLostConfirm": "The original physical session is lost and the old transaction final outcome is unknown. It cannot be committed or rolled back through a new connection. First verify the database outcome through an independent session. End the invalid console and close the tab? This does not claim rollback succeeded."
   },
   "runtime": {
     "tauriUnavailable": "This page is not running inside the Tauri desktop runtime. Start the app with pnpm tauri dev."
@@ -1278,6 +1285,10 @@
     "localInstall": "Import local driver",
     "jarHint": "Select the main driver first, followed by all required dependencies. Each import creates a separate installation.",
     "chooseJars": "Select JAR files",
+    "enterJarPath": "Enter a local JAR path",
+    "jarPathHint": "If the file picker is unavailable, add each local JAR by its full path. Installation checks file existence and extension.",
+    "jarPath": "Full JAR path",
+    "addJarPath": "Add path",
     "moveUp": "Move earlier",
     "moveDown": "Move later",
     "cancelDownload": "Cancel download",

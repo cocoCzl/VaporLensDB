@@ -13,7 +13,9 @@ export function workflowErrorSummary(error: AppError, t: TFunction, context: 'co
   const value = `${error.code} ${error.message}`
   // i18n-hardcoded-ok: classify backend diagnostics in either language.
   const reason = /checksum|sha-?256|digest|校验|摘要/i.test(value) ? 'checksum' // i18n-hardcoded-ok: backend diagnostic parsing
-    : /java|jdk|jre/i.test(value) ? 'java'
+    : /ORA-01005|ORA-01017|AUTH_ERROR|authentication|login failed|access denied/i.test(value) ? 'connection'
+    : /classnotfoundexception|class not found|classpath|no suitable driver|JDBC driver class|missing.{0,20}jar|jar.{0,20}missing/i.test(value) ? 'driver'
+    : /java runtime|java executable|requires java \d|java.{0,30}(not found|not installed|missing)|jdk|jre|unable to (locate|find).{0,20}java/i.test(value) ? 'java'
     : /CONNECTION_FAILED|SSH_TUNNEL_FAILED|AUTH_ERROR|connection refused|no route|authentication|login failed/i.test(value) ? 'connection'
     : /download|https?|network|dns|timed? ?out|TIMEOUT/i.test(value) ? 'network'
     : context

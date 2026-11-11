@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -47,7 +48,6 @@ includesAll(
     "t('connectionForm.savePassword')",
     "t('connectionForm.storedSecurely')",
     'savePassword: connection?.hasSavedPassword ?? true',
-    "t('connectionForm.testConnection')",
     'dataSourceGroups = useConnectionStore',
     'groupId: groupSelection || null',
     "t('connectionForm.ungrouped')",
@@ -149,6 +149,8 @@ includesAll(
   ['test:connection-readiness', 'scripts/connection-readiness-smoke.mjs'],
   'connection readiness smoke registration',
 )
+
+verifyBehavior(['src/components/connection/ConnectionTestState.test.tsx', 'src/components/connection/ConnectionDialog.test.tsx'])
 
 if (failures.length > 0) {
   console.error('Connection readiness smoke failed:')

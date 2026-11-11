@@ -106,10 +106,11 @@ export function DriverInstallationPage({ driver, initialMode, onInstalled, onBac
   const { t } = useTranslation()
   const { recipe, busy, error, setError, task, active, start, importFiles } = useJdbcInstallation(driver, onInstalled)
   const [paths, setPaths] = useState<string[]>([])
+  const [localPath, setLocalPath] = useState('')
   const [label, setLabel] = useState('')
   const [imported, setImported] = useState(false)
   const installed = useDriverStore(state => state.installations.some(i => i.id === `installation-${task?.id}` && i.driverDefinitionId === driver.id))
-  const guard = useLeaveGuard(initialMode === 'local' && !imported && (paths.length > 0 || Boolean(label)))
+  const guard = useLeaveGuard(initialMode === 'local' && !imported && (paths.length > 0 || Boolean(label) || Boolean(localPath)))
   const back = () => guard.request(onBack)
   useEffect(() => { registerBack?.(back) })
   async function chooseFiles() {
@@ -137,6 +138,14 @@ export function DriverInstallationPage({ driver, initialMode, onInstalled, onBac
         <p className="text-muted-foreground">{t('driverWorkflow.jarHint')}</p>
         <label className="grid gap-1.5">{t('driverRefactor.versionLabel')}<Input autoFocus value={label} onChange={e => setLabel(e.target.value)} /></label>
         <Button type="button" variant="outline" disabled={busy} onClick={() => { void chooseFiles() }}><Upload />{t('driverWorkflow.chooseJars')}</Button>
+        <details className="space-y-2">
+          <summary className="cursor-pointer font-medium">{t('driverWorkflow.enterJarPath')}</summary>
+          <p className="text-muted-foreground">{t('driverWorkflow.jarPathHint')}</p>
+          <div className="flex items-end gap-2">
+            <label className="grid min-w-0 flex-1 gap-1.5">{t('driverWorkflow.jarPath')}<Input value={localPath} onChange={e => setLocalPath(e.target.value)} /></label>
+            <Button type="button" variant="outline" disabled={busy || !localPath.trim()} onClick={() => { setPaths(current => [...new Set([...current, localPath.trim()])]); setLocalPath(''); setImported(false) }}>{t('driverWorkflow.addJarPath')}</Button>
+          </div>
+        </details>
         <ol className="divide-y rounded-md border">{paths.map((path, index) => <li key={path} className="flex min-w-0 items-center gap-2 p-2">
           <span className="w-5 shrink-0 text-muted-foreground">{index + 1}</span><span title={path} className="min-w-0 flex-1 break-words">{path.split(/[\\/]/).pop()}</span>
           <Button type="button" size="icon-sm" variant="ghost" disabled={index === 0 || busy} aria-label={t('driverWorkflow.moveUp')} onClick={() => move(index, -1)}><ArrowUp /></Button>

@@ -1,3 +1,4 @@
+import { formatConnectionErrorDetail } from '@/lib/connectionErrorDetail'
 import { useLeaveGuard } from './useLeaveGuard'
 import { FormEvent, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import type { TFunction } from 'i18next'
@@ -161,7 +162,7 @@ export function ConnectionForm({
   const selectableDrivers = driverDefinitions.length ? driverDefinitions.filter((driver) => driver.status !== 'planned').sort(compareDriverChoices) : []
   const selectedDriver = driverDefinitions.find((driver) => driver.id === form.driverDefinitionId)
   const driverProfile = localizedProfile(profileForDriver(form.driverType, selectedDriver), form.driverType, t)
-  if (!selectedDriver || selectedDriver.builtIn) driverProfile.connectionVariants = driverProfile.connectionVariants.map(v => ({ ...v, label: t(`driverRefactor.modes.${v.id}`, { defaultValue: v.label }) }))
+  if (!selectedDriver || selectedDriver.builtIn) driverProfile.connectionVariants = driverProfile.connectionVariants.map(v => ({ ...v, label: t(v.id === 'urlOnly' && selectedDriver?.backend !== 'jdbc' ? 'connectionForm.nativeUrlMode' : `driverRefactor.modes.${v.id}`, { defaultValue: v.label }) }))
   const sslModes = selectedDriver?.backend === 'jdbc' ? (form.sslMode ? ['', form.sslMode] : ['']) : supportedSslModes(form.driverType, form.sslMode)
   const installationId = form.driverInstallationId
   const missingInstallation = selectedDriver?.backend === 'jdbc' && (!installationId || !installations.some((i) => i.id === installationId && i.driverDefinitionId === selectedDriver.id))
@@ -639,22 +640,6 @@ function connectionDraftKey(input: ConnectionInput, variant: ConnectionVariant, 
   })
 }
 
-function formatConnectionErrorDetail(error: AppError, input: ConnectionInput, t: TFunction) {
-  const lines = [error.message, ...(error.detail?.split(/\r?\n|;\s*/).filter(Boolean) ?? [])]
-  if (input.host?.trim()) {
-    const endpoint = input.port ? `${input.host.trim()}:${input.port}` : input.host.trim()
-    const driverIndex = lines.findIndex((line) => line.startsWith('driver='))
-    lines.splice(driverIndex >= 0 ? driverIndex + 1 : 0, 0, `endpoint=${endpoint}`)
-  }
-
-  if (/no route to host/i.test(error.message)) {
-    if (!lines.includes('phase=tcp_connect')) lines.push('phase=tcp_connect')
-    if (!lines.includes('cause=no_route_to_host')) lines.push('cause=no_route_to_host')
-    lines.push('', t('connectionForm.noRouteToHostHint'))
-  }
-
-  return lines.length ? lines.join('\n') : null
-}
 
 function FormRow({
   label,

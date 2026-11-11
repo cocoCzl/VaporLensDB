@@ -1,3 +1,4 @@
+import { getConsoleTransactionState } from '@/ipc/query'
 import { useEditorStore } from '@/stores/editorStore'
 import type { ConsoleTransactionState } from '@/types/query'
 
@@ -16,6 +17,16 @@ export async function runTabTransaction(
     if (current?.connectionId === tab.connectionId) {
       useEditorStore.getState().setTabTransactionState(tabId, next.mode, next.phase)
     }
+  } catch (error) {
+    try {
+      if (tab.connectionId) {
+      const next = await getConsoleTransactionState(tab.connectionId, tabId).catch(() => null)
+      if (next && useEditorStore.getState().tabs.find(item => item.id === tabId)?.connectionId === tab.connectionId) {
+        useEditorStore.getState().setTabTransactionState(tabId, next.mode, next.phase)
+      }
+      }
+    } catch { /* Preserve the original operation error if state refresh fails. */ }
+    throw error
   } finally {
     useEditorStore.getState().setTabTransactionBusy(tabId, false)
   }

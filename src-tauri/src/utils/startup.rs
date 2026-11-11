@@ -127,6 +127,23 @@ pub fn mark(stage: &str) {
     write(stage, None, serde_json::json!({}));
 }
 
+/// Opt-in runtime evidence records the store that actually opened, rather
+/// than assuming a launcher environment reached the process.
+pub fn runtime_identity(config_dir: &std::path::Path, identifier: &str) {
+    if enabled() {
+        write(
+            "runtime_identity",
+            None,
+            serde_json::json!({
+                "configDir": config_dir.canonicalize().unwrap_or_else(|_| config_dir.to_path_buf()),
+                "executable": std::env::current_exe().ok(),
+                "identifier": identifier,
+                "version": env!("CARGO_PKG_VERSION"),
+            }),
+        );
+    }
+}
+
 /// Read-only lifecycle evidence, disabled unless the local trace is on.
 pub fn window_snapshot(
     window: &tauri::Window,
@@ -322,7 +339,7 @@ mod notifications {
             let center = NSNotificationCenter::defaultCenter();
             for token in tokens.borrow_mut().drain(..) {
                 unsafe {
-                    center.removeObserver((&*token).as_ref());
+                    center.removeObserver((*token).as_ref());
                 }
             }
         });
@@ -341,18 +358,6 @@ pub fn clear_window_observers() {
     notifications::clear();
 }
 
-/// Reset only the disposable QA app's workspace snapshot before application
-/// modules execute. Backend profiles alone do not isolate browser localStorage.
-/// Normal bundles cannot opt in, even if the environment variable is present.
-pub fn qa_workspace_initialization(identifier: &str) -> &'static str {
-    if identifier == "com.vaporlensdb.qa.lifecycle"
-        && std::env::var("VAPORLENSDB_DIAGNOSTIC_EMPTY_WORKSPACE").as_deref() == Ok("1")
-    {
-        "try { localStorage.removeItem('vaporlensdb.sqlWorkspace.v1'); window.__vaporStartupMark?.('perf_workspace_reset', { empty: localStorage.getItem('vaporlensdb.sqlWorkspace.v1') === null ? 1 : 0 }); } catch { window.__vaporStartupMark?.('perf_workspace_reset', { empty: 0 }); }"
-    } else {
-        ""
-    }
-}
 fn write(stage: &str, epoch_ms: Option<f64>, metrics: serde_json::Value) {
     write_event(stage, epoch_ms, metrics, None);
 }
@@ -408,13 +413,37 @@ pub fn record(
     write_event(&stage, Some(epoch_ms), serde_json::json!(metrics), details);
 }
 
+pub fn initialization_script() -> String {
+    if enabled() {
+        let gate = std::env::var("VAPORLENSDB_DIAGNOSTIC_EDITOR_GATE")
+            .ok()
+            .filter(|value| {
+                matches!(
+                    value.as_str(),
+                    "workspace-input"
+                        | "workspace-composition"
+                        | "monaco-input"
+                        | "monaco-composition"
+                )
+            });
+        format!(
+            "window.__vaporDiagnosticGateConfig = {};\n{}",
+            serde_json::json!(gate),
+            include_str!("startup.js")
+        )
+    } else {
+        String::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn ordinary_bundles_never_reset_workspace_storage() {
-        assert!(qa_workspace_initialization("com.vaporlens.db").is_empty());
-        assert!(qa_workspace_initialization("com.vaporlens.db.dev").is_empty());
+    fn formal_diagnostics_do_not_mutate_workspace_storage() {
+        let script = include_str!("startup.js");
+        assert!(!script.contains("localStorage"));
+        assert!(!script.contains("sessionStorage"));
     }
     #[test]
     fn untrusted_error_text_cannot_bypass_renderer_redaction() {
@@ -455,28 +484,5 @@ mod tests {
         assert_eq!(detail.location, "app:/favicon.png");
         assert_eq!(detail.stack.len(), 1);
         assert!(detail.message.starts_with("Dynamic module"));
-    }
-}
-
-pub fn initialization_script() -> String {
-    if enabled() {
-        let gate = std::env::var("VAPORLENSDB_DIAGNOSTIC_EDITOR_GATE")
-            .ok()
-            .filter(|value| {
-                matches!(
-                    value.as_str(),
-                    "workspace-input"
-                        | "workspace-composition"
-                        | "monaco-input"
-                        | "monaco-composition"
-                )
-            });
-        format!(
-            "window.__vaporDiagnosticGateConfig = {};\n{}",
-            serde_json::json!(gate),
-            include_str!("startup.js")
-        )
-    } else {
-        String::new()
     }
 }

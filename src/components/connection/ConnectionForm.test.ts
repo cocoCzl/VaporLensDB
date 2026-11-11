@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeConnectionUrl } from '@/lib/connectionUrlNormalization'
 import type { ConnectionInput } from '@/types/connection'
+import { formatConnectionErrorDetail } from '@/lib/connectionErrorDetail'
+import i18n from '@/i18n'
+
+it('does not attach unused host fields to a full URL authentication error', () => {
+  const detail = formatConnectionErrorDetail({ code: 'AUTH_ERROR', message: 'ORA-01005: null password given; logon denied' }, { ...baseInput, connectionMode: 'urlOnly', host: 'stale.invalid', port: 1521, connectionUrl: 'jdbc:oracle:thin:@//qa.invalid:1521/fixture_service' }, i18n.t)
+  expect(detail).toContain('ORA-01005')
+  expect(detail).not.toContain('stale.invalid')
+  expect(detail).not.toContain('jdbc:oracle')
+})
 
 const baseInput: ConnectionInput = {
   name: 'SQLite QA',

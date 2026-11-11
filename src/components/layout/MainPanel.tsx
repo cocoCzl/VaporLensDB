@@ -1,3 +1,4 @@
+import { LostConsoleRecovery } from '@/components/editor/LostConsoleRecovery'
 import { resultLimitNotice } from '@/lib/resultLimitNotice'
 import { SqlEditorSurface } from '@/components/editor/SqlEditorSurface'
 import { connectionProductType } from '@/lib/productPresentation'
@@ -246,7 +247,9 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
     connectionId != null
       ? executionDatabase(activeConnection, activeTab?.database)
       : null
-  const selectedSchema = connectionId != null ? activeTab?.schema ?? null : null
+  // MySQL catalogs are databases, including when generic JDBC reports schema support.
+  const hasExecutionSchema = activeDriverType !== 'mysql' && (actualCapabilities?.hasSchema ?? true)
+  const selectedSchema = connectionId != null && hasExecutionSchema ? activeTab?.schema ?? null : null
   const connectionIsConnected = Boolean(
     connectionId && statuses[connectionId]?.status === 'connected',
   )
@@ -254,7 +257,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
   const canRun = Boolean(
     activeTab &&
       connectionId &&
-      queryCapabilities.canQuery &&
+      queryCapabilities.canQuery && activeTab.transactionPhase !== 'lost' &&
       activeTab.sql.trim(),
   )
   const canFormat = Boolean(activeTab?.sql.trim())
@@ -331,7 +334,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
     let cancelled = false
     Promise.all([loadDatabases(connectionId), loadSchemas(connectionId, selectedDatabase)])
       .then(([, schemas]) => {
-        if (!cancelled && !selectedSchema) {
+        if (!cancelled && hasExecutionSchema && !selectedSchema) {
           const visibleSchemas = filterCompletionSchemas(
             activeDriverType,
             schemas,
@@ -371,6 +374,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
     queryCapabilities.canReadMetadata,
     selectedDatabase,
     selectedSchema,
+    hasExecutionSchema,
     showSystemObjects,
     loadDatabases,
     loadSchemas,
@@ -853,7 +857,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         <EditorToolbar
         metadataNotice={actualCapabilities?.supportsFunctions === false ? t('workbench.functionsUnsupported') : undefined}
         hasDatabase={actualCapabilities?.hasDatabase}
-        hasSchema={actualCapabilities?.hasSchema}
+        hasSchema={hasExecutionSchema}
         connections={connections}
         dataSourceGroups={dataSourceGroups}
         connectionStatuses={Object.fromEntries(
@@ -869,7 +873,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         canCancel={Boolean(activeTab.runningQueryId && !activeTab.cancelling && queryCapabilities.canCancel)}
         canExplain={queryCapabilities.canExplain}
         explainUnsupportedReason={t('workbench.explainUnsupported')}
-        disabled={!canRun || preparing}
+        disabled={!canRun || preparing || activeTab.transactionPhase === 'lost'}
         hasSelection={cursor.tabId === activeTab.id && cursor.value.start !== cursor.value.end}
         runAllDisabled={!connectionId || !queryCapabilities.canQuery || !activeTab.sql.trim() || preparing || Boolean(activeTab.running || activeTab.closing || activeTab.transactionBusy || activeTab.fileBusy)}
         onRunAll={() => dispatchSqlCommand('runAll')}
@@ -905,7 +909,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         onHistoryToggle={() => setHistoryOpen((open) => !open)}
         transactionMode={activeTab.transactionMode ?? 'auto'}
         transactionPhase={activeTab.transactionPhase ?? 'idle'}
-        transactionDisabled={!connectionIsConnected || actualCapabilities?.supportsTransactions === false || activeTab.closing || activeTab.transactionBusy}
+        transactionDisabled={activeTab.transactionPhase === 'lost' || !connectionIsConnected || actualCapabilities?.supportsTransactions === false || activeTab.closing || activeTab.transactionBusy}
         onTransactionModeChange={(mode) => {
           if (!connectionId || !connectionIsConnected) return
           void (async () => {
@@ -929,6 +933,8 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
         workspaceView={workspaceView}
         onWorkspaceViewChange={setWorkspaceView}
         />
+
+        <LostConsoleRecovery tab={activeTab} />
 
         <div ref={setSqlSplitHost} data-sql-split-area className="relative min-h-0 flex-1">
         <div className="flex h-full min-w-0 flex-col overflow-hidden">
@@ -985,7 +991,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
             <span className="inline-flex min-w-0 items-center gap-1 text-destructive"><AlertCircle className="size-3.5 shrink-0" />{t('workbench.queryFailed')}</span>
           ) : undefined}
           summary={activeResult && !activeExplain && !activeTab.running ? largeResultNotice(activeResult) : activeExplain ? t('workbench.explainSummary', { elapsedMs: activeExplain.elapsedMs }) : undefined}
-          source={activeResultSource ? `${activeResultConnection?.name ?? t('connection.disconnected')}${(activeResultSource.database || activeResultSource.schema) ? ` · ${[activeResultSource.database, activeResultSource.schema].filter(Boolean).join(' / ')}` : ''}${activeResultSource.connectionId === connectionId ? '' : ` · ${t('workbench.previousResult')}`}` : undefined}
+          source={activeResultSource ? `${activeResultSource.connectionName ?? activeResultConnection?.name ?? t('connection.disconnected')}${(activeResultSource.database || activeResultSource.schema) ? ` · ${[activeResultSource.database, activeResultSource.schema].filter(Boolean).join(' / ')}` : ''}${activeResultSource.connectionId === connectionId ? '' : ` · ${t('workbench.previousResult')}`}` : undefined}
           actions={<>
             {activeResult?.columns.length ? <ResultViewTabs value={resultView} onChange={setResultView} /> : null}
             <IconTooltipButton
@@ -1055,7 +1061,7 @@ function MainPanelContent({ onSwitchConnection }: { onSwitchConnection: (tabId: 
               {activeReport && activeQueryId && <Suspense fallback={null}><ExecutionSummary key={activeQueryId} report={activeReport} onSelectResult={index => setResultIndexes(state => ({ ...state, [activeQueryId]: index }))} /></Suspense>}
               <div className="min-h-0 flex-1">
               {activeTab.error && !activeReport ? (
-                <ErrorDetails message={activeTab.error} sql={activeTab.sql} onRetry={() => void execute()} />
+                <ErrorDetails message={activeTab.error} sql={activeTab.errorSql ?? undefined} onRetry={() => void execute()} />
               ) : activeExplain ? (
                 activeExplain.result ? (
                   <DataGrid result={activeExplain.result} />

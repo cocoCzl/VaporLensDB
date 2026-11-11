@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -62,7 +63,7 @@ includesAll(connectionForm, ["t('connectionForm.validation.oracleJarRequired')"]
 
 const dataGrid = read('src/components/grid/DataGrid.tsx')
 excludesAll(dataGrid, ['UPDATE '], 'data grid should not execute SQL directly')
-includesAll(dataGrid, ['copyToClipboard(value)', 'copyToClipboard(rowValue)'], 'read-only data grid copy actions')
+// Cell/row copy is verified through the actual grid actions below.
 
 const mainPanel = read('src/components/layout/MainPanel.tsx')
 includesAll(mainPanel, ['analyzeSqlRisk', 'confirmDangerousSql', 'driverQueryCapabilities'], 'query controls')
@@ -79,6 +80,8 @@ includesAll(
   ["status: 'safe' | 'dangerous' | 'unknown'", "| 'mergeStatement'", "| 'proceduralStatement'", "| 'unclassifiedStatement'"],
   'SQL risk IPC contract',
 )
+
+verifyBehavior(['src/components/grid/DataGrid.test.tsx'])
 
 if (failures.length > 0) {
   console.error('V1 UI scope smoke failed:')

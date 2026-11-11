@@ -130,6 +130,40 @@ pub(crate) async fn apply_execution_context(
     database: Option<&str>,
     schema: Option<&str>,
 ) -> Result<(), String> {
+    if driver_type == DriverType::Postgres {
+        if let Some(database) = database.filter(|value| !value.trim().is_empty()) {
+            let current = driver
+                .execute_query("SELECT current_database()", None)
+                .await
+                .map_err(String::from)?;
+            if current
+                .rows
+                .first()
+                .and_then(|row| row.first())
+                .and_then(serde_json::Value::as_str)
+                != Some(database)
+            {
+                return Err("PostgreSQL execution database does not match this physical connection. Open a connection to the selected database; no SQL was executed and no transaction was reset.".into());
+            }
+        }
+    }
+    // MySQL has no SQL equivalent of USE NULL. Auto consoles share a physical
+    // session, so a missing target must not inherit a previous console's USE.
+    // Fail before user SQL instead of resetting/replacing a possibly live session.
+    if driver_type == DriverType::Mysql && database.is_none_or(|value| value.trim().is_empty()) {
+        let current = driver
+            .execute_query("SELECT DATABASE()", None)
+            .await
+            .map_err(String::from)?;
+        if !current
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(serde_json::Value::is_null)
+        {
+            return Err("MySQL execution target is unset but this physical session has a selected database. Select a database for this tab. An active Manual session cannot be reset; finish its transaction before explicitly reconnecting.".into());
+        }
+    }
     let statement = execution_context_statement(driver_type, database, schema);
 
     if let Some(statement) = statement {
@@ -166,7 +200,7 @@ fn quote_mysql_identifier(identifier: &str) -> String {
     format!("`{}`", identifier.replace('`', "``"))
 }
 
-fn execution_driver_type(
+pub(crate) fn execution_driver_type(
     state: &State<'_, AppState>,
     connection_id: Uuid,
 ) -> Result<DriverType, String> {
@@ -183,6 +217,93 @@ fn execution_driver_type(
         })
 }
 
+/// Open an additional bounded Auto session; never reset/reconnect a working
+/// or Manual session. Its operations retain the parent runtime's generation,
+/// queue, cancellation routing and disconnect protection.
+pub(crate) async fn prepare_auto_execution_context(
+    state: &State<'_, AppState>,
+    connection_id: Uuid,
+    driver_type: DriverType,
+    database: Option<&str>,
+) -> Result<bool, String> {
+    let empty = driver_type == DriverType::Mysql
+        && database.is_none_or(|database| database.trim().is_empty());
+    if !empty {
+        return Ok(false);
+    }
+    let generation = {
+        let manager = state.connection_manager.lock().await;
+        if manager.has_mysql_empty_session(connection_id) {
+            return Ok(true);
+        }
+        manager
+            .connection_generation(connection_id)
+            .map_err(String::from)?
+    };
+    let config = state
+        .config_store
+        .get_connection(connection_id)
+        .map_err(String::from)?
+        .ok_or_else(|| "connection not found".to_string())?;
+    let (password, ssh_tunnel) = state
+        .config_store
+        .decrypt_connection_credentials(&config)
+        .map_err(String::from)?;
+    let (mut config, definition) = state
+        .config_store
+        .resolve_connection(&config)
+        .map_err(String::from)?;
+    clear_mysql_connection_database(&mut config)?;
+    config.ssh_tunnel = ssh_tunnel;
+    let active = crate::services::connection_manager::create_active_connection(
+        &config,
+        password.as_deref(),
+        Some(&definition),
+    )
+    .await
+    .map_err(String::from)?;
+    state
+        .connection_manager
+        .lock()
+        .await
+        .install_mysql_empty_session(connection_id, generation, active)
+        .map_err(String::from)?;
+    Ok(true)
+}
+
+fn clear_mysql_connection_database(
+    config: &mut crate::models::connection::ConnectionConfig,
+) -> Result<(), String> {
+    config.database = None;
+    if let Some(connection_url) = &config.connection_url {
+        let jdbc = connection_url.starts_with("jdbc:");
+        let mut url = url::Url::parse(connection_url.strip_prefix("jdbc:").unwrap_or(connection_url))
+            .map_err(|_| "Cannot safely open an unset-target session for this MySQL URL; select a database explicitly".to_string())?;
+        if url.scheme() != "mysql" || url.host_str().is_none() {
+            return Err("Cannot safely open an unset-target session for this MySQL URL; select a database explicitly".into());
+        }
+        url.set_path("/");
+        config.connection_url = Some(format!("{}{}", if jdbc { "jdbc:" } else { "" }, url));
+    }
+    Ok(())
+}
+
+fn validate_execution_context_sql(driver_type: DriverType, sql: &str) -> Result<(), String> {
+    if driver_type == DriverType::Mysql
+        && crate::utils::sql_parser::split_sql_statements(sql)
+            .iter()
+            .any(|statement| {
+                crate::utils::sql_parser::mask_sql(statement)
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|word| word.eq_ignore_ascii_case("USE"))
+            })
+    {
+        return Err("Choose the SQL tab's execution database in the target selector instead of USE. No statements in this batch were executed.".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn execute_query(
     app: AppHandle,
@@ -195,6 +316,7 @@ pub async fn execute_query(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     input.query_id = Some(input_query_id.clone());
     let driver_type = execution_driver_type(&state, input.connection_id)?;
+    validate_execution_context_sql(driver_type, &input.sql)?;
     if let Some(console_id) = input.console_id.as_deref() {
         ensure_console_session(&state, input.connection_id, console_id).await?;
         let operation = state
@@ -245,12 +367,20 @@ pub async fn execute_query(
         clear_metadata_after_batch(&state, input.connection_id, &sql, &result).await;
         return result.map_err(Into::into);
     }
+    let mysql_empty = prepare_auto_execution_context(
+        &state,
+        input.connection_id,
+        driver_type,
+        input.database.as_deref(),
+    )
+    .await?;
     let operation_start = {
         let mut manager = state.connection_manager.lock().await;
         manager
-            .begin_query_operation(
+            .begin_context_query_operation(
                 input.connection_id,
                 input.query_id.as_deref().unwrap_or("anonymous-query"),
+                mysql_empty,
             )
             .map_err(String::from)?
     };
@@ -307,6 +437,7 @@ pub async fn execute_query_stream(
     input: ExecuteQueryStreamInput,
 ) -> Result<ExecutionSession, String> {
     let driver_type = execution_driver_type(&state, input.connection_id)?;
+    validate_execution_context_sql(driver_type, &input.sql)?;
     if let Some(console_id) = input.console_id.as_deref() {
         let input_query_id = input.query_id.clone();
         ensure_console_session(&state, input.connection_id, console_id).await?;
@@ -362,10 +493,17 @@ pub async fn execute_query_stream(
             })
             .map_err(String::from);
     }
+    let mysql_empty = prepare_auto_execution_context(
+        &state,
+        input.connection_id,
+        driver_type,
+        input.database.as_deref(),
+    )
+    .await?;
     let operation_start = {
         let mut manager = state.connection_manager.lock().await;
         manager
-            .begin_query_operation(input.connection_id, &input.query_id)
+            .begin_context_query_operation(input.connection_id, &input.query_id, mysql_empty)
             .map_err(String::from)?
     };
     let operation = match operation_start {
@@ -497,6 +635,9 @@ fn execution_fails_transaction<T>(result: &Result<T, crate::models::error::AppEr
 fn ensure_query_transaction_usable(
     phase: ConsoleTransactionPhase,
 ) -> Result<(), crate::models::error::AppError> {
+    if phase == ConsoleTransactionPhase::Lost {
+        return Err(crate::models::error::AppError::ConfigError("Original physical session lost; the old transaction cannot be committed or rolled back on a new connection. Its final outcome is unknown. First verify the database outcome through an independent session, then explicitly end the invalid console or create a new session. No rollback success is implied.".into()));
+    }
     if phase == ConsoleTransactionPhase::Failed {
         return Err(crate::models::error::AppError::ConfigError(
             "transaction failed; rollback is required".into(),
@@ -565,6 +706,7 @@ fn should_retire_stale_connection_message(message: &str) -> bool {
         "connection is closed",
         "closed connection",
         "jdbc bridge sidecar is not running",
+        "jdbc physical session was lost",
     ]
     .iter()
     .any(|needle| message.contains(needle))
@@ -585,7 +727,7 @@ async fn retire_stale_connection(
         .connection_manager
         .lock()
         .await
-        .invalidate_connection_generation(connection_id, generation, reason);
+        .retire_failed_query_generation(connection_id, generation, reason);
 }
 
 #[cfg(test)]
@@ -632,6 +774,7 @@ pub async fn explain_query(
     schema: Option<String>,
 ) -> Result<ExplainResult, String> {
     let driver_type = execution_driver_type(&state, connection_id)?;
+    validate_execution_context_sql(driver_type, &sql)?;
     let query_id = query_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     if let Some(console_id) = console_id {
         // EXPLAIN must see the existing console's temporary/uncommitted objects.
@@ -642,9 +785,7 @@ pub async fn explain_query(
             .await
             .begin_console_operation(connection_id, &console_id, Some(&query_id))
             .map_err(String::from)?;
-        if operation.phase == ConsoleTransactionPhase::Failed {
-            return Err("transaction failed; rollback is required".into());
-        }
+        ensure_query_transaction_usable(operation.phase).map_err(String::from)?;
         let result = async {
             apply_execution_context(
                 operation.driver.clone(),
@@ -669,10 +810,13 @@ pub async fn explain_query(
         }
         return result;
     }
+    let mysql_empty =
+        prepare_auto_execution_context(&state, connection_id, driver_type, database.as_deref())
+            .await?;
     let start = {
         let mut manager = state.connection_manager.lock().await;
         manager
-            .begin_query_operation(connection_id, &query_id)
+            .begin_context_query_operation(connection_id, &query_id, mysql_empty)
             .map_err(String::from)?
     };
     let operation = match start {
@@ -822,6 +966,92 @@ pub async fn set_console_transaction_mode(
         .map_err(String::from)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverLostConsoleInput {
+    pub connection_id: Uuid,
+    pub console_id: String,
+    pub new_console_id: String,
+    // Explicitly confirmed by the user; never taken from Explorer selection.
+    pub database: Option<String>,
+    pub schema: Option<String>,
+}
+
+/// Closing a lost tab must not require working credentials or a new connection.
+#[tauri::command]
+pub async fn end_lost_console_session(
+    state: State<'_, AppState>,
+    input: ConsoleTransactionInput,
+) -> Result<ConsoleTransactionState, String> {
+    let mut manager = state.connection_manager.lock().await;
+    let operation = manager
+        .begin_console_operation(input.connection_id, &input.console_id, None)
+        .map_err(String::from)?;
+    manager
+        .end_lost_console_session(input.connection_id, &input.console_id, &operation)
+        .map_err(String::from)
+}
+
+#[tauri::command]
+pub async fn recover_lost_console_session(
+    state: State<'_, AppState>,
+    input: RecoverLostConsoleInput,
+) -> Result<ConsoleTransactionState, String> {
+    let operation = state
+        .connection_manager
+        .lock()
+        .await
+        .begin_console_operation(input.connection_id, &input.console_id, None)
+        .map_err(String::from)?;
+    if operation.phase != ConsoleTransactionPhase::Lost {
+        return Err("The original physical session is not confirmed lost; recovery cannot discard a live transaction".into());
+    }
+    let config = state
+        .config_store
+        .get_connection(input.connection_id)
+        .map_err(String::from)?
+        .ok_or("connection not found")?;
+    let (password, ssh_tunnel) = state
+        .config_store
+        .decrypt_connection_credentials(&config)
+        .map_err(String::from)?;
+    let (mut config, definition) = state
+        .config_store
+        .resolve_connection(&config)
+        .map_err(String::from)?;
+    config.ssh_tunnel = ssh_tunnel;
+    let product = execution_driver_type(&state, input.connection_id)?;
+    if product == DriverType::Mysql && input.database.is_none() {
+        clear_mysql_connection_database(&mut config)?;
+    }
+    let active = crate::services::connection_manager::create_active_connection(
+        &config,
+        password.as_deref(),
+        Some(&definition),
+    )
+    .await
+    .map_err(String::from)?;
+    apply_execution_context(
+        active.driver(),
+        product,
+        input.database.as_deref(),
+        input.schema.as_deref(),
+    )
+    .await?;
+    state
+        .connection_manager
+        .lock()
+        .await
+        .replace_lost_console_session(
+            input.connection_id,
+            &input.console_id,
+            input.new_console_id,
+            &operation,
+            active,
+        )
+        .map_err(String::from)
+}
+
 #[tauri::command]
 pub async fn commit_console_transaction(
     state: State<'_, AppState>,
@@ -873,8 +1103,13 @@ pub async fn rollback_console_transaction(
 }
 
 #[cfg(test)]
+#[path = "query_convergence_tests.rs"]
+pub(crate) mod convergence_tests;
+
+#[cfg(test)]
 mod context_tests {
     use super::execution_context_statement;
+    use super::ConsoleTransactionPhase;
     use crate::models::connection::DriverType;
 
     #[test]
@@ -1001,6 +1236,50 @@ mod context_tests {
     }
 
     #[test]
+    fn lost_query_and_explain_guard_requires_independent_observation_not_rollback() {
+        let error =
+            super::ensure_query_transaction_usable(ConsoleTransactionPhase::Lost).unwrap_err();
+        let wire = String::from(error);
+        for expected in [
+            "Original physical session lost",
+            "cannot be committed or rolled back on a new connection",
+            "final outcome is unknown",
+            "First verify",
+            "independent session",
+            "end the invalid console",
+            "No rollback success is implied",
+        ] {
+            assert!(
+                wire.contains(expected),
+                "missing recovery guidance: {expected}"
+            );
+        }
+        assert!(!wire.contains("rollback is required"));
+        for sensitive in ["SELECT", "password=", "jdbc:", "connectionUrl", "\"sql\""] {
+            assert!(
+                !wire.contains(sensitive),
+                "static guard must not contain execution inputs"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_live_transaction_still_requires_rollback_and_usable_phases_continue() {
+        let error =
+            super::ensure_query_transaction_usable(ConsoleTransactionPhase::Failed).unwrap_err();
+        assert!(error
+            .safe_message()
+            .contains("transaction failed; rollback is required"));
+        assert!(!error.safe_message().contains("physical session lost"));
+        for phase in [
+            ConsoleTransactionPhase::Idle,
+            ConsoleTransactionPhase::Active,
+        ] {
+            assert!(super::ensure_query_transaction_usable(phase).is_ok());
+        }
+    }
+
+    #[test]
     fn database_session_and_cancellation_errors_remain_conservative() {
         use crate::models::error::AppError;
         for error in [
@@ -1118,5 +1397,76 @@ mod context_tests {
             execution_context_statement(DriverType::Mysql, Some("qa`name"), None),
             Some("USE `qa``name`".to_string())
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicit read-only MySQL URL, credentials, JAR and existing context database"]
+    async fn mysql_empty_target_never_inherits_a_prior_catalog() {
+        use crate::drivers::{jdbc::JdbcDriver, mysql::MysqlDriver, trait_def::DatabaseDriver};
+        use std::sync::Arc;
+        let required = |key| std::env::var(key).unwrap_or_else(|_| panic!("missing {key}"));
+        let url = required("TEST_READONLY_JDBC_URL");
+        let user = required("TEST_READONLY_USER");
+        let password = required("TEST_READONLY_PASSWORD");
+        let database = required("TEST_READONLY_CONTEXT_DATABASE");
+        let definition = crate::services::driver_catalog::driver_definitions()
+            .into_iter()
+            .find(|d| d.id == "jdbc-mysql")
+            .unwrap();
+        let config = serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::new_v4(), "name":"QA readonly context", "driverType":"jdbc",
+            "driverClass":definition.jdbc_driver_class, "connectionUrl":url,
+            "driverPaths":[required("TEST_READONLY_JDBC_DRIVER_PATH")], "username":user,
+            "createdAt":chrono::Utc::now(), "updatedAt":chrono::Utc::now()
+        }))
+        .unwrap();
+        let native: Arc<dyn DatabaseDriver> = Arc::new(
+            MysqlDriver::connect_with_url_credentials(
+                url.strip_prefix("jdbc:").unwrap(),
+                Some(&user),
+                Some(&password),
+            )
+            .await
+            .unwrap(),
+        );
+        let jdbc: Arc<dyn DatabaseDriver> = Arc::new(
+            JdbcDriver::connect(&config, Some(&password), Some(&definition))
+                .await
+                .unwrap(),
+        );
+        for (name, driver) in [("native", native), ("jdbc", jdbc)] {
+            super::apply_execution_context(driver.clone(), DriverType::Mysql, None, None)
+                .await
+                .unwrap();
+            assert!(driver
+                .execute_query("SELECT DATABASE()", None)
+                .await
+                .unwrap()
+                .rows[0][0]
+                .is_null());
+            super::apply_execution_context(
+                driver.clone(),
+                DriverType::Mysql,
+                Some(&database),
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                driver
+                    .execute_query("SELECT DATABASE()", None)
+                    .await
+                    .unwrap()
+                    .rows[0][0],
+                serde_json::json!(database)
+            );
+            let result =
+                super::apply_execution_context(driver, DriverType::Mysql, None, None).await;
+            assert!(
+                result.is_err(),
+                "{name}: empty target must fail closed before running SQL in a prior catalog"
+            );
+            println!("QA_EMPTY_TARGET_GUARD_PASSED {name}");
+        }
     }
 }

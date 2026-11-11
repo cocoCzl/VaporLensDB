@@ -59,6 +59,7 @@ export interface ExecutionSession {
 }
 
 export interface QueryExecutionSnapshot {
+  connectionName?: string
   queryId: string
   sql: string
   connectionId: string
@@ -71,7 +72,7 @@ export interface QueryExecutionSnapshot {
 }
 
 export type TransactionMode = 'auto' | 'manual'
-export type TransactionPhase = 'idle' | 'active' | 'failed'
+export type TransactionPhase = 'idle' | 'active' | 'failed' | 'lost'
 export interface ConsoleTransactionState {
   connectionId: string
   consoleId: string

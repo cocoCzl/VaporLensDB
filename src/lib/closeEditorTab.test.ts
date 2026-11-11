@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeEditorTab, closeEditorTabs } from '@/lib/closeEditorTab'
+import i18n from '@/i18n'
 import { runTabTransaction } from '@/lib/tabTransaction'
 import { useEditorStore, type EditorTab } from '@/stores/editorStore'
 
-const mocks = vi.hoisted(() => ({ save: vi.fn(), rollback: vi.fn(), mode: vi.fn(), notify: vi.fn(), notifyError: vi.fn() }))
-vi.mock('@/ipc/query', () => ({ rollbackConsoleTransaction: mocks.rollback, setConsoleTransactionMode: mocks.mode }))
+const mocks = vi.hoisted(() => ({ state: vi.fn(), endLost: vi.fn(), save: vi.fn(), rollback: vi.fn(), mode: vi.fn(), notify: vi.fn(), notifyError: vi.fn() }))
+vi.mock('@/ipc/query', () => ({ getConsoleTransactionState: mocks.state, endLostConsoleSession: mocks.endLost, rollbackConsoleTransaction: mocks.rollback, setConsoleTransactionMode: mocks.mode }))
 vi.mock('@/stores/sqlDraftStore', () => ({ useSqlDraftStore: { getState: () => ({ saveTabDraft: mocks.save }) } }))
 vi.mock('@/stores/connectionStore', () => ({ useConnectionStore: { getState: () => ({ connections: [] }) } }))
 vi.mock('@/stores/uiStore', () => ({ useUiStore: { getState: () => ({ notify: mocks.notify, notifyError: mocks.notifyError }) } }))
@@ -73,6 +74,7 @@ describe('shared tab closing', () => {
     expect(current().transactionPhase).toBe(operation === 'rollback' ? 'active' : 'idle')
     expect(mocks.save).not.toHaveBeenCalled()
     expect(mocks.notifyError).toHaveBeenCalledOnce()
+    expect(mocks.notifyError).toHaveBeenCalledWith(expect.objectContaining({ message: 'session unavailable' }), expect.any(String))
   })
 
   it('retains the tab when saving fails and permits a retry', async () => {
@@ -129,4 +131,24 @@ describe('shared tab closing', () => {
     await runTabTransaction('tab', action)
     expect(action).not.toHaveBeenCalled()
   })
+
+it('can close a lost console without creating a new connection or claiming rollback', async () => {
+  useEditorStore.setState({ tabs: [tab({ transactionMode: 'manual', transactionPhase: 'lost' })], activeTabId: 'tab' })
+  mocks.endLost.mockResolvedValue({ mode: 'auto', phase: 'idle' })
+  expect(await closeEditorTab('tab')).toBe(true)
+  expect(mocks.endLost).toHaveBeenCalledWith('source', 'tab')
+  expect(mocks.rollback).not.toHaveBeenCalled()
+  expect(mocks.mode).not.toHaveBeenCalled()
+  expect(window.confirm).toHaveBeenCalledWith(i18n.t('executionContext.closeLostConfirm'))
+})
+
+  it('refreshes lost state if closing first discovers a dead physical session', async () => {
+    useEditorStore.setState({ tabs: [tab({ transactionMode: 'manual', transactionPhase: 'active' })] })
+    mocks.rollback.mockRejectedValue(new Error('physical session lost'))
+    mocks.state.mockResolvedValue({ connectionId: 'source', consoleId: 'tab', mode: 'manual', phase: 'lost' })
+    expect(await closeEditorTab('tab')).toBe(false)
+    expect(current()).toMatchObject({ transactionPhase: 'lost', closing: false })
+    expect(mocks.endLost).not.toHaveBeenCalled()
+  })
+
 })

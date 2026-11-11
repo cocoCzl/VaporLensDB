@@ -40,3 +40,16 @@ it('reserves editing space, isolates Tab choices, and preserves a manual split a
   unmount()
   expect(disconnect).toHaveBeenCalledOnce()
 })
+
+it('reveals a persisted collapsed/editor-only pane when execution starts, without hiding the next blank tab', () => {
+  const tabs = [{ id: 'a' }, { id: 'b' }]
+  const { result, rerender } = renderHook(({ id, output }) => useSqlPaneLayout(id, tabs, output, 520, true), { initialProps: { id: 'a', output: false } })
+  act(() => result.current.setView('editor'))
+  act(() => result.current.revealResults())
+  expect(result.current).toMatchObject({ collapsed: false, view: 'split' })
+  rerender({ id: 'a', output: true })
+  expect(result.current.height).toBeGreaterThan(88)
+  rerender({ id: 'b', output: false })
+  expect(result.current.height).toBe(88)
+  expect(result.current.view).toBe('split')
+})

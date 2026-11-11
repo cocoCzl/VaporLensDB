@@ -1,3 +1,4 @@
+import { verifyBehavior } from './verify-behavior.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -58,11 +59,6 @@ includesAll(
   dialog,
   [
     'void loadDrivers()',
-    "h-[min(600px,calc(100dvh-2rem))]",
-    'w-[min(900px,calc(100vw-2rem))]',
-    'data-open:animate-none',
-    'data-closed:animate-none',
-    'min-h-0 flex-1 overflow-hidden',
   ],
   'connection dialog stable opening layout',
 )
@@ -103,6 +99,10 @@ includesAll(
   ['test:connection-dialog-clarity', 'scripts/connection-dialog-clarity-smoke.mjs'],
   'connection dialog clarity smoke registration',
 )
+
+assert(dialog.includes('animated={false}') && /max-h-\[calc\(100dvh-2rem\)\]/u.test(dialog) && /w-\[min\(\d+px,calc\(100vw-2rem\)\)\]/u.test(dialog), 'dialog must disable animations and remain viewport-bounded')
+
+verifyBehavior(['src/components/connection/ConnectionDialog.test.tsx'])
 
 if (failures.length > 0) {
   console.error('Connection dialog clarity smoke failed:')

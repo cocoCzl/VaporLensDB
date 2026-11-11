@@ -1,5 +1,10 @@
 /** Mirrors the backend lexer; offsets are UTF-16 for Monaco, not UTF-8 bytes. */
 export function maskSql(sql: string): string {
+  return maskSqlRegions(sql, true)
+}
+
+/** Keep quoted tokens when checking whether a segment contains SQL. */
+function maskSqlRegions(sql: string, maskQuoted: boolean): string {
   const output = sql.split('')
   const identifier = (char: string | undefined) => char !== undefined && /[a-zA-Z0-9_$\u0080-\uffff]/u.test(char)
   let index = 0
@@ -43,6 +48,7 @@ export function maskSql(sql: string): string {
       const end = sql.indexOf(delimiter, index + delimiter.length)
       index = end < 0 ? sql.length : end + delimiter.length
     }
+    if (!maskQuoted && !sql.startsWith('--', start) && !sql.startsWith('/*', start)) continue
     for (let at = start; at < index; at += 1) {
       if (sql[at] !== '\n' && sql[at] !== '\r') output[at] = ' '
     }
@@ -142,12 +148,13 @@ function oracleQQuoteEnd(
 }
 
 function statementRanges(sql: string) {
-  const mask = maskSql(normalizeGoBatchSeparators(sql))
+  const mask = maskSql(sql)
+  const withoutComments = maskSqlRegions(sql, false)
   const ranges: Array<{ start: number; end: number }> = []
   let start = 0
   for (let end = 0; end <= sql.length; end += 1) {
     if (end !== sql.length && mask[end] !== ';') continue
-    if (sql.slice(start, end).trim()) ranges.push({ start, end })
+    if (withoutComments.slice(start, end).trim()) ranges.push({ start, end })
     start = end + 1
   }
   return ranges

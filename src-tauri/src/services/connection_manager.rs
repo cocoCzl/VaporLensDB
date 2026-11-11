@@ -44,12 +44,22 @@ pub(crate) struct ActiveConnection {
     activity: ConnectionActivity,
     serial_query_gate: Arc<Semaphore>,
     console_sessions: HashMap<String, ConsoleSession>,
+    // One bounded Auto session for MySQL's unset target. Never reset the
+    // working session: it may have live work or user-managed transaction state.
+    mysql_empty_session: Option<AutoContextSession>,
     generation: u64,
 }
 
 struct QueryRegistration {
     queued: bool,
     cancellation: CancellationToken,
+    driver: Option<Arc<dyn DatabaseDriver>>,
+}
+
+struct AutoContextSession {
+    driver: Arc<dyn DatabaseDriver>,
+    _ssh_tunnel: Option<SshTunnel>,
+    gate: Arc<Semaphore>,
 }
 
 struct OperationRegistry {
@@ -138,6 +148,7 @@ pub enum ConsoleTransactionPhase {
     Idle,
     Active,
     Failed,
+    Lost,
 }
 
 pub(crate) struct ConsoleSession {
@@ -172,6 +183,9 @@ impl Drop for ConsoleOperation {
 }
 
 impl ActiveConnection {
+    pub(crate) fn driver(&self) -> Arc<dyn DatabaseDriver> {
+        self.driver.clone()
+    }
     fn has_running_operations(&self) -> bool {
         !self.activity.lock().queries.is_empty()
             || self
@@ -399,11 +413,47 @@ impl ConnectionManager {
         true
     }
 
+    /// A failed Auto query must not discard another console's transaction or
+    /// an operation on the separate unset-target session. Keep the runtime
+    /// until explicit resolution instead of pretending it was recovered.
+    pub(crate) fn retire_failed_query_generation(
+        &mut self,
+        id: Uuid,
+        generation: u64,
+        reason: &str,
+    ) -> bool {
+        if self.connections.get(&id).is_some_and(|connection| {
+            connection.has_uncommitted_transaction()
+                || connection.activity.lock().queries.len() > 1
+                || connection
+                    .console_sessions
+                    .values()
+                    .any(|s| s.operation_gate.available_permits() == 0)
+        }) {
+            return false;
+        }
+        self.invalidate_connection_generation(id, generation, reason)
+    }
+
     pub async fn shutdown_all(&mut self) {
         let drivers = self
             .connections
             .iter()
-            .map(|(id, connection)| (*id, connection.driver.clone()))
+            .flat_map(|(id, connection)| {
+                std::iter::once((*id, connection.driver.clone()))
+                    .chain(
+                        connection
+                            .mysql_empty_session
+                            .iter()
+                            .map(|s| (*id, s.driver.clone())),
+                    )
+                    .chain(
+                        connection
+                            .console_sessions
+                            .values()
+                            .map(|s| (*id, s.driver.clone())),
+                    )
+            })
             .collect::<Vec<_>>();
         let mut known_ids = self.statuses.keys().copied().collect::<Vec<_>>();
 
@@ -647,7 +697,13 @@ impl ConnectionManager {
                 "auto".to_string()
             },
             phase: session
-                .map(|value| value.phase)
+                .map(|value| {
+                    if value.driver.physical_session_lost() {
+                        ConsoleTransactionPhase::Lost
+                    } else {
+                        value.phase
+                    }
+                })
                 .unwrap_or(ConsoleTransactionPhase::Idle),
         }
     }
@@ -665,12 +721,12 @@ impl ConnectionManager {
                     resource: "active connection".to_string(),
                     id: connection_id.to_string(),
                 })?;
-        if connection.console_sessions.contains_key(&console_id) {
+        if let Some(session) = connection.console_sessions.get(&console_id) {
             return Ok(ConsoleTransactionState {
                 connection_id,
                 console_id,
                 mode: "manual".to_string(),
-                phase: ConsoleTransactionPhase::Idle,
+                phase: session.phase,
             });
         }
         connection.console_sessions.insert(
@@ -689,6 +745,55 @@ impl ConnectionManager {
             mode: "manual".to_string(),
             phase: ConsoleTransactionPhase::Idle,
         })
+    }
+
+    /// Requires the exclusive lease of the exact lost physical console. No
+    /// transaction command is issued, and other consoles are never replaced.
+    pub(crate) fn replace_lost_console_session(
+        &mut self,
+        connection_id: Uuid,
+        console_id: &str,
+        new_console_id: String,
+        operation: &ConsoleOperation,
+        active: ActiveConnection,
+    ) -> Result<ConsoleTransactionState, AppError> {
+        if self
+            .connections
+            .get(&connection_id)
+            .is_some_and(|c| c.console_sessions.contains_key(&new_console_id))
+        {
+            return Err(AppError::ConfigError(
+                "new console identity already exists".into(),
+            ));
+        }
+        self.end_lost_console_session(connection_id, console_id, operation)?;
+        self.install_console_session(connection_id, new_console_id, active)
+    }
+
+    pub(crate) fn end_lost_console_session(
+        &mut self,
+        connection_id: Uuid,
+        console_id: &str,
+        operation: &ConsoleOperation,
+    ) -> Result<ConsoleTransactionState, AppError> {
+        let connection = self
+            .connections
+            .get_mut(&connection_id)
+            .ok_or_else(|| AppError::ConfigError("connection no longer exists".into()))?;
+        let session = connection
+            .console_sessions
+            .get(console_id)
+            .ok_or_else(|| AppError::ConfigError("console no longer exists".into()))?;
+        if connection.generation != operation.generation
+            || !Arc::ptr_eq(&session.driver, &operation.driver)
+            || session.operation_gate.available_permits() != 0
+            || !(session.phase == ConsoleTransactionPhase::Lost
+                || session.driver.physical_session_lost())
+        {
+            return Err(AppError::ConfigError("only the leased lost physical console can be ended; no transaction was committed or rolled back".into()));
+        }
+        connection.console_sessions.remove(console_id);
+        Ok(self.console_transaction_state(connection_id, console_id))
     }
 
     pub fn remove_console_session(
@@ -766,7 +871,11 @@ impl ConnectionManager {
         connection.activity.lock().last_used = Instant::now();
         Ok(ConsoleOperation {
             driver: session.driver.clone(),
-            phase: session.phase,
+            phase: if session.driver.physical_session_lost() {
+                ConsoleTransactionPhase::Lost
+            } else {
+                session.phase
+            },
             generation: connection.generation,
             active_query: session.active_query.clone(),
             activity: connection.activity.0.clone(),
@@ -780,6 +889,15 @@ impl ConnectionManager {
         query_id: &str,
     ) -> Result<Arc<dyn DatabaseDriver>, AppError> {
         if let Some(connection) = self.connections.get(&connection_id) {
+            if let Some(driver) = connection
+                .activity
+                .lock()
+                .queries
+                .get(query_id)
+                .and_then(|entry| entry.driver.clone())
+            {
+                return Ok(driver);
+            }
             for session in connection.console_sessions.values() {
                 let query = session.active_query.lock().map_err(|_| {
                     AppError::ConfigError("console query registry is poisoned".into())
@@ -812,6 +930,40 @@ impl ConnectionManager {
         connection_id: Uuid,
         query_id: &str,
     ) -> Result<QueryOperationStart, AppError> {
+        self.begin_context_query_operation(connection_id, query_id, false)
+    }
+
+    pub(crate) fn has_mysql_empty_session(&self, id: Uuid) -> bool {
+        self.connections
+            .get(&id)
+            .is_some_and(|c| c.mysql_empty_session.is_some())
+    }
+
+    pub(crate) fn install_mysql_empty_session(
+        &mut self,
+        id: Uuid,
+        generation: u64,
+        active: ActiveConnection,
+    ) -> Result<(), AppError> {
+        let connection = self.connections.get_mut(&id).filter(|c| c.generation == generation)
+            .ok_or_else(|| AppError::ConfigError("connection changed while opening the unset-target session; execute again explicitly".into()))?;
+        // A concurrent opener must never replace the winner's session.
+        if connection.mysql_empty_session.is_none() {
+            connection.mysql_empty_session = Some(AutoContextSession {
+                driver: active.driver,
+                _ssh_tunnel: active._ssh_tunnel,
+                gate: Arc::new(Semaphore::new(1)),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn begin_context_query_operation(
+        &mut self,
+        connection_id: Uuid,
+        query_id: &str,
+        mysql_empty: bool,
+    ) -> Result<QueryOperationStart, AppError> {
         let connection =
             self.connections
                 .get_mut(&connection_id)
@@ -819,6 +971,18 @@ impl ConnectionManager {
                     resource: "active connection".into(),
                     id: connection_id.to_string(),
                 })?;
+        let (driver, serial_query_gate) = if mysql_empty {
+            let session = connection
+                .mysql_empty_session
+                .as_ref()
+                .ok_or_else(|| AppError::ConfigError("unset-target session is not ready".into()))?;
+            (session.driver.clone(), session.gate.clone())
+        } else {
+            (
+                connection.driver.clone(),
+                connection.serial_query_gate.clone(),
+            )
+        };
         let cancellation = CancellationToken::new();
         {
             let mut registry = connection.activity.lock();
@@ -833,6 +997,7 @@ impl ConnectionManager {
                 QueryRegistration {
                     queued: true,
                     cancellation: cancellation.clone(),
+                    driver: Some(driver.clone()),
                 },
             );
         }
@@ -840,7 +1005,6 @@ impl ConnectionManager {
             registry: connection.activity.0.clone(),
             query_id: query_id.to_string(),
         };
-        let driver = connection.driver.clone();
         if driver.supports_concurrent_queries() {
             lease.activate()?;
             return Ok(QueryOperationStart::Ready(QueryOperation {
@@ -850,7 +1014,6 @@ impl ConnectionManager {
                 _lease: lease,
             }));
         }
-        let serial_query_gate = connection.serial_query_gate.clone();
         match serial_query_gate.clone().try_acquire_owned() {
             Ok(permit) => {
                 lease.activate()?;
@@ -991,6 +1154,7 @@ pub(crate) async fn create_active_connection(
         activity: ConnectionActivity::new(Instant::now()),
         serial_query_gate: Arc::new(Semaphore::new(1)),
         console_sessions: HashMap::new(),
+        mysql_empty_session: None,
         generation: 0,
     })
 }
@@ -1266,6 +1430,7 @@ mod tests {
                 super::QueryRegistration {
                     queued: false,
                     cancellation: tokio_util::sync::CancellationToken::new(),
+                    driver: None,
                 },
             );
         }
@@ -1279,6 +1444,7 @@ mod tests {
             activity,
             serial_query_gate: Arc::new(Semaphore::new(1)),
             console_sessions: HashMap::new(),
+            mysql_empty_session: None,
             generation: 0,
         }
     }
@@ -1295,6 +1461,83 @@ mod tests {
             manager.status(connection_id).status,
             ConnectionRuntimeStatus::Disconnected
         ));
+    }
+
+    #[tokio::test]
+    async fn unset_context_session_owns_its_queue_cancellation_and_lifetime() {
+        let mut manager = ConnectionManager::new();
+        let id = Uuid::new_v4();
+        manager.begin_connect(id).unwrap();
+        manager
+            .finish_connect(id, Ok(sqlite_connection(Instant::now(), 0).await))
+            .unwrap();
+        let generation = manager.connection_generation(id).unwrap();
+        manager
+            .install_mysql_empty_session(id, generation, sqlite_connection(Instant::now(), 0).await)
+            .unwrap();
+        let first = manager
+            .begin_context_query_operation(id, "empty-a", true)
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        let chosen = manager
+            .begin_query_operation(id, "chosen")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first.driver, &chosen.driver));
+        assert!(Arc::ptr_eq(
+            &first.driver,
+            &manager.query_driver(id, "empty-a").unwrap()
+        ));
+        assert!(manager.disconnect(id).is_err());
+        assert!(!manager.retire_failed_query_generation(
+            id,
+            generation,
+            "one failed query must preserve the other"
+        ));
+        let queued = manager
+            .begin_context_query_operation(id, "empty-b", true)
+            .unwrap();
+        assert!(matches!(&queued, QueryOperationStart::Queued(_)));
+        assert!(manager.cancel_queued_query(id, "empty-b"));
+        assert!(queued.wait().await.is_err());
+        // Racing openers cannot replace a physical session already in use.
+        manager
+            .install_mysql_empty_session(id, generation, sqlite_connection(Instant::now(), 0).await)
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &first.driver,
+            &manager.query_driver(id, "empty-a").unwrap()
+        ));
+        drop(first);
+        drop(chosen);
+        manager
+            .install_console_session(
+                id,
+                "manual".into(),
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .unwrap();
+        manager.set_console_phase(id, "manual", ConsoleTransactionPhase::Active);
+        assert!(!manager.retire_failed_query_generation(
+            id,
+            generation,
+            "must preserve transaction"
+        ));
+        assert!(manager.disconnect(id).is_err());
+        manager.set_console_phase(id, "manual", ConsoleTransactionPhase::Idle);
+        manager.disconnect(id).unwrap();
+        manager.begin_connect(id).unwrap();
+        manager
+            .finish_connect(id, Ok(sqlite_connection(Instant::now(), 0).await))
+            .unwrap();
+        assert!(manager
+            .install_mysql_empty_session(id, generation, sqlite_connection(Instant::now(), 0).await)
+            .is_err());
+        assert!(!manager.has_mysql_empty_session(id));
     }
 
     #[tokio::test]
@@ -1434,6 +1677,67 @@ mod tests {
             manager.reclaim_idle_sessions();
             assert!(!manager.connections.contains_key(&id));
         }
+    }
+
+    #[tokio::test]
+    async fn lost_console_replacement_is_explicit_scoped_and_preserves_other_transactions() {
+        let mut manager = ConnectionManager::new();
+        let id = Uuid::new_v4();
+        manager
+            .connections
+            .insert(id, sqlite_connection(Instant::now(), 0).await);
+        for console in ["lost", "other"] {
+            manager
+                .install_console_session(
+                    id,
+                    console.into(),
+                    sqlite_connection(Instant::now(), 0).await,
+                )
+                .unwrap();
+            manager.set_console_phase(id, console, ConsoleTransactionPhase::Active);
+        }
+        let operation = manager.begin_console_operation(id, "lost", None).unwrap();
+        assert!(manager
+            .replace_lost_console_session(
+                id,
+                "lost",
+                "replacement".into(),
+                &operation,
+                sqlite_connection(Instant::now(), 0).await
+            )
+            .is_err());
+        manager.set_console_phase(id, "lost", ConsoleTransactionPhase::Lost);
+        assert!(manager.begin_console_operation(id, "lost", None).is_err());
+        manager
+            .replace_lost_console_session(
+                id,
+                "lost",
+                "replacement".into(),
+                &operation,
+                sqlite_connection(Instant::now(), 0).await,
+            )
+            .unwrap();
+        assert_eq!(
+            manager.console_transaction_state(id, "replacement").phase,
+            ConsoleTransactionPhase::Idle
+        );
+        assert_eq!(
+            manager.console_transaction_state(id, "other").phase,
+            ConsoleTransactionPhase::Active
+        );
+        assert!(!Arc::ptr_eq(
+            &operation.driver,
+            &manager.console_driver(id, "replacement").unwrap()
+        ));
+        assert!(manager
+            .replace_lost_console_session(
+                id,
+                "lost",
+                "replacement".into(),
+                &operation,
+                sqlite_connection(Instant::now(), 0).await
+            )
+            .is_err());
     }
 
     #[tokio::test]

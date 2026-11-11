@@ -407,20 +407,7 @@ impl JdbcBridgeSidecar {
         timeout_window: Duration,
     ) -> Result<String, AppError> {
         let _request_guard = self.request_lock.lock().await;
-        if self.session_lost.load(Ordering::Acquire)
-            && matches!(command, JdbcBridgeCommand::Transaction("COMMIT"))
-        {
-            return Err(broken_sidecar(
-                "JDBC session was lost; rollback is required before further transaction work",
-            ));
-        }
         let process = self.process().await?;
-        if self.session_lost.load(Ordering::Acquire)
-            && matches!(command, JdbcBridgeCommand::Transaction("ROLLBACK"))
-        {
-            self.session_lost.store(false, Ordering::Release);
-            return Ok("{\"ok\":true}".into());
-        }
         let request_id = process.next_request_id.fetch_add(1, Ordering::Relaxed);
         let request = Zeroizing::new(command.encode(request_id));
 
@@ -434,14 +421,6 @@ impl JdbcBridgeSidecar {
             )
             .await;
         let result = self.finish_request(&process, result).await;
-        if result.is_ok()
-            && matches!(
-                command,
-                JdbcBridgeCommand::Transaction("BEGIN" | "ROLLBACK")
-            )
-        {
-            self.session_lost.store(false, Ordering::Release);
-        }
         result
     }
 
@@ -499,6 +478,9 @@ impl JdbcBridgeSidecar {
             parse_sidecar_frame(&response, request_id).map_err(JdbcRequestFailure::Poisoned)?;
         match status.as_str() {
             "OK" => Ok(payload),
+            "SESSION_LOST" => Err(JdbcRequestFailure::Poisoned(broken_sidecar(
+                &normalize_jdbc_error_message(&payload),
+            ))),
             "ERR" => Err(JdbcRequestFailure::Completed(broken_sidecar(
                 &normalize_jdbc_error_message(&payload),
             ))),
@@ -709,6 +691,11 @@ impl JdbcBridgeSidecar {
                         ),
                     ))
                 }
+                "SESSION_LOST" => {
+                    return Err(JdbcRequestFailure::Poisoned(broken_sidecar(
+                        &normalize_jdbc_error_message(&payload),
+                    )))
+                }
                 "ERR" => {
                     return Err(JdbcRequestFailure::Completed(broken_sidecar(
                         &normalize_jdbc_error_message(&payload),
@@ -744,6 +731,12 @@ impl JdbcBridgeSidecar {
     async fn process(&self) -> Result<Arc<JdbcBridgeProcess>, AppError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(broken_sidecar("JDBC bridge sidecar has been shut down"));
+        }
+        // A new bridge cannot recover the old physical session, transaction,
+        // locks or session context. In particular, ROLLBACK on a new session
+        // must never be reported as successful rollback of the lost one.
+        if self.session_lost.load(Ordering::Acquire) {
+            return Err(broken_sidecar("JDBC physical session was lost; its transaction cannot be restored. Explicit reconnection is required. No SQL was replayed."));
         }
         let mut current = self.process.lock().await;
         if let Some(process) = current.as_ref() {
@@ -995,6 +988,10 @@ const MAX_JDBC_RESULT_BYTES: usize = 64 * 1024 * 1024;
 
 #[async_trait]
 impl DatabaseDriver for JdbcDriver {
+    fn physical_session_lost(&self) -> bool {
+        self.sidecar.session_lost.load(Ordering::Acquire)
+    }
+
     fn driver_name(&self) -> &'static str {
         "jdbc"
     }
@@ -1696,10 +1693,14 @@ fn classify_jdbc_error(command: &str, sql: Option<&str>, error: AppError) -> App
                 message: format!("{driver}: {}", normalize_jdbc_error_message(&message)),
             }
         }
-        AppError::ConnectionFailed { driver, message } => AppError::ConnectionFailed {
-            driver,
-            message: normalize_jdbc_error_message(&message),
-        },
+        AppError::ConnectionFailed { driver, message } => {
+            let message = normalize_jdbc_error_message(&message);
+            if message.starts_with("authentication failed.") {
+                AppError::AuthError(message)
+            } else {
+                AppError::ConnectionFailed { driver, message }
+            }
+        }
         AppError::QueryFailed { sql, message } => AppError::QueryFailed {
             sql,
             message: normalize_jdbc_error_message(&message),
@@ -1818,10 +1819,14 @@ fn parse_sidecar_frame(
 fn normalize_jdbc_error_message(message: &str) -> String {
     let normalized = compact_jdbc_error_message(message);
     let lower = normalized.to_ascii_lowercase();
+    if lower.contains("no database selected") {
+        return "No database selected for this SQL tab. Select an execution database, or qualify table names explicitly. Queries that do not require a default database can run with an unset target.".into();
+    }
     let classified =
         if lower.contains("io error: connection failed") || lower.contains("connection refused") {
             normalized
-        } else if lower.contains("ora-01017")
+        } else if lower.contains("ora-01005")
+            || lower.contains("ora-01017")
             || lower.contains("access denied")
             || lower.contains("authentication failed")
             || lower.contains("invalid username/password")
@@ -1976,6 +1981,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn server_transport_failure_is_sticky_but_authentication_is_not_session_loss() {
+        for stream in [false, true] {
+            let sidecar = fake_sidecar("session-loss").await;
+            let result = if stream {
+                let (sender, _receiver) = tokio::sync::mpsc::channel(2);
+                sidecar
+                    .request_stream_with_timeout(
+                        "SELECT 1",
+                        "lost",
+                        10,
+                        Some(10),
+                        sender,
+                        Duration::from_secs(2),
+                    )
+                    .await
+                    .map(|_| String::new())
+            } else {
+                sidecar.request(JdbcBridgeCommand::Ping).await
+            };
+            assert!(result
+                .unwrap_err()
+                .safe_message()
+                .contains("physical session lost"));
+            assert!(sidecar
+                .session_lost
+                .load(std::sync::atomic::Ordering::Acquire));
+            assert!(sidecar
+                .request(JdbcBridgeCommand::Transaction("ROLLBACK"))
+                .await
+                .is_err());
+        }
+        let sidecar = fake_sidecar("auth-error").await;
+        assert!(sidecar
+            .request(JdbcBridgeCommand::Ping)
+            .await
+            .unwrap_err()
+            .safe_message()
+            .contains("authentication failed"));
+        assert!(!sidecar
+            .session_lost
+            .load(std::sync::atomic::Ordering::Acquire));
+        sidecar.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn ordinary_timeout_retires_the_process_before_the_next_request() {
         let sidecar = fake_sidecar("late").await;
         let process = sidecar.process().await.unwrap();
@@ -1989,36 +2039,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_lost_session_requires_rollback_before_commit_even_after_restart() {
+    async fn a_lost_session_rejects_queries_begin_commit_and_false_rollback() {
         let mut sidecar = fake_sidecar("late").await;
         sidecar
             .request_with_timeout(JdbcBridgeCommand::Ping, Duration::from_millis(30))
             .await
             .unwrap_err();
-        let error = sidecar
-            .request(JdbcBridgeCommand::Transaction("COMMIT"))
-            .await
-            .unwrap_err();
-        assert!(error.affects_transaction());
-        assert!(sidecar.process.lock().await.is_none());
         sidecar.start_spec.arguments = vec!["normal".into()];
-        sidecar.request(JdbcBridgeCommand::Ping).await.unwrap();
-        assert!(sidecar
-            .request(JdbcBridgeCommand::Transaction("COMMIT"))
-            .await
-            .is_err());
-        sidecar
-            .request(JdbcBridgeCommand::Transaction("ROLLBACK"))
-            .await
-            .unwrap();
-        sidecar
-            .request(JdbcBridgeCommand::Transaction("BEGIN"))
-            .await
-            .unwrap();
-        sidecar
-            .request(JdbcBridgeCommand::Transaction("COMMIT"))
-            .await
-            .unwrap();
+        for command in [
+            JdbcBridgeCommand::Ping,
+            JdbcBridgeCommand::Query("SELECT 1".into()),
+            JdbcBridgeCommand::Transaction("BEGIN"),
+            JdbcBridgeCommand::Transaction("COMMIT"),
+            JdbcBridgeCommand::Transaction("ROLLBACK"),
+        ] {
+            let error = sidecar.request(command).await.unwrap_err();
+            assert!(error.affects_transaction());
+            assert!(error.safe_message().contains("physical session was lost"));
+            assert!(sidecar.process.lock().await.is_none());
+            assert!(sidecar
+                .session_lost
+                .load(std::sync::atomic::Ordering::Acquire));
+        }
         sidecar.shutdown().await.unwrap();
     }
 
@@ -2038,37 +2080,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_late_old_response_cannot_contaminate_a_fresh_process() {
-        let mut sidecar = fake_sidecar("late").await;
+    async fn a_late_old_response_cannot_contaminate_an_explicit_new_sidecar() {
+        let sidecar = fake_sidecar("late").await;
         let old = sidecar.process().await.unwrap();
         assert!(sidecar
             .request_with_timeout(JdbcBridgeCommand::Ping, Duration::from_millis(30))
             .await
             .is_err());
-        sidecar.start_spec.arguments = vec!["normal".into()];
-        let response = sidecar.request(JdbcBridgeCommand::Ping).await.unwrap();
-        let current = sidecar.process().await.unwrap();
-        assert!(!Arc::ptr_eq(&old, &current));
-        let value: serde_json::Value = serde_json::from_str(&response).unwrap();
-        assert_eq!(value["requestId"], 1);
-        assert_eq!(value["pid"], current.child.lock().await.id().unwrap());
         assert!(old.child.lock().await.try_wait().unwrap().is_some());
+        assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_err());
         assert!(sidecar
-            .request(JdbcBridgeCommand::Transaction("COMMIT"))
-            .await
-            .is_err());
-        sidecar
             .request(JdbcBridgeCommand::Transaction("ROLLBACK"))
             .await
-            .unwrap();
-        assert!(!sidecar
+            .is_err());
+        let fresh = fake_sidecar("normal").await;
+        let current = fresh.process().await.unwrap();
+        assert!(!Arc::ptr_eq(&old, &current));
+        let value: serde_json::Value =
+            serde_json::from_str(&fresh.request(JdbcBridgeCommand::Ping).await.unwrap()).unwrap();
+        assert_eq!(value["requestId"], 1);
+        assert_eq!(value["pid"], current.child.lock().await.id().unwrap());
+        assert!(sidecar
             .session_lost
             .load(std::sync::atomic::Ordering::Acquire));
         sidecar.shutdown().await.unwrap();
+        fresh.shutdown().await.unwrap();
     }
 
     #[tokio::test]
-    async fn corrupted_protocol_is_retired_and_the_next_request_can_restart() {
+    async fn corrupted_protocol_is_retired_and_requires_explicit_reconnection() {
         for mode in ["mismatch", "malformed", "eof"] {
             let mut sidecar = fake_sidecar(mode).await;
             let process = sidecar.process().await.unwrap();
@@ -2076,7 +2116,8 @@ mod tests {
             assert!(sidecar.process.lock().await.is_none());
             assert!(process.child.lock().await.try_wait().unwrap().is_some());
             sidecar.start_spec.arguments = vec!["normal".into()];
-            assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_ok());
+            assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_err());
+            assert!(sidecar.process.lock().await.is_none());
             sidecar.shutdown().await.unwrap();
         }
     }
@@ -2144,7 +2185,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_consumer_stop_retires_and_reaps_sidecar_then_restarts_at_a_fresh_boundary() {
+    async fn auto_consumer_stop_reaps_sidecar_and_requires_explicit_reconnection() {
         use crate::drivers::trait_def::{
             DriverStreamRequest, StreamControl, StreamStopReason, StreamTransactionMode,
         };
@@ -2178,12 +2219,12 @@ mod tests {
         assert!(sidecar.process.lock().await.is_none());
         assert!(sidecar.active_stream.lock().await.is_none());
         sidecar.start_spec.arguments = vec!["normal".into()];
-        let response: serde_json::Value =
-            serde_json::from_str(&sidecar.request(JdbcBridgeCommand::Ping).await.unwrap()).unwrap();
-        let fresh = sidecar.process().await.unwrap();
-        assert!(!Arc::ptr_eq(&old, &fresh));
-        assert_eq!(response["requestId"], 1);
-        assert_eq!(response["pid"], fresh.child.lock().await.id().unwrap());
+        assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_err());
+        assert!(sidecar
+            .request(JdbcBridgeCommand::Transaction("ROLLBACK"))
+            .await
+            .is_err());
+        assert!(sidecar.process.lock().await.is_none());
         sidecar.shutdown().await.unwrap();
     }
 
@@ -2341,7 +2382,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restart_credentials_remain_runtime_only_and_are_not_echoed_in_errors() {
+    async fn lost_session_credentials_remain_runtime_only_and_are_not_echoed_in_errors() {
         let mut sidecar = fake_sidecar("late").await;
         sidecar.start_spec.init_request = Zeroizing::new(
             JdbcBridgeCommand::Init {
@@ -2361,7 +2402,11 @@ mod tests {
         assert!(!serialized.contains("runtimeDummyPassword"));
         assert!(!serialized.contains("fixture-user"));
         sidecar.start_spec.arguments = vec!["normal".into()];
-        assert!(sidecar.request(JdbcBridgeCommand::Ping).await.is_ok());
+        let refused = sidecar.request(JdbcBridgeCommand::Ping).await.unwrap_err();
+        let serialized = serde_json::to_string(&refused).unwrap();
+        assert!(!serialized.contains("runtimeDummyPassword"));
+        assert!(!serialized.contains("fixture-user"));
+        assert!(sidecar.process.lock().await.is_none());
         sidecar.shutdown().await.unwrap();
     }
 
@@ -2685,6 +2730,19 @@ mod tests {
             normalize_jdbc_error_message("ORA-01017: invalid username/password; logon denied");
         assert!(message.contains("authentication failed"));
         assert!(message.contains("ORA-01017"));
+    }
+
+    #[test]
+    fn ora_01005_is_authentication_and_redacted_through_ipc() {
+        let error = classify_jdbc_error("connect", None, AppError::ConnectionFailed {
+            driver: "jdbc".into(), message: "java.sql.SQLException: ORA-01005: null password given; logon denied; password=qa-secret; jdbc:oracle:thin:fixture_user/qa-secret@db.invalid:1521/fixture_service".into(),
+        });
+        assert_eq!(error.code(), "AUTH_ERROR");
+        let json = serde_json::to_string(&error).unwrap();
+        assert!(json.contains("ORA-01005"));
+        assert!(json.contains("authentication failed"));
+        assert!(!json.contains("qa-secret"));
+        assert!(!json.contains("fixture_user/"));
     }
 
     #[test]

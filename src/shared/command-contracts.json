@@ -607,5 +607,19 @@
     "args": "{ id: UUID }",
     "response": "void",
     "status": "active"
+  },
+  {
+    "name": "recover_lost_console_session",
+    "namespace": "query",
+    "args": "{ input: { connectionId: string; consoleId: string; newConsoleId: string; database: string | null; schema: string | null } }",
+    "response": "ConsoleTransactionState",
+    "status": "active"
+  },
+  {
+    "name": "end_lost_console_session",
+    "namespace": "query",
+    "args": "{ input: { connectionId: string; consoleId: string } }",
+    "response": "ConsoleTransactionState",
+    "status": "active"
   }
 ]

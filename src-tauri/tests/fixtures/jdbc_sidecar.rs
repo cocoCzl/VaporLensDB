@@ -56,6 +56,8 @@ fn main() {
                 println!("invalid protocol frame");
                 io::stdout().flush().unwrap();
             }
+            "session-loss" => respond("SESSION_LOST", request_id, "Original physical session lost; final outcome unknown"),
+            "auth-error" => respond("ERR", request_id, "ORA-01005: null password given; logon denied"),
             "eof" => return,
             "limit" => respond(
                 "LIMIT",

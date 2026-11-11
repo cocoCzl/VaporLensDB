@@ -404,16 +404,11 @@ pub async fn export_query_result_csv(
 pub async fn export_query_csv(
     app: AppHandle,
     state: State<'_, AppState>,
-    input: ExportQueryCsvInput,
+    mut input: ExportQueryCsvInput,
 ) -> Result<TaskInfo, AppError> {
-    let driver_type = state
-        .config_store
-        .get_connection(input.connection_id)?
-        .map(|connection| connection.driver_type)
-        .ok_or_else(|| AppError::NotFound {
-            resource: "connection".to_string(),
-            id: input.connection_id.to_string(),
-        })?;
+    input.sql = query_export_statement(&input.sql)?;
+    let driver_type = crate::commands::query::execution_driver_type(&state, input.connection_id)
+        .map_err(AppError::ConfigError)?;
     let operation = begin_query_export_operation(&state, &input).await?;
     let path = PathBuf::from(&input.path);
     let staged_path = staged_export_path(&path)?;
@@ -872,6 +867,26 @@ async fn begin_query_export_operation(
     state: &State<'_, AppState>,
     input: &ExportQueryCsvInput,
 ) -> Result<QueryExportOperationStart, AppError> {
+    let current = state
+        .connection_manager
+        .lock()
+        .await
+        .connection_generation(input.connection_id)?;
+    validate_query_export_generation(current, input.connection_generation)?;
+    let mysql_empty = if input.console_id.is_none() {
+        let product = crate::commands::query::execution_driver_type(state, input.connection_id)
+            .map_err(AppError::ConfigError)?;
+        crate::commands::query::prepare_auto_execution_context(
+            state,
+            input.connection_id,
+            product,
+            input.database.as_deref(),
+        )
+        .await
+        .map_err(AppError::ConfigError)?
+    } else {
+        false
+    };
     let mut connections = state.connection_manager.lock().await;
     let current_generation = connections.connection_generation(input.connection_id)?;
     validate_query_export_generation(current_generation, input.connection_generation)?;
@@ -885,9 +900,10 @@ async fn begin_query_export_operation(
         return Ok(QueryExportOperationStart::Console(operation));
     }
     connections
-        .begin_query_operation(
+        .begin_context_query_operation(
             input.connection_id,
             &format!("csv-operation-{}", Uuid::new_v4()),
+            mysql_empty,
         )
         .map(QueryExportOperationStart::Auto)
 }
@@ -1085,6 +1101,16 @@ async fn write_table_csv(
     })
 }
 
+fn query_export_statement(sql: &str) -> Result<String, AppError> {
+    let mut statements = crate::utils::sql_parser::split_sql_statements(sql);
+    if statements.len() != 1 {
+        return Err(AppError::ConfigError(
+            "Full query export requires exactly one SQL statement".into(),
+        ));
+    }
+    Ok(statements.remove(0))
+}
+
 async fn write_streamed_query_csv(
     input: &ExportQueryCsvInput,
     operation: Arc<QueryExportOperation>,
@@ -1092,6 +1118,7 @@ async fn write_streamed_query_csv(
     manager: &crate::services::task_manager::TaskManager,
     handle: &TaskHandle,
 ) -> Result<ExportReport, ExportTaskError> {
+    let sql = query_export_statement(&input.sql)?;
     let driver = operation.driver();
     if handle.is_cancel_requested() {
         return Err(ExportTaskError::Cancelled);
@@ -1101,7 +1128,6 @@ async fn write_streamed_query_csv(
     let query_id = format!("query-export-{}", handle.id);
     let (tx, mut rx) = mpsc::channel::<Result<QueryResultChunk, AppError>>(4);
     let query_driver = driver.clone();
-    let sql = input.sql.clone();
     let query_id_for_task = query_id.clone();
     let operation_for_query = operation.clone();
     let query = async move {
@@ -2458,6 +2484,10 @@ fn csv_cell(value: &str) -> String {
         value.to_string()
     }
 }
+
+#[cfg(test)]
+#[path = "export_convergence_tests.rs"]
+mod convergence_tests;
 
 #[cfg(test)]
 mod precision_tests {
@@ -4163,6 +4193,19 @@ mod stream_lifecycle_tests {
             .finish_connect(id, create_active_connection(&config, None, None).await)
             .unwrap();
         (manager, id)
+    }
+
+    #[test]
+    fn full_query_export_ignores_trailing_comments_but_requires_one_statement() {
+        for suffix in ["; -- tail", "; /* tail ; */", "; ; /* nested /* c */ */;"] {
+            assert_eq!(
+                query_export_statement(&format!("SELECT '-- /* */' AS value{suffix}")).unwrap(),
+                "SELECT '-- /* */' AS value"
+            );
+        }
+        for sql in ["", "-- only", "/* only */;", "SELECT 1; SELECT 2"] {
+            assert!(query_export_statement(sql).is_err());
+        }
     }
 
     #[test]
