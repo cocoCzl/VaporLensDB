@@ -610,7 +610,6 @@ fn execute_sqlite_query(
 fn sqlite_result_columns(statement: &rusqlite::Statement<'_>) -> Vec<ColumnMeta> {
     statement
         .columns()
-        .iter()
         .map(|column| ColumnMeta {
             name: column.name().to_string(),
             data_type: column
