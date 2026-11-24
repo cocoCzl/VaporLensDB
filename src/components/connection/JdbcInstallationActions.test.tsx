@@ -5,7 +5,7 @@ import { checksumSourceLabel } from './workflowPresentation'
 import { JdbcInstallationActions, DriverInstallationPage } from './JdbcInstallationActions'
 import { useDriverStore } from '@/stores/driverStore'
 import { useTaskStore } from '@/stores/taskStore'
-import { checkJdbcRuntime, downloadJdbcDriver, validateExternalDriver } from '@/ipc/driver'
+import { checkJdbcRuntime, downloadJdbcDriver, listJdbcDownloads, validateExternalDriver } from '@/ipc/driver'
 import { open } from '@tauri-apps/plugin-dialog'
 import recipes from '@/shared/jdbc-downloads.json'
 import type { DriverDefinition } from '@/types/driver'
@@ -64,10 +64,20 @@ it('does not bind a late download to a different product or a closed form', asyn
 })
 
 it.each(['failed','cancelled'] as const)('offers a reviewed retry after %s without selecting an installation',async status=>{
+  let resolveRecipes!: (value: typeof recipes) => void
+  vi.mocked(listJdbcDownloads).mockReturnValueOnce(new Promise(resolve => { resolveRecipes = resolve }))
   useTaskStore.setState({tasks:[task(status)]})
   const installed=vi.fn();render(<DriverInstallationPage driver={driver} initialMode="download" onInstalled={installed} onBack={vi.fn()} onCancel={vi.fn()} />)
   expect(screen.getByRole('region')).toHaveTextContent('42.7.14')
-  fireEvent.click(await screen.findByRole('button',{name:i18n.t('jdbcDownload.retry')}))
+  const retry = screen.getByRole('button',{name:i18n.t('jdbcDownload.retry')})
+  // The previous task already exposes its version, but the review is still loading.
+  expect(retry).toBeDisabled()
+  fireEvent.click(retry)
+  expect(downloadJdbcDriver).not.toHaveBeenCalled()
+  await act(async () => { resolveRecipes(recipes) })
+  await screen.findByText('checker-qual-3.55.1.jar')
+  await waitFor(() => expect(retry).toBeEnabled())
+  fireEvent.click(retry)
   await waitFor(()=>expect(downloadJdbcDriver).toHaveBeenCalledWith(driver.id))
   expect(installed).not.toHaveBeenCalled()
 })
